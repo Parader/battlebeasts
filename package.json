@@ -1,0 +1,16 @@
+{
+  "name": "battlebeasts",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @battlebeasts/web --filter @battlebeasts/game-server run dev",
+    "dev:web": "pnpm --filter @battlebeasts/web dev",
+    "dev:server": "pnpm --filter @battlebeasts/game-server dev",
+    "build": "pnpm -r run build",
+    "build:shared": "pnpm --filter @battlebeasts/shared build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.27.0"
+}
