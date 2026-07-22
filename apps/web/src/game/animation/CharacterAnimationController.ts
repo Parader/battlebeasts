@@ -4,8 +4,12 @@ import {
   character1AnimationConfig,
 } from "./animationConfig";
 import {
+  createCastBodyClip,
+  createLegsOnlyClip,
   createLowerBodyClip,
   createUpperBodyClip,
+  getHipsStartY,
+  plantHipsRootMotion,
   reportMissingClips,
   resolveClip,
   stripHorizontalRootMotion,
@@ -79,6 +83,8 @@ export class CharacterAnimationController {
   private readonly sourceClips: readonly THREE.AnimationClip[];
 
   private readonly lowerActions = new Map<LocoSlot, THREE.AnimationAction>();
+  /** Legs without hips — active while a cast owns Mixamo hip aim twist. */
+  private readonly legsOnlyActions = new Map<LocoSlot, THREE.AnimationAction>();
   private readonly upperLocoActions = new Map<LocoSlot, THREE.AnimationAction>();
   private readonly upperCastByName = new Map<string, THREE.AnimationAction>();
   private readonly fullBodyClips = new Map<string, THREE.AnimationClip>();
@@ -116,6 +122,8 @@ export class CharacterAnimationController {
 
   private disposed = false;
   private readonly refClipDuration: number;
+  /** Idle hips height — cast clips plant here so Mixamo crouches don't sink feet. */
+  private readonly plantHipsY: number;
 
   constructor(
     character: THREE.Object3D,
@@ -141,6 +149,9 @@ export class CharacterAnimationController {
       heavyCast: config.heavyCast,
     });
 
+    const idleSrc = resolveClip(clips, config.idle);
+    const plantSrc = idleSrc ?? resolveClip(clips, config.runForward);
+    this.plantHipsY = (plantSrc && getHipsStartY(plantSrc)) ?? 100;
     const locoMap: Array<{ slot: LocoSlot; name: string }> = [
       { slot: "idle", name: config.idle },
       { slot: "forward", name: config.runForward },
@@ -156,8 +167,9 @@ export class CharacterAnimationController {
     for (const { slot, name } of locoMap) {
       const src = resolveClip(clips, name);
       if (!src) continue;
+      const noRoot = stripHorizontalRootMotion(src);
 
-      const lowerClip = createLowerBodyClip(stripHorizontalRootMotion(src));
+      const lowerClip = createLowerBodyClip(noRoot);
       if (lowerClip.tracks.length === 0) {
         console.warn(`[CharacterAnimation] lower clip empty after mask: ${name}`);
       } else {
@@ -171,7 +183,21 @@ export class CharacterAnimationController {
         this.lowerActions.set(slot, lower);
       }
 
-      const upperClip = createUpperBodyClip(stripHorizontalRootMotion(src));
+      const legsClip = createLegsOnlyClip(noRoot);
+      if (legsClip.tracks.length === 0) {
+        console.warn(`[CharacterAnimation] legs-only clip empty after mask: ${name}`);
+      } else {
+        const legs = this.mixer.clipAction(legsClip);
+        legs.enabled = true;
+        legs.setEffectiveWeight(0);
+        legs.setLoop(THREE.LoopRepeat, Infinity);
+        legs.timeScale = slot === "idle" ? 1 : refDur / Math.max(1e-4, src.duration);
+        legs.time = 0;
+        legs.play();
+        this.legsOnlyActions.set(slot, legs);
+      }
+
+      const upperClip = createUpperBodyClip(noRoot);
       if (upperClip.tracks.length === 0) {
         console.warn(`[CharacterAnimation] upper loco clip empty after mask: ${name}`);
       } else {
@@ -209,12 +235,14 @@ export class CharacterAnimationController {
       console.warn(`[CharacterAnimation] cannot register upper cast "${logicalName}" → "${clipName}"`);
       return;
     }
-    const upper = createUpperBodyClip(stripHorizontalRootMotion(src));
-    if (upper.tracks.length === 0) {
-      console.warn(`[CharacterAnimation] upper cast has no tracks after mask: ${clipName}`);
+    // Include hips so Mixamo aim twist stays with the cast (upper-only looked sideways).
+    // Plant hips Y to idle height — Mixamo casts crouch hard and drive feet through the floor.
+    const castClip = createCastBodyClip(plantHipsRootMotion(src, this.plantHipsY));
+    if (castClip.tracks.length === 0) {
+      console.warn(`[CharacterAnimation] cast clip has no tracks after mask: ${clipName}`);
       return;
     }
-    const action = this.mixer.clipAction(upper);
+    const action = this.mixer.clipAction(castClip);
     action.enabled = true;
     action.setEffectiveWeight(0);
     action.setLoop(THREE.LoopOnce, 1);
@@ -268,13 +296,31 @@ export class CharacterAnimationController {
     );
 
     const locoUpperMul = this.layerMulUpper * (1 - this.castWeight);
+    // While casting, legs-only loco so cast hips own Mixamo aim twist
+    const hipsLocoMul = this.layerMulLower * (1 - this.castWeight);
+    const legsLocoMul = this.layerMulLower * this.castWeight;
 
     for (const [slot, action] of this.lowerActions) {
-      action.setEffectiveWeight(this.locoCurrent[slot] * this.layerMulLower);
+      action.setEffectiveWeight(this.locoCurrent[slot] * hipsLocoMul);
       if (slot === "idle") action.timeScale = 1;
       else {
         action.timeScale =
           (this.refClipDuration / Math.max(1e-4, action.getClip().duration)) * speedScale;
+      }
+    }
+
+    for (const [slot, action] of this.legsOnlyActions) {
+      const w = this.locoCurrent[slot] * legsLocoMul;
+      action.setEffectiveWeight(w);
+      if (slot === "idle") action.timeScale = 1;
+      else {
+        action.timeScale =
+          (this.refClipDuration / Math.max(1e-4, action.getClip().duration)) * speedScale;
+      }
+      // Keep legs in phase with the hips+legs loco clip
+      const withHips = this.lowerActions.get(slot);
+      if (withHips && this.locoCurrent[slot] > 0.05) {
+        action.time = withHips.time;
       }
     }
 
@@ -446,6 +492,7 @@ export class CharacterAnimationController {
     this.layerMulLowerTarget = 0;
     this.layerMulUpperTarget = 0;
     for (const action of this.lowerActions.values()) action.setEffectiveWeight(0);
+    for (const action of this.legsOnlyActions.values()) action.setEffectiveWeight(0);
     for (const action of this.upperLocoActions.values()) action.setEffectiveWeight(0);
 
     if (this.overrideAction) {

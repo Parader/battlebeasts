@@ -102,6 +102,11 @@ export function isHipsPositionTrack(trackName: string): boolean {
   return bone.includes("hips") && prop.startsWith("position");
 }
 
+/** Any hips track (position or quaternion). */
+export function isHipsTrack(trackName: string): boolean {
+  return normalizedBoneFromTrack(trackName).includes("hips");
+}
+
 /** Clone clip keeping only tracks that pass `keep`. */
 export function filterClipTracks(
   clip: THREE.AnimationClip,
@@ -118,6 +123,37 @@ export function createUpperBodyClip(clip: THREE.AnimationClip): THREE.AnimationC
 
 export function createLowerBodyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
   return filterClipTracks(clip, (t) => isLowerBodyTrack(t.name), "::lower");
+}
+
+/**
+ * Legs only (no hips) — used while a cast owns hips so Mixamo torso twist
+ * isn't fighting locomotion hip keys.
+ */
+export function createLegsOnlyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  return filterClipTracks(
+    clip,
+    (t) => isLowerBodyTrack(t.name) && !isHipsTrack(t.name),
+    "::legs",
+  );
+}
+
+/**
+ * Upper body + hips for casts. Mixamo attacks bake aim into hip yaw; without
+ * hips the spell reads as sideways relative to gameplay facing.
+ */
+export function createCastBodyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  return filterClipTracks(
+    clip,
+    (t) => isUpperBodyTrack(t.name) || isHipsTrack(t.name),
+    "::cast",
+  );
+}
+
+/** First-frame hips Y from a clip, or null if missing. */
+export function getHipsStartY(clip: THREE.AnimationClip): number | null {
+  const track = clip.tracks.find((t) => isHipsPositionTrack(t.name));
+  if (!track || track.values.length < 3) return null;
+  return track.values[1]!;
 }
 
 /**
@@ -143,6 +179,34 @@ export function stripHorizontalRootMotion(clip: THREE.AnimationClip): THREE.Anim
   });
 
   return new THREE.AnimationClip(`${clip.name}::noRootXZ`, clip.duration, tracks);
+}
+
+/**
+ * Lock hips XZ to the first frame and Y to `plantY` so cast crouches/dives
+ * don't drive feet through the ground. Quaternion (aim twist) is untouched.
+ */
+export function plantHipsRootMotion(
+  clip: THREE.AnimationClip,
+  plantY: number,
+): THREE.AnimationClip {
+  const tracks = clip.tracks.map((track) => {
+    if (!isHipsPositionTrack(track.name)) return track.clone();
+
+    const values = track.values;
+    if (values.length < 3) return track.clone();
+
+    const lockedX = values[0]!;
+    const lockedZ = values[2]!;
+    const next = track.clone();
+    for (let i = 0; i < next.values.length; i += 3) {
+      next.values[i] = lockedX;
+      next.values[i + 1] = plantY;
+      next.values[i + 2] = lockedZ;
+    }
+    return next;
+  });
+
+  return new THREE.AnimationClip(`${clip.name}::planted`, clip.duration, tracks);
 }
 
 /** Normalize for fuzzy clip-name resolve: lower case, collapse non-alnum. */

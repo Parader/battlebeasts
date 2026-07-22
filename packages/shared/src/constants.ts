@@ -2,7 +2,7 @@
 export const TICK_RATE = 30;
 export const TICK_MS = 1000 / TICK_RATE;
 
-export const MOVE_SPEED = 6;
+export const MOVE_SPEED = 5;
 
 /** Battlerite-style fixed camera: high pitch looking down. */
 export const CAMERA = {

@@ -20,7 +20,11 @@ export { debugPrintAnimationAssets } from "./debugAnimations";
 export {
   createLowerBodyClip,
   createUpperBodyClip,
+  createLegsOnlyClip,
+  createCastBodyClip,
   stripHorizontalRootMotion,
+  plantHipsRootMotion,
+  getHipsStartY,
   resolveClip,
   reportMissingClips,
 } from "./clipUtils";
