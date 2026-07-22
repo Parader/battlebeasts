@@ -9,6 +9,12 @@ export const CAMERA = {
   pitchDeg: 55,
   distance: 18,
   fov: 45,
+  /** Soft follow of player (1/s). Lower = less shake when strafing. */
+  followLambda: 2.2,
+  /** Soft follow of cursor offset (1/s). Higher = snappier look-ahead. */
+  cursorLambda: 6,
+  /** Max look-ahead as fraction of half-screen (lower = more resistance). */
+  cursorInfluence: 0.55,
 } as const;
 
 export const ROOM = {
@@ -38,3 +44,5 @@ export const INTERACT = {
 export const PVP_RECONNECT_GRACE_MS = 45_000;
 /** PvE disconnect grace before rebalance (ms). */
 export const PVE_RECONNECT_GRACE_MS = 90_000;
+/** After a successful reconnect, stay paused this long before match resumes (ms). */
+export const RECONNECT_RESUME_GRACE_MS = 3_000;

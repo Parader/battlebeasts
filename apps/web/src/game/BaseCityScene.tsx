@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
@@ -9,6 +9,7 @@ import {
     PRACTICE_DUMMY,
 } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
+import { RemotePlayers } from "./RemotePlayers";
 import type { PredictedPose } from "./useBaseCityRoom";
 
 type Props = {
@@ -84,91 +85,12 @@ function LocalPlayerMesh({
     );
 }
 
-function RemotePlayerMesh({ room, sessionId }: { room: Room; sessionId: string }) {
-    const group = useRef<THREE.Group>(null);
-    const renderPos = useRef(new THREE.Vector3());
-    const renderYaw = useRef(0);
-    const colorRef = useRef("#60a5fa");
-    const matRef = useRef<THREE.MeshStandardMaterial>(null);
-    const seeded = useRef(false);
-
-    useFrame((_, dt) => {
-        const p = room.state?.players?.get(sessionId) as
-            | { x: number; z: number; yaw: number; color: string; disconnected?: boolean }
-            | undefined;
-        const g = group.current;
-        if (!p || !g || p.disconnected) {
-            if (g) g.visible = false;
-            return;
-        }
-        g.visible = true;
-        if (!seeded.current) {
-            renderPos.current.set(p.x, 0, p.z);
-            renderYaw.current = p.yaw;
-            seeded.current = true;
-        }
-        if (p.color && p.color !== colorRef.current) {
-            colorRef.current = p.color;
-            if (matRef.current) matRef.current.color.set(p.color);
-        }
-
-        const alpha = 1 - Math.exp(-16 * dt);
-        renderPos.current.x = THREE.MathUtils.lerp(renderPos.current.x, p.x, alpha);
-        renderPos.current.z = THREE.MathUtils.lerp(renderPos.current.z, p.z, alpha);
-        renderYaw.current = THREE.MathUtils.lerp(renderYaw.current, p.yaw, alpha);
-        g.position.set(renderPos.current.x, 0, renderPos.current.z);
-        g.rotation.y = renderYaw.current;
-    });
-
-    return (
-        <group ref={group}>
-            <mesh position={[0, 0.7, 0]} castShadow>
-                <capsuleGeometry args={[0.35, 0.7, 4, 8]} />
-                <meshStandardMaterial ref={matRef} color={colorRef.current} />
-            </mesh>
-            <mesh position={[0, 0.85, 0.35]}>
-                <boxGeometry args={[0.25, 0.15, 0.35]} />
-                <meshStandardMaterial color="#94a3b8" />
-            </mesh>
-        </group>
-    );
-}
-
-function RemotePlayers({ room, localSessionId }: { room: Room | null; localSessionId: string | null }) {
-    const [remoteIds, setRemoteIds] = useState<string[]>([]);
-    const prevKey = useRef("");
-
-    useFrame(() => {
-        if (!room?.state?.players) return;
-        const next: string[] = [];
-        room.state.players.forEach((_p: unknown, id: string) => {
-            if (id !== localSessionId) next.push(id);
-        });
-        next.sort();
-        const key = next.join("|");
-        if (key !== prevKey.current) {
-            prevKey.current = key;
-            setRemoteIds(next);
-        }
-    });
-
-    if (!room) return null;
-
-    return (
-        <>
-            {remoteIds.map((id) => (
-                <RemotePlayerMesh key={id} room={room} sessionId={id} />
-            ))}
-        </>
-    );
-}
-
 export function BaseCityScene({ room, localSessionId, predictedRef, onInteract }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
+    const aimNdc = useRef(new THREE.Vector2(0, 0));
     const { camera, gl } = useThree();
     const groundPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
     const raycaster = useMemo(() => new THREE.Raycaster(), []);
-    const pointer = useMemo(() => new THREE.Vector2(), []);
     const hit = useMemo(() => new THREE.Vector3(), []);
     const localColor = (localSessionId && room?.state?.players?.get(localSessionId)?.color) || "#4ade80";
 
@@ -181,9 +103,10 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract }
         const el = gl.domElement;
         const onMove = (e: PointerEvent) => {
             const rect = el.getBoundingClientRect();
-            pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-            pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-            raycaster.setFromCamera(pointer, camera);
+            const ndc = aimNdc.current;
+            ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(ndc, camera);
             if (raycaster.ray.intersectPlane(groundPlane, hit)) {
                 const origin = predictedRef.current;
                 const yaw = Math.atan2(hit.x - origin.x, hit.z - origin.z);
@@ -192,7 +115,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract }
         };
         el.addEventListener("pointermove", onMove);
         return () => el.removeEventListener("pointermove", onMove);
-    }, [camera, gl, groundPlane, hit, pointer, predictedRef, raycaster]);
+    }, [camera, gl, groundPlane, hit, predictedRef, raycaster]);
 
     useEffect(() => {
         const handler = () => {
@@ -250,7 +173,15 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract }
 
             <LocalPlayerMesh predictedRef={predictedRef} color={localColor} />
             <RemotePlayers room={room} localSessionId={localSessionId} />
-            <FixedFollowCamera target={localPos} pitchDeg={CAMERA.pitchDeg} distance={CAMERA.distance} />
+            <FixedFollowCamera
+                target={localPos}
+                pitchDeg={CAMERA.pitchDeg}
+                distance={CAMERA.distance}
+                fov={CAMERA.fov}
+                followLambda={CAMERA.followLambda}
+                cursorLambda={CAMERA.cursorLambda}
+                cursorInfluence={CAMERA.cursorInfluence}
+            />
         </>
     );
 }

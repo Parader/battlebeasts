@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
 import { ROOM, type PlayerInput } from "@battlebeasts/shared";
+import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 
 export type ActiveUi =
@@ -11,6 +12,14 @@ export type ActiveUi =
     | "portal_pvp"
     | "portal_pve"
     | null;
+
+export type SessionPhase = "hub" | "queued" | "content";
+
+export type MatchPauseInfo = {
+    reason: "pvp_reconnect" | "pve_reconnect" | "resume_grace";
+    until: number;
+    playerName?: string;
+} | null;
 
 export type PredictedPose = {
     x: number;
@@ -24,15 +33,16 @@ type Options = {
     displayName: string;
     color?: string;
     accessToken?: string | null;
+    hubOwnerId?: string;
     enabled?: boolean;
+    /** When true, WASD/arrows/E are ignored so UI typing works. */
+    inputLocked?: boolean;
 };
 
-/** Shared mutable pose read by the R3F scene every frame (no React re-renders). */
-export type GameNetApi = {
-    room: Room | null;
-    predicted: PredictedPose;
-    setYaw: (yaw: number) => void;
-    sendInteract: (interactId: string) => void;
+type TransferMsg = {
+    room: string;
+    roomId?: string;
+    options?: Record<string, unknown>;
 };
 
 export function useBaseCityRoom(options: Options) {
@@ -40,55 +50,348 @@ export function useBaseCityRoom(options: Options) {
     const [toast, setToast] = useState<string | null>(null);
     const [activeUi, setActiveUi] = useState<ActiveUi>(null);
     const [room, setRoom] = useState<Room | null>(null);
+    const [phase, setPhase] = useState<SessionPhase>("hub");
+    const [queueModes, setQueueModes] = useState<string[]>([]);
+    const [contentMode, setContentMode] = useState<string | null>(null);
+    const [matchPause, setMatchPause] = useState<MatchPauseInfo>(null);
+    const [economy, setEconomy] = useState({
+        copper: 0,
+        silver: 0,
+        gold: 0,
+        essence: 0,
+        loadout: [] as string[],
+        talents: [] as string[],
+    });
 
     const seqRef = useRef(0);
     const keysRef = useRef({ up: false, down: false, left: false, right: false });
     const yawRef = useRef(0);
     const roomRef = useRef<Room | null>(null);
+    const clientRef = useRef<Client | null>(null);
     const predictorRef = useRef(new LocalPredictor());
     const predictedRef = useRef<PredictedPose>({ x: 0, z: 0, yaw: 0 });
     const pendingInteractRef = useRef<string | undefined>(undefined);
     const lastHudUpdate = useRef(0);
     const lastAckRef = useRef(-1);
+    const inputLockedRef = useRef(Boolean(options.inputLocked));
+    const transferringRef = useRef(false);
+    const phaseRef = useRef<SessionPhase>("hub");
+    const reconnectingRef = useRef(false);
+    const optionsRef = useRef(options);
+    optionsRef.current = options;
     const [localPlayer, setLocalPlayer] = useState<{ x: number; z: number } | null>(null);
+
+    const showToast = useCallback((message: string) => {
+        setToast(message);
+        window.setTimeout(() => setToast(null), 2500);
+    }, []);
+
+    const applyTransferRef = useRef<(msg: TransferMsg) => Promise<void>>(async () => undefined);
+    const tryContentReconnectRef = useRef<(code?: number) => Promise<boolean>>(async () => false);
+
+    const persistRejoinToken = useCallback((joined: Room, mode: string | null) => {
+        const token = (joined as Room & { reconnectionToken?: string }).reconnectionToken;
+        if (!token) return;
+        const opts = optionsRef.current;
+        saveContentRejoin({
+            token,
+            roomId: joined.roomId,
+            mode,
+            hubOwnerId: opts.hubOwnerId ?? opts.userId,
+        });
+    }, []);
+
+    const wireRoom = useCallback(
+        (joined: Room, nextPhase: SessionPhase, mode?: string | null) => {
+            roomRef.current = joined;
+            setRoom(joined);
+            setStatus("connected");
+            setPhase(nextPhase);
+            phaseRef.current = nextPhase;
+            setContentMode(mode ?? null);
+            setActiveUi(null);
+            setMatchPause(null);
+            predictorRef.current = new LocalPredictor();
+            lastAckRef.current = -1;
+            seqRef.current = 0;
+
+            if (nextPhase === "content") {
+                persistRejoinToken(joined, mode ?? null);
+            } else {
+                clearContentRejoin();
+            }
+
+            joined.onMessage("toast", (msg: { message: string }) => {
+                showToast(msg.message);
+            });
+
+            joined.onMessage("ui", (msg: { ui: Exclude<ActiveUi, null> }) => {
+                setActiveUi(msg.ui);
+            });
+
+            joined.onMessage("queue_status", (msg: { queued: boolean; modes?: string[] }) => {
+                if (msg.queued) {
+                    setPhase("queued");
+                    phaseRef.current = "queued";
+                    setQueueModes(msg.modes ?? []);
+                } else {
+                    setQueueModes([]);
+                    setPhase((p) => {
+                        const next = p === "queued" ? "hub" : p;
+                        phaseRef.current = next;
+                        return next;
+                    });
+                }
+            });
+
+            joined.onMessage("transfer", (msg: TransferMsg) => {
+                void applyTransferRef.current(msg);
+            });
+
+            joined.onMessage(
+                "inventory",
+                (msg: { resources?: Record<string, number>; loadout?: string[]; talents?: string[] }) => {
+                    setEconomy({
+                        copper: msg.resources?.copper ?? 0,
+                        silver: msg.resources?.silver ?? 0,
+                        gold: msg.resources?.gold ?? 0,
+                        essence: msg.resources?.essence ?? 0,
+                        loadout: msg.loadout ?? [],
+                        talents: msg.talents ?? [],
+                    });
+                },
+            );
+
+            joined.onMessage(
+                "match_pause",
+                (msg: {
+                    reason: "pvp_reconnect" | "pve_reconnect" | "resume_grace";
+                    until: number;
+                    playerName?: string;
+                }) => {
+                    setMatchPause({
+                        reason: msg.reason,
+                        until: msg.until,
+                        playerName: msg.playerName,
+                    });
+                },
+            );
+
+            joined.onMessage("match_resume", () => {
+                setMatchPause(null);
+            });
+
+            // Backup: schema patch also clears UI if match_resume was missed
+            const state = joined.state as {
+                listen?: (key: string, cb: (value: unknown) => void) => void;
+                paused?: boolean;
+                pauseReason?: string;
+                reconnectUntil?: number;
+            };
+            const syncPauseFromState = (s: typeof state) => {
+                const reason = s.pauseReason;
+                if (reason === "pvp_reconnect" || reason === "pve_reconnect" || reason === "resume_grace") {
+                    setMatchPause({
+                        reason,
+                        until: s.reconnectUntil ?? 0,
+                    });
+                }
+            };
+            state.listen?.("paused", (paused) => {
+                if (!paused) {
+                    setMatchPause(null);
+                    return;
+                }
+                syncPauseFromState(state);
+            });
+            state.listen?.("pauseReason", () => {
+                if (state.paused) syncPauseFromState(state);
+            });
+            state.listen?.("reconnectUntil", () => {
+                if (state.paused) syncPauseFromState(state);
+            });
+
+            joined.onMessage("match_forfeit", (msg: { playerName: string }) => {
+                showToast(`${msg.playerName} forfeited`);
+            });
+
+            joined.onMessage("match_rebalance", (msg: { remaining: number; playerName?: string }) => {
+                showToast(
+                    msg.playerName
+                        ? `Rebalanced after ${msg.playerName} left (${msg.remaining} left)`
+                        : `Party rebalanced (${msg.remaining} left)`,
+                );
+            });
+
+            joined.onLeave((code) => {
+                if (transferringRef.current || reconnectingRef.current) return;
+                if (phaseRef.current === "content" && code !== 1000) {
+                    void tryContentReconnectRef.current(code).then((ok) => {
+                        if (!ok) {
+                            setStatus("disconnected");
+                            setRoom(null);
+                            roomRef.current = null;
+                            setMatchPause(null);
+                        }
+                    });
+                    return;
+                }
+                setStatus("disconnected");
+                setRoom(null);
+                roomRef.current = null;
+                setMatchPause(null);
+                if (phaseRef.current !== "content") clearContentRejoin();
+            });
+        },
+        [persistRejoinToken, showToast],
+    );
+
+    const tryContentReconnect = useCallback(
+        async (_code?: number) => {
+            const client = clientRef.current;
+            const saved = loadContentRejoin();
+            if (!client || !saved?.token || reconnectingRef.current) return false;
+
+            reconnectingRef.current = true;
+            setStatus("connecting");
+            showToast("Reconnecting to match…");
+            try {
+                const rejoined = await client.reconnect(saved.token);
+                wireRoom(rejoined, "content", saved.mode);
+                showToast("Back in match");
+                return true;
+            } catch (err) {
+                console.warn("content reconnect failed", err);
+                clearContentRejoin();
+                showToast("Could not reconnect — returning to city");
+                try {
+                    const opts = optionsRef.current;
+                    const hub = await client.joinOrCreate(ROOM.BASE_CITY, {
+                        userId: opts.userId,
+                        displayName: opts.displayName,
+                        color: opts.color,
+                        accessToken: opts.accessToken ?? undefined,
+                        hubOwnerId: saved.hubOwnerId || opts.hubOwnerId || opts.userId,
+                    });
+                    wireRoom(hub, "hub", null);
+                    return true;
+                } catch (hubErr) {
+                    console.error(hubErr);
+                    setStatus("error");
+                    return false;
+                }
+            } finally {
+                reconnectingRef.current = false;
+            }
+        },
+        [showToast, wireRoom],
+    );
+    tryContentReconnectRef.current = tryContentReconnect;
+
+    const applyTransfer = useCallback(
+        async (msg: TransferMsg) => {
+            const opts = optionsRef.current;
+            const client = clientRef.current;
+            if (!client || !msg?.room) return;
+
+            transferringRef.current = true;
+            try {
+                await roomRef.current?.leave(true);
+                roomRef.current = null;
+                setRoom(null);
+
+                const hubOwnerId =
+                    (msg.options?.hubOwnerId as string | undefined) ?? opts.hubOwnerId ?? opts.userId;
+
+                const joinOpts: Record<string, unknown> = {
+                    userId: opts.userId,
+                    displayName: opts.displayName,
+                    color: opts.color,
+                    accessToken: opts.accessToken ?? undefined,
+                    hubOwnerId,
+                    mode: msg.options?.mode,
+                    modifiers: msg.options?.modifiers,
+                    matchId: msg.options?.matchId,
+                };
+
+                const joined = msg.roomId
+                    ? await client.joinById(msg.roomId, joinOpts)
+                    : await client.joinOrCreate(msg.room, joinOpts);
+                const nextPhase: SessionPhase = msg.room === ROOM.BASE_CITY ? "hub" : "content";
+                const mode = typeof msg.options?.mode === "string" ? msg.options.mode : null;
+                wireRoom(joined, nextPhase, mode);
+                if (nextPhase === "hub") {
+                    setQueueModes([]);
+                    clearContentRejoin();
+                    showToast("Returned to base city");
+                } else {
+                    showToast(`Transferred to ${mode ?? msg.room}`);
+                }
+            } catch (err) {
+                console.error(err);
+                setStatus("error");
+                showToast("Transfer failed");
+            } finally {
+                transferringRef.current = false;
+            }
+        },
+        [showToast, wireRoom],
+    );
+    applyTransferRef.current = applyTransfer;
+
+    useEffect(() => {
+        const locked = Boolean(options.inputLocked) || activeUi !== null || Boolean(matchPause);
+        inputLockedRef.current = locked;
+        if (locked) {
+            keysRef.current = { up: false, down: false, left: false, right: false };
+        }
+    }, [options.inputLocked, activeUi, matchPause]);
 
     useEffect(() => {
         if (options.enabled === false) return;
 
         let cancelled = false;
         const client = new Client(options.endpoint);
+        clientRef.current = client;
         predictorRef.current = new LocalPredictor();
+        setStatus("connecting");
+        setPhase("hub");
+        phaseRef.current = "hub";
+        setQueueModes([]);
+        setContentMode(null);
+        setMatchPause(null);
 
         (async () => {
             try {
+                const saved = loadContentRejoin();
+                if (saved?.token) {
+                    try {
+                        const rejoined = await client.reconnect(saved.token);
+                        if (cancelled) {
+                            rejoined.leave();
+                            return;
+                        }
+                        wireRoom(rejoined, "content", saved.mode);
+                        showToast("Rejoined match");
+                        return;
+                    } catch {
+                        clearContentRejoin();
+                    }
+                }
+
+                const hubOwnerId = options.hubOwnerId ?? options.userId;
                 const joined = await client.joinOrCreate(ROOM.BASE_CITY, {
                     userId: options.userId,
                     displayName: options.displayName,
                     color: options.color,
                     accessToken: options.accessToken ?? undefined,
+                    hubOwnerId,
                 });
                 if (cancelled) {
                     joined.leave();
                     return;
                 }
-                roomRef.current = joined;
-                setRoom(joined);
-                setStatus("connected");
-
-                joined.onMessage("toast", (msg: { message: string }) => {
-                    setToast(msg.message);
-                    window.setTimeout(() => setToast(null), 2500);
-                });
-
-                joined.onMessage("ui", (msg: { ui: Exclude<ActiveUi, null> }) => {
-                    setActiveUi(msg.ui);
-                });
-
-                joined.onLeave(() => {
-                    setStatus("disconnected");
-                    setRoom(null);
-                    roomRef.current = null;
-                });
+                wireRoom(joined, "hub", null);
             } catch (err) {
                 console.error(err);
                 if (!cancelled) setStatus("error");
@@ -97,8 +400,10 @@ export function useBaseCityRoom(options: Options) {
 
         return () => {
             cancelled = true;
+            transferringRef.current = false;
             roomRef.current?.leave();
             roomRef.current = null;
+            clientRef.current = null;
         };
     }, [
         options.endpoint,
@@ -106,11 +411,15 @@ export function useBaseCityRoom(options: Options) {
         options.displayName,
         options.color,
         options.accessToken,
+        options.hubOwnerId,
         options.enabled,
+        wireRoom,
+        showToast,
     ]);
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent, down: boolean) => {
+            if (inputLockedRef.current) return;
             if (e.repeat && down) return;
             switch (e.code) {
                 case "KeyW":
@@ -209,6 +518,26 @@ export function useBaseCityRoom(options: Options) {
                 if (now - lastHudUpdate.current > 100) {
                     lastHudUpdate.current = now;
                     setLocalPlayer({ x: predictedRef.current.x, z: predictedRef.current.z });
+                    const me = r.state?.players?.get(r.sessionId) as
+                        | {
+                              copper?: number;
+                              silver?: number;
+                              gold?: number;
+                              essence?: number;
+                              loadout?: string;
+                              talents?: string;
+                          }
+                        | undefined;
+                    if (me && typeof me.copper === "number") {
+                        setEconomy((prev) => ({
+                            copper: me.copper ?? prev.copper,
+                            silver: me.silver ?? prev.silver,
+                            gold: me.gold ?? prev.gold,
+                            essence: me.essence ?? prev.essence,
+                            loadout: me.loadout ? me.loadout.split(",").filter(Boolean) : prev.loadout,
+                            talents: me.talents ? me.talents.split(",").filter(Boolean) : prev.talents,
+                        }));
+                    }
                 }
             }
 
@@ -229,6 +558,22 @@ export function useBaseCityRoom(options: Options) {
         yawRef.current = yaw;
     }, []);
 
+    const confirmPortal = useCallback(
+        (portal: "pvp" | "pve", params: { modes?: string[]; content?: string; modifiers?: string[] }) => {
+            roomRef.current?.send("portal_confirm", { portal, params });
+            setActiveUi(null);
+        },
+        [],
+    );
+
+    const cancelQueue = useCallback(() => {
+        roomRef.current?.send("queue_cancel");
+    }, []);
+
+    const returnToHub = useCallback(() => {
+        roomRef.current?.send("return_hub");
+    }, []);
+
     useEffect(() => {
         (window as unknown as { __bbSetYaw?: (y: number) => void }).__bbSetYaw = setYaw;
         return () => {
@@ -246,5 +591,13 @@ export function useBaseCityRoom(options: Options) {
         sendInteract,
         predictedRef,
         setYaw,
+        phase,
+        queueModes,
+        contentMode,
+        confirmPortal,
+        cancelQueue,
+        returnToHub,
+        economy,
+        matchPause,
     };
 }

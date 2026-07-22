@@ -32,7 +32,7 @@ export interface WorldSnapshot {
   lastProcessedInputSeq: Record<string, number>;
   players: PlayerSnapshot[];
   paused: boolean;
-  pauseReason?: "pvp_reconnect" | "pve_reconnect" | null;
+  pauseReason?: "pvp_reconnect" | "pve_reconnect" | "resume_grace" | null;
 }
 
 export type UiKind =
@@ -58,5 +58,14 @@ export type ServerMessage =
   | { type: "ui"; ui: UiKind }
   | { type: "toast"; message: string }
   | { type: "queue_status"; queued: boolean; modes?: string[] }
-  | { type: "transfer"; room: string; options?: Record<string, unknown> }
-  | { type: "inventory"; resources: Record<string, number> };
+  | { type: "transfer"; room: string; roomId?: string; options?: Record<string, unknown> }
+  | { type: "inventory"; resources: Record<string, number>; loadout?: string[]; talents?: string[] }
+  | {
+      type: "match_pause";
+      reason: "pvp_reconnect" | "pve_reconnect" | "resume_grace";
+      until: number;
+      playerName?: string;
+    }
+  | { type: "match_resume" }
+  | { type: "match_forfeit"; playerName: string }
+  | { type: "match_rebalance"; remaining: number; playerName?: string };

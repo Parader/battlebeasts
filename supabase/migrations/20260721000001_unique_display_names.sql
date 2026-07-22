@@ -60,7 +60,9 @@ begin
 
   insert into public.inventory (user_id, resource_id, quantity)
   values
-    (new.id, 'scrap', 0),
+    (new.id, 'copper', 0),
+    (new.id, 'silver', 0),
+    (new.id, 'gold', 0),
     (new.id, 'essence', 0)
   on conflict do nothing;
 

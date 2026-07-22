@@ -43,4 +43,7 @@ export const TALENTS: Record<string, TalentDef> = {
   focused: { id: "focused", name: "Focused", description: "-10% ability cooldowns" },
 };
 
-export const COSMETIC_COLORS = ["#4ade80", "#60a5fa", "#f472b6"] as const;
+export const COSMETIC_COLORS = ["#4ade80", "#60a5fa", "#f472b6", "#ef4444"] as const;
+
+export const LOADOUT_SIZE = 3;
+export const MAX_TALENTS = 2;

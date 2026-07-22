@@ -14,6 +14,8 @@ export type AuthJoinOptions = {
   displayName?: string;
   color?: string;
   accessToken?: string;
+  /** Whose base city this room belongs to (filterBy key). */
+  hubOwnerId?: string;
 };
 
 export type VerifiedIdentity = {
