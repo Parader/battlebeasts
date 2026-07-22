@@ -158,7 +158,8 @@ export function getHipsStartY(clip: THREE.AnimationClip): number | null {
 
 /**
  * Remove horizontal root motion from hips.position while keeping Y bounce.
- * Clones the clip; does not mutate the source.
+ * Locks XZ to 0 (not the first keyframe) so the mesh stays on the gameplay
+ * origin — Mixamo clips often rest at a non-zero hips XZ.
  */
 export function stripHorizontalRootMotion(clip: THREE.AnimationClip): THREE.AnimationClip {
   const tracks = clip.tracks.map((track) => {
@@ -167,13 +168,11 @@ export function stripHorizontalRootMotion(clip: THREE.AnimationClip): THREE.Anim
     const values = track.values;
     if (values.length < 3) return track.clone();
 
-    const lockedX = values[0]!;
-    const lockedZ = values[2]!;
     const next = track.clone();
     for (let i = 0; i < next.values.length; i += 3) {
-      next.values[i] = lockedX;
+      next.values[i] = 0;
       // Y preserved at next.values[i + 1]
-      next.values[i + 2] = lockedZ;
+      next.values[i + 2] = 0;
     }
     return next;
   });
@@ -182,7 +181,7 @@ export function stripHorizontalRootMotion(clip: THREE.AnimationClip): THREE.Anim
 }
 
 /**
- * Lock hips XZ to the first frame and Y to `plantY` so cast crouches/dives
+ * Lock hips XZ to origin and Y to `plantY` so cast crouches/dives
  * don't drive feet through the ground. Quaternion (aim twist) is untouched.
  */
 export function plantHipsRootMotion(
@@ -195,13 +194,11 @@ export function plantHipsRootMotion(
     const values = track.values;
     if (values.length < 3) return track.clone();
 
-    const lockedX = values[0]!;
-    const lockedZ = values[2]!;
     const next = track.clone();
     for (let i = 0; i < next.values.length; i += 3) {
-      next.values[i] = lockedX;
+      next.values[i] = 0;
       next.values[i + 1] = plantY;
-      next.values[i + 2] = lockedZ;
+      next.values[i + 2] = 0;
     }
     return next;
   });

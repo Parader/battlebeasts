@@ -4,6 +4,7 @@ import {
   COLLISION,
   COMBAT,
   MOVE_SPEED,
+  canPlayerCancelCast,
   createProjectile,
   dashOffset,
   isInIFrameWindow,
@@ -254,10 +255,10 @@ export class CombatSystem {
 
   tryCancelCast(sessionId: string, player: PlayerState, now: number): boolean {
     const cast = this.casts.get(sessionId);
-    if (!cast || cast.phase !== "anticipation") return false;
+    if (!cast) return false;
     const def = ABILITIES[cast.abilityId];
     if (!def) return false;
-    if (def.timing.canCancelAnticipation === false) return false;
+    if (!canPlayerCancelCast(def, cast.phase)) return false;
 
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, def.id, "cancel", now);
@@ -419,7 +420,6 @@ export class CombatSystem {
       });
       player.x = clamped.x;
       player.z = clamped.z;
-      this.fx({ kind: "dash", abilityId: def.id, x: player.x, z: player.z, ownerId: sessionId });
     } else if (travel.mode === "translate") {
       const dist = travelDistance(def);
       const dur = travelDurationMs(def);
@@ -431,14 +431,6 @@ export class CombatSystem {
         distance: dist,
         startAt: now,
         endAt: now + dur,
-      });
-      this.fx({
-        kind: "dash",
-        abilityId: def.id,
-        x: player.x,
-        z: player.z,
-        ownerId: sessionId,
-        radius: dist,
       });
     }
 

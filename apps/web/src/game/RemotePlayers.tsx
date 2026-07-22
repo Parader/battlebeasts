@@ -39,7 +39,13 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
   const yawLocked = useRef(false);
 
   const gltf = useGLTF(CHARACTER_URL);
-  const scene = useMemo(() => prepareCharacterScene(gltf.scene), [gltf.scene]);
+  const scene = useMemo(() => {
+    const idle =
+      gltf.animations.find((c) => c.name === character1AnimationConfig.idle) ??
+      gltf.animations[0] ??
+      null;
+    return prepareCharacterScene(gltf.scene, { restClip: idle });
+  }, [gltf.scene, gltf.animations]);
   const animations = gltf.animations;
 
   useEffect(() => {

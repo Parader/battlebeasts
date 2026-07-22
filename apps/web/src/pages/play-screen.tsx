@@ -227,7 +227,7 @@ export const PlayScreen = () => {
                         <li>Mouse aim — character yaw</li>
                         <li>LMB / RMB / Space / Q / E / R — cast</li>
                         <li>Space can interrupt other casts (missile keeps flying if already fired)</li>
-                        <li>C / Esc — cancel (anticipation only)</li>
+                        <li>C / Esc / mouse side buttons — cancel (Bolt: until projectile fires; others: anticipation)</li>
                         <li>F — interact with stands / portals</li>
                         {!inContent && <li>Practice dummy — damage it with abilities for copper</li>}
                     </ul>

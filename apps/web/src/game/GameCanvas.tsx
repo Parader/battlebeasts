@@ -1,6 +1,8 @@
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
+import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { Room } from "colyseus.js";
-import type { MutableRefObject } from "react";
+import { useLayoutEffect, useRef, type MutableRefObject } from "react";
+import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import { CAMERA } from "@battlebeasts/shared";
 import { BaseCityScene } from "./BaseCityScene";
 import { ContentScene } from "./ContentScene";
@@ -18,6 +20,32 @@ type Props = {
 };
 
 const pitch = (CAMERA.pitchDeg * Math.PI) / 180;
+
+/**
+ * Bloom pipeline sized to the WebGL drawing buffer.
+ * Default CSS-pixel composer sizing + dpr mismatch shifts the scene off-center.
+ */
+function PostFX() {
+    const composerRef = useRef<EffectComposerImpl>(null);
+    const { gl, size } = useThree();
+
+    useLayoutEffect(() => {
+        const composer = composerRef.current;
+        if (!composer) return;
+        composer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
+    }, [gl, size.width, size.height]);
+
+    return (
+        <EffectComposer ref={composerRef} multisampling={0} enableNormalPass={false}>
+            <Bloom
+                luminanceThreshold={0.85}
+                luminanceSmoothing={0.25}
+                intensity={0.55}
+                mipmapBlur
+            />
+        </EffectComposer>
+    );
+}
 
 export function GameCanvas({
     room,
@@ -63,6 +91,7 @@ export function GameCanvas({
                     fxBursts={fxBursts}
                 />
             )}
+            <PostFX />
         </Canvas>
     );
 }

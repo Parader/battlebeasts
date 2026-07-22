@@ -12,6 +12,7 @@ import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { CombatFxMeshes, Projectiles, WorldTargets, type FxBurst } from "./CombatVfx";
+import { SpellVfxBridge, VfxWorld } from "./vfx";
 import type { PredictedPose } from "./useBaseCityRoom";
 
 type Props = {
@@ -168,6 +169,12 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
             <RemotePlayers room={room} localSessionId={localSessionId} />
             <Projectiles room={room} />
             <CombatFxMeshes bursts={fxBursts} />
+            <VfxWorld
+                room={room}
+                localSessionId={localSessionId}
+                predictedRef={predictedRef}
+            />
+            <SpellVfxBridge room={room} />
             <FixedFollowCamera
                 target={localPos}
                 pitchDeg={CAMERA.pitchDeg}

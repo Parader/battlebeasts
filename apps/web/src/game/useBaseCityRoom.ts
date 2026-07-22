@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, baseCityStaticColliders, normalizeLoadout, playerCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, normalizeLoadout, playerCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst } from "./CombatVfx";
+import { abilityVfxColor, CATALOG_PROJECTILES, spawnImpactEffect } from "./vfx";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     aoe: "#c084fc",
@@ -263,6 +264,10 @@ export function useBaseCityRoom(options: Options) {
 
                     const key = ++fxKeyRef.current;
                     const life = msg.kind === "hit" ? 280 : msg.kind === "dash" ? 220 : 450;
+                    const tint =
+                        msg.kind === "hit"
+                            ? abilityVfxColor(msg.abilityId, FX_COLORS.hit)
+                            : abilityVfxColor(msg.abilityId, FX_COLORS[msg.kind]);
                     const burst: FxBurst = {
                         key,
                         kind: msg.kind,
@@ -271,9 +276,13 @@ export function useBaseCityRoom(options: Options) {
                         radius: msg.radius ?? (msg.kind === "hit" ? 0.7 : 2.2),
                         born: performance.now(),
                         life,
-                        color: FX_COLORS[msg.kind],
+                        color: tint,
                     };
                     setFxBursts((prev) => [...prev.filter((b) => performance.now() - b.born < b.life), burst]);
+
+                    if (msg.kind === "hit" && CATALOG_PROJECTILES.has(msg.abilityId)) {
+                        spawnImpactEffect(msg.abilityId, { x: msg.x, z: msg.z, y: 0.7 });
+                    }
                 },
             );
 
@@ -495,7 +504,11 @@ export function useBaseCityRoom(options: Options) {
 
     const queueCancelCast = useCallback(() => {
         if (inputLockedRef.current) return;
-        if (castPhaseRef.current !== "anticipation") return;
+        const abilityId = castingAbilityRef.current;
+        const phase = castPhaseRef.current;
+        if (!abilityId || !phase) return;
+        const def = ABILITIES[abilityId];
+        if (!def || !canPlayerCancelCast(def, phase)) return;
         pendingCancelRef.current = true;
         awaitingCastAckRef.current = false;
         // Optimistic local clear; server confirms via cast_phase cancel
@@ -503,6 +516,17 @@ export function useBaseCityRoom(options: Options) {
         castingAbilityRef.current = null;
         predictorRef.current.setMoveMulFromPhase(undefined, undefined);
     }, []);
+
+    /** True when a mouse press should cancel instead of starting/queuing a cast. */
+    const tryMouseCancelCast = useCallback((): boolean => {
+        const abilityId = castingAbilityRef.current;
+        const phase = castPhaseRef.current;
+        if (!abilityId || !phase) return false;
+        const def = ABILITIES[abilityId];
+        if (!def || !canPlayerCancelCast(def, phase)) return false;
+        queueCancelCast();
+        return true;
+    }, [queueCancelCast]);
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent, down: boolean) => {
@@ -603,17 +627,52 @@ export function useBaseCityRoom(options: Options) {
             if (target?.closest?.("[data-ui-overlay]")) return;
             e.preventDefault();
         };
+
+        /**
+         * Side buttons: cancel cast + block browser back/forward.
+         * Must handle cancel here — capture stopPropagation never reaches window listeners.
+         */
+        const onSideButtonCapture = (e: MouseEvent) => {
+            if (e.button !== 3 && e.button !== 4) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.type !== "mousedown") return;
+            if (inputLockedRef.current) return;
+            const target = e.target as HTMLElement | null;
+            if (target?.closest?.("[data-ui-overlay]")) return;
+            tryMouseCancelCast();
+        };
+        const capture = { capture: true } as const;
+        const lockHistory = () => {
+            try {
+                history.pushState({ bbPlay: 1 }, "", location.href);
+            } catch {
+                /* ignore */
+            }
+        };
+        const onPopState = () => lockHistory();
+
+        lockHistory();
+        window.addEventListener("popstate", onPopState);
+        document.addEventListener("mousedown", onSideButtonCapture, capture);
+        document.addEventListener("mouseup", onSideButtonCapture, capture);
+        document.addEventListener("auxclick", onSideButtonCapture, capture);
+
         window.addEventListener("mousedown", onMouseDown);
         window.addEventListener("mouseup", onMouseUp);
         window.addEventListener("blur", clearHeld);
         window.addEventListener("contextmenu", onContextMenu);
         return () => {
+            window.removeEventListener("popstate", onPopState);
+            document.removeEventListener("mousedown", onSideButtonCapture, capture);
+            document.removeEventListener("mouseup", onSideButtonCapture, capture);
+            document.removeEventListener("auxclick", onSideButtonCapture, capture);
             window.removeEventListener("mousedown", onMouseDown);
             window.removeEventListener("mouseup", onMouseUp);
             window.removeEventListener("blur", clearHeld);
             window.removeEventListener("contextmenu", onContextMenu);
         };
-    }, [queueCastFromSlotInput]);
+    }, [queueCastFromSlotInput, tryMouseCancelCast]);
 
     useEffect(() => {
         if (options.enabled === false) return;

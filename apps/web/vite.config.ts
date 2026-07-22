@@ -9,6 +9,7 @@ export default defineConfig({
         alias: {
             "@": path.resolve(__dirname, "./src"),
         },
+        dedupe: ["three"],
     },
     server: {
         host: true,

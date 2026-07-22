@@ -2,13 +2,9 @@ import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import { useRef, useState } from "react";
 import * as THREE from "three";
+import { abilityVfxColor, BoltProjectileEffect, hasCatalogProjectile } from "./vfx";
 
-const ABILITY_COLOR: Record<string, string> = {
-    bolt: "#38bdf8",
-    shock: "#facc15",
-};
-
-function ProjectileMesh({ room, id }: { room: Room; id: string }) {
+function LegacyProjectileMesh({ room, id }: { room: Room; id: string }) {
     const mesh = useRef<THREE.Mesh>(null);
     const color = useRef("#38bdf8");
     const renderPos = useRef(new THREE.Vector3());
@@ -36,7 +32,6 @@ function ProjectileMesh({ room, id }: { room: Room; id: string }) {
             lastServer.current = { x: p.x, z: p.z, vx, vz };
             seeded.current = true;
         } else {
-            // Dead-reckon with velocity so motion is display-rate smooth between ~30Hz patches
             renderPos.current.x += vx * safeDt;
             renderPos.current.z += vz * safeDt;
 
@@ -53,7 +48,6 @@ function ProjectileMesh({ room, id }: { room: Room; id: string }) {
                     renderPos.current.x = p.x;
                     renderPos.current.z = p.z;
                 } else {
-                    // Soft correct toward authority without killing smoothness
                     const blend = 1 - Math.exp(-14 * safeDt);
                     renderPos.current.x = THREE.MathUtils.lerp(renderPos.current.x, p.x, blend);
                     renderPos.current.z = THREE.MathUtils.lerp(renderPos.current.z, p.z, blend);
@@ -63,7 +57,7 @@ function ProjectileMesh({ room, id }: { room: Room; id: string }) {
 
         m.position.copy(renderPos.current);
 
-        const next = ABILITY_COLOR[p.abilityId ?? ""] ?? "#38bdf8";
+        const next = abilityVfxColor(p.abilityId ?? "", "#38bdf8");
         if (next !== color.current) {
             color.current = next;
             const mat = m.material as THREE.MeshStandardMaterial;
@@ -78,6 +72,15 @@ function ProjectileMesh({ room, id }: { room: Room; id: string }) {
             <meshStandardMaterial color={color.current} emissive={color.current} emissiveIntensity={0.8} />
         </mesh>
     );
+}
+
+function ProjectileRouter({ room, id }: { room: Room; id: string }) {
+    const abilityId = (room.state?.projectiles?.get(id) as { abilityId?: string } | undefined)
+        ?.abilityId;
+    if (hasCatalogProjectile(abilityId)) {
+        return <BoltProjectileEffect room={room} id={id} />;
+    }
+    return <LegacyProjectileMesh room={room} id={id} />;
 }
 
 export function Projectiles({ room }: { room: Room | null }) {
@@ -100,7 +103,7 @@ export function Projectiles({ room }: { room: Room | null }) {
     return (
         <>
             {ids.map((id) => (
-                <ProjectileMesh key={id} room={room} id={id} />
+                <ProjectileRouter key={id} room={room} id={id} />
             ))}
         </>
     );

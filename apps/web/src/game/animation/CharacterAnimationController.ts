@@ -222,6 +222,8 @@ export class CharacterAnimationController {
       if (!name) continue;
       const src = resolveClip(clips, name);
       if (!src) continue;
+      // Keep Mixamo hips Y (strip XZ only). Idle-height plant floated the dive;
+      // natural dive Y drops the body through the roll.
       const prepared = stripHorizontalRootMotion(src);
       this.fullBodyClips.set(key, prepared);
       this.fullBodyClips.set(name, prepared);

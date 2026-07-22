@@ -33,7 +33,13 @@ export function syncPlayerCast(
     return;
   }
 
-  if (player.castAbilityId === lastCastId.current) return;
+  if (player.castAbilityId === lastCastId.current) {
+    // Soften roll exit: blend loco back during recovery instead of snapping at idle
+    if (player.castPhase === "recovery") {
+      controller.cancelFullBodyAction();
+    }
+    return;
+  }
   if (
     player.castPhase !== "anticipation" &&
     player.castPhase !== "cast" &&

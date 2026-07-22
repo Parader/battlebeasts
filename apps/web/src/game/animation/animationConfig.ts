@@ -38,8 +38,8 @@ export const character1AnimationConfig: CharacterAnimationConfig = {
   castAoE: "Standing2HMagicAreaAttack02",
   castMelee: "StandingMeleeAttackDownward",
   heavyCast: "Standing2HMagicAttack04",
-  // No true dash clip yet — Jump stands in until a dash export exists
-  dash: "Jump",
+  // Forward dive from the updated Mixamo pack
+  dash: "StandingDiveForward",
   locomotionBlendResponsiveness: 12,
   idleBlendResponsiveness: 10,
   locoTimeScaleMin: 0.75,

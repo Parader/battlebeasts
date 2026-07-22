@@ -28,8 +28,14 @@ export interface AbilityTiming {
   impactMoveMul?: number;
   /** Movement speed multiplier during recovery. */
   recoveryMoveMul?: number;
-  /** Cancel allowed only in anticipation (default true). */
+  /** Cancel allowed only in anticipation (default true). Prefer `cancelUntilPhase`. */
   canCancelAnticipation?: boolean;
+  /**
+   * Latest phase where player cancel is allowed (inclusive).
+   * Default `"anticipation"`. Use `"cast"` to allow cancel until the effect fires (impact).
+   * Never cancelable during impact/recovery.
+   */
+  cancelUntilPhase?: "anticipation" | "cast";
   /** Block starting other abilities until recovery ends (default true). */
   blocksOtherCasts?: boolean;
 }
@@ -121,12 +127,23 @@ const DEFAULT_MOVE = {
   recovery: 0.85,
 } as const;
 
+/**
+ * Global scale for cast phase lockouts + matching anim duration.
+ * Does not affect projectile `speed`, cooldowns, or damage.
+ * 0.6 ≈ 40% faster wind-up / recovery.
+ */
+export const CAST_EXECUTION_SCALE = 0.6;
+
+function scaledCastMs(ms: number): number {
+  return Math.max(0, ms * CAST_EXECUTION_SCALE);
+}
+
 /** Minimal v0 kit — one ability per Battlerite slot. */
 export const ABILITIES: Record<string, AbilityDef> = {
   bolt: {
     id: "bolt",
     name: "Bolt",
-    cooldownMs: 900,
+    cooldownMs: 350,
     range: 12,
     shape: "projectile",
     damage: 18,
@@ -144,6 +161,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       impactMoveMul: 0.55,
       recoveryMoveMul: 1,
       canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
     },
   },
   smash: {
@@ -178,25 +196,27 @@ export const ABILITIES: Record<string, AbilityDef> = {
     damage: 0,
     speed: 18,
     defaultSlot: "space",
-    // ~0.55s → Jump ~1.8×; travel spans impact
+    // Dive clip ~1.63s; ~0.50s lock after CAST_EXECUTION_SCALE (~3.3×).
+    // Travel across impact; short soft recovery (no i-frames).
     timing: {
-      anticipationMs: 60,
+      anticipationMs: 90,
       castMs: 60,
-      impactMs: 280,
-      recoveryMs: 150,
-      anticipationMoveMul: 0.5,
-      castMoveMul: 0.15,
+      impactMs: 560,
+      recoveryMs: 110,
+      anticipationMoveMul: 0.1,
+      castMoveMul: 0,
       impactMoveMul: 0,
-      recoveryMoveMul: 0.75,
-      canCancelAnticipation: true,
+      recoveryMoveMul: 0.8,
+      canCancelAnticipation: false,
     },
     travel: {
       mode: "translate",
-      durationMs: 280,
+      durationMs: 560,
     },
+    // i-frames cover wind-up + most of the dive; drop before get-up.
     iFrames: {
-      startMs: 80,
-      durationMs: 320,
+      startMs: 30,
+      durationMs: 520,
     },
     applyOnSelf: [{ statusId: "hasted", durationMs: 900 }],
     interruptsOtherCasts: true,
@@ -311,19 +331,40 @@ export function moveMulForPhase(def: AbilityDef, phase: CastPhaseId): number {
   return t.recoveryMoveMul ?? DEFAULT_MOVE.recovery;
 }
 
-/** Total lockout from anticipation through end of recovery. */
-export function totalCastDurationMs(def: AbilityDef): number {
-  const t = def.timing;
-  return t.anticipationMs + t.castMs + t.impactMs + t.recoveryMs;
+/**
+ * Whether the player may cancel during this phase.
+ * Cancel is never allowed once impact has fired the effect.
+ */
+export function canPlayerCancelCast(
+  def: AbilityDef,
+  phase: CastPhaseId | string,
+): boolean {
+  if (phase !== "anticipation" && phase !== "cast") return false;
+  if (def.timing.canCancelAnticipation === false && !def.timing.cancelUntilPhase) {
+    return false;
+  }
+  const until = def.timing.cancelUntilPhase ?? "anticipation";
+  if (until === "anticipation") return phase === "anticipation";
+  return phase === "anticipation" || phase === "cast";
 }
 
-/** Phase duration helper (0 means skip). */
+/** Total lockout from anticipation through end of recovery. */
+export function totalCastDurationMs(def: AbilityDef): number {
+  return (
+    phaseDurationMs(def, "anticipation") +
+    phaseDurationMs(def, "cast") +
+    phaseDurationMs(def, "impact") +
+    phaseDurationMs(def, "recovery")
+  );
+}
+
+/** Phase duration helper (0 means skip). Includes global CAST_EXECUTION_SCALE. */
 export function phaseDurationMs(def: AbilityDef, phase: CastPhaseId): number {
   const t = def.timing;
-  if (phase === "anticipation") return Math.max(0, t.anticipationMs);
-  if (phase === "cast") return Math.max(0, t.castMs);
-  if (phase === "impact") return Math.max(0, t.impactMs);
-  return Math.max(0, t.recoveryMs);
+  if (phase === "anticipation") return scaledCastMs(t.anticipationMs);
+  if (phase === "cast") return scaledCastMs(t.castMs);
+  if (phase === "impact") return scaledCastMs(t.impactMs);
+  return scaledCastMs(t.recoveryMs);
 }
 
 const PHASE_ORDER: CastPhaseId[] = ["anticipation", "cast", "impact", "recovery"];
@@ -342,6 +383,7 @@ export function nextCastPhase(def: AbilityDef, current: CastPhaseId | null): Cas
 export function resolveTravel(def: AbilityDef): AbilityTravel {
   if (def.travel) return def.travel;
   if (def.shape === "dash") {
+    // Unscaled authored ms — travelDurationMs applies CAST_EXECUTION_SCALE
     return { mode: "translate", durationMs: def.timing.impactMs };
   }
   return { mode: "none" };
@@ -355,7 +397,9 @@ export function travelDistance(def: AbilityDef): number {
 export function travelDurationMs(def: AbilityDef): number {
   const travel = resolveTravel(def);
   if (travel.mode !== "translate") return 0;
-  return Math.max(16, travel.durationMs ?? def.timing.impactMs);
+  const raw = travel.durationMs ?? def.timing.impactMs;
+  // Explicit travel.durationMs is authored in unscaled ms — scale for global snappiness
+  return Math.max(16, scaledCastMs(raw));
 }
 
 /** True if elapsedMs since cast start is inside the i-frame window. */
@@ -363,5 +407,7 @@ export function isInIFrameWindow(def: AbilityDef, elapsedSinceCastStartMs: numbe
   const ifr = def.iFrames;
   if (!ifr || ifr.durationMs <= 0) return false;
   const t = elapsedSinceCastStartMs;
-  return t >= ifr.startMs && t < ifr.startMs + ifr.durationMs;
+  const start = scaledCastMs(ifr.startMs);
+  const end = start + scaledCastMs(ifr.durationMs);
+  return t >= start && t < end;
 }
