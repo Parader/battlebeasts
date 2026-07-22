@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ROOM, type PlayerInput } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, baseCityStaticColliders, normalizeLoadout, playerCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
+import type { FxBurst } from "./CombatVfx";
+
+const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
+    aoe: "#c084fc",
+    melee: "#fb923c",
+    dash: "#a3e635",
+    hit: "#f87171",
+};
 
 export type ActiveUi =
     | "customization"
@@ -35,7 +43,7 @@ type Options = {
     accessToken?: string | null;
     hubOwnerId?: string;
     enabled?: boolean;
-    /** When true, WASD/arrows/E are ignored so UI typing works. */
+    /** When true, WASD/arrows/casts are ignored so UI typing works. */
     inputLocked?: boolean;
 };
 
@@ -54,6 +62,10 @@ export function useBaseCityRoom(options: Options) {
     const [queueModes, setQueueModes] = useState<string[]>([]);
     const [contentMode, setContentMode] = useState<string | null>(null);
     const [matchPause, setMatchPause] = useState<MatchPauseInfo>(null);
+    const [cooldownUntil, setCooldownUntil] = useState<Record<string, number>>({});
+    const [castFlashId, setCastFlashId] = useState<string | null>(null);
+    const [fxBursts, setFxBursts] = useState<FxBurst[]>([]);
+    const [localHp, setLocalHp] = useState({ hp: 100, maxHp: 100 });
     const [economy, setEconomy] = useState({
         copper: 0,
         silver: 0,
@@ -62,18 +74,32 @@ export function useBaseCityRoom(options: Options) {
         loadout: [] as string[],
         talents: [] as string[],
     });
+    const fxKeyRef = useRef(0);
 
     const seqRef = useRef(0);
     const keysRef = useRef({ up: false, down: false, left: false, right: false });
+    /** Hold-to-cast for mouse slots (LMB / RMB). */
+    const heldCastSlotsRef = useRef({ mouse0: false, mouse2: false });
     const yawRef = useRef(0);
     const roomRef = useRef<Room | null>(null);
     const clientRef = useRef<Client | null>(null);
     const predictorRef = useRef(new LocalPredictor());
     const predictedRef = useRef<PredictedPose>({ x: 0, z: 0, yaw: 0 });
     const pendingInteractRef = useRef<string | undefined>(undefined);
+    const pendingCastRef = useRef<string | undefined>(undefined);
+    const pendingCancelRef = useRef(false);
+    const awaitingCastAckRef = useRef(false);
+    const castingAbilityRef = useRef<string | null>(null);
+    const castPhaseRef = useRef<string>("");
+    const cooldownUntilRef = useRef<Record<string, number>>({});
+    const loadoutRef = useRef<string[]>([]);
+    const castFlashTimerRef = useRef(0);
+    const sessionIdRef = useRef<string | null>(null);
     const lastHudUpdate = useRef(0);
     const lastAckRef = useRef(-1);
     const inputLockedRef = useRef(Boolean(options.inputLocked));
+    const matchPauseRef = useRef<MatchPauseInfo>(null);
+    const activeUiRef = useRef<ActiveUi>(null);
     const transferringRef = useRef(false);
     const phaseRef = useRef<SessionPhase>("hub");
     const reconnectingRef = useRef(false);
@@ -105,12 +131,14 @@ export function useBaseCityRoom(options: Options) {
         (joined: Room, nextPhase: SessionPhase, mode?: string | null) => {
             roomRef.current = joined;
             setRoom(joined);
+            sessionIdRef.current = joined.sessionId;
             setStatus("connected");
             setPhase(nextPhase);
             phaseRef.current = nextPhase;
             setContentMode(mode ?? null);
             setActiveUi(null);
             setMatchPause(null);
+            setFxBursts([]);
             predictorRef.current = new LocalPredictor();
             lastAckRef.current = -1;
             seqRef.current = 0;
@@ -180,6 +208,74 @@ export function useBaseCityRoom(options: Options) {
             joined.onMessage("match_resume", () => {
                 setMatchPause(null);
             });
+
+            joined.onMessage(
+                "combat_fx",
+                (msg: {
+                    kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase";
+                    abilityId: string;
+                    x: number;
+                    z: number;
+                    radius?: number;
+                    ownerId?: string;
+                    phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
+                    phaseEndsAt?: number;
+                }) => {
+                    const isLocal = msg.ownerId === sessionIdRef.current;
+
+                    if (msg.kind === "cast_phase") {
+                        if (isLocal) {
+                            awaitingCastAckRef.current = false;
+                            const ended =
+                                msg.phase === "idle" ||
+                                msg.phase === "cancel" ||
+                                msg.phase === "interrupt";
+                            castPhaseRef.current = ended ? "" : (msg.phase ?? "");
+                            castingAbilityRef.current = ended ? null : msg.abilityId;
+                            predictorRef.current.setMoveMulFromPhase(
+                                ended ? undefined : msg.abilityId,
+                                ended ? undefined : msg.phase,
+                            );
+
+                            // Effect + CD + travel start at impact (projectile near full extension)
+                            if (msg.phase === "impact") {
+                                const def = ABILITIES[msg.abilityId];
+                                if (def) {
+                                    const until = Date.now() + def.cooldownMs;
+                                    cooldownUntilRef.current = {
+                                        ...cooldownUntilRef.current,
+                                        [msg.abilityId]: until,
+                                    };
+                                    setCooldownUntil(cooldownUntilRef.current);
+                                    predictorRef.current.beginTravelFromCast(
+                                        msg.abilityId,
+                                        yawRef.current,
+                                    );
+                                }
+                            }
+                            if (ended) {
+                                // interrupt: keep flying projectiles; only clear local cast/travel anim
+                                predictorRef.current.clearTravel();
+                            }
+                        }
+                        return;
+                    }
+
+                    const key = ++fxKeyRef.current;
+                    const life = msg.kind === "hit" ? 280 : msg.kind === "dash" ? 220 : 450;
+                    const burst: FxBurst = {
+                        key,
+                        kind: msg.kind,
+                        x: msg.x,
+                        z: msg.z,
+                        radius: msg.radius ?? (msg.kind === "hit" ? 0.7 : 2.2),
+                        born: performance.now(),
+                        life,
+                        color: FX_COLORS[msg.kind],
+                    };
+                    setFxBursts((prev) => [...prev.filter((b) => performance.now() - b.born < b.life), burst]);
+                },
+            );
 
             // Backup: schema patch also clears UI if match_resume was missed
             const state = joined.state as {
@@ -342,10 +438,182 @@ export function useBaseCityRoom(options: Options) {
     useEffect(() => {
         const locked = Boolean(options.inputLocked) || activeUi !== null || Boolean(matchPause);
         inputLockedRef.current = locked;
+        activeUiRef.current = activeUi;
+        matchPauseRef.current = matchPause;
         if (locked) {
             keysRef.current = { up: false, down: false, left: false, right: false };
+            heldCastSlotsRef.current = { mouse0: false, mouse2: false };
+            pendingCastRef.current = undefined;
         }
     }, [options.inputLocked, activeUi, matchPause]);
+
+    useEffect(() => {
+        loadoutRef.current = normalizeLoadout(economy.loadout);
+    }, [economy.loadout]);
+
+    const queueCastFromSlotInput = useCallback((slotInput: "mouse0" | "mouse2" | "space" | "q" | "e" | "r") => {
+        if (inputLockedRef.current) return;
+        const idx = slotIndexForInput(slotInput);
+        if (idx < 0) return;
+        const loadout = loadoutRef.current;
+        const abilityId = loadout[idx];
+        if (!abilityId) return;
+        const def = ABILITIES[abilityId];
+        if (!def) return;
+        const now = Date.now();
+        if ((cooldownUntilRef.current[abilityId] ?? 0) > now) return;
+        if (pendingCastRef.current) return;
+
+        const currentId = castingAbilityRef.current;
+        const current = currentId ? ABILITIES[currentId] : null;
+        const busy = Boolean(castPhaseRef.current);
+        if (busy) {
+            // Already casting this spell — wait for recovery (hold-to-cast retries next frame)
+            if (currentId === abilityId) return;
+            const canCut = def.interruptsOtherCasts === true && current?.interruptible !== false;
+            if (!canCut && (current?.timing.blocksOtherCasts !== false || def.timing.blocksOtherCasts !== false)) {
+                return;
+            }
+            if (canCut) {
+                // Optimistic: drop local cast anim; server soft-interrupts and starts this ability
+                castPhaseRef.current = "";
+                castingAbilityRef.current = null;
+                predictorRef.current.clearTravel();
+                predictorRef.current.setMoveMulFromPhase(undefined, undefined);
+            }
+        }
+
+        pendingCastRef.current = abilityId;
+        awaitingCastAckRef.current = true;
+        castPhaseRef.current = "anticipation";
+        castingAbilityRef.current = abilityId;
+        predictorRef.current.setMoveMulFromPhase(abilityId, "anticipation");
+        setCastFlashId(abilityId);
+        window.clearTimeout(castFlashTimerRef.current);
+        castFlashTimerRef.current = window.setTimeout(() => setCastFlashId(null), 120);
+    }, []);
+
+    const queueCancelCast = useCallback(() => {
+        if (inputLockedRef.current) return;
+        if (castPhaseRef.current !== "anticipation") return;
+        pendingCancelRef.current = true;
+        awaitingCastAckRef.current = false;
+        // Optimistic local clear; server confirms via cast_phase cancel
+        castPhaseRef.current = "";
+        castingAbilityRef.current = null;
+        predictorRef.current.setMoveMulFromPhase(undefined, undefined);
+    }, []);
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent, down: boolean) => {
+            if (inputLockedRef.current) return;
+            if (e.repeat && down) return;
+            switch (e.code) {
+                case "KeyW":
+                case "ArrowUp":
+                    keysRef.current.up = down;
+                    e.preventDefault();
+                    break;
+                case "KeyS":
+                case "ArrowDown":
+                    keysRef.current.down = down;
+                    e.preventDefault();
+                    break;
+                case "KeyA":
+                case "ArrowLeft":
+                    keysRef.current.left = down;
+                    e.preventDefault();
+                    break;
+                case "KeyD":
+                case "ArrowRight":
+                    keysRef.current.right = down;
+                    e.preventDefault();
+                    break;
+                case "KeyF":
+                    if (down) window.dispatchEvent(new CustomEvent("bb-interact"));
+                    break;
+                case "Space":
+                    if (down) {
+                        e.preventDefault();
+                        queueCastFromSlotInput("space");
+                    }
+                    break;
+                case "KeyQ":
+                    if (down) {
+                        e.preventDefault();
+                        queueCastFromSlotInput("q");
+                    }
+                    break;
+                case "KeyE":
+                    if (down) {
+                        e.preventDefault();
+                        queueCastFromSlotInput("e");
+                    }
+                    break;
+                case "KeyR":
+                    if (down) {
+                        e.preventDefault();
+                        queueCastFromSlotInput("r");
+                    }
+                    break;
+                case "KeyC":
+                case "Escape":
+                    if (down) {
+                        e.preventDefault();
+                        queueCancelCast();
+                    }
+                    break;
+            }
+        };
+        const down = (e: KeyboardEvent) => onKey(e, true);
+        const up = (e: KeyboardEvent) => onKey(e, false);
+        window.addEventListener("keydown", down);
+        window.addEventListener("keyup", up);
+        return () => {
+            window.removeEventListener("keydown", down);
+            window.removeEventListener("keyup", up);
+        };
+    }, [queueCastFromSlotInput, queueCancelCast]);
+
+    useEffect(() => {
+        const onMouseDown = (e: MouseEvent) => {
+            if (inputLockedRef.current) return;
+            const target = e.target as HTMLElement | null;
+            if (target?.closest?.("[data-ui-overlay]")) return;
+            if (e.button === 0) {
+                heldCastSlotsRef.current.mouse0 = true;
+                queueCastFromSlotInput("mouse0");
+            } else if (e.button === 2) {
+                e.preventDefault();
+                heldCastSlotsRef.current.mouse2 = true;
+                queueCastFromSlotInput("mouse2");
+            }
+        };
+        const onMouseUp = (e: MouseEvent) => {
+            if (e.button === 0) heldCastSlotsRef.current.mouse0 = false;
+            if (e.button === 2) heldCastSlotsRef.current.mouse2 = false;
+        };
+        const clearHeld = () => {
+            heldCastSlotsRef.current.mouse0 = false;
+            heldCastSlotsRef.current.mouse2 = false;
+        };
+        const onContextMenu = (e: MouseEvent) => {
+            if (inputLockedRef.current) return;
+            const target = e.target as HTMLElement | null;
+            if (target?.closest?.("[data-ui-overlay]")) return;
+            e.preventDefault();
+        };
+        window.addEventListener("mousedown", onMouseDown);
+        window.addEventListener("mouseup", onMouseUp);
+        window.addEventListener("blur", clearHeld);
+        window.addEventListener("contextmenu", onContextMenu);
+        return () => {
+            window.removeEventListener("mousedown", onMouseDown);
+            window.removeEventListener("mouseup", onMouseUp);
+            window.removeEventListener("blur", clearHeld);
+            window.removeEventListener("contextmenu", onContextMenu);
+        };
+    }, [queueCastFromSlotInput]);
 
     useEffect(() => {
         if (options.enabled === false) return;
@@ -418,46 +686,6 @@ export function useBaseCityRoom(options: Options) {
     ]);
 
     useEffect(() => {
-        const onKey = (e: KeyboardEvent, down: boolean) => {
-            if (inputLockedRef.current) return;
-            if (e.repeat && down) return;
-            switch (e.code) {
-                case "KeyW":
-                case "ArrowUp":
-                    keysRef.current.up = down;
-                    e.preventDefault();
-                    break;
-                case "KeyS":
-                case "ArrowDown":
-                    keysRef.current.down = down;
-                    e.preventDefault();
-                    break;
-                case "KeyA":
-                case "ArrowLeft":
-                    keysRef.current.left = down;
-                    e.preventDefault();
-                    break;
-                case "KeyD":
-                case "ArrowRight":
-                    keysRef.current.right = down;
-                    e.preventDefault();
-                    break;
-                case "KeyE":
-                    if (down) window.dispatchEvent(new CustomEvent("bb-interact"));
-                    break;
-            }
-        };
-        const down = (e: KeyboardEvent) => onKey(e, true);
-        const up = (e: KeyboardEvent) => onKey(e, false);
-        window.addEventListener("keydown", down);
-        window.addEventListener("keyup", up);
-        return () => {
-            window.removeEventListener("keydown", down);
-            window.removeEventListener("keyup", up);
-        };
-    }, []);
-
-    useEffect(() => {
         let raf = 0;
         let last = performance.now();
 
@@ -475,13 +703,46 @@ export function useBaseCityRoom(options: Options) {
 
             if (r) {
                 const serverMe = r.state?.players?.get(r.sessionId) as
-                    | { x: number; z: number; yaw: number; lastInputSeq: number }
+                    | {
+                          x: number;
+                          z: number;
+                          yaw: number;
+                          lastInputSeq: number;
+                          castPhase?: string;
+                          castAbilityId?: string;
+                      }
                     | undefined;
+
+                const playersMap = r.state?.players as
+                    | Map<string, { x: number; z: number; disconnected?: boolean; hp?: number }>
+                    | undefined;
+                if (playersMap) {
+                    const dynamics = playerCollidersExcept(
+                        playersMap.entries(),
+                        r.sessionId,
+                    );
+                    const statics =
+                        phaseRef.current === "hub" ? baseCityStaticColliders() : [];
+                    predictor.setWorldColliders(statics, dynamics);
+                }
 
                 if (serverMe && !predictor.isSeeded) {
                     predictor.seed(serverMe.x, serverMe.z, serverMe.yaw);
                     predictedRef.current = { ...predictor.state };
                     lastAckRef.current = serverMe.lastInputSeq;
+                }
+
+                if (serverMe) {
+                    if (serverMe.castPhase) {
+                        castPhaseRef.current = serverMe.castPhase;
+                        castingAbilityRef.current = serverMe.castAbilityId || null;
+                        awaitingCastAckRef.current = false;
+                        predictor.setMoveMulFromPhase(serverMe.castAbilityId, serverMe.castPhase);
+                    } else if (!pendingCastRef.current && !awaitingCastAckRef.current) {
+                        castPhaseRef.current = "";
+                        castingAbilityRef.current = null;
+                        predictor.setMoveMulFromPhase(undefined, undefined);
+                    }
                 }
 
                 if (serverMe && predictor.isSeeded && serverMe.lastInputSeq !== lastAckRef.current) {
@@ -498,14 +759,24 @@ export function useBaseCityRoom(options: Options) {
                 if (keys.down) moveZ += 1;
                 if (keys.up) moveZ -= 1;
 
+                // Hold-to-cast: re-fire as soon as CD + cast lock allow
+                if (heldCastSlotsRef.current.mouse0) queueCastFromSlotInput("mouse0");
+                if (heldCastSlotsRef.current.mouse2) queueCastFromSlotInput("mouse2");
+
                 if (predictor.isSeeded) {
                     seqRef.current += 1;
+                    const castId = pendingCastRef.current;
+                    pendingCastRef.current = undefined;
+                    const cancelCast = pendingCancelRef.current;
+                    pendingCancelRef.current = false;
                     const input: PlayerInput = {
                         seq: seqRef.current,
                         dt,
                         moveX,
                         moveZ,
                         yaw: yawRef.current,
+                        castId,
+                        cancelCast: cancelCast || undefined,
                         interactId: pendingInteractRef.current,
                     };
                     pendingInteractRef.current = undefined;
@@ -526,6 +797,8 @@ export function useBaseCityRoom(options: Options) {
                               essence?: number;
                               loadout?: string;
                               talents?: string;
+                              hp?: number;
+                              maxHp?: number;
                           }
                         | undefined;
                     if (me && typeof me.copper === "number") {
@@ -537,6 +810,9 @@ export function useBaseCityRoom(options: Options) {
                             loadout: me.loadout ? me.loadout.split(",").filter(Boolean) : prev.loadout,
                             talents: me.talents ? me.talents.split(",").filter(Boolean) : prev.talents,
                         }));
+                    }
+                    if (me && typeof me.hp === "number") {
+                        setLocalHp({ hp: me.hp, maxHp: me.maxHp ?? 100 });
                     }
                 }
             }
@@ -599,5 +875,9 @@ export function useBaseCityRoom(options: Options) {
         returnToHub,
         economy,
         matchPause,
+        cooldownUntil,
+        castFlashId,
+        fxBursts,
+        localHp,
     };
 }

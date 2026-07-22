@@ -7,6 +7,8 @@ import { useBaseCityRoom } from "@/game/useBaseCityRoom";
 import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
+import { AbilityBar } from "@/game/ui/AbilityBar";
+import { StatusBar } from "@/game/ui/StatusBar";
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
@@ -59,6 +61,10 @@ export const PlayScreen = () => {
         returnToHub,
         economy,
         matchPause,
+        cooldownUntil,
+        castFlashId,
+        fxBursts,
+        localHp,
     } = useBaseCityRoom({
         endpoint: WS_URL,
         userId,
@@ -93,9 +99,29 @@ export const PlayScreen = () => {
                 onInteract={sendInteract}
                 phase={phase}
                 contentMode={contentMode}
+                fxBursts={fxBursts}
             />
 
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4">
+            <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
+                <div className="min-w-[12rem] rounded-full bg-slate-950/70 px-3 py-1.5 ring-1 ring-white/20 backdrop-blur-sm">
+                    <div className="mb-0.5 flex justify-between text-[10px] font-semibold uppercase tracking-wide text-white/70">
+                        <span>HP</span>
+                        <span className="tabular-nums">
+                            {Math.round(localHp.hp)}/{Math.round(localHp.maxHp)}
+                        </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                        <div
+                            className="h-full rounded-full bg-emerald-400 transition-[width] duration-150"
+                            style={{
+                                width: `${Math.max(0, Math.min(100, (localHp.hp / Math.max(1, localHp.maxHp)) * 100))}%`,
+                            }}
+                        />
+                    </div>
+                </div>
+            </div>
+
+            <div data-ui-overlay className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4">
                 <div className="pointer-events-auto flex flex-col gap-2">
                     <Badge color="brand" size="lg">
                         BattleBeasts
@@ -182,14 +208,28 @@ export const PlayScreen = () => {
                 </div>
             )}
 
-            {helpOpen && !inContent && (
-                <div className="pointer-events-none absolute bottom-4 left-4 z-20 max-w-sm rounded-xl bg-primary/90 p-4 text-sm text-secondary shadow-lg ring-1 ring-secondary">
+            <StatusBar room={room} sessionId={room?.sessionId ?? null} />
+
+            <AbilityBar
+                loadout={economy.loadout}
+                cooldownUntil={cooldownUntil}
+                flashId={castFlashId}
+            />
+
+            {helpOpen && (
+                <div
+                    data-ui-overlay
+                    className="pointer-events-none absolute bottom-24 left-4 z-20 max-w-sm rounded-xl bg-primary/90 p-4 text-sm text-secondary shadow-lg ring-1 ring-secondary"
+                >
                     <p className="font-semibold text-primary">Controls</p>
                     <ul className="mt-2 list-disc space-y-1 pl-4">
                         <li>WASD / arrows — move</li>
-                        <li>Mouse — aim (character yaw)</li>
-                        <li>E — interact with stands / portals</li>
-                        <li>Practice dummy — earn copper</li>
+                        <li>Mouse aim — character yaw</li>
+                        <li>LMB / RMB / Space / Q / E / R — cast</li>
+                        <li>Space can interrupt other casts (missile keeps flying if already fired)</li>
+                        <li>C / Esc — cancel (anticipation only)</li>
+                        <li>F — interact with stands / portals</li>
+                        {!inContent && <li>Practice dummy — damage it with abilities for copper</li>}
                     </ul>
                     {localPlayer && (
                         <p className="mt-3 text-tertiary">
@@ -200,7 +240,10 @@ export const PlayScreen = () => {
             )}
 
             {toast && (
-                <div className="absolute bottom-4 right-4 z-30 rounded-lg bg-primary px-4 py-2 text-sm text-primary shadow-lg ring-1 ring-secondary">
+                <div
+                    data-ui-overlay
+                    className="absolute bottom-24 right-4 z-30 rounded-lg bg-primary px-4 py-2 text-sm text-primary shadow-lg ring-1 ring-secondary"
+                >
                     {toast}
                 </div>
             )}

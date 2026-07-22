@@ -10,6 +10,8 @@ import {
 } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { CombatFxMeshes, Projectiles, WorldTargets, type FxBurst } from "./CombatVfx";
 import type { PredictedPose } from "./useBaseCityRoom";
 
 type Props = {
@@ -17,6 +19,7 @@ type Props = {
     localSessionId: string | null;
     predictedRef: MutableRefObject<PredictedPose>;
     onInteract: (id: string) => void;
+    fxBursts: FxBurst[];
 };
 
 function Ground() {
@@ -56,36 +59,26 @@ function PortalMarker({ x, z, color }: { x: number; z: number; color: string }) 
 
 function LocalPlayerMesh({
     predictedRef,
+    room,
+    localSessionId,
     color,
 }: {
     predictedRef: MutableRefObject<PredictedPose>;
+    room: Room | null;
+    localSessionId: string | null;
     color: string;
 }) {
-    const group = useRef<THREE.Group>(null);
-
-    useFrame(() => {
-        const g = group.current;
-        if (!g) return;
-        const p = predictedRef.current;
-        g.position.set(p.x, 0, p.z);
-        g.rotation.y = p.yaw;
-    });
-
     return (
-        <group ref={group}>
-            <mesh position={[0, 0.7, 0]} castShadow>
-                <capsuleGeometry args={[0.35, 0.7, 4, 8]} />
-                <meshStandardMaterial color={color} />
-            </mesh>
-            <mesh position={[0, 0.85, 0.35]}>
-                <boxGeometry args={[0.25, 0.15, 0.35]} />
-                <meshStandardMaterial color="#fef08a" />
-            </mesh>
-        </group>
+        <CharacterAvatar
+            predictedRef={predictedRef}
+            room={room}
+            localSessionId={localSessionId}
+            color={color}
+        />
     );
 }
 
-export function BaseCityScene({ room, localSessionId, predictedRef, onInteract }: Props) {
+export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, fxBursts }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
     const aimNdc = useRef(new THREE.Vector2(0, 0));
     const { camera, gl } = useThree();
@@ -164,15 +157,17 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract }
                 <PortalMarker key={p.id} x={p.x} z={p.z} color={p.kind === "pvp" ? "#ef4444" : "#22c55e"} />
             ))}
 
-            <group position={[PRACTICE_DUMMY.x, 0, PRACTICE_DUMMY.z]}>
-                <mesh position={[0, 1, 0]} castShadow>
-                    <cylinderGeometry args={[0.45, 0.55, 2, 12]} />
-                    <meshStandardMaterial color="#78716c" />
-                </mesh>
-            </group>
+            <WorldTargets room={room} />
 
-            <LocalPlayerMesh predictedRef={predictedRef} color={localColor} />
+            <LocalPlayerMesh
+                predictedRef={predictedRef}
+                room={room}
+                localSessionId={localSessionId}
+                color={localColor}
+            />
             <RemotePlayers room={room} localSessionId={localSessionId} />
+            <Projectiles room={room} />
+            <CombatFxMeshes bursts={fxBursts} />
             <FixedFollowCamera
                 target={localPos}
                 pitchDeg={CAMERA.pitchDeg}

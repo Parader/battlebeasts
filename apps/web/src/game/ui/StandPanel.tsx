@@ -6,10 +6,12 @@ import {
     LOADOUT_SIZE,
     MAX_TALENTS,
     SHOP_ITEMS,
+    SPELL_SLOTS,
     TALENTS,
     canAffordCoins,
     formatShopCost,
     formatWallet,
+    normalizeLoadout,
 } from "@battlebeasts/shared";
 import { Heading } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
@@ -43,18 +45,21 @@ const TITLES: Record<Kind, string> = {
 };
 
 export function StandPanel({ kind, onClose, room, economy }: Props) {
-    const [draftLoadout, setDraftLoadout] = useState(() =>
-        economy.loadout.length === LOADOUT_SIZE ? economy.loadout : Object.keys(ABILITIES).slice(0, LOADOUT_SIZE),
-    );
+    const [draftLoadout, setDraftLoadout] = useState(() => normalizeLoadout(economy.loadout));
     const [draftTalents, setDraftTalents] = useState(() => economy.talents);
+    const [selectedSlot, setSelectedSlot] = useState(0);
 
     const abilityList = useMemo(() => Object.values(ABILITIES), []);
 
-    const toggleAbility = (id: string) => {
+    const assignAbility = (abilityId: string) => {
         setDraftLoadout((prev) => {
-            if (prev.includes(id)) return prev.filter((x) => x !== id);
-            if (prev.length >= LOADOUT_SIZE) return [...prev.slice(1), id];
-            return [...prev, id];
+            const next = [...prev];
+            const existingAt = next.indexOf(abilityId);
+            if (existingAt >= 0 && existingAt !== selectedSlot) {
+                next[existingAt] = next[selectedSlot] ?? abilityId;
+            }
+            next[selectedSlot] = abilityId;
+            return normalizeLoadout(next);
         });
     };
 
@@ -65,6 +70,9 @@ export function StandPanel({ kind, onClose, room, economy }: Props) {
             return [...prev, id];
         });
     };
+
+    const loadoutReady =
+        draftLoadout.length === LOADOUT_SIZE && new Set(draftLoadout).size === LOADOUT_SIZE;
 
     return (
         <ModalOverlay
@@ -103,24 +111,68 @@ export function StandPanel({ kind, onClose, room, economy }: Props) {
                         )}
 
                         {kind === "build" && (
-                            <div className="space-y-3">
+                            <div className="space-y-4">
                                 <p className="text-sm text-tertiary">
-                                    Pick {LOADOUT_SIZE} abilities ({draftLoadout.length}/{LOADOUT_SIZE})
+                                    Assign one ability per slot (Space is usually movement). Shift+casts
+                                    come later.
                                 </p>
-                                <ul className="space-y-2">
-                                    {abilityList.map((a) => (
-                                        <li key={a.id}>
-                                            <Checkbox
-                                                isSelected={draftLoadout.includes(a.id)}
-                                                onChange={() => toggleAbility(a.id)}
-                                                label={`${a.name} — ${a.shape}, ${a.damage} dmg`}
-                                            />
-                                        </li>
-                                    ))}
+                                <div className="flex flex-wrap gap-1.5">
+                                    {SPELL_SLOTS.map((slot, i) => {
+                                        const id = draftLoadout[i];
+                                        const ability = id ? ABILITIES[id] : undefined;
+                                        const active = selectedSlot === i;
+                                        return (
+                                            <button
+                                                key={slot.id}
+                                                type="button"
+                                                onClick={() => setSelectedSlot(i)}
+                                                className={[
+                                                    "flex min-w-[4.5rem] flex-col items-center rounded-lg px-2 py-1.5 text-center ring-1",
+                                                    active
+                                                        ? "bg-brand-solid/15 ring-brand-solid"
+                                                        : "bg-secondary ring-secondary",
+                                                ].join(" ")}
+                                            >
+                                                <span className="text-[10px] font-semibold uppercase text-tertiary">
+                                                    {slot.label}
+                                                </span>
+                                                <span className="text-xs font-medium text-primary">
+                                                    {ability?.name ?? "Empty"}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <p className="text-xs text-tertiary">
+                                    Editing {SPELL_SLOTS[selectedSlot]?.label} — {SPELL_SLOTS[selectedSlot]?.hint}
+                                </p>
+                                <ul className="max-h-56 space-y-1 overflow-y-auto">
+                                    {abilityList.map((a) => {
+                                        const equipped = draftLoadout[selectedSlot] === a.id;
+                                        return (
+                                            <li key={a.id}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => assignAbility(a.id)}
+                                                    className={[
+                                                        "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ring-1",
+                                                        equipped
+                                                            ? "bg-brand-solid/15 ring-brand-solid"
+                                                            : "bg-secondary ring-transparent hover:ring-secondary",
+                                                    ].join(" ")}
+                                                >
+                                                    <span className="font-medium text-primary">{a.name}</span>
+                                                    <span className="text-xs text-tertiary">
+                                                        {a.shape} · {a.damage} dmg
+                                                    </span>
+                                                </button>
+                                            </li>
+                                        );
+                                    })}
                                 </ul>
                                 <Button
                                     color="primary"
-                                    isDisabled={draftLoadout.length !== LOADOUT_SIZE}
+                                    isDisabled={!loadoutReady}
                                     onClick={() => room?.send("set_loadout", { abilityIds: draftLoadout })}
                                 >
                                     Save loadout

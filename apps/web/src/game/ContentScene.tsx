@@ -1,10 +1,12 @@
-﻿import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { CAMERA } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { CombatFxMeshes, Projectiles, type FxBurst } from "./CombatVfx";
 import type { PredictedPose } from "./useBaseCityRoom";
 
 type Props = {
@@ -12,33 +14,32 @@ type Props = {
     localSessionId: string | null;
     predictedRef: MutableRefObject<PredictedPose>;
     modeLabel: string;
+    fxBursts: FxBurst[];
 };
 
-function LocalMesh({ predictedRef, color }: { predictedRef: MutableRefObject<PredictedPose>; color: string }) {
-    const group = useRef<THREE.Group>(null);
-    useFrame(() => {
-        const g = group.current;
-        if (!g) return;
-        const p = predictedRef.current;
-        g.position.set(p.x, 0, p.z);
-        g.rotation.y = p.yaw;
-    });
+function LocalMesh({
+    predictedRef,
+    room,
+    localSessionId,
+    color,
+}: {
+    predictedRef: MutableRefObject<PredictedPose>;
+    room: Room | null;
+    localSessionId: string | null;
+    color: string;
+}) {
     return (
-        <group ref={group}>
-            <mesh position={[0, 0.7, 0]} castShadow>
-                <capsuleGeometry args={[0.35, 0.7, 4, 8]} />
-                <meshStandardMaterial color={color} />
-            </mesh>
-            <mesh position={[0, 0.85, 0.35]}>
-                <boxGeometry args={[0.25, 0.15, 0.35]} />
-                <meshStandardMaterial color="#fef08a" />
-            </mesh>
-        </group>
+        <CharacterAvatar
+            predictedRef={predictedRef}
+            room={room}
+            localSessionId={localSessionId}
+            color={color}
+        />
     );
 }
 
 /** Minimal content arena — same movement/camera, no hub props. */
-export function ContentScene({ room, localSessionId, predictedRef }: Props) {
+export function ContentScene({ room, localSessionId, predictedRef, fxBursts }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
     const aimNdc = useRef(new THREE.Vector2(0, 0));
     const { camera, gl } = useThree();
@@ -87,8 +88,15 @@ export function ContentScene({ room, localSessionId, predictedRef }: Props) {
                 <circleGeometry args={[1.4, 32]} />
                 <meshStandardMaterial color="#334155" />
             </mesh>
-            <LocalMesh predictedRef={predictedRef} color={localColor} />
+            <LocalMesh
+                predictedRef={predictedRef}
+                room={room}
+                localSessionId={localSessionId}
+                color={localColor}
+            />
             <RemotePlayers room={room} localSessionId={localSessionId} />
+            <Projectiles room={room} />
+            <CombatFxMeshes bursts={fxBursts} />
             <FixedFollowCamera
                 target={localPos}
                 pitchDeg={CAMERA.pitchDeg}

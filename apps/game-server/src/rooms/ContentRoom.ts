@@ -7,10 +7,13 @@ import {
   TICK_MS,
   applyMovement,
   applyYaw,
+  normalizeLoadout,
   type PlayerInput,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
+import { CombatSystem } from "../combat/CombatSystem.js";
 import { grantPendingLoot } from "../pendingLoot.js";
+import { loadEconomy } from "../persistence.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
 export type ContentJoinOptions = AuthJoinOptions & {
@@ -38,6 +41,7 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
   private awaitingReconnect = new Set<string>();
   /** Clears the post-reconnect 3s countdown if someone drops again. */
   private resumeGraceClear: (() => void) | null = null;
+  private combat!: CombatSystem;
 
   onCreate(options: ContentJoinOptions) {
     this.setState(new BaseCityState());
@@ -45,6 +49,24 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
     this.returnHubOwnerId = options.hubOwnerId ?? options.userId ?? null;
     this.kind = kindFromRoomName(this.roomName);
     this.setMetadata({ mode: this.mode, matchId: options.matchId ?? null, kind: this.kind });
+    this.combat = new CombatSystem(this as never, {
+      canHurtPlayers: true,
+      onPlayerDamaged: (sessionId) => {
+        const p = this.state.players.get(sessionId);
+        if (p && p.hp <= 0) {
+          // Soft respawn after a short beat for the playable slice
+          this.clock.setTimeout(() => {
+            const again = this.state.players.get(sessionId);
+            if (again && again.hp <= 0) {
+              again.hp = again.maxHp;
+              again.x = 0;
+              again.z = 0;
+            }
+          }, 2500);
+        }
+      },
+    });
+    this.setPatchRate(1000 / 30);
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
 
     this.onMessage("input", (client, message: { input: PlayerInput }) => {
@@ -101,6 +123,13 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
     player.z = Math.sin(angle) * 4;
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, []);
+
+    if (!verified.isGuest) {
+      void loadEconomy(verified.userId).then((eco) => {
+        const p = this.state.players.get(client.sessionId);
+        if (p) p.loadout = normalizeLoadout(eco.abilityIds).join(",");
+      });
+    }
 
     client.send("toast", {
       message: `Entered ${this.mode} (${this.kind}) — Return to city when ready`,
@@ -216,6 +245,7 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
     this.state.players.delete(sessionId);
     this.inputs.delete(sessionId);
     this.identities.delete(sessionId);
+    this.combat.clearSession(sessionId);
   }
 
   private afterSeatEmpty(playerName: string, cause: "abandon" | "timeout") {
@@ -289,6 +319,7 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
 
     const dt = dtMs / 1000;
     this.state.tick += 1;
+    const now = Date.now();
 
     for (const [sessionId, player] of this.state.players.entries()) {
       if (player.disconnected) continue;
@@ -296,14 +327,28 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
       while (queue.length > 0) {
         const input = queue.shift()!;
         player.lastInputSeq = input.seq;
-        const next = applyMovement(
-          { x: player.x, z: player.z },
-          { moveX: input.moveX, moveZ: input.moveZ, dt: input.dt || dt },
-        );
-        player.x = next.x;
-        player.z = next.z;
-        player.yaw = applyYaw(player.yaw, input.yaw);
+        if (player.hp > 0) {
+          const speed = this.combat.getEffectiveMoveSpeed(sessionId);
+          const from = { x: player.x, z: player.z };
+          const desired = applyMovement(
+            from,
+            { moveX: input.moveX, moveZ: input.moveZ, dt: input.dt || dt },
+            speed,
+          );
+          const next = this.combat.movePlayer(sessionId, from, desired);
+          player.x = next.x;
+          player.z = next.z;
+          player.yaw = applyYaw(player.yaw, input.yaw);
+          if (input.cancelCast) {
+            this.combat.tryCancelCast(sessionId, player, now);
+          }
+          if (input.castId) {
+            this.combat.tryBeginCast(sessionId, player, input.castId, now);
+          }
+        }
       }
     }
+
+    this.combat.tick(dt, now);
   }
 }

@@ -38,4 +38,7 @@ Friends: open **Friends** in-city → add by display name → invite online frie
 
 - WASD — move
 - Mouse — aim (character yaw; fixed camera)
-- E — interact with stands / portals
+- LMB / RMB / Space / Q / E / R — cast (Space is usually mobility)
+- C / Esc — cancel cast during preparation
+- F — interact with stands / portals
+- Shift+casts — later

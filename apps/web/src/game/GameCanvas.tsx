@@ -4,6 +4,7 @@ import type { MutableRefObject } from "react";
 import { CAMERA } from "@battlebeasts/shared";
 import { BaseCityScene } from "./BaseCityScene";
 import { ContentScene } from "./ContentScene";
+import type { FxBurst } from "./CombatVfx";
 import type { PredictedPose, SessionPhase } from "./useBaseCityRoom";
 
 type Props = {
@@ -13,6 +14,7 @@ type Props = {
     onInteract: (id: string) => void;
     phase: SessionPhase;
     contentMode: string | null;
+    fxBursts: FxBurst[];
 };
 
 const pitch = (CAMERA.pitchDeg * Math.PI) / 180;
@@ -24,6 +26,7 @@ export function GameCanvas({
     onInteract,
     phase,
     contentMode,
+    fxBursts,
 }: Props) {
     const inContent = phase === "content";
 
@@ -49,6 +52,7 @@ export function GameCanvas({
                     localSessionId={localSessionId}
                     predictedRef={predictedRef}
                     modeLabel={contentMode ?? "content"}
+                    fxBursts={fxBursts}
                 />
             ) : (
                 <BaseCityScene
@@ -56,6 +60,7 @@ export function GameCanvas({
                     localSessionId={localSessionId}
                     predictedRef={predictedRef}
                     onInteract={onInteract}
+                    fxBursts={fxBursts}
                 />
             )}
         </Canvas>

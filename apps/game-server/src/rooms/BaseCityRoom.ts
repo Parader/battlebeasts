@@ -18,9 +18,11 @@ import {
   formatShopCost,
   formatWallet,
   normalizeCoins,
+  normalizeLoadout,
   PRACTICE_DUMMY,
   resolvePveTransfer,
   spendCoins,
+  baseCityStaticColliders,
   type PlayerInput,
   type Wallet,
 } from "@battlebeasts/shared";
@@ -34,11 +36,13 @@ import {
   saveTalents,
 } from "../persistence.js";
 import { takePendingLoot } from "../pendingLoot.js";
+import { CombatSystem } from "../combat/CombatSystem.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
 const INTERACT_RANGE = 2.5;
 const DUMMY_COOLDOWN_MS = 1500;
 const DUMMY_COPPER_REWARD = 3;
+const DUMMY_HIT_COPPER = 1;
 
 export class BaseCityRoom extends Room<{ state: BaseCityState }> {
   maxClients = 16;
@@ -46,10 +50,29 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
   private ownerId: string | null = null;
   private identities = new Map<string, VerifiedIdentity>();
   private dummyCooldownUntil = new Map<string, number>();
+  private combat!: CombatSystem;
 
   onCreate(options: AuthJoinOptions) {
     this.setState(new BaseCityState());
     this.ownerId = options.hubOwnerId ?? null;
+    this.combat = new CombatSystem(this as never, {
+      canHurtPlayers: false,
+      onTargetDamaged: (targetId, _damage, attackerSessionId) => {
+        if (targetId !== "practice_dummy") return;
+        const player = this.state.players.get(attackerSessionId);
+        const client = this.clients.find((c) => c.sessionId === attackerSessionId);
+        if (!player || !client) return;
+        this.applyWallet(player, {
+          ...addCoins(this.walletOf(player), { copper: DUMMY_HIT_COPPER }),
+          essence: player.essence,
+        });
+        void this.persistInventory(attackerSessionId, player);
+        this.sendInventory(client, player);
+      },
+    });
+    this.combat.ensurePracticeDummy(PRACTICE_DUMMY.x, PRACTICE_DUMMY.z);
+    this.combat.setStaticColliders(baseCityStaticColliders());
+    this.setPatchRate(1000 / 30);
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
 
     this.onMessage("input", (client, message: { input: PlayerInput }) => {
@@ -135,7 +158,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
       player.silver = eco.silver;
       player.gold = eco.gold;
       player.essence = eco.essence;
-      player.loadout = eco.abilityIds.slice(0, LOADOUT_SIZE).join(",");
+      player.loadout = normalizeLoadout(eco.abilityIds).join(",");
       player.talents = eco.talentIds.slice(0, MAX_TALENTS).join(",");
       player.color =
         (eco.color && (COSMETIC_COLORS as readonly string[]).includes(eco.color)
@@ -171,7 +194,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     const visiting = this.ownerId && verified.userId !== this.ownerId;
     client.send("toast", {
       message: verified.isGuest
-        ? "Welcome (guest) — punch the dummy for copper"
+        ? "Welcome (guest) — blast the dummy with abilities for copper"
         : visiting
           ? `Visiting hub`
           : `Welcome home, ${verified.displayName}`,
@@ -200,6 +223,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     this.inputs.delete(client.sessionId);
     this.identities.delete(client.sessionId);
     this.dummyCooldownUntil.delete(client.sessionId);
+    this.combat.clearSession(client.sessionId);
   }
 
   private queueKey(client: Client) {
@@ -301,9 +325,9 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
-    const cleaned = abilityIds.filter((id) => id in ABILITIES).slice(0, LOADOUT_SIZE);
+    const cleaned = abilityIds.filter((id) => id in ABILITIES);
     if (cleaned.length !== LOADOUT_SIZE) {
-      client.send("toast", { message: `Pick exactly ${LOADOUT_SIZE} abilities` });
+      client.send("toast", { message: `Assign all ${LOADOUT_SIZE} slots` });
       return;
     }
     if (new Set(cleaned).size !== cleaned.length) {
@@ -388,19 +412,32 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         const input = queue.shift()!;
         player.lastInputSeq = input.seq;
 
-        const next = applyMovement(
-          { x: player.x, z: player.z },
+        const speed = this.combat.getEffectiveMoveSpeed(sessionId);
+        const from = { x: player.x, z: player.z };
+        const desired = applyMovement(
+          from,
           { moveX: input.moveX, moveZ: input.moveZ, dt: input.dt || dt },
+          speed,
         );
+        const next = this.combat.movePlayer(sessionId, from, desired);
         player.x = next.x;
         player.z = next.z;
         player.yaw = applyYaw(player.yaw, input.yaw);
+
+        if (input.cancelCast) {
+          this.combat.tryCancelCast(sessionId, player, now);
+        }
+        if (input.castId) {
+          this.combat.tryBeginCast(sessionId, player, input.castId, now);
+        }
 
         if (input.interactId) {
           this.handleInteract(sessionId, player, input.interactId, now);
         }
       }
     }
+
+    this.combat.tick(dt, now);
   }
 
   private handleInteract(sessionId: string, player: PlayerState, interactId: string, now: number) {

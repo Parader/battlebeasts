@@ -1,0 +1,188 @@
+import * as THREE from "three";
+
+/** Tokens matched against normalized bone names (partial, case-insensitive). */
+export const UPPER_BODY_BONE_TOKENS = [
+  "spine",
+  "spine1",
+  "spine2",
+  "neck",
+  "head",
+  "shoulder",
+  "arm",
+  "forearm",
+  "hand",
+  "finger",
+  "thumb",
+  "index",
+  "middle",
+  "ring",
+  "pinky",
+] as const;
+
+/** Hips belong to lower body so upper casts never drive root translation. */
+export const LOWER_BODY_BONE_TOKENS = [
+  "hips",
+  "upleg",
+  "leg",
+  "foot",
+  "toe",
+] as const;
+
+/** Strip common Mixamo / exporter prefixes and non-alphanumerics for matching. */
+export function normalizeBoneName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/^mixamorig/, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Track names look like:
+ *   "mixamorigHips.position"
+ *   "Armature|mixamorigLeftArm.quaternion"
+ *   "Beta_Surface_0.morphTargetInfluences"
+ */
+export function boneNameFromTrack(trackName: string): string {
+  const withoutProp = trackName.includes(".")
+    ? trackName.slice(0, trackName.lastIndexOf("."))
+    : trackName;
+  const segments = withoutProp.split(/[|/]/);
+  return segments[segments.length - 1] ?? withoutProp;
+}
+
+export function normalizedBoneFromTrack(trackName: string): string {
+  return normalizeBoneName(boneNameFromTrack(trackName));
+}
+
+/**
+ * True if the bone key contains a token as a contiguous substring.
+ * Special-case: token "arm" must not match "upleg" / "forearm" is ok (contains arm).
+ * Token "leg" must not match purely upper bones; "upleg"/"leftleg" are fine.
+ */
+export function boneMatchesTokens(normalizedBone: string, tokens: readonly string[]): boolean {
+  for (const token of tokens) {
+    if (token === "arm") {
+      // Match Arm / ForeArm / LeftArm, but not unrelated
+      if (normalizedBone.includes("arm") && !normalizedBone.includes("upleg")) return true;
+      continue;
+    }
+    if (token === "leg") {
+      if (
+        normalizedBone.includes("leg") ||
+        normalizedBone.includes("upleg") ||
+        normalizedBone.endsWith("leg")
+      ) {
+        return true;
+      }
+      continue;
+    }
+    if (normalizedBone.includes(token)) return true;
+  }
+  return false;
+}
+
+export function isUpperBodyTrack(trackName: string): boolean {
+  const bone = normalizedBoneFromTrack(trackName);
+  // Explicitly exclude hips from upper masking
+  if (bone.includes("hips")) return false;
+  if (boneMatchesTokens(bone, LOWER_BODY_BONE_TOKENS) && !boneMatchesTokens(bone, UPPER_BODY_BONE_TOKENS)) {
+    return false;
+  }
+  return boneMatchesTokens(bone, UPPER_BODY_BONE_TOKENS);
+}
+
+export function isLowerBodyTrack(trackName: string): boolean {
+  const bone = normalizedBoneFromTrack(trackName);
+  return boneMatchesTokens(bone, LOWER_BODY_BONE_TOKENS);
+}
+
+export function isHipsPositionTrack(trackName: string): boolean {
+  const bone = normalizedBoneFromTrack(trackName);
+  const prop = trackName.slice(trackName.lastIndexOf(".") + 1).toLowerCase();
+  return bone.includes("hips") && prop.startsWith("position");
+}
+
+/** Clone clip keeping only tracks that pass `keep`. */
+export function filterClipTracks(
+  clip: THREE.AnimationClip,
+  keep: (track: THREE.KeyframeTrack) => boolean,
+  nameSuffix: string,
+): THREE.AnimationClip {
+  const tracks = clip.tracks.filter(keep).map((t) => t.clone());
+  return new THREE.AnimationClip(`${clip.name}${nameSuffix}`, clip.duration, tracks);
+}
+
+export function createUpperBodyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  return filterClipTracks(clip, (t) => isUpperBodyTrack(t.name), "::upper");
+}
+
+export function createLowerBodyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  return filterClipTracks(clip, (t) => isLowerBodyTrack(t.name), "::lower");
+}
+
+/**
+ * Remove horizontal root motion from hips.position while keeping Y bounce.
+ * Clones the clip; does not mutate the source.
+ */
+export function stripHorizontalRootMotion(clip: THREE.AnimationClip): THREE.AnimationClip {
+  const tracks = clip.tracks.map((track) => {
+    if (!isHipsPositionTrack(track.name)) return track.clone();
+
+    const values = track.values;
+    if (values.length < 3) return track.clone();
+
+    const lockedX = values[0]!;
+    const lockedZ = values[2]!;
+    const next = track.clone();
+    for (let i = 0; i < next.values.length; i += 3) {
+      next.values[i] = lockedX;
+      // Y preserved at next.values[i + 1]
+      next.values[i + 2] = lockedZ;
+    }
+    return next;
+  });
+
+  return new THREE.AnimationClip(`${clip.name}::noRootXZ`, clip.duration, tracks);
+}
+
+/** Normalize for fuzzy clip-name resolve: lower case, collapse non-alnum. */
+export function normalizeClipKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * Resolve a configured name against loaded clips.
+ * Exact (case-insensitive) first, then normalized key equality.
+ * Never picks a loosely related name — returns null if ambiguous or missing.
+ */
+export function resolveClip(
+  clips: readonly THREE.AnimationClip[],
+  configuredName: string,
+): THREE.AnimationClip | null {
+  if (!configuredName) return null;
+
+  const exact = clips.filter((c) => c.name.toLowerCase() === configuredName.toLowerCase());
+  if (exact.length === 1) return exact[0]!;
+  if (exact.length > 1) return null;
+
+  const key = normalizeClipKey(configuredName);
+  const fuzzy = clips.filter((c) => normalizeClipKey(c.name) === key);
+  if (fuzzy.length === 1) return fuzzy[0]!;
+  return null;
+}
+
+export function reportMissingClips(
+  clips: readonly THREE.AnimationClip[],
+  config: Record<string, string | undefined>,
+  label = "[CharacterAnimation]",
+): string[] {
+  const missing: string[] = [];
+  for (const [key, name] of Object.entries(config)) {
+    if (!name) continue;
+    if (!resolveClip(clips, name)) {
+      missing.push(`${key} → "${name}"`);
+      console.warn(`${label} missing clip for ${key}: "${name}"`);
+    }
+  }
+  return missing;
+}

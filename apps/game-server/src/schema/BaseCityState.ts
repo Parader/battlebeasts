@@ -1,6 +1,16 @@
 import { MapSchema, Schema, type } from "@colyseus/schema";
 import { DEFAULT_LOADOUT } from "@battlebeasts/shared";
 
+export class StatusInstanceState extends Schema {
+  /** Same as statusId for map key stability (one row per status id). */
+  @type("string") id = "";
+  @type("string") statusId = "";
+  @type("number") expiresAt = 0;
+  @type("number") stacks = 1;
+  @type("number") nextTickAt = 0;
+  @type("string") sourceId = "";
+}
+
 export class PlayerState extends Schema {
   @type("string") id = "";
   @type("string") displayName = "Hunter";
@@ -11,6 +21,13 @@ export class PlayerState extends Schema {
   @type("number") maxHp = 100;
   @type("string") color = "#4ade80";
   @type("number") castLockUntil = 0;
+  /** "" | anticipation | cast | impact | recovery */
+  @type("string") castPhase = "";
+  @type("string") castAbilityId = "";
+  /** Server epoch ms when current cast phase ends. */
+  @type("number") castPhaseEndsAt = 0;
+  /** True while inside configured i-frame window. */
+  @type("boolean") invulnerable = false;
   @type("boolean") disconnected = false;
   @type("number") lastInputSeq = 0;
   /** WoW-style metal purse (stored separately, normalized in game logic). */
@@ -19,10 +36,33 @@ export class PlayerState extends Schema {
   @type("number") gold = 0;
   /** Magical currency. */
   @type("number") essence = 0;
-  /** Comma-separated ability ids (3 slots). */
+  /** Comma-separated ability ids (Battlerite slots). */
   @type("string") loadout = DEFAULT_LOADOUT.join(",");
   /** Comma-separated talent ids. */
   @type("string") talents = "";
+  @type({ map: StatusInstanceState }) statuses = new MapSchema<StatusInstanceState>();
+}
+
+export class ProjectileState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("string") abilityId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") vx = 0;
+  @type("number") vz = 0;
+  @type("number") radius = 0.35;
+}
+
+/** Practice dummy / neutral world target. */
+export class WorldTargetState extends Schema {
+  @type("string") id = "";
+  @type("string") kind = "dummy";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") hp = 200;
+  @type("number") maxHp = 200;
+  @type({ map: StatusInstanceState }) statuses = new MapSchema<StatusInstanceState>();
 }
 
 export class BaseCityState extends Schema {
@@ -33,4 +73,6 @@ export class BaseCityState extends Schema {
   /** Server epoch ms when reconnect grace ends (0 if not paused). */
   @type("number") reconnectUntil = 0;
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
+  @type({ map: ProjectileState }) projectiles = new MapSchema<ProjectileState>();
+  @type({ map: WorldTargetState }) targets = new MapSchema<WorldTargetState>();
 }

@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { DEFAULT_LOADOUT, normalizeCoins, type Wallet } from "@battlebeasts/shared";
+import { DEFAULT_LOADOUT, normalizeCoins, normalizeLoadout, type Wallet } from "@battlebeasts/shared";
 
 const url = process.env.SUPABASE_URL;
 const serverKey =
@@ -43,10 +43,9 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   return {
     ...normalizeCoins({ copper, silver: qty("silver"), gold: qty("gold") }),
     essence: qty("essence"),
-    abilityIds:
-      Array.isArray(loadout.data?.ability_ids) && loadout.data.ability_ids.length > 0
-        ? loadout.data.ability_ids
-        : [...DEFAULT_LOADOUT],
+    abilityIds: normalizeLoadout(
+      Array.isArray(loadout.data?.ability_ids) ? loadout.data.ability_ids : null,
+    ),
     talentIds: Array.isArray(talents.data?.talent_ids) ? talents.data.talent_ids : [],
     color: profile.data?.color ?? undefined,
   };

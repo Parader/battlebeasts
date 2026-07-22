@@ -5,6 +5,8 @@ export interface PlayerInput {
   moveZ: number;
   yaw: number;
   castId?: string;
+  /** Cancel current cast — only honored during anticipation. */
+  cancelCast?: boolean;
   interactId?: string;
 }
 
@@ -68,4 +70,16 @@ export type ServerMessage =
     }
   | { type: "match_resume" }
   | { type: "match_forfeit"; playerName: string }
-  | { type: "match_rebalance"; remaining: number; playerName?: string };
+  | { type: "match_rebalance"; remaining: number; playerName?: string }
+  | {
+      type: "combat_fx";
+      kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase";
+      abilityId: string;
+      x: number;
+      z: number;
+      radius?: number;
+      ownerId?: string;
+      targetId?: string;
+      phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
+      phaseEndsAt?: number;
+    };
