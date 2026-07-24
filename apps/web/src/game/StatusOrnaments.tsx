@@ -24,6 +24,15 @@ export function collectStatusRows(map: StatusMapLike): StatusRowLite[] {
   return rows;
 }
 
+export function hasStatusId(map: StatusMapLike, statusId: string): boolean {
+  if (!map) return false;
+  let found = false;
+  map.forEach((row) => {
+    if (row?.statusId === statusId) found = true;
+  });
+  return found;
+}
+
 type Props = {
   /** Polled each frame — keep allocation light. */
   getStatuses: () => StatusRowLite[];

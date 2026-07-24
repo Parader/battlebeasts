@@ -380,8 +380,8 @@ export class CombatSystem {
         continue;
       }
 
-      // Aim tracks during anticipation only — cast/impact lock silhouette facing
-      if (cast.phase === "anticipation") {
+      // Aim tracks through windup and air so Leap Slam follows the mouse.
+      if (cast.phase === "anticipation" || cast.phase === "cast" || cast.phase === "impact") {
         cast.yaw = player.yaw;
       }
 

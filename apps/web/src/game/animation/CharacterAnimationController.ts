@@ -129,6 +129,13 @@ export class CharacterAnimationController {
   /** Idle hips height — cast clips plant here so Mixamo crouches don't sink feet. */
   private readonly plantHipsY: number;
 
+  /** When true, idle slot weight routes to stunnedIdle clips. */
+  private stunned = false;
+  private stunBlend = 0;
+  private stunIdleLower: THREE.AnimationAction | null = null;
+  private stunIdleLegs: THREE.AnimationAction | null = null;
+  private stunIdleUpper: THREE.AnimationAction | null = null;
+
   constructor(
     character: THREE.Object3D,
     clips: THREE.AnimationClip[],
@@ -152,6 +159,7 @@ export class CharacterAnimationController {
       hit: config.hit,
       death: config.death,
       heavyCast: config.heavyCast,
+      ...(config.stunnedIdle ? { stunnedIdle: config.stunnedIdle } : {}),
     });
 
     const idleSrc = resolveClip(clips, config.idle);
@@ -222,6 +230,46 @@ export class CharacterAnimationController {
       }
     }
 
+    if (config.stunnedIdle) {
+      const stunSrc = resolveClip(clips, config.stunnedIdle);
+      if (stunSrc) {
+        const noRoot = plantHipsRootMotion(stripHorizontalRootMotion(stunSrc), this.plantHipsY);
+        const lowerClip = createLowerBodyClip(noRoot);
+        lowerClip.name = `${stunSrc.name}::lower::stunnedIdle`;
+        if (lowerClip.tracks.length > 0) {
+          const lower = this.mixer.clipAction(lowerClip);
+          lower.enabled = true;
+          lower.setEffectiveWeight(0);
+          lower.setLoop(THREE.LoopRepeat, Infinity);
+          lower.timeScale = 1;
+          lower.play();
+          this.stunIdleLower = lower;
+        }
+        const legsClip = createLegsOnlyClip(noRoot);
+        legsClip.name = `${stunSrc.name}::legs::stunnedIdle`;
+        if (legsClip.tracks.length > 0) {
+          const legs = this.mixer.clipAction(legsClip);
+          legs.enabled = true;
+          legs.setEffectiveWeight(0);
+          legs.setLoop(THREE.LoopRepeat, Infinity);
+          legs.timeScale = 1;
+          legs.play();
+          this.stunIdleLegs = legs;
+        }
+        const upperClip = createUpperBodyClip(noRoot);
+        upperClip.name = `${stunSrc.name}::upper::stunnedIdle`;
+        if (upperClip.tracks.length > 0) {
+          const upper = this.mixer.clipAction(upperClip);
+          upper.enabled = true;
+          upper.setEffectiveWeight(0);
+          upper.setLoop(THREE.LoopRepeat, Infinity);
+          upper.timeScale = 1;
+          upper.play();
+          this.stunIdleUpper = upper;
+        }
+      }
+    }
+
     this.registerUpperCast("castPrimary", config.castPrimary);
     if (config.castAoE) this.registerUpperCast("castAoE", config.castAoE);
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
@@ -283,6 +331,12 @@ export class CharacterAnimationController {
     this.setMovement({ worldVelocity, facingYaw, maximumSpeed });
   }
 
+  /** Swap idle → Dizzy Idle while a stun status is active. */
+  setStunned(active: boolean): void {
+    if (this.disposed) return;
+    this.stunned = active;
+  }
+
   update(delta: number): void {
     if (this.disposed) return;
     const dt = Math.max(0, Math.min(0.1, delta));
@@ -315,17 +369,32 @@ export class CharacterAnimationController {
     const hipsLocoMul = this.layerMulLower * (1 - this.castWeight);
     const legsLocoMul = this.layerMulLower * this.castWeight;
 
+    this.stunBlend +=
+      ((this.stunned && this.stunIdleLower ? 1 : 0) - this.stunBlend) *
+      (1 - Math.exp(-14 * dt));
+    const idleNormalMul = 1 - this.stunBlend;
+    const idleStunMul = this.stunBlend;
+
     for (const [slot, action] of this.lowerActions) {
-      action.setEffectiveWeight(this.locoCurrent[slot] * hipsLocoMul);
+      const base = this.locoCurrent[slot] * hipsLocoMul;
+      const w = slot === "idle" ? base * idleNormalMul : base;
+      action.setEffectiveWeight(w);
       if (slot === "idle") action.timeScale = 1;
       else {
         action.timeScale =
           (this.refClipDuration / Math.max(1e-4, action.getClip().duration)) * speedScale;
       }
     }
+    if (this.stunIdleLower) {
+      this.stunIdleLower.setEffectiveWeight(
+        this.locoCurrent.idle * hipsLocoMul * idleStunMul,
+      );
+      this.stunIdleLower.timeScale = 1;
+    }
 
     for (const [slot, action] of this.legsOnlyActions) {
-      const w = this.locoCurrent[slot] * legsLocoMul;
+      const base = this.locoCurrent[slot] * legsLocoMul;
+      const w = slot === "idle" ? base * idleNormalMul : base;
       action.setEffectiveWeight(w);
       if (slot === "idle") action.timeScale = 1;
       else {
@@ -338,13 +407,33 @@ export class CharacterAnimationController {
         action.time = withHips.time;
       }
     }
+    if (this.stunIdleLegs) {
+      this.stunIdleLegs.setEffectiveWeight(
+        this.locoCurrent.idle * legsLocoMul * idleStunMul,
+      );
+      this.stunIdleLegs.timeScale = 1;
+      if (this.stunIdleLower && this.locoCurrent.idle > 0.05) {
+        this.stunIdleLegs.time = this.stunIdleLower.time;
+      }
+    }
 
     for (const [slot, action] of this.upperLocoActions) {
-      action.setEffectiveWeight(this.locoCurrent[slot] * locoUpperMul);
+      const base = this.locoCurrent[slot] * locoUpperMul;
+      const w = slot === "idle" ? base * idleNormalMul : base;
+      action.setEffectiveWeight(w);
       if (slot === "idle") action.timeScale = 1;
       else {
         action.timeScale =
           (this.refClipDuration / Math.max(1e-4, action.getClip().duration)) * speedScale;
+      }
+    }
+    if (this.stunIdleUpper) {
+      this.stunIdleUpper.setEffectiveWeight(
+        this.locoCurrent.idle * locoUpperMul * idleStunMul,
+      );
+      this.stunIdleUpper.timeScale = 1;
+      if (this.stunIdleLower && this.locoCurrent.idle > 0.05) {
+        this.stunIdleUpper.time = this.stunIdleLower.time;
       }
     }
 
@@ -509,6 +598,9 @@ export class CharacterAnimationController {
     for (const action of this.lowerActions.values()) action.setEffectiveWeight(0);
     for (const action of this.legsOnlyActions.values()) action.setEffectiveWeight(0);
     for (const action of this.upperLocoActions.values()) action.setEffectiveWeight(0);
+    if (this.stunIdleLower) this.stunIdleLower.setEffectiveWeight(0);
+    if (this.stunIdleLegs) this.stunIdleLegs.setEffectiveWeight(0);
+    if (this.stunIdleUpper) this.stunIdleUpper.setEffectiveWeight(0);
 
     if (this.overrideAction) {
       this.overrideAction.setEffectiveWeight(0);

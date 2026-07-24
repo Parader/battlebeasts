@@ -10,6 +10,8 @@ export type CharacterAnimationConfig = {
   runBackward: string;
   strafeLeft: string;
   strafeRight: string;
+  /** Loop while stunned (replaces idle when present). */
+  stunnedIdle?: string;
   /** Upper torso when not casting (usually Idle upper mask). */
   upperBodyIdle?: string;
   /** Default upper-body cast (1H magic). */
@@ -41,6 +43,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   runBackward: "run_back",
   strafeLeft: "strafe_left",
   strafeRight: "strafe_right",
+  stunnedIdle: "Dizzy Idle",
   upperBodyIdle: "idle",
   castPrimary: "magic_1h",
   castAoE: "magic_aoe",

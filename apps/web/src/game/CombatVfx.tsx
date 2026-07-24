@@ -7,7 +7,7 @@ import { HUB_PRACTICE_DUMMIES, MOVE_SPEED } from "@battlebeasts/shared";
 import { abilityVfxColor, BoltProjectileEffect, hasCatalogProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
-import { StatusOrnaments, collectStatusRows } from "./StatusOrnaments";
+import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -355,14 +355,21 @@ function PracticeDummyAvatar({
     useFrame((_, dt) => {
         const safeDt = Math.min(0.05, Math.max(0, dt));
         const controller = controllerRef.current;
+        const t = room?.state?.targets?.get(targetId) as
+            | {
+                  x: number;
+                  z: number;
+                  hp: number;
+                  maxHp: number;
+                  statuses?: Parameters<typeof hasStatusId>[0];
+              }
+            | undefined;
         if (controller) {
+            controller.setStunned(hasStatusId(t?.statuses, "stunned"));
             controller.setMovementFromYaw(_zeroVel, 0, MOVE_SPEED);
             controller.update(safeDt);
         }
 
-        const t = room?.state?.targets?.get(targetId) as
-            | { x: number; z: number; hp: number; maxHp: number }
-            | undefined;
         const g = group.current;
         if (!g) return;
         if (!t) {

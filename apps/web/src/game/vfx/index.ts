@@ -27,7 +27,32 @@ export {
   renderOneShot,
 } from "./catalog";
 
+export { GroundMagicCircle } from "./components/GroundMagicCircle";
+export { GroundDecal } from "./components/GroundDecal";
+export { RuneDecal } from "./components/RuneDecal";
+export { AdditiveParticleBurst } from "./components/AdditiveParticleBurst";
+
 export {
+  groundPresets,
+  projectilePresets,
+  laserPresets,
+  streamPresets,
+  wavePresets,
+} from "./presets/ground";
+
+export type {
+  VfxElement,
+  GroundShape,
+  VfxPrimitive,
+  GroundDecalPreset,
+} from "./kit/types";
+
+export {
+  createGroundDecalMaterial,
+  setGroundDecalProgress,
+  setGroundDecalOpacity,
+  tickGroundDecal,
+  applyGroundDecalPreset,
   createEnergyBallMaterial,
   createEnergyRingMaterial,
   tintEnergyMaterial,
@@ -44,9 +69,7 @@ export {
   tickShieldMaterials,
 } from "./materials";
 
-export { GroundMagicCircle } from "./components/GroundMagicCircle";
-export { RuneDecal } from "./components/RuneDecal";
-export { AdditiveParticleBurst } from "./components/AdditiveParticleBurst";
+export { ObjectPool, createVec3Pool } from "./pool";
 
 export {
   findBone,
@@ -55,5 +78,3 @@ export {
   followObjectWorld,
   type AttachHandle,
 } from "./attach";
-
-export { ObjectPool, createVec3Pool } from "./pool";

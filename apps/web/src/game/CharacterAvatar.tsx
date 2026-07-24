@@ -14,7 +14,7 @@ import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
 import { AimIndicator } from "./AimIndicator";
 import { smashHopOffsetY } from "./smashHop";
-import { StatusOrnaments, collectStatusRows } from "./StatusOrnaments";
+import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import type { PredictedPose } from "./useBaseCityRoom";
 
 useGLTF.preload(CHARACTER_URL);
@@ -100,7 +100,12 @@ export function CharacterAvatar({
 
     const me = localSessionId
       ? (room?.state?.players?.get(localSessionId) as
-          | { castAbilityId?: string; castPhase?: string; castPhaseEndsAt?: number }
+          | {
+              castAbilityId?: string;
+              castPhase?: string;
+              castPhaseEndsAt?: number;
+              statuses?: Parameters<typeof hasStatusId>[0];
+            }
           | undefined)
       : undefined;
     g.position.set(p.x, smashHopOffsetY(me), p.z);
@@ -114,9 +119,19 @@ export function CharacterAvatar({
 
     syncPlayerCast(controller, room, localSessionId, lastCastId, comboAnimHoldUntil);
 
-    yawLocked.current = controller.getState().fullBody === "override";
+    // Jump Attack keeps mouse aim; dash still locks facing for the dive.
+    const fullBodyName = controller.getState().activeFullBodyName;
+    const jumpAim =
+      fullBodyName === "jumpAttack" ||
+      fullBodyName === "Jump Attack" ||
+      me?.castAbilityId === "smash";
+    yawLocked.current =
+      controller.getState().fullBody === "override" && !jumpAim;
 
-    if (!yawLocked.current) {
+    if (jumpAim) {
+      // Instant aim — Leap Slam facing is mouse-driven, not damp-smoothed.
+      visualYaw.current = p.yaw;
+    } else if (!yawLocked.current) {
       visualYaw.current = dampYawClamped(
         visualYaw.current,
         p.yaw,
@@ -134,6 +149,7 @@ export function CharacterAvatar({
     );
     prevPos.current.set(p.x, 0, p.z);
 
+    controller.setStunned(hasStatusId(me?.statuses, "stunned"));
     controller.setMovement({
       worldVelocity: velocity.current,
       facingYaw: visualYaw.current,

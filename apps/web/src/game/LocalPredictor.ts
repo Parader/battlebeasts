@@ -205,7 +205,7 @@ export class LocalPredictor {
         COLLISION.playerRadius,
         this.staticColliders,
       );
-      this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw: this.travel.yaw };
+      this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw: input.yaw };
       this.travel = null;
     }
 
@@ -221,7 +221,8 @@ export class LocalPredictor {
         COLLISION.playerRadius,
         this.staticColliders,
       );
-      this.state = { x: clamped.x, z: clamped.z, yaw: t.yaw };
+      // Path stays on travel.yaw; facing still follows mouse (Leap Slam aim).
+      this.state = { x: clamped.x, z: clamped.z, yaw: input.yaw };
       return this.state;
     }
 

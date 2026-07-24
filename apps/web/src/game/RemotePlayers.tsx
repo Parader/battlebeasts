@@ -12,7 +12,7 @@ import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./ch
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
 import { smashHopOffsetY } from "./smashHop";
-import { StatusOrnaments, collectStatusRows } from "./StatusOrnaments";
+import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -25,6 +25,7 @@ type RemotePlayerState = {
   castPhase?: string;
   castAbilityId?: string;
   castPhaseEndsAt?: number;
+  statuses?: Parameters<typeof hasStatusId>[0];
 };
 
 function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string }) {
@@ -135,8 +136,16 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
 
     // Sync casts before reading override state so dash locks facing this frame
     syncPlayerCast(controller, room, sessionId, lastCastId, comboAnimHoldUntil);
-    yawLocked.current = controller.getState().fullBody === "override";
-    if (!yawLocked.current) {
+    const fullBodyName = controller.getState().activeFullBodyName;
+    const jumpAim =
+      fullBodyName === "jumpAttack" ||
+      fullBodyName === "Jump Attack" ||
+      p.castAbilityId === "smash";
+    yawLocked.current =
+      controller.getState().fullBody === "override" && !jumpAim;
+    if (jumpAim) {
+      renderYaw.current = p.yaw;
+    } else if (!yawLocked.current) {
       renderYaw.current = dampYawClamped(
         renderYaw.current,
         p.yaw,
@@ -149,6 +158,7 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
     g.rotation.y = renderYaw.current;
 
     const speed = Math.hypot(vel.current.x, vel.current.z);
+    controller.setStunned(hasStatusId(p.statuses, "stunned"));
     controller.setMovement({
       worldVelocity: speed > 0.12 ? vel.current : zeroVel.current,
       facingYaw: renderYaw.current,

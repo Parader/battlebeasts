@@ -267,7 +267,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     range: 2.8,
     shape: "aoe",
     damage: 12,
-    radius: 2.35,
+    radius: 1.9,
     allowedSlots: ["m2"],
     defaultSlot: "m2",
     // Windup start→19 (fast), air 19→54 (unchanged rate), then 150ms pose hold.
