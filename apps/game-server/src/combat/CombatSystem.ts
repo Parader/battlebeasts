@@ -7,25 +7,28 @@ import {
   canPlayerCancelCast,
   createProjectile,
   dashOffset,
+  isComboAbility,
   isInIFrameWindow,
   meleeCenter,
   moveAndCollide,
-  moveMulForPhase,
   nextCastPhase,
   playerCollidersExcept,
   phaseDurationMs,
+  resolveCastMoveMul,
+  resolveComboContinueMoveMul,
   resolveCollisions,
   resolveInstantHits,
   resolveTravel,
   ruptureCenter,
   sampleTravel,
+  sweepMove,
   tickProjectiles,
   totalCastDurationMs,
   travelDistance,
   travelDurationMs,
   type AbilityDef,
   type CastPhaseId,
-  type CircleCollider,
+  type StaticCollider,
   type CombatBody,
   type CombatFxEvent,
   type ProjectileSim,
@@ -70,6 +73,13 @@ type ActiveTravel = {
   endAt: number;
 };
 
+type ActiveCombo = {
+  abilityId: string;
+  hitsDone: number;
+  /** After a swing ends; 0 while still casting that swing. */
+  continueUntil: number;
+};
+
 /**
  * Server-side combat: Anticipation → Cast → Impact → Recovery.
  * Cancel is only valid during anticipation (before commitment / effect).
@@ -82,9 +92,10 @@ export class CombatSystem {
   private cds = new Map<string, Map<string, number>>();
   private casts = new Map<string, ActiveCast>();
   private travels = new Map<string, ActiveTravel>();
+  private combos = new Map<string, ActiveCombo>();
   private nextId = 1;
   private hooks: CombatRoomHooks;
-  private staticColliders: CircleCollider[] = [];
+  private staticColliders: StaticCollider[] = [];
   readonly statuses: StatusSystem;
 
   constructor(
@@ -104,7 +115,7 @@ export class CombatSystem {
     this.hooks = { ...this.hooks, ...hooks };
   }
 
-  setStaticColliders(colliders: CircleCollider[]) {
+  setStaticColliders(colliders: StaticCollider[]) {
     this.staticColliders = colliders;
   }
 
@@ -119,10 +130,21 @@ export class CombatSystem {
     );
   }
 
-  /** Clamp a teleport/dash sample into free space. */
+  /** Clamp a teleport/dash sample into free space (swept so we can't skip walls). */
   clampPlayerPos(sessionId: string, pos: Vec2): Vec2 {
     return resolveCollisions(
       pos,
+      COLLISION.playerRadius,
+      this.staticColliders,
+      playerCollidersExcept(this.room.state.players.entries(), sessionId),
+    );
+  }
+
+  /** Sweep from → to for dashes / charges. */
+  sweepPlayerPos(sessionId: string, from: Vec2, to: Vec2): Vec2 {
+    return sweepMove(
+      from,
+      to,
       COLLISION.playerRadius,
       this.staticColliders,
       playerCollidersExcept(this.room.state.players.entries(), sessionId),
@@ -136,9 +158,11 @@ export class CombatSystem {
     const cast = this.casts.get(sessionId);
     if (!cast) return;
     const abilityId = cast.abilityId;
+    const now = Date.now();
     this.travels.delete(sessionId);
+    const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
     this.clearCastState(sessionId, player);
-    this.phaseFx(sessionId, player, abilityId, "cancel", Date.now());
+    this.phaseFx(sessionId, player, abilityId, "cancel", now, { cooldownMs });
   }
 
   /**
@@ -149,17 +173,9 @@ export class CombatSystem {
     const cast = this.casts.get(sessionId);
     if (!cast) return;
     const abilityId = cast.abilityId;
-    const travel = this.travels.get(sessionId);
-    if (travel && travel.abilityId === abilityId) {
-      this.travels.delete(sessionId);
-    }
-    this.casts.delete(sessionId);
-    player.castAbilityId = "";
-    player.castPhase = "";
-    player.castPhaseEndsAt = 0;
-    player.castLockUntil = 0;
-    player.invulnerable = false;
-    this.phaseFx(sessionId, player, abilityId, "interrupt", now);
+    const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
+    this.clearCastState(sessionId, player);
+    this.phaseFx(sessionId, player, abilityId, "interrupt", now, { cooldownMs });
   }
 
   ensurePracticeDummy(x: number, z: number) {
@@ -178,6 +194,7 @@ export class CombatSystem {
     this.cds.delete(sessionId);
     this.casts.delete(sessionId);
     this.travels.delete(sessionId);
+    this.combos.delete(sessionId);
     this.statuses.clearTarget(sessionId);
     for (const [id, sim] of this.sims) {
       if (sim.ownerId === sessionId) {
@@ -191,10 +208,16 @@ export class CombatSystem {
     if (this.travels.has(sessionId)) return 0;
     let mul = 1;
     const cast = this.casts.get(sessionId);
+    const combo = this.combos.get(sessionId);
+    const now = Date.now();
+
     if (cast) {
       const def = ABILITIES[cast.abilityId];
-      if (def) mul *= moveMulForPhase(def, cast.phase);
+      if (def) mul *= resolveCastMoveMul(def, cast.phase);
+    } else if (combo?.hitsDone && combo.continueUntil > now) {
+      mul *= resolveComboContinueMoveMul(ABILITIES[combo.abilityId]);
     }
+
     mul *= this.statuses.getMoveMul(sessionId);
     return mul;
   }
@@ -238,12 +261,17 @@ export class CombatSystem {
     const first = nextCastPhase(def, null);
     if (!first) return false;
 
+    this.beginComboHitIndex(sessionId, player, def);
+
     if (first === "impact") {
-      this.enterPhase(sessionId, player, def, "impact", now, now);
       this.fireEffect(sessionId, player, def, now);
+      const cooldownMs = this.onEffectResolved(sessionId, def, now);
+      this.enterPhase(sessionId, player, def, "impact", now, now, {
+        cooldownMs,
+        comboHit: this.comboHitFor(sessionId, def.id),
+      });
       const live = this.casts.get(sessionId);
       if (live) live.effectFired = true;
-      bag.set(castId, now + def.cooldownMs);
       this.syncInvulnerable(sessionId, player, now);
       return true;
     }
@@ -260,14 +288,16 @@ export class CombatSystem {
     if (!def) return false;
     if (!canPlayerCancelCast(def, cast.phase)) return false;
 
+    const cooldownMs = this.endComboEarly(sessionId, def.id, cast.effectFired, now);
     this.clearCastState(sessionId, player);
-    this.phaseFx(sessionId, player, def.id, "cancel", now);
+    this.phaseFx(sessionId, player, def.id, "cancel", now, { cooldownMs });
     return true;
   }
 
   tick(dt: number, now: number) {
     this.advanceTravels(now);
     this.advanceCasts(now);
+    this.advanceCombos(now);
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
 
@@ -307,7 +337,11 @@ export class CombatSystem {
         travel.distance,
         progress,
       );
-      const clamped = this.clampPlayerPos(sessionId, pos);
+      const clamped = this.sweepPlayerPos(
+        sessionId,
+        { x: travel.fromX, z: travel.fromZ },
+        pos,
+      );
       player.x = clamped.x;
       player.z = clamped.z;
       if (now >= travel.endAt) {
@@ -320,9 +354,12 @@ export class CombatSystem {
     for (const [sessionId, cast] of [...this.casts.entries()]) {
       const player = this.room.state.players.get(sessionId);
       if (!player || player.disconnected || player.hp <= 0) {
-        this.casts.delete(sessionId);
-        this.travels.delete(sessionId);
+        this.endComboEarly(sessionId, cast.abilityId, cast.effectFired, now);
         if (player) this.clearCastState(sessionId, player);
+        else {
+          this.casts.delete(sessionId);
+          this.travels.delete(sessionId);
+        }
         continue;
       }
 
@@ -341,26 +378,49 @@ export class CombatSystem {
 
       const next = nextCastPhase(def, cast.phase);
       if (!next) {
+        this.openComboContinueWindow(sessionId, def, now);
         this.clearCastState(sessionId, player);
         this.phaseFx(sessionId, player, def.id, "idle", now);
         continue;
       }
-
-      this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt);
 
       if (next === "impact" && !cast.effectFired) {
         const yawBefore = player.yaw;
         player.yaw = cast.yaw;
         this.fireEffect(sessionId, player, def, now);
         player.yaw = yawBefore;
+        const cooldownMs = this.onEffectResolved(sessionId, def, now);
+        this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
+          cooldownMs,
+          comboHit: this.comboHitFor(sessionId, def.id),
+        });
         const live = this.casts.get(sessionId);
         if (live) live.effectFired = true;
-        let bag = this.cds.get(sessionId);
-        if (!bag) {
-          bag = new Map();
-          this.cds.set(sessionId, bag);
-        }
-        bag.set(def.id, now + def.cooldownMs);
+      } else {
+        this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt);
+      }
+    }
+  }
+
+  private advanceCombos(now: number) {
+    for (const [sessionId, combo] of [...this.combos.entries()]) {
+      if (combo.continueUntil <= 0 || now < combo.continueUntil) continue;
+      const casting = this.casts.get(sessionId);
+      if (casting?.abilityId === combo.abilityId) continue;
+      if (combo.hitsDone <= 0) {
+        this.combos.delete(sessionId);
+        continue;
+      }
+      const def = ABILITIES[combo.abilityId];
+      if (!def) {
+        this.combos.delete(sessionId);
+        continue;
+      }
+      const cooldownMs = this.startCooldown(sessionId, def.id, now);
+      this.combos.delete(sessionId);
+      const player = this.room.state.players.get(sessionId);
+      if (player) {
+        this.phaseFx(sessionId, player, def.id, "idle", now, { cooldownMs });
       }
     }
   }
@@ -372,6 +432,7 @@ export class CombatSystem {
     phase: CastPhaseId,
     now: number,
     castStartedAt: number,
+    fxExtra?: { cooldownMs?: number; comboHit?: number },
   ) {
     const duration = Math.max(16, phaseDurationMs(def, phase));
 
@@ -393,7 +454,10 @@ export class CombatSystem {
       player.castLockUntil = now + totalCastDurationMs(def);
     }
 
-    this.phaseFx(sessionId, player, def.id, phase, cast.phaseEndsAt);
+    this.phaseFx(sessionId, player, def.id, phase, cast.phaseEndsAt, {
+      ...fxExtra,
+      comboHit: player.castComboHit || fxExtra?.comboHit,
+    });
   }
 
   private clearCastState(sessionId: string, player: PlayerState) {
@@ -403,7 +467,19 @@ export class CombatSystem {
     player.castPhase = "";
     player.castPhaseEndsAt = 0;
     player.castLockUntil = 0;
+    player.castComboHit = 0;
     player.invulnerable = false;
+  }
+
+  /** Stamp 1-based swing index for combo abilities (anim / VFX sync). */
+  private beginComboHitIndex(sessionId: string, player: PlayerState, def: AbilityDef) {
+    if (!isComboAbility(def)) {
+      player.castComboHit = 0;
+      return;
+    }
+    const combo = this.combos.get(sessionId);
+    const done = combo?.abilityId === def.id ? combo.hitsDone : 0;
+    player.castComboHit = done + 1;
   }
 
   private fireEffect(sessionId: string, player: PlayerState, def: AbilityDef, now: number) {
@@ -414,7 +490,7 @@ export class CombatSystem {
     if (travel.mode === "instant") {
       const dist = travelDistance(def);
       const off = dashOffset(player.yaw, dist);
-      const clamped = this.clampPlayerPos(sessionId, {
+      const clamped = this.sweepPlayerPos(sessionId, { x: player.x, z: player.z }, {
         x: player.x + off.x,
         z: player.z + off.z,
       });
@@ -455,6 +531,11 @@ export class CombatSystem {
     } else if (def.shape === "melee") {
       const center = meleeCenter(ownerBody, def);
       const radius = def.radius ?? def.range;
+      const combo = this.combos.get(sessionId);
+      const comboHit =
+        isComboAbility(def) && (!combo || combo.abilityId === def.id)
+          ? (combo?.hitsDone ?? 0) + 1
+          : undefined;
       this.fx({
         kind: "melee",
         abilityId: def.id,
@@ -462,6 +543,7 @@ export class CombatSystem {
         z: center.z,
         radius,
         ownerId: sessionId,
+        comboHit,
       });
       this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
     } else if (def.shape === "aoe") {
@@ -630,6 +712,7 @@ export class CombatSystem {
     abilityId: string,
     phase: CombatFxEvent["phase"],
     phaseEndsAt: number,
+    extra?: { cooldownMs?: number; comboHit?: number },
   ) {
     this.fx({
       kind: "cast_phase",
@@ -639,10 +722,94 @@ export class CombatSystem {
       ownerId: sessionId,
       phase,
       phaseEndsAt,
+      cooldownMs: extra?.cooldownMs,
+      comboHit: extra?.comboHit,
     });
   }
 
   private fx(event: CombatFxEvent) {
     this.room.broadcast("combat_fx", event);
+  }
+
+  /** Apply ability cooldown; returns ms for client sync. */
+  private startCooldown(sessionId: string, abilityId: string, now: number): number {
+    const def = ABILITIES[abilityId];
+    const cooldownMs = def?.cooldownMs ?? 0;
+    let bag = this.cds.get(sessionId);
+    if (!bag) {
+      bag = new Map();
+      this.cds.set(sessionId, bag);
+    }
+    bag.set(abilityId, now + cooldownMs);
+    return cooldownMs;
+  }
+
+  /**
+   * After an effect resolves: non-combo → start CD.
+   * Combo → count hit; start CD only when chain completes.
+   * Returns cooldownMs when CD started, else undefined.
+   */
+  private onEffectResolved(sessionId: string, def: AbilityDef, now: number): number | undefined {
+    if (!isComboAbility(def) || !def.combo) {
+      return this.startCooldown(sessionId, def.id, now);
+    }
+
+    let combo = this.combos.get(sessionId);
+    if (!combo || combo.abilityId !== def.id) {
+      combo = { abilityId: def.id, hitsDone: 0, continueUntil: 0 };
+    }
+    combo.hitsDone += 1;
+    combo.continueUntil = 0;
+
+    if (combo.hitsDone >= def.combo.hits) {
+      this.combos.delete(sessionId);
+      return this.startCooldown(sessionId, def.id, now);
+    }
+
+    this.combos.set(sessionId, combo);
+    return undefined;
+  }
+
+  /** After a swing fully ends, open the window to continue the chain. */
+  private openComboContinueWindow(sessionId: string, def: AbilityDef, now: number) {
+    if (!isComboAbility(def) || !def.combo) return;
+    const combo = this.combos.get(sessionId);
+    if (!combo || combo.abilityId !== def.id || combo.hitsDone <= 0) return;
+    if (combo.hitsDone >= def.combo.hits) return;
+    combo.continueUntil = now + def.combo.continueWindowMs;
+    this.combos.set(sessionId, combo);
+  }
+
+  /**
+   * Cancel / interrupt mid-chain: if any hit landed (this swing or prior), start CD.
+   * Free cancel only on the first swing before impact.
+   */
+  private endComboEarly(
+    sessionId: string,
+    abilityId: string,
+    effectFired: boolean,
+    now: number,
+  ): number | undefined {
+    const def = ABILITIES[abilityId];
+    if (!isComboAbility(def)) {
+      this.combos.delete(sessionId);
+      return undefined;
+    }
+
+    const combo = this.combos.get(sessionId);
+    const priorHits = combo?.abilityId === abilityId ? combo.hitsDone : 0;
+    this.combos.delete(sessionId);
+
+    if (!effectFired && priorHits <= 0) return undefined;
+
+    const readyAt = this.cds.get(sessionId)?.get(abilityId) ?? 0;
+    if (readyAt > now) return undefined;
+    return this.startCooldown(sessionId, abilityId, now);
+  }
+
+  private comboHitFor(sessionId: string, abilityId: string): number | undefined {
+    const combo = this.combos.get(sessionId);
+    if (combo?.abilityId === abilityId && combo.hitsDone > 0) return combo.hitsDone;
+    return undefined;
   }
 }

@@ -1,4 +1,4 @@
-export type SpellEffectId = "bolt";
+export type SpellEffectId = "bolt" | "crescent";
 
 export type VfxPose = {
   x: number;
@@ -12,6 +12,8 @@ export type VfxSpawnOpts = {
   followOwnerId?: string;
   /** Forward offset from owner along yaw (ability spawnOffset). */
   followSpawnOffset?: number;
+  /** Optional style index (e.g. crescent swing 0/1/2). */
+  variant?: number;
 };
 
 export type VfxHandle = {
@@ -33,4 +35,5 @@ export type OneShotEffect = {
   life: number;
   followOwnerId?: string;
   followSpawnOffset?: number;
+  variant?: number;
 };

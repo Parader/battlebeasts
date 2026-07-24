@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import {
   type CharacterAnimationConfig,
-  character1AnimationConfig,
+  heroAnimationConfig,
 } from "./animationConfig";
 import {
   createCastBodyClip,
@@ -128,7 +128,7 @@ export class CharacterAnimationController {
   constructor(
     character: THREE.Object3D,
     clips: THREE.AnimationClip[],
-    config: CharacterAnimationConfig = character1AnimationConfig,
+    config: CharacterAnimationConfig = heroAnimationConfig,
   ) {
     this.mixer = new THREE.AnimationMixer(character);
     this.config = config;
@@ -169,7 +169,10 @@ export class CharacterAnimationController {
       if (!src) continue;
       const noRoot = stripHorizontalRootMotion(src);
 
+      // Unique clip names per slot so reusing one source (e.g. run for
+      // forward+strafe) still gets independent AnimationActions.
       const lowerClip = createLowerBodyClip(noRoot);
+      lowerClip.name = `${src.name}::lower::${slot}`;
       if (lowerClip.tracks.length === 0) {
         console.warn(`[CharacterAnimation] lower clip empty after mask: ${name}`);
       } else {
@@ -184,6 +187,7 @@ export class CharacterAnimationController {
       }
 
       const legsClip = createLegsOnlyClip(noRoot);
+      legsClip.name = `${src.name}::legs::${slot}`;
       if (legsClip.tracks.length === 0) {
         console.warn(`[CharacterAnimation] legs-only clip empty after mask: ${name}`);
       } else {
@@ -198,6 +202,7 @@ export class CharacterAnimationController {
       }
 
       const upperClip = createUpperBodyClip(noRoot);
+      upperClip.name = `${src.name}::upper::${slot}`;
       if (upperClip.tracks.length === 0) {
         console.warn(`[CharacterAnimation] upper loco clip empty after mask: ${name}`);
       } else {

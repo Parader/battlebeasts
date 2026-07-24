@@ -5,9 +5,19 @@ export { spawnTrail } from "./spawnTrail";
 export { VfxWorld } from "./VfxWorld";
 export { SpellVfxBridge } from "./SpellVfxBridge";
 export {
+  notifyCrescentHit,
+  notifyCrescentMelee,
+  clearCrescentSpawnState,
+} from "./crescentSpawn";
+export {
   CATALOG_PROJECTILES,
+  CATALOG_CAST_FX,
+  CATALOG_MELEE_SWOOP,
   hasCatalogProjectile,
+  hasCatalogCastFx,
+  usesMeleeSwoopFx,
   BoltProjectileEffect,
+  CrescentCastEffect,
   renderOneShot,
 } from "./catalog";
 

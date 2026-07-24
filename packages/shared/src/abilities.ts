@@ -69,6 +69,39 @@ export interface AbilityIFrames {
   durationMs: number;
 }
 
+/**
+ * Multi-press / hold chain (e.g. M1 crescent): fire up to `hits` swings,
+ * then start cooldown. Stopping mid-chain also starts cooldown; next cast
+ * always begins at hit 1.
+ */
+export interface AbilityCombo {
+  /** Swings before full cooldown (must be > 1). */
+  hits: number;
+  /** Ms after a swing finishes to start the next before CD locks. */
+  continueWindowMs: number;
+  /**
+   * Steady move speed while the chain is live (casting or continue window).
+   * Avoids per-phase stop/start jerks on multi-hit M1s.
+   */
+  moveMul?: number;
+}
+
+/**
+ * Battlerite-style hotbar (v0).
+ * Shift+cast / EX variants come later — not wired yet.
+ */
+export const SPELL_SLOTS = [
+  { id: "m1", label: "LMB", hint: "Left click", input: "mouse0" },
+  { id: "m2", label: "RMB", hint: "Right click", input: "mouse2" },
+  { id: "space", label: "Space", hint: "Movement", input: "space" },
+  { id: "q", label: "Q", hint: "Q", input: "q" },
+  { id: "e", label: "E", hint: "E", input: "e" },
+  { id: "r", label: "R", hint: "R", input: "r" },
+] as const;
+
+export type SpellSlotId = (typeof SPELL_SLOTS)[number]["id"];
+export type SpellSlot = (typeof SPELL_SLOTS)[number];
+
 export interface AbilityDef {
   id: string;
   name: string;
@@ -89,6 +122,8 @@ export interface AbilityDef {
   applyOnHit?: StatusApplication[];
   /** Statuses applied to caster when the effect resolves. */
   applyOnSelf?: StatusApplication[];
+  /** Optional hit-chain before cooldown (LMB flurries). */
+  combo?: AbilityCombo;
   /**
    * If true, this ability can cut another cast at any phase (e.g. Space/dash).
    * Already-fired projectiles/DoTs keep living; only caster cast phases are cleared.
@@ -98,25 +133,14 @@ export interface AbilityDef {
    * If false, interruptors cannot cut this cast (default true = interruptible).
    */
   interruptible?: boolean;
-  /** Preferred Battlerite-style slot when suggesting a default kit. */
-  defaultSlot?: SpellSlotId;
+  /**
+   * Hotbar slots this spell may be equipped in.
+   * Q-only spells cannot appear in R, etc.
+   */
+  allowedSlots: SpellSlotId[];
+  /** Preferred slot when building the default kit. */
+  defaultSlot: SpellSlotId;
 }
-
-/**
- * Battlerite-style hotbar (v0).
- * Shift+cast / EX variants come later — not wired yet.
- */
-export const SPELL_SLOTS = [
-  { id: "m1", label: "LMB", hint: "Left click", input: "mouse0" },
-  { id: "m2", label: "RMB", hint: "Right click", input: "mouse2" },
-  { id: "space", label: "Space", hint: "Movement", input: "space" },
-  { id: "q", label: "Q", hint: "Q", input: "q" },
-  { id: "e", label: "E", hint: "E", input: "e" },
-  { id: "r", label: "R", hint: "R", input: "r" },
-] as const;
-
-export type SpellSlotId = (typeof SPELL_SLOTS)[number]["id"];
-export type SpellSlot = (typeof SPELL_SLOTS)[number];
 
 export const LOADOUT_SIZE = SPELL_SLOTS.length;
 
@@ -149,6 +173,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     damage: 18,
     speed: 22,
     spawnOffset: 0.32,
+    allowedSlots: ["m1"],
     defaultSlot: "m1",
     // ~1.0s window → clip 2.3s plays ~2.3× (snappy, not 8×)
     timing: {
@@ -164,6 +189,31 @@ export const ABILITIES: Record<string, AbilityDef> = {
       cancelUntilPhase: "cast",
     },
   },
+  /** Close-range magical slash — 3 quick hits, then CD (or CD if chain stops early). */
+  crescent: {
+    id: "crescent",
+    name: "Crescent",
+    cooldownMs: 550,
+    range: 2.2,
+    shape: "melee",
+    damage: 11,
+    radius: 2.0,
+    allowedSlots: ["m1"],
+    defaultSlot: "m1",
+    combo: {
+      hits: 3,
+      continueWindowMs: 220,
+      moveMul: 0.72,
+    },
+    timing: {
+      anticipationMs: 110,
+      castMs: 90,
+      impactMs: 155,
+      recoveryMs: 155,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+  },
   smash: {
     id: "smash",
     name: "Smash",
@@ -172,6 +222,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "melee",
     damage: 32,
     radius: 2.2,
+    allowedSlots: ["m2"],
     defaultSlot: "m2",
     // ~1.0s → melee clip ~2.3×
     timing: {
@@ -195,6 +246,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "dash",
     damage: 0,
     speed: 18,
+    allowedSlots: ["space"],
     defaultSlot: "space",
     // Dive clip ~1.63s; ~0.50s lock after CAST_EXECUTION_SCALE (~3.3×).
     // Travel across impact; short soft recovery (no i-frames).
@@ -229,6 +281,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "aoe",
     damage: 24,
     radius: 3.5,
+    allowedSlots: ["q"],
     defaultSlot: "q",
     // ~1.4s → AoE clip ~2.3×
     timing: {
@@ -254,6 +307,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     speed: 28,
     radius: 1.6,
     spawnOffset: 0.34,
+    allowedSlots: ["e"],
     defaultSlot: "e",
     // ~1.05s → 1H clip ~2.2×
     timing: {
@@ -277,6 +331,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "aoe",
     damage: 40,
     radius: 2.8,
+    allowedSlots: ["r"],
     defaultSlot: "r",
     // ~1.5s → AoE clip ~2.2×
     timing: {
@@ -303,15 +358,47 @@ export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map((slot) => {
   return found?.id ?? "bolt";
 });
 
+export function canEquipInSlot(abilityId: string, slotId: SpellSlotId): boolean {
+  const def = ABILITIES[abilityId];
+  return Boolean(def?.allowedSlots.includes(slotId));
+}
+
+/** True when the ability chains multiple swings before cooldown. */
+export function isComboAbility(def: AbilityDef | undefined): boolean {
+  return (def?.combo?.hits ?? 0) > 1;
+}
+
+/** Choosable spells for a hotbar slot (Spells UI catalog). */
+export function abilitiesForSlot(slotId: SpellSlotId): AbilityDef[] {
+  return Object.values(ABILITIES).filter((a) => a.allowedSlots.includes(slotId));
+}
+
+function defaultAbilityForSlot(slotId: SpellSlotId): string {
+  const preferred = Object.values(ABILITIES).find(
+    (a) => a.defaultSlot === slotId && a.allowedSlots.includes(slotId),
+  );
+  if (preferred) return preferred.id;
+  const any = abilitiesForSlot(slotId)[0];
+  return any?.id ?? "bolt";
+}
+
+/**
+ * Produce a length-6 loadout aligned to SPELL_SLOTS.
+ * Each index must be an ability allowed in that slot; illegal entries are replaced.
+ */
 export function normalizeLoadout(abilityIds: string[] | null | undefined): string[] {
-  const cleaned = (abilityIds ?? []).filter((id) => id in ABILITIES);
-  const out = [...cleaned];
-  for (const id of DEFAULT_LOADOUT) {
-    if (out.length >= LOADOUT_SIZE) break;
-    if (!out.includes(id)) out.push(id);
+  const raw = abilityIds ?? [];
+  const out: string[] = [];
+  for (let i = 0; i < LOADOUT_SIZE; i++) {
+    const slotId = SPELL_SLOTS[i]!.id;
+    const candidate = raw[i];
+    if (candidate && canEquipInSlot(candidate, slotId)) {
+      out.push(candidate);
+    } else {
+      out.push(defaultAbilityForSlot(slotId));
+    }
   }
-  while (out.length < LOADOUT_SIZE) out.push(DEFAULT_LOADOUT[out.length] ?? "bolt");
-  return out.slice(0, LOADOUT_SIZE);
+  return out;
 }
 
 export function abilityAtSlot(loadout: string[], slotIndex: number): AbilityDef | undefined {
@@ -329,6 +416,29 @@ export function moveMulForPhase(def: AbilityDef, phase: CastPhaseId): number {
   if (phase === "cast") return t.castMoveMul ?? DEFAULT_MOVE.cast;
   if (phase === "impact") return t.impactMoveMul ?? DEFAULT_MOVE.impact;
   return t.recoveryMoveMul ?? DEFAULT_MOVE.recovery;
+}
+
+/**
+ * Authoritative move multiplier during a cast.
+ * Combo abilities use a steady `combo.moveMul` (no per-phase spikes).
+ */
+export function resolveCastMoveMul(def: AbilityDef, phase: CastPhaseId): number {
+  if (def.combo?.moveMul != null) return def.combo.moveMul;
+  return moveMulForPhase(def, phase);
+}
+
+/** Move mul while a combo continue window is open (between swings). */
+export function resolveComboContinueMoveMul(def: AbilityDef | undefined): number {
+  return def?.combo?.moveMul ?? 1;
+}
+
+/**
+ * 0-based VFX / pose variant from 1-based `castComboHit` / FX `comboHit`.
+ * Falls back to 0 when missing.
+ */
+export function comboSwingVariant(comboHit: number | undefined, poseCount = 3): number {
+  if (!comboHit || comboHit < 1) return 0;
+  return (comboHit - 1) % Math.max(1, poseCount);
 }
 
 /**
@@ -356,6 +466,17 @@ export function totalCastDurationMs(def: AbilityDef): number {
     phaseDurationMs(def, "impact") +
     phaseDurationMs(def, "recovery")
   );
+}
+
+/**
+ * Wall-clock length of a full combo chain (all hits + continue windows between them).
+ * Used to time multi-hit clips (e.g. DualWeaponCombo) to the complete Crescent.
+ */
+export function comboChainDurationMs(def: AbilityDef): number {
+  const hits = Math.max(1, def.combo?.hits ?? 1);
+  const swingMs = totalCastDurationMs(def);
+  if (hits <= 1 || !def.combo) return swingMs;
+  return hits * swingMs + (hits - 1) * def.combo.continueWindowMs;
 }
 
 /** Phase duration helper (0 means skip). Includes global CAST_EXECUTION_SCALE. */

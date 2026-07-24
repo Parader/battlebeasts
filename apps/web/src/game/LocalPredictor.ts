@@ -3,21 +3,19 @@ import {
   COLLISION,
   MOVE_SPEED,
   applyMovement,
-  applyYaw,
   baseCityStaticColliders,
-  moveAndCollide,
-  moveMulForPhase,
-  resolveCollisions,
-  resolveTravel,
+  resolveCastMoveMul,
+  resolveComboContinueMoveMul,
   sampleTravel,
+  sweepMove,
   travelDistance,
   travelDurationMs,
+  resolveTravel,
   type CastPhaseId,
   type CircleCollider,
   type PlayerInput,
+  type StaticCollider,
 } from "@battlebeasts/shared";
-
-const RECONCILE_EPSILON = 0.05;
 
 export type PredictedState = {
   x: number;
@@ -34,57 +32,48 @@ type LocalTravel = {
   durationMs: number;
 };
 
-function applyInput(
+function isActiveCastPhase(phase: string | undefined): phase is CastPhaseId {
+  return (
+    phase === "anticipation" ||
+    phase === "cast" ||
+    phase === "impact" ||
+    phase === "recovery"
+  );
+}
+
+function stepPredicted(
   state: PredictedState,
   input: PlayerInput,
   moveMul: number,
-  travel: LocalTravel | null,
-  nowMs: number,
-  staticColliders: readonly CircleCollider[],
-  dynamicColliders: readonly CircleCollider[],
+  staticColliders: StaticCollider[],
+  dynamicColliders: CircleCollider[],
 ): PredictedState {
-  let next = {
-    ...state,
-    yaw: applyYaw(state.yaw, input.yaw),
-  };
-
-  if (travel) {
-    const progress = Math.min(1, Math.max(0, (nowMs - travel.startMs) / travel.durationMs));
-    const pos = sampleTravel(
-      { x: travel.fromX, z: travel.fromZ },
-      travel.yaw,
-      travel.distance,
-      progress,
-    );
-    const clamped = resolveCollisions(
-      pos,
-      COLLISION.playerRadius,
-      staticColliders,
-      dynamicColliders,
-    );
-    next = { ...next, x: clamped.x, z: clamped.z };
-    return next;
-  }
-
+  const next = { ...state, yaw: input.yaw };
   const desired = applyMovement(next, input, MOVE_SPEED * moveMul);
-  const moved = moveAndCollide(
-    { x: next.x, z: next.z },
+  const clamped = sweepMove(
+    next,
     desired,
     COLLISION.playerRadius,
     staticColliders,
     dynamicColliders,
   );
-  next = { ...moved, yaw: next.yaw };
-  return next;
+  return { x: clamped.x, z: clamped.z, yaw: input.yaw };
 }
 
+/**
+ * Client-side movement prediction.
+ * Cast / combo move muls mirror server `resolveCastMoveMul` + continue-window rules.
+ */
 export class LocalPredictor {
   state: PredictedState = { x: 0, z: 0, yaw: 0 };
   private pending: PlayerInput[] = [];
   private seeded = false;
   moveMul = 1;
+  /** Ability id while a combo continue-window slow is active. */
+  private comboGapAbilityId: string | null = null;
+  private comboGapUntil = 0;
   private travel: LocalTravel | null = null;
-  private staticColliders: CircleCollider[] = baseCityStaticColliders();
+  private staticColliders: StaticCollider[] = baseCityStaticColliders();
   private dynamicColliders: CircleCollider[] = [];
 
   seed(x: number, z: number, yaw: number) {
@@ -92,6 +81,7 @@ export class LocalPredictor {
     this.pending = [];
     this.seeded = true;
     this.travel = null;
+    this.clearMoveMul();
   }
 
   get isSeeded() {
@@ -99,40 +89,65 @@ export class LocalPredictor {
   }
 
   setWorldColliders(
-    staticColliders: CircleCollider[],
+    staticColliders: StaticCollider[],
     dynamicColliders: CircleCollider[] = [],
   ) {
     this.staticColliders = staticColliders;
     this.dynamicColliders = dynamicColliders;
   }
 
-  setMoveMulFromPhase(abilityId: string | undefined, phase: string | undefined) {
-    if (!abilityId || !phase) {
-      this.moveMul = 1;
+  /**
+   * Mirror server cast slow for an active phase.
+   * Call only for anticipation/cast/impact/recovery.
+   */
+  applyCastMove(abilityId: string, phase: string) {
+    if (!isActiveCastPhase(phase)) {
+      this.clearMoveMul();
       return;
     }
     const def = ABILITIES[abilityId];
     if (!def) {
-      this.moveMul = 1;
+      this.clearMoveMul();
       return;
     }
-    if (phase === "anticipation" || phase === "cast" || phase === "impact" || phase === "recovery") {
-      this.moveMul = moveMulForPhase(def, phase as CastPhaseId);
+    this.comboGapAbilityId = null;
+    this.comboGapUntil = 0;
+    this.moveMul = resolveCastMoveMul(def, phase);
+  }
+
+  /**
+   * Mirror server continue-window slow between combo swings.
+   * Call on cast idle when the server did not start cooldown.
+   */
+  applyComboContinue(abilityId: string) {
+    const def = ABILITIES[abilityId];
+    const windowMs = def?.combo?.continueWindowMs;
+    if (windowMs == null) {
+      this.clearMoveMul();
       return;
     }
+    this.comboGapAbilityId = abilityId;
+    this.comboGapUntil = performance.now() + windowMs;
+    this.moveMul = resolveComboContinueMoveMul(def);
+  }
+
+  /** End all cast/combo slows (CD started, free cancel, interrupt, leave). */
+  clearMoveMul() {
+    this.comboGapAbilityId = null;
+    this.comboGapUntil = 0;
     this.moveMul = 1;
   }
 
-  /** Start local translate prediction when impact begins for a travel spell. */
   beginTravelFromCast(abilityId: string, yaw: number) {
     const def = ABILITIES[abilityId];
     if (!def) return;
     const travel = resolveTravel(def);
     if (travel.mode === "instant") {
       const dist = travelDistance(def);
-      const pos = sampleTravel(this.state, yaw, dist, 1);
-      const clamped = resolveCollisions(
-        pos,
+      const ideal = sampleTravel(this.state, yaw, dist, 1);
+      const clamped = sweepMove(
+        this.state,
+        ideal,
         COLLISION.playerRadius,
         this.staticColliders,
         this.dynamicColliders,
@@ -160,87 +175,65 @@ export class LocalPredictor {
     this.pending.push(input);
     if (this.pending.length > 128) this.pending.shift();
 
+    if (this.comboGapAbilityId && performance.now() >= this.comboGapUntil) {
+      this.clearMoveMul();
+    }
+
     const now = performance.now();
     if (this.travel && now >= this.travel.startMs + this.travel.durationMs) {
-      const pos = sampleTravel(
+      const ideal = sampleTravel(
         { x: this.travel.fromX, z: this.travel.fromZ },
         this.travel.yaw,
         this.travel.distance,
         1,
       );
-      const clamped = resolveCollisions(
-        pos,
+      const clamped = sweepMove(
+        { x: this.travel.fromX, z: this.travel.fromZ },
+        ideal,
         COLLISION.playerRadius,
         this.staticColliders,
         this.dynamicColliders,
       );
-      this.state = { ...this.state, x: clamped.x, z: clamped.z };
+      this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw: this.travel.yaw };
       this.travel = null;
     }
 
-    this.state = applyInput(
+    if (this.travel) {
+      const t = this.travel;
+      const p = Math.min(1, Math.max(0, (now - t.startMs) / Math.max(1, t.durationMs)));
+      const ideal = sampleTravel({ x: t.fromX, z: t.fromZ }, t.yaw, t.distance, p);
+      const clamped = sweepMove(
+        { x: t.fromX, z: t.fromZ },
+        ideal,
+        COLLISION.playerRadius,
+        this.staticColliders,
+        this.dynamicColliders,
+      );
+      this.state = { x: clamped.x, z: clamped.z, yaw: t.yaw };
+      return this.state;
+    }
+
+    this.state = stepPredicted(
       this.state,
       input,
       this.moveMul,
-      this.travel,
-      now,
       this.staticColliders,
       this.dynamicColliders,
     );
     return this.state;
   }
 
-  reconcile(server: { x: number; z: number; yaw: number; lastInputSeq: number }) {
-    if (!this.seeded) {
-      this.seed(server.x, server.z, server.yaw);
-      return this.state;
-    }
-
-    this.pending = this.pending.filter((i) => i.seq > server.lastInputSeq);
-
-    // While translating, soft-follow server — hard replay fights the lerp
-    if (this.travel) {
-      const blend = 0.35;
-      this.state = {
-        x: this.state.x + (server.x - this.state.x) * blend,
-        z: this.state.z + (server.z - this.state.z) * blend,
-        yaw: server.yaw,
-      };
-      return this.state;
-    }
-
-    let replayed: PredictedState = { x: server.x, z: server.z, yaw: server.yaw };
-    const now = performance.now();
+  reconcile(serverX: number, serverZ: number, serverYaw: number, lastProcessedSeq: number) {
+    this.state = { x: serverX, z: serverZ, yaw: serverYaw };
+    this.pending = this.pending.filter((p) => p.seq > lastProcessedSeq);
     for (const input of this.pending) {
-      replayed = applyInput(
-        replayed,
+      this.state = stepPredicted(
+        this.state,
         input,
         this.moveMul,
-        null,
-        now,
         this.staticColliders,
         this.dynamicColliders,
       );
     }
-
-    const dx = replayed.x - this.state.x;
-    const dz = replayed.z - this.state.z;
-    const err = Math.hypot(dx, dz);
-
-    if (err > RECONCILE_EPSILON) {
-      if (err > 2) {
-        this.state = replayed;
-      } else {
-        this.state = {
-          x: this.state.x + (replayed.x - this.state.x) * 0.5,
-          z: this.state.z + (replayed.z - this.state.z) * 0.5,
-          yaw: replayed.yaw,
-        };
-      }
-    } else {
-      this.state.yaw = replayed.yaw;
-    }
-
-    return this.state;
   }
 }

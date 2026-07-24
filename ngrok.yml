@@ -1,0 +1,11 @@
+# Local playtest tunnels.
+# Start with (PowerShell):
+#   ngrok start --all --config "$env:LOCALAPPDATA\ngrok\ngrok.yml" --config .\ngrok.yml
+version: "3"
+tunnels:
+  web:
+    proto: http
+    addr: 5173
+  game:
+    proto: http
+    addr: 2567

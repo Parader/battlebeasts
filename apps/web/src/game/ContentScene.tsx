@@ -8,6 +8,8 @@ import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { CombatFxMeshes, Projectiles, type FxBurst } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
+import { TexturedGround } from "./TexturedGround";
+import { FollowSun } from "./FollowSun";
 import type { PredictedPose } from "./useBaseCityRoom";
 
 type Props = {
@@ -75,12 +77,8 @@ export function ContentScene({ room, localSessionId, predictedRef, fxBursts }: P
     return (
         <>
             <ambientLight intensity={0.55} />
-            <directionalLight castShadow position={[12, 18, 8]} intensity={1.15} />
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-                <planeGeometry args={[40, 40]} />
-                <meshStandardMaterial color="#1a2332" />
-            </mesh>
-            <gridHelper args={[40, 40, "#3f4b5c", "#243044"]} position={[0, 0.01, 0]} />
+            <FollowSun follow={localPos} intensity={1.15} />
+            <TexturedGround size={40} />
             <mesh position={[0, 0.05, -10]}>
                 <boxGeometry args={[6, 0.1, 2]} />
                 <meshStandardMaterial color="#64748b" />

@@ -46,6 +46,14 @@ export type CombatFxEvent = {
   /** For cast_phase events. */
   phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
   phaseEndsAt?: number;
+  /**
+   * When set, clients should start this ability's cooldown for `cooldownMs`.
+   * Used for combo abilities (CD after final hit / early stop) and as an
+   * explicit signal so clients don't assume every impact starts CD.
+   */
+  cooldownMs?: number;
+  /** 1-based combo swing index when relevant. */
+  comboHit?: number;
 };
 
 export function facingVector(yaw: number): Vec2 {

@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { MOVE_SPEED } from "@battlebeasts/shared";
 import {
   CharacterAnimationController,
-  character1AnimationConfig,
+  heroAnimationConfig,
 } from "./animation";
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
 import { syncPlayerCast } from "./syncPlayerCast";
@@ -28,6 +28,7 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
   const group = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
   const lastCastId = useRef("");
+  const comboAnimHoldUntil = useRef(0);
 
   const renderPos = useRef(new THREE.Vector3());
   const renderYaw = useRef(0);
@@ -41,10 +42,10 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
   const gltf = useGLTF(CHARACTER_URL);
   const scene = useMemo(() => {
     const idle =
-      gltf.animations.find((c) => c.name === character1AnimationConfig.idle) ??
+      gltf.animations.find((c) => c.name === heroAnimationConfig.idle) ??
       gltf.animations[0] ??
       null;
-    return prepareCharacterScene(gltf.scene, { restClip: idle });
+    return prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
   }, [gltf.scene, gltf.animations]);
   const animations = gltf.animations;
 
@@ -52,7 +53,7 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
     const controller = new CharacterAnimationController(
       scene,
       animations,
-      character1AnimationConfig,
+      heroAnimationConfig,
     );
     controllerRef.current = controller;
     return () => {
@@ -71,6 +72,7 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
       if (controller && lastCastId.current) {
         controller.cancelAbilityAnimation();
         lastCastId.current = "";
+        comboAnimHoldUntil.current = 0;
       }
       return;
     }
@@ -129,7 +131,7 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
     }
 
     // Sync casts before reading override state so dash locks facing this frame
-    syncPlayerCast(controller, room, sessionId, lastCastId);
+    syncPlayerCast(controller, room, sessionId, lastCastId, comboAnimHoldUntil);
     yawLocked.current = controller.getState().fullBody === "override";
     if (!yawLocked.current) {
       renderYaw.current = dampYawClamped(

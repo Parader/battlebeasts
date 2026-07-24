@@ -67,13 +67,20 @@ export function GameCanvas({
             camera={{
                 fov: CAMERA.fov,
                 near: 0.1,
-                far: 200,
+                far: 280,
                 position: [0, Math.sin(pitch) * CAMERA.distance, Math.cos(pitch) * CAMERA.distance],
             }}
             onPointerMissed={() => undefined}
         >
             <color attach="background" args={[inContent ? "#0a1018" : "#0b1220"]} />
-            <fog attach="fog" args={[inContent ? "#0a1018" : "#0b1220", 25, 55]} />
+            <fog
+                attach="fog"
+                args={[
+                    inContent ? "#0a1018" : "#0b1220",
+                    inContent ? 25 : 55,
+                    inContent ? 55 : 160,
+                ]}
+            />
             {inContent ? (
                 <ContentScene
                     room={room}

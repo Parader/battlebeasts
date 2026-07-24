@@ -7,9 +7,14 @@ export const UPPER_BODY_BONE_TOKENS = [
   "spine2",
   "neck",
   "head",
+  "jaw",
+  "eye",
+  "eyebrow",
+  "clavicle",
   "shoulder",
   "arm",
   "forearm",
+  "elbow",
   "hand",
   "finger",
   "thumb",
@@ -19,12 +24,18 @@ export const UPPER_BODY_BONE_TOKENS = [
   "pinky",
 ] as const;
 
-/** Hips belong to lower body so upper casts never drive root translation. */
+/**
+ * Hips / Root belong to lower body so upper casts never drive root translation.
+ * Includes Blender hero ankle/ball naming (not Mixamo `Foot`).
+ */
 export const LOWER_BODY_BONE_TOKENS = [
+  "root",
   "hips",
   "upleg",
   "leg",
   "foot",
+  "ankle",
+  "ball",
   "toe",
 ] as const;
 
@@ -81,10 +92,15 @@ export function boneMatchesTokens(normalizedBone: string, tokens: readonly strin
   return false;
 }
 
+/** True for skeleton root movers (Mixamo Hips or Blender Root/Hips). */
+export function isRootMoverBone(normalizedBone: string): boolean {
+  return normalizedBone === "root" || normalizedBone.includes("hips");
+}
+
 export function isUpperBodyTrack(trackName: string): boolean {
   const bone = normalizedBoneFromTrack(trackName);
-  // Explicitly exclude hips from upper masking
-  if (bone.includes("hips")) return false;
+  // Explicitly exclude root movers from upper masking
+  if (isRootMoverBone(bone)) return false;
   if (boneMatchesTokens(bone, LOWER_BODY_BONE_TOKENS) && !boneMatchesTokens(bone, UPPER_BODY_BONE_TOKENS)) {
     return false;
   }
@@ -99,12 +115,12 @@ export function isLowerBodyTrack(trackName: string): boolean {
 export function isHipsPositionTrack(trackName: string): boolean {
   const bone = normalizedBoneFromTrack(trackName);
   const prop = trackName.slice(trackName.lastIndexOf(".") + 1).toLowerCase();
-  return bone.includes("hips") && prop.startsWith("position");
+  return isRootMoverBone(bone) && prop.startsWith("position");
 }
 
-/** Any hips track (position or quaternion). */
+/** Any root-mover track (position or quaternion) — Hips and/or Root. */
 export function isHipsTrack(trackName: string): boolean {
-  return normalizedBoneFromTrack(trackName).includes("hips");
+  return isRootMoverBone(normalizedBoneFromTrack(trackName));
 }
 
 /** Clone clip keeping only tracks that pass `keep`. */
@@ -149,17 +165,24 @@ export function createCastBodyClip(clip: THREE.AnimationClip): THREE.AnimationCl
   );
 }
 
-/** First-frame hips Y from a clip, or null if missing. */
+/** First-frame hips Y from a clip (prefer Hips over Root), or null if missing. */
 export function getHipsStartY(clip: THREE.AnimationClip): number | null {
-  const track = clip.tracks.find((t) => isHipsPositionTrack(t.name));
+  const hips = clip.tracks.find((t) => {
+    const bone = normalizedBoneFromTrack(t.name);
+    const prop = t.name.slice(t.name.lastIndexOf(".") + 1).toLowerCase();
+    return bone.includes("hips") && prop.startsWith("position");
+  });
+  const track =
+    hips ??
+    clip.tracks.find((t) => isHipsPositionTrack(t.name));
   if (!track || track.values.length < 3) return null;
   return track.values[1]!;
 }
 
 /**
- * Remove horizontal root motion from hips.position while keeping Y bounce.
+ * Remove horizontal root motion from Root/Hips.position while keeping Y bounce.
  * Locks XZ to 0 (not the first keyframe) so the mesh stays on the gameplay
- * origin — Mixamo clips often rest at a non-zero hips XZ.
+ * origin — retargeted clips often rest at a non-zero root XZ.
  */
 export function stripHorizontalRootMotion(clip: THREE.AnimationClip): THREE.AnimationClip {
   const tracks = clip.tracks.map((track) => {
@@ -181,8 +204,10 @@ export function stripHorizontalRootMotion(clip: THREE.AnimationClip): THREE.Anim
 }
 
 /**
- * Lock hips XZ to origin and Y to `plantY` so cast crouches/dives
- * don't drive feet through the ground. Quaternion (aim twist) is untouched.
+ * Lock Hips Y to `plantY` (and Hips/Root XZ to origin) so cast crouches
+ * don't drive feet through the ground. Root Y is left alone — Blender Root
+ * is usually near 0 while Hips carries stance height.
+ * Quaternion (aim twist) is untouched.
  */
 export function plantHipsRootMotion(
   clip: THREE.AnimationClip,
@@ -194,10 +219,13 @@ export function plantHipsRootMotion(
     const values = track.values;
     if (values.length < 3) return track.clone();
 
+    const bone = normalizedBoneFromTrack(track.name);
+    const plantYOnThisBone = bone.includes("hips");
+
     const next = track.clone();
     for (let i = 0; i < next.values.length; i += 3) {
       next.values[i] = 0;
-      next.values[i + 1] = plantY;
+      if (plantYOnThisBone) next.values[i + 1] = plantY;
       next.values[i + 2] = 0;
     }
     return next;

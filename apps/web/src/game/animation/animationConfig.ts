@@ -26,7 +26,30 @@ export type CharacterAnimationConfig = {
   locoTimeScaleMax?: number;
 };
 
-/** Default mapping for `/character1.glb` (Mixamo Beta). */
+/**
+ * Active mapping for `/hero.glb` (Blender Mixamo export).
+ * Cardinal loco + dive + magic/melee attacks. Diagonal jogs exist in the
+ * file (`jog_diag_*`) but the blend tree is still 4-way.
+ */
+export const heroAnimationConfig: CharacterAnimationConfig = {
+  idle: "idle",
+  runForward: "run",
+  runBackward: "run_back",
+  strafeLeft: "strafe_left",
+  strafeRight: "strafe_right",
+  upperBodyIdle: "idle",
+  castPrimary: "magic_1h",
+  castAoE: "magic_aoe",
+  castMelee: "attack",
+  heavyCast: "magic_2h",
+  dash: "dive",
+  locomotionBlendResponsiveness: 12,
+  idleBlendResponsiveness: 10,
+  locoTimeScaleMin: 0.75,
+  locoTimeScaleMax: 1.35,
+};
+
+/** @deprecated Legacy Mixamo `/character1.glb` clip names. */
 export const character1AnimationConfig: CharacterAnimationConfig = {
   idle: "UnarmedIdle",
   runForward: "Running",
@@ -38,7 +61,6 @@ export const character1AnimationConfig: CharacterAnimationConfig = {
   castAoE: "Standing2HMagicAreaAttack02",
   castMelee: "StandingMeleeAttackDownward",
   heavyCast: "Standing2HMagicAttack04",
-  // Forward dive from the updated Mixamo pack
   dash: "StandingDiveForward",
   locomotionBlendResponsiveness: 12,
   idleBlendResponsiveness: 10,
@@ -46,10 +68,34 @@ export const character1AnimationConfig: CharacterAnimationConfig = {
   locoTimeScaleMax: 1.35,
 };
 
+/** Default = hero. */
+export const defaultCharacterAnimationConfig = heroAnimationConfig;
+
 /** Ability id → logical cast / full-body key used by the avatar bridge. */
 export const abilityAnimationBindings: Record<
   string,
-  { upper?: keyof CharacterAnimationConfig; fullBody?: keyof CharacterAnimationConfig }
+  {
+    upper?: keyof CharacterAnimationConfig;
+    fullBody?: keyof CharacterAnimationConfig;
+    /**
+     * Ordered clip names for combo swings (1st, 2nd, 3rd…).
+     * Index = castComboHit - 1. Prefer full-body for melee flourishes.
+     */
+    comboFullBody?: string[];
+    comboUpper?: string[];
+    /**
+     * Single multi-hit clip started on combo swing 1 only.
+     * Held across inter-swing gaps so it is not restarted per slash.
+     */
+    comboFullBodyOnce?: string;
+    /** Same as comboFullBodyOnce but upper-body so legs keep locomoting. */
+    comboUpperOnce?: string;
+    /**
+     * Playback length for combo*Once clips (seconds).
+     * When set, overrides combo-chain compression so the anim isn't frantic.
+     */
+    comboAnimDurationSec?: number;
+  }
 > = {
   bolt: { upper: "castPrimary" },
   shock: { upper: "castPrimary" },
@@ -57,4 +103,7 @@ export const abilityAnimationBindings: Record<
   rupture: { upper: "castAoE" },
   smash: { upper: "castMelee" },
   dash: { fullBody: "dash" },
+  crescent: {
+    comboUpperOnce: "attack_combo",
+  },
 };

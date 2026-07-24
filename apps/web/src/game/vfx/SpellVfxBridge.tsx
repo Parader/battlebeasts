@@ -2,7 +2,7 @@ import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import { useRef } from "react";
 import { ABILITIES, phaseDurationMs } from "@battlebeasts/shared";
-import { CATALOG_PROJECTILES } from "./catalog";
+import { CATALOG_CAST_FX, usesMeleeSwoopFx } from "./catalog";
 import { spawnCastEffect } from "./runtime";
 
 type PlayerCast = {
@@ -28,6 +28,7 @@ type PendingMuzzle = {
 /**
  * Fires muzzle VFX slightly before impact (during late cast).
  * Cast FX follow the caster via `followOwnerId`.
+ * Melee swoops (crescent) spawn from combat_fx instead.
  */
 export function SpellVfxBridge({ room }: { room: Room | null }) {
   const lastPhase = useRef(new Map<string, string>());
@@ -44,9 +45,9 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       const prev = lastPhase.current.get(sessionId) ?? "";
 
       const catalog =
-        !!abilityId && CATALOG_PROJECTILES.has(abilityId);
+        !!abilityId && CATALOG_CAST_FX.has(abilityId) && !usesMeleeSwoopFx(abilityId);
 
-      // Schedule muzzle 50ms before impact when cast phase begins
+      // Schedule muzzle when cast phase begins
       if (catalog && phase === "cast" && prev !== "cast") {
         const def = ABILITIES[abilityId];
         const castMs = def ? phaseDurationMs(def, "cast") : 200;

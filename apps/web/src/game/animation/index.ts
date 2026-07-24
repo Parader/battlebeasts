@@ -10,7 +10,9 @@ export {
 export type { FullBodyActionOptions as FullBodyPlayOptions } from "./CharacterAnimationController";
 
 export {
+  heroAnimationConfig,
   character1AnimationConfig,
+  defaultCharacterAnimationConfig,
   abilityAnimationBindings,
   type CharacterAnimationConfig,
 } from "./animationConfig";

@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { MOVE_SPEED } from "@battlebeasts/shared";
 import {
   CharacterAnimationController,
-  character1AnimationConfig,
+  heroAnimationConfig,
   debugPrintAnimationAssets,
 } from "./animation";
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
@@ -27,9 +27,9 @@ type Props = {
 };
 
 /**
- * Local player Mixamo avatar + layered animation controller.
+ * Local player avatar + layered animation controller (hero.glb).
  * Gameplay owns root transform; animations never apply horizontal root motion.
- * Visual yaw is smoothed (and locked during full-body overrides like dash/Jump).
+ * Visual yaw is smoothed (and locked during full-body overrides like dash).
  * Aim ring follows instant gameplay yaw.
  */
 export function CharacterAvatar({
@@ -46,6 +46,7 @@ export function CharacterAvatar({
   const prevPos = useRef(new THREE.Vector3());
   const velocity = useRef(new THREE.Vector3());
   const lastCastId = useRef("");
+  const comboAnimHoldUntil = useRef(0);
   const seededMove = useRef(false);
   const visualYaw = useRef(0);
   const yawLocked = useRef(false);
@@ -53,10 +54,10 @@ export function CharacterAvatar({
   const gltf = useGLTF(CHARACTER_URL);
   const scene = useMemo(() => {
     const idle =
-      gltf.animations.find((c) => c.name === character1AnimationConfig.idle) ??
+      gltf.animations.find((c) => c.name === heroAnimationConfig.idle) ??
       gltf.animations[0] ??
       null;
-    return prepareCharacterScene(gltf.scene, { restClip: idle });
+    return prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
   }, [gltf.scene, gltf.animations]);
   const animations = gltf.animations;
 
@@ -69,12 +70,12 @@ export function CharacterAvatar({
     const controller = new CharacterAnimationController(
       scene,
       animations,
-      character1AnimationConfig,
+      heroAnimationConfig,
     );
     controllerRef.current = controller;
 
     if (debug) {
-      debugPrintAnimationAssets(scene, animations, "[character1.glb]");
+      debugPrintAnimationAssets(scene, animations, "[hero.glb]");
       (window as unknown as { __animDebug?: () => void }).__animDebug = () =>
         controller.debugAnimations();
     }
@@ -104,7 +105,7 @@ export function CharacterAvatar({
       seededMove.current = true;
     }
 
-    syncPlayerCast(controller, room, localSessionId, lastCastId);
+    syncPlayerCast(controller, room, localSessionId, lastCastId, comboAnimHoldUntil);
 
     yawLocked.current = controller.getState().fullBody === "override";
 

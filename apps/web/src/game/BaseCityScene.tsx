@@ -6,14 +6,30 @@ import {
     BASE_CITY_PORTALS,
     BASE_CITY_STANDS,
     CAMERA,
+    HUB_GROUND_SIZE,
+    HUB_MAP_PROPS,
+    PORTAL_TORUS_MAJOR,
+    PORTAL_TORUS_TUBE,
     PRACTICE_DUMMY,
+    STAND_INTERACT_RADIUS,
 } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { CombatFxMeshes, Projectiles, WorldTargets, type FxBurst } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
+import { TexturedGround } from "./TexturedGround";
+import { FollowSun } from "./FollowSun";
+import { HubProp, hubAssetUrl } from "./FantasyProp";
+import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
+import { PlacementHelper } from "./PlacementHelper";
+import { useGLTF } from "@react-three/drei";
 import type { PredictedPose } from "./useBaseCityRoom";
+
+// Preload every unique village asset once
+for (const file of new Set(HUB_MAP_PROPS.map((p) => p.file))) {
+    useGLTF.preload(hubAssetUrl(file));
+}
 
 type Props = {
     room: Room | null;
@@ -23,38 +39,43 @@ type Props = {
     fxBursts: FxBurst[];
 };
 
-function Ground() {
-    return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-            <planeGeometry args={[60, 60]} />
-            <meshStandardMaterial color="#1e293b" />
-        </mesh>
-    );
-}
-
-function StandMarker({ x, z, color }: { x: number; z: number; color: string }) {
-    return (
-        <group position={[x, 0, z]}>
-            <mesh position={[0, 0.75, 0]} castShadow>
-                <boxGeometry args={[1.4, 1.5, 1.4]} />
-                <meshStandardMaterial color={color} />
-            </mesh>
-        </group>
-    );
-}
-
 function PortalMarker({ x, z, color }: { x: number; z: number; color: string }) {
     return (
         <group position={[x, 0, z]}>
-            <mesh position={[0, 1.2, 0]} castShadow>
-                <torusGeometry args={[1.1, 0.12, 12, 32]} />
+            <mesh position={[0, PORTAL_TORUS_MAJOR * 0.85, 0]} castShadow>
+                <torusGeometry args={[PORTAL_TORUS_MAJOR, PORTAL_TORUS_TUBE, 12, 32]} />
                 <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} />
             </mesh>
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-                <circleGeometry args={[1.2, 32]} />
-                <meshStandardMaterial color={color} transparent opacity={0.35} />
+                <circleGeometry args={[PORTAL_TORUS_MAJOR * 1.15, 32]} />
+                <meshStandardMaterial color={color} transparent opacity={0.28} />
             </mesh>
         </group>
+    );
+}
+
+/** Soft pale ground discs for interact kinds. */
+const STAND_MARKER_COLOR: Record<string, string> = {
+    shop: "#f5e6b8",
+    build: "#c5d8f0",
+    customization: "#edd0e0",
+    talent: "#d9d0f0",
+};
+
+/** Ground-only interact zone — pale disc, no floating markers. */
+function InteractSpot({ x, z, color }: { x: number; z: number; color: string }) {
+    const r = STAND_INTERACT_RADIUS * 0.92;
+    return (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.02, z]} receiveShadow={false}>
+            <circleGeometry args={[r, 48]} />
+            <meshBasicMaterial
+                color={color}
+                transparent
+                opacity={0.32}
+                depthWrite={false}
+                side={THREE.DoubleSide}
+            />
+        </mesh>
     );
 }
 
@@ -114,15 +135,25 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
     useEffect(() => {
         const handler = () => {
             const me = predictedRef.current;
-            const targets = [
-                ...BASE_CITY_STANDS.map((s) => ({ id: s.id, x: s.x, z: s.z })),
-                ...BASE_CITY_PORTALS.map((p) => ({ id: p.id, x: p.x, z: p.z })),
-                { id: "practice_dummy", x: PRACTICE_DUMMY.x, z: PRACTICE_DUMMY.z },
+            const targets: Array<{ id: string; x: number; z: number; radius: number }> = [
+                ...BASE_CITY_STANDS.map((s) => ({
+                    id: s.id,
+                    x: s.x,
+                    z: s.z,
+                    radius: STAND_INTERACT_RADIUS,
+                })),
+                ...BASE_CITY_PORTALS.map((p) => ({
+                    id: p.id,
+                    x: p.x,
+                    z: p.z,
+                    radius: PORTAL_TORUS_MAJOR * 0.85,
+                })),
+                { id: "practice_dummy", x: PRACTICE_DUMMY.x, z: PRACTICE_DUMMY.z, radius: 2.2 },
             ];
             let best: { id: string; d: number } | null = null;
             for (const t of targets) {
                 const d = Math.hypot(me.x - t.x, me.z - t.z);
-                if (d <= 2.5 && (!best || d < best.d)) best = { id: t.id, d };
+                if (d <= t.radius && (!best || d < best.d)) best = { id: t.id, d };
             }
             if (best) onInteract(best.id);
         };
@@ -133,24 +164,22 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
     return (
         <>
             <ambientLight intensity={0.55} />
-            <directionalLight castShadow position={[12, 18, 8]} intensity={1.2} />
-            <Ground />
-            <gridHelper args={[60, 60, "#334155", "#1e293b"]} position={[0, 0.01, 0]} />
+            <FollowSun follow={localPos} intensity={1.2} />
+            <TexturedGround size={HUB_GROUND_SIZE} />
+
+            {HUB_MAP_PROPS.map((prop) => (
+                <HubProp key={prop.id} prop={prop} />
+            ))}
+
+            <CollisionDebugOverlay />
+            <PlacementHelper />
 
             {BASE_CITY_STANDS.map((s) => (
-                <StandMarker
+                <InteractSpot
                     key={s.id}
                     x={s.x}
                     z={s.z}
-                    color={
-                        s.kind === "shop"
-                            ? "#f59e0b"
-                            : s.kind === "build"
-                              ? "#38bdf8"
-                              : s.kind === "talent"
-                                ? "#a78bfa"
-                                : "#fb7185"
-                    }
+                    color={STAND_MARKER_COLOR[s.kind] ?? "#94a3b8"}
                 />
             ))}
 

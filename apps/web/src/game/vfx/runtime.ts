@@ -12,10 +12,12 @@ type Listener = () => void;
 
 const CAST_LIFE_MS: Record<string, number> = {
   bolt: 320,
+  crescent: 260,
 };
 
 const IMPACT_LIFE_MS: Record<string, number> = {
   bolt: 380,
+  crescent: 240,
 };
 
 /**
@@ -82,6 +84,7 @@ class VfxRuntime {
       life,
       followOwnerId: opts?.followOwnerId,
       followSpawnOffset: opts?.followSpawnOffset,
+      variant: opts?.variant,
     };
     this.shots = [...this.shots, shot];
     this.emit();

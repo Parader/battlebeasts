@@ -8,7 +8,9 @@ import {
     SHOP_ITEMS,
     SPELL_SLOTS,
     TALENTS,
+    abilitiesForSlot,
     canAffordCoins,
+    canEquipInSlot,
     formatShopCost,
     formatWallet,
     normalizeLoadout,
@@ -39,7 +41,7 @@ type Props = {
 
 const TITLES: Record<Kind, string> = {
     customization: "Customization",
-    build: "Build",
+    build: "Spells",
     talent: "Talents",
     shop: "Shop",
 };
@@ -49,15 +51,17 @@ export function StandPanel({ kind, onClose, room, economy }: Props) {
     const [draftTalents, setDraftTalents] = useState(() => economy.talents);
     const [selectedSlot, setSelectedSlot] = useState(0);
 
-    const abilityList = useMemo(() => Object.values(ABILITIES), []);
+    const selectedSlotDef = SPELL_SLOTS[selectedSlot];
+    const slotPool = useMemo(
+        () => (selectedSlotDef ? abilitiesForSlot(selectedSlotDef.id) : []),
+        [selectedSlotDef],
+    );
 
     const assignAbility = (abilityId: string) => {
+        const slot = SPELL_SLOTS[selectedSlot];
+        if (!slot || !canEquipInSlot(abilityId, slot.id)) return;
         setDraftLoadout((prev) => {
             const next = [...prev];
-            const existingAt = next.indexOf(abilityId);
-            if (existingAt >= 0 && existingAt !== selectedSlot) {
-                next[existingAt] = next[selectedSlot] ?? abilityId;
-            }
             next[selectedSlot] = abilityId;
             return normalizeLoadout(next);
         });
@@ -113,8 +117,8 @@ export function StandPanel({ kind, onClose, room, economy }: Props) {
                         {kind === "build" && (
                             <div className="space-y-4">
                                 <p className="text-sm text-tertiary">
-                                    Assign one ability per slot (Space is usually movement). Shift+casts
-                                    come later.
+                                    Each hotbar slot has its own spell pool. Pick one spell per slot —
+                                    Q spells cannot go in R, and so on.
                                 </p>
                                 <div className="flex flex-wrap gap-1.5">
                                     {SPELL_SLOTS.map((slot, i) => {
@@ -144,31 +148,38 @@ export function StandPanel({ kind, onClose, room, economy }: Props) {
                                     })}
                                 </div>
                                 <p className="text-xs text-tertiary">
-                                    Editing {SPELL_SLOTS[selectedSlot]?.label} — {SPELL_SLOTS[selectedSlot]?.hint}
+                                    {selectedSlotDef?.label} pool — {selectedSlotDef?.hint} (
+                                    {slotPool.length} available)
                                 </p>
                                 <ul className="max-h-56 space-y-1 overflow-y-auto">
-                                    {abilityList.map((a) => {
-                                        const equipped = draftLoadout[selectedSlot] === a.id;
-                                        return (
-                                            <li key={a.id}>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => assignAbility(a.id)}
-                                                    className={[
-                                                        "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ring-1",
-                                                        equipped
-                                                            ? "bg-brand-solid/15 ring-brand-solid"
-                                                            : "bg-secondary ring-transparent hover:ring-secondary",
-                                                    ].join(" ")}
-                                                >
-                                                    <span className="font-medium text-primary">{a.name}</span>
-                                                    <span className="text-xs text-tertiary">
-                                                        {a.shape} · {a.damage} dmg
-                                                    </span>
-                                                </button>
-                                            </li>
-                                        );
-                                    })}
+                                    {slotPool.length === 0 ? (
+                                        <li className="rounded-lg px-3 py-2 text-sm text-tertiary">
+                                            No spells in this pool yet.
+                                        </li>
+                                    ) : (
+                                        slotPool.map((a) => {
+                                            const equipped = draftLoadout[selectedSlot] === a.id;
+                                            return (
+                                                <li key={a.id}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => assignAbility(a.id)}
+                                                        className={[
+                                                            "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ring-1",
+                                                            equipped
+                                                                ? "bg-brand-solid/15 ring-brand-solid"
+                                                                : "bg-secondary ring-transparent hover:ring-secondary",
+                                                        ].join(" ")}
+                                                    >
+                                                        <span className="font-medium text-primary">{a.name}</span>
+                                                        <span className="text-xs text-tertiary">
+                                                            {a.shape} · {a.damage} dmg
+                                                        </span>
+                                                    </button>
+                                                </li>
+                                            );
+                                        })
+                                    )}
                                 </ul>
                                 <Button
                                     color="primary"

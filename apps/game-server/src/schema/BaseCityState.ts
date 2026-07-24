@@ -24,6 +24,8 @@ export class PlayerState extends Schema {
   /** "" | anticipation | cast | impact | recovery */
   @type("string") castPhase = "";
   @type("string") castAbilityId = "";
+  /** 1-based combo swing index while casting a combo ability; 0 otherwise. */
+  @type("number") castComboHit = 0;
   /** Server epoch ms when current cast phase ends. */
   @type("number") castPhaseEndsAt = 0;
   /** True while inside configured i-frame window. */

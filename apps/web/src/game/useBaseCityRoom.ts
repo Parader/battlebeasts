@@ -4,7 +4,8 @@ import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, normaliz
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst } from "./CombatVfx";
-import { abilityVfxColor, CATALOG_PROJECTILES, spawnImpactEffect } from "./vfx";
+import { abilityVfxColor, CATALOG_PROJECTILES, spawnImpactEffect, usesMeleeSwoopFx, clearCrescentSpawnState } from "./vfx";
+import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     aoe: "#c084fc",
@@ -221,6 +222,8 @@ export function useBaseCityRoom(options: Options) {
                     ownerId?: string;
                     phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
                     phaseEndsAt?: number;
+                    cooldownMs?: number;
+                    comboHit?: number;
                 }) => {
                     const isLocal = msg.ownerId === sessionIdRef.current;
 
@@ -233,52 +236,93 @@ export function useBaseCityRoom(options: Options) {
                                 msg.phase === "interrupt";
                             castPhaseRef.current = ended ? "" : (msg.phase ?? "");
                             castingAbilityRef.current = ended ? null : msg.abilityId;
-                            predictorRef.current.setMoveMulFromPhase(
-                                ended ? undefined : msg.abilityId,
-                                ended ? undefined : msg.phase,
-                            );
 
-                            // Effect + CD + travel start at impact (projectile near full extension)
+                            if (ended) {
+                                predictorRef.current.clearTravel();
+                                // Mirror server: CD → full speed; idle mid-chain → continue slow; else clear
+                                if (typeof msg.cooldownMs === "number") {
+                                    predictorRef.current.clearMoveMul();
+                                } else if (msg.phase === "idle" && ABILITIES[msg.abilityId]?.combo) {
+                                    predictorRef.current.applyComboContinue(msg.abilityId);
+                                } else {
+                                    predictorRef.current.clearMoveMul();
+                                }
+                            } else if (msg.phase) {
+                                predictorRef.current.applyCastMove(msg.abilityId, msg.phase);
+                            }
+
+                            // Effect + travel at impact; CD only when server says so
+                            // (combo mid-chain impacts omit cooldownMs).
                             if (msg.phase === "impact") {
                                 const def = ABILITIES[msg.abilityId];
                                 if (def) {
-                                    const until = Date.now() + def.cooldownMs;
-                                    cooldownUntilRef.current = {
-                                        ...cooldownUntilRef.current,
-                                        [msg.abilityId]: until,
-                                    };
-                                    setCooldownUntil(cooldownUntilRef.current);
                                     predictorRef.current.beginTravelFromCast(
                                         msg.abilityId,
                                         yawRef.current,
                                     );
                                 }
                             }
-                            if (ended) {
-                                // interrupt: keep flying projectiles; only clear local cast/travel anim
-                                predictorRef.current.clearTravel();
+                            if (typeof msg.cooldownMs === "number") {
+                                const until = Date.now() + msg.cooldownMs;
+                                cooldownUntilRef.current = {
+                                    ...cooldownUntilRef.current,
+                                    [msg.abilityId]: until,
+                                };
+                                setCooldownUntil(cooldownUntilRef.current);
                             }
                         }
                         return;
                     }
 
-                    const key = ++fxKeyRef.current;
-                    const life = msg.kind === "hit" ? 280 : msg.kind === "dash" ? 220 : 450;
-                    const tint =
-                        msg.kind === "hit"
-                            ? abilityVfxColor(msg.abilityId, FX_COLORS.hit)
-                            : abilityVfxColor(msg.abilityId, FX_COLORS[msg.kind]);
-                    const burst: FxBurst = {
-                        key,
-                        kind: msg.kind,
-                        x: msg.x,
-                        z: msg.z,
-                        radius: msg.radius ?? (msg.kind === "hit" ? 0.7 : 2.2),
-                        born: performance.now(),
-                        life,
-                        color: tint,
-                    };
-                    setFxBursts((prev) => [...prev.filter((b) => performance.now() - b.born < b.life), burst]);
+                    // Follow-caster swoops skip the legacy ground melee ring.
+                    const skipGroundBurst =
+                        usesMeleeSwoopFx(msg.abilityId) &&
+                        (msg.kind === "melee" || msg.kind === "hit");
+
+                    if (!skipGroundBurst) {
+                        const key = ++fxKeyRef.current;
+                        const life = msg.kind === "hit" ? 280 : msg.kind === "dash" ? 220 : 450;
+                        const tint =
+                            msg.kind === "hit"
+                                ? abilityVfxColor(msg.abilityId, FX_COLORS.hit)
+                                : abilityVfxColor(msg.abilityId, FX_COLORS[msg.kind]);
+                        const burst: FxBurst = {
+                            key,
+                            kind: msg.kind,
+                            x: msg.x,
+                            z: msg.z,
+                            radius: msg.radius ?? (msg.kind === "hit" ? 0.7 : 2.2),
+                            born: performance.now(),
+                            life,
+                            color: tint,
+                        };
+                        setFxBursts((prev) => [
+                            ...prev.filter((b) => performance.now() - b.born < b.life),
+                            burst,
+                        ]);
+                    }
+
+                    if (usesMeleeSwoopFx(msg.abilityId) && msg.ownerId) {
+                        const owner = joined.state?.players?.get(msg.ownerId) as
+                            | { x?: number; z?: number; yaw?: number }
+                            | undefined;
+                        const localOwner = msg.ownerId === sessionIdRef.current;
+                        const yaw = localOwner ? yawRef.current : (owner?.yaw ?? yawRef.current);
+                        const payload = {
+                            x: msg.x,
+                            z: msg.z,
+                            yaw,
+                            ownerId: msg.ownerId,
+                            casterX: localOwner ? predictedRef.current.x : owner?.x,
+                            casterZ: localOwner ? predictedRef.current.z : owner?.z,
+                            comboHit: msg.comboHit,
+                        };
+                        if (msg.kind === "melee") {
+                            notifyCrescentMelee(payload);
+                        } else if (msg.kind === "hit") {
+                            notifyCrescentHit(payload);
+                        }
+                    }
 
                     if (msg.kind === "hit" && CATALOG_PROJECTILES.has(msg.abilityId)) {
                         spawnImpactEffect(msg.abilityId, { x: msg.x, z: msg.z, y: 0.7 });
@@ -329,6 +373,9 @@ export function useBaseCityRoom(options: Options) {
             });
 
             joined.onLeave((code) => {
+                clearCrescentSpawnState();
+                predictorRef.current.clearMoveMul();
+                predictorRef.current.clearTravel();
                 if (transferringRef.current || reconnectingRef.current) return;
                 if (phaseRef.current === "content" && code !== 1000) {
                     void tryContentReconnectRef.current(code).then((ok) => {
@@ -488,7 +535,7 @@ export function useBaseCityRoom(options: Options) {
                 castPhaseRef.current = "";
                 castingAbilityRef.current = null;
                 predictorRef.current.clearTravel();
-                predictorRef.current.setMoveMulFromPhase(undefined, undefined);
+                predictorRef.current.clearMoveMul();
             }
         }
 
@@ -496,7 +543,7 @@ export function useBaseCityRoom(options: Options) {
         awaitingCastAckRef.current = true;
         castPhaseRef.current = "anticipation";
         castingAbilityRef.current = abilityId;
-        predictorRef.current.setMoveMulFromPhase(abilityId, "anticipation");
+        predictorRef.current.applyCastMove(abilityId, "anticipation");
         setCastFlashId(abilityId);
         window.clearTimeout(castFlashTimerRef.current);
         castFlashTimerRef.current = window.setTimeout(() => setCastFlashId(null), 120);
@@ -514,7 +561,7 @@ export function useBaseCityRoom(options: Options) {
         // Optimistic local clear; server confirms via cast_phase cancel
         castPhaseRef.current = "";
         castingAbilityRef.current = null;
-        predictorRef.current.setMoveMulFromPhase(undefined, undefined);
+        predictorRef.current.clearMoveMul();
     }, []);
 
     /** True when a mouse press should cancel instead of starting/queuing a cast. */
@@ -728,6 +775,7 @@ export function useBaseCityRoom(options: Options) {
         return () => {
             cancelled = true;
             transferringRef.current = false;
+            clearCrescentSpawnState();
             roomRef.current?.leave();
             roomRef.current = null;
             clientRef.current = null;
@@ -796,17 +844,24 @@ export function useBaseCityRoom(options: Options) {
                         castPhaseRef.current = serverMe.castPhase;
                         castingAbilityRef.current = serverMe.castAbilityId || null;
                         awaitingCastAckRef.current = false;
-                        predictor.setMoveMulFromPhase(serverMe.castAbilityId, serverMe.castPhase);
+                        if (serverMe.castAbilityId) {
+                            predictor.applyCastMove(serverMe.castAbilityId, serverMe.castPhase);
+                        }
                     } else if (!pendingCastRef.current && !awaitingCastAckRef.current) {
                         castPhaseRef.current = "";
                         castingAbilityRef.current = null;
-                        predictor.setMoveMulFromPhase(undefined, undefined);
+                        // Do not clearMoveMul here — continue-window slow is owned by combat_fx
                     }
                 }
 
                 if (serverMe && predictor.isSeeded && serverMe.lastInputSeq !== lastAckRef.current) {
                     lastAckRef.current = serverMe.lastInputSeq;
-                    predictor.reconcile(serverMe);
+                    predictor.reconcile(
+                        serverMe.x,
+                        serverMe.z,
+                        serverMe.yaw,
+                        serverMe.lastInputSeq,
+                    );
                     predictedRef.current = { ...predictor.state };
                 }
 

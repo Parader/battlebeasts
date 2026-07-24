@@ -17,11 +17,13 @@ import {
   formatCoins,
   formatShopCost,
   formatWallet,
+  HUB_SPAWN,
   normalizeCoins,
   normalizeLoadout,
   PRACTICE_DUMMY,
   resolvePveTransfer,
   spendCoins,
+  STAND_INTERACT_RADIUS,
   baseCityStaticColliders,
   type PlayerInput,
   type Wallet,
@@ -39,7 +41,7 @@ import { takePendingLoot } from "../pendingLoot.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
-const INTERACT_RANGE = 2.5;
+const INTERACT_RANGE = STAND_INTERACT_RADIUS;
 const DUMMY_COOLDOWN_MS = 1500;
 const DUMMY_COPPER_REWARD = 3;
 const DUMMY_HIT_COPPER = 1;
@@ -137,8 +139,8 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     const player = new PlayerState();
     player.id = verified.userId;
     player.displayName = verified.displayName;
-    player.x = (Math.random() - 0.5) * 2;
-    player.z = (Math.random() - 0.5) * 2;
+    player.x = HUB_SPAWN.x + (Math.random() - 0.5) * 1.2;
+    player.z = HUB_SPAWN.z + (Math.random() - 0.5) * 1.2;
     player.loadout = DEFAULT_LOADOUT.join(",");
     player.talents = "";
 

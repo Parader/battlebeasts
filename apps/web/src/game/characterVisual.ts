@@ -3,20 +3,36 @@ import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 
 /** Desired standing height in world meters. */
 export const CHARACTER_TARGET_HEIGHT = 1.7;
-export const CHARACTER_URL = "/character1.glb";
+
+/** Active player / remote avatar GLB (Blender Mixamo export). */
+export const CHARACTER_URL = "/hero.glb";
+
+/**
+ * Preferred surface mesh when the GLB ships multiple skinned bodies
+ * (e.g. SM_Chr_* outfit packs). Beta Mixamo packs ignore this and keep
+ * Beta_Surface visible / Beta_Joints hidden.
+ */
+export const CHARACTER_DEFAULT_MESH = "Beta_Surface";
 
 export type PrepareCharacterOptions = {
   targetHeight?: number;
   /**
    * Idle (or rest) clip used to place feet on the gameplay origin.
-   * Required for dive-bind Mixamo re-exports — bind-pose centering is wrong.
+   * Required when bind-pose centering is wrong (common after retarget).
    */
   restClip?: THREE.AnimationClip | null;
+  /**
+   * Source orientation. Mixamo Z-up packs need a -90° X stand-up;
+   * Blender Y-up exports (hero.glb) leave identity.
+   */
+  upAxis?: "y" | "mixamo-z";
+  /** Visible skinned mesh name (exact). Others are hidden. */
+  visibleMeshName?: string;
 };
 
 /**
- * Clone a Mixamo GLB, stand into Y-up, fit height, plant on y=0, and shift
- * XZ so idle feet sit on the aim-ring origin.
+ * Clone a character GLB, fit height, plant on y=0, and shift XZ so idle
+ * feet sit on the aim-ring origin. Gameplay owns horizontal root motion.
  */
 export function prepareCharacterScene(
   sourceScene: THREE.Object3D,
@@ -25,10 +41,16 @@ export function prepareCharacterScene(
   const opts = typeof options === "number" ? { targetHeight: options } : options;
   const targetHeight = opts.targetHeight ?? CHARACTER_TARGET_HEIGHT;
   const restClip = opts.restClip ?? null;
+  const upAxis = opts.upAxis ?? "y";
+  const visibleMeshName = opts.visibleMeshName ?? CHARACTER_DEFAULT_MESH;
 
   const root = cloneSkinned(sourceScene) as THREE.Object3D;
-  // Stand Mixamo Z-up body into Y-up — only X, never combine with Y here
-  root.rotation.x = -Math.PI / 2;
+  if (upAxis === "mixamo-z") {
+    // Stand Mixamo Z-up body into Y-up — only X, never combine with Y here
+    root.rotation.x = -Math.PI / 2;
+  }
+
+  selectCharacterMesh(root, visibleMeshName);
 
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
@@ -47,8 +69,8 @@ export function prepareCharacterScene(
     }
   });
 
-  // Scale from idle height, not dive-bind — bind bbox is shorter and overshoots.
-  const stance = measureIdleStance(sourceScene, restClip, targetHeight);
+  // Scale from idle height, not bind pose — bind bbox can overshoot.
+  const stance = measureIdleStance(sourceScene, restClip, targetHeight, upAxis, visibleMeshName);
   if (stance) {
     root.scale.setScalar(stance.scale);
     root.position.set(-stance.feetX, -stance.minY, -stance.feetZ);
@@ -67,6 +89,49 @@ export function prepareCharacterScene(
   return root;
 }
 
+/** Keep one outfit mesh visible; hide the rest (multi-pack SM_Chr_* / Beta). */
+export function selectCharacterMesh(root: THREE.Object3D, meshName: string): void {
+  const wanted = meshName.toLowerCase();
+  let hasOutfitPack = false;
+  let matched = false;
+
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const name = mesh.name;
+    const lower = name.toLowerCase();
+
+    // Mixamo Beta: show surface, hide joints helper
+    if (lower.includes("beta_joints")) {
+      mesh.visible = false;
+      return;
+    }
+    if (lower.includes("beta_surface")) {
+      mesh.visible = true;
+      matched = matched || wanted.includes("beta_surface") || wanted === "beta_surface";
+      return;
+    }
+
+    const isChr = name.startsWith("SM_Chr_");
+    if (!isChr) return;
+    hasOutfitPack = true;
+    const show = lower === wanted;
+    mesh.visible = show;
+    if (show) matched = true;
+  });
+
+  if (hasOutfitPack && !matched) {
+    console.warn(`[characterVisual] mesh "${meshName}" not found — showing first SM_Chr_*`);
+    let first = true;
+    root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.name.startsWith("SM_Chr_")) return;
+      mesh.visible = first;
+      first = false;
+    });
+  }
+}
+
 type IdleStance = {
   scale: number;
   feetX: number;
@@ -75,7 +140,7 @@ type IdleStance = {
 };
 
 /**
- * Disposable probe: evaluate rest clip with hips XZ locked, derive scale so
+ * Disposable probe: evaluate rest clip with hips/root XZ locked, derive scale so
  * standing height matches `targetHeight`, then feet mid + ground plant.
  * Never touches the live skeleton/mixer.
  */
@@ -83,14 +148,17 @@ function measureIdleStance(
   sourceScene: THREE.Object3D,
   restClip: THREE.AnimationClip | null,
   targetHeight: number,
+  upAxis: "y" | "mixamo-z",
+  visibleMeshName: string,
 ): IdleStance | null {
   if (!restClip) return null;
 
   const probe = cloneSkinned(sourceScene) as THREE.Object3D;
-  probe.rotation.x = -Math.PI / 2;
+  if (upAxis === "mixamo-z") probe.rotation.x = -Math.PI / 2;
+  selectCharacterMesh(probe, visibleMeshName);
   probe.updateMatrixWorld(true);
 
-  const clip = lockHipsHorizontal(restClip);
+  const clip = lockRootHorizontal(restClip);
   const mixer = new THREE.AnimationMixer(probe);
   const action = mixer.clipAction(clip);
   action.enabled = true;
@@ -119,11 +187,13 @@ function measureIdleStance(
   };
 }
 
-/** Match locomotion: hips.position XZ → 0, keep Y bounce. */
-function lockHipsHorizontal(clip: THREE.AnimationClip): THREE.AnimationClip {
+/** Match locomotion: Root/Hips.position XZ → 0, keep Y bounce. */
+function lockRootHorizontal(clip: THREE.AnimationClip): THREE.AnimationClip {
   const tracks = clip.tracks.map((track) => {
     const bone = track.name.toLowerCase().replace(/[^a-z0-9.]+/g, "");
-    if (!bone.includes("hips") || !bone.endsWith(".position")) return track.clone();
+    const isMover =
+      (bone.includes("hips") || bone.startsWith("root.")) && bone.endsWith(".position");
+    if (!isMover) return track.clone();
     if (track.values.length < 3) return track.clone();
     const next = track.clone();
     for (let i = 0; i < next.values.length; i += 3) {
@@ -156,8 +226,17 @@ export function recenterStanceOnFeet(root: THREE.Object3D): boolean {
 }
 
 function footMidpointWorld(root: THREE.Object3D): { x: number; z: number } | null {
-  const left = findBone(root, "leftfoot");
-  const right = findBone(root, "rightfoot");
+  // Prefer ankles (Blender hero), then Mixamo feet, then balls
+  const left =
+    findBone(root, "ankle_l") ??
+    findBone(root, "leftfoot") ??
+    findBone(root, "ball_l") ??
+    findBone(root, "leftankle");
+  const right =
+    findBone(root, "ankle_r") ??
+    findBone(root, "rightfoot") ??
+    findBone(root, "ball_r") ??
+    findBone(root, "rightankle");
   if (!left || !right) return null;
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
@@ -167,23 +246,30 @@ function footMidpointWorld(root: THREE.Object3D): { x: number; z: number } | nul
 }
 
 function findBone(root: THREE.Object3D, key: string): THREE.Object3D | null {
+  const needle = key.toLowerCase().replace(/[^a-z0-9]/g, "");
   let found: THREE.Object3D | null = null;
   root.traverse((obj) => {
     if (found) return;
-    if (obj.name.toLowerCase().replace(/[^a-z0-9]/g, "").includes(key)) {
+    const name = obj.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (name === needle || name.includes(needle)) {
       found = obj;
     }
   });
   return found;
 }
 
-/** Tint Beta_Surface materials when present. */
+/**
+ * Tint the visible character surface. Supports Mixamo Beta_Surface meshes
+ * and hero.glb materials (lambert1 / any colored material on visible SM_Chr_*).
+ */
 export function tintCharacterSurface(scene: THREE.Object3D, color: string): void {
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.material) return;
+    if (!mesh.isMesh || !mesh.material || !mesh.visible) return;
     const name = mesh.name.toLowerCase();
-    if (!name.includes("surface")) return;
+    const isHeroOutfit = mesh.name.startsWith("SM_Chr_");
+    const isMixamoSurface = name.includes("surface");
+    if (!isHeroOutfit && !isMixamoSurface) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
       const std = m as THREE.MeshStandardMaterial;
