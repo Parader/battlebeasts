@@ -12,12 +12,15 @@ export {
 export {
   CATALOG_PROJECTILES,
   CATALOG_CAST_FX,
+  CATALOG_IMPACT_FX,
   CATALOG_MELEE_SWOOP,
   hasCatalogProjectile,
   hasCatalogCastFx,
+  hasCatalogImpactFx,
   usesMeleeSwoopFx,
   BoltProjectileEffect,
   CrescentCastEffect,
+  CrescentImpactEffect,
   renderOneShot,
 } from "./catalog";
 

@@ -9,6 +9,7 @@ import {
   dashOffset,
   isComboAbility,
   isInIFrameWindow,
+  length2,
   meleeCenter,
   moveAndCollide,
   nextCastPhase,
@@ -21,7 +22,7 @@ import {
   resolveTravel,
   ruptureCenter,
   sampleTravel,
-  sweepMove,
+  sweepTravel,
   tickProjectiles,
   totalCastDurationMs,
   travelDistance,
@@ -140,15 +141,9 @@ export class CombatSystem {
     );
   }
 
-  /** Sweep from → to for dashes / charges. */
-  sweepPlayerPos(sessionId: string, from: Vec2, to: Vec2): Vec2 {
-    return sweepMove(
-      from,
-      to,
-      COLLISION.playerRadius,
-      this.staticColliders,
-      playerCollidersExcept(this.room.state.players.entries(), sessionId),
-    );
+  /** Sweep from → to for dashes / charges (through enemies; stop on walls). */
+  sweepPlayerPos(_sessionId: string, from: Vec2, to: Vec2): Vec2 {
+    return sweepTravel(from, to, COLLISION.playerRadius, this.staticColliders);
   }
 
   /** Force-cancel an in-progress cast (stun / silence). Clears travel too. */
@@ -178,10 +173,10 @@ export class CombatSystem {
     this.phaseFx(sessionId, player, abilityId, "interrupt", now, { cooldownMs });
   }
 
-  ensurePracticeDummy(x: number, z: number) {
-    if (this.room.state.targets.has("practice_dummy")) return;
+  ensurePracticeDummy(x: number, z: number, id = "practice_dummy") {
+    if (this.room.state.targets.has(id)) return;
     const t = new WorldTargetState();
-    t.id = "practice_dummy";
+    t.id = id;
     t.kind = "dummy";
     t.x = x;
     t.z = z;
@@ -305,7 +300,16 @@ export class CombatSystem {
 
     const bodies = this.collectBodies();
     const list = [...this.sims.values()];
-    const { removedIds, hits } = tickProjectiles(list, dt, bodies, (o, t) => this.canHurt(o, t));
+    const walls = this.staticColliders.filter(
+      (c): c is Extract<StaticCollider, { shape: "walls" }> => c.shape === "walls",
+    );
+    const { removedIds, hits } = tickProjectiles(
+      list,
+      dt,
+      bodies,
+      (o, t) => this.canHurt(o, t),
+      walls,
+    );
 
     for (const hit of hits) {
       this.applyDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId);
@@ -490,7 +494,8 @@ export class CombatSystem {
     if (travel.mode === "instant") {
       const dist = travelDistance(def);
       const off = dashOffset(player.yaw, dist);
-      const clamped = this.sweepPlayerPos(sessionId, { x: player.x, z: player.z }, {
+      const from = { x: player.x, z: player.z };
+      const clamped = this.sweepPlayerPos(sessionId, from, {
         x: player.x + off.x,
         z: player.z + off.z,
       });
@@ -499,14 +504,22 @@ export class CombatSystem {
     } else if (travel.mode === "translate") {
       const dist = travelDistance(def);
       const dur = travelDurationMs(def);
+      const from = { x: player.x, z: player.z };
+      const ideal = sampleTravel(from, player.yaw, dist, 1);
+      const clamped = this.sweepPlayerPos(sessionId, from, ideal);
+      const actualDist = length2(clamped.x - from.x, clamped.z - from.z);
+      // Shorten range (and duration) when a wall/solid cuts the path.
+      const scale = dist > 1e-6 ? Math.min(1, actualDist / dist) : 0;
+      const travelDist = dist * scale;
+      const travelDur = Math.max(16, dur * Math.max(0.05, scale));
       this.travels.set(sessionId, {
         abilityId: def.id,
         fromX: player.x,
         fromZ: player.z,
         yaw: player.yaw,
-        distance: dist,
+        distance: travelDist,
         startAt: now,
-        endAt: now + dur,
+        endAt: now + travelDur,
       });
     }
 

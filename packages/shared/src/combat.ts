@@ -1,6 +1,8 @@
 import { ABILITIES, type AbilityDef } from "./abilities";
 import { length2, normalize2 } from "./sim";
 import type { Vec2 } from "./protocol";
+import type { WallCollider } from "./collision";
+import { projectileHitsWalls } from "./collision";
 
 export const COMBAT = {
   playerHitRadius: 0.55,
@@ -156,21 +158,31 @@ export type ProjectileTickResult = {
   hits: { projectileId: string; ownerId: string; abilityId: string; targetId: string; damage: number; hpAfter: number; x: number; z: number }[];
 };
 
-/** Advance projectiles; mutates projectile positions and hitIds. */
+/** Advance projectiles; mutates projectile positions and hitIds.
+ *  Wall collisions despawn without a damage hit (no hit VFX).
+ */
 export function tickProjectiles(
   projectiles: ProjectileSim[],
   dt: number,
   bodies: CombatBody[],
   canHurt: (ownerId: string, targetId: string) => boolean,
+  walls: readonly WallCollider[] = [],
 ): ProjectileTickResult {
   const removedIds: string[] = [];
   const hits: ProjectileTickResult["hits"] = [];
 
   for (const p of projectiles) {
+    const fromX = p.x;
+    const fromZ = p.z;
     p.x += p.vx * dt;
     p.z += p.vz * dt;
     p.life -= dt;
     if (p.life <= 0) {
+      removedIds.push(p.id);
+      continue;
+    }
+
+    if (walls.length > 0 && projectileHitsWalls(fromX, fromZ, p.x, p.z, p.hitRadius, walls)) {
       removedIds.push(p.id);
       continue;
     }

@@ -17,7 +17,7 @@ const CAST_LIFE_MS: Record<string, number> = {
 
 const IMPACT_LIFE_MS: Record<string, number> = {
   bolt: 380,
-  crescent: 240,
+  crescent: 320,
 };
 
 /**

@@ -3,18 +3,78 @@ import {
   BASE_CITY_PORTALS,
   BASE_CITY_STANDS,
   HUB_WORLD_SCALE,
+  HUB_SPAWN_FALLBACK,
   PORTAL_RING_COLLIDE_RADIUS,
   PORTAL_TORUS_MAJOR,
   PRACTICE_DUMMY,
+  type InteractZone,
   type PortalPadDef,
+  type StandDef,
 } from "./stands";
-import type { CircleCollider, MeshCollider, StaticCollider } from "./collision";
+import type { CircleCollider, MeshCollider, StaticCollider, WallCollider } from "./collision";
 import { COLLISION, decodeMeshMask } from "./collision";
-import villageProps from "./maps/main_village.props.json";
+import villageMarkers from "./maps/main_village.markers.json";
+import villageWalls from "./maps/main_village.walls.json";
 
 export { HUB_WORLD_SCALE };
+export {
+  pointInInteractZone,
+  interactZoneDist,
+  type InteractZone,
+} from "./stands";
 
-/** Baked mesh footprint at asset scale=1 (see scripts/bake-hub-colliders.mjs). */
+/** Single-scene hub visual (Blender Collection → glTF). */
+export const HUB_SCENE_URL = "/assets/maps/village.glb";
+
+/**
+ * Blender village is authored at oversized RTS placement sizes.
+ * Uniform scale for the GLB + markers + wall segments (keep in sync).
+ */
+export const HUB_SCENE_SCALE = 0.2;
+
+type MarkerDoc = {
+  version?: number;
+  markers?: Array<{
+    id: string;
+    kind: string;
+    x: number;
+    z: number;
+    halfX?: number;
+    halfZ?: number;
+    rotationY?: number;
+    label?: string | null;
+  }>;
+};
+
+type WallsDoc = {
+  version?: number;
+  walls?: Array<{
+    id: string;
+    segs: number[];
+  }>;
+};
+
+const markersDoc = villageMarkers as MarkerDoc;
+const wallsDoc = villageWalls as WallsDoc;
+const S = HUB_SCENE_SCALE;
+/** Fallback pad when a marker has no empty box size. */
+const DEFAULT_HALF = 2.15;
+
+function sx(v: number) {
+  return v * S;
+}
+
+function zoneFromMarker(m: NonNullable<MarkerDoc["markers"]>[number]): InteractZone {
+  return {
+    x: sx(m.x),
+    z: sx(m.z),
+    halfX: sx(m.halfX ?? DEFAULT_HALF / S),
+    halfZ: sx(m.halfZ ?? DEFAULT_HALF / S),
+    rotationY: m.rotationY ?? 0,
+  };
+}
+
+/** Baked mesh footprint at asset scale=1 (legacy prop bake; unused by scene hub). */
 export type PropMeshLocal = {
   ox: number;
   oz: number;
@@ -30,9 +90,8 @@ export type PropMeshLocal = {
 };
 
 /**
- * Prop from Blender `map.json` import (see scripts/import-village-map.mjs).
- * Mesh colliders baked via scripts/bake-hub-colliders.mjs.
- * Positions/scales already include HUB_WORLD_SCALE at runtime.
+ * Legacy per-prop placement (kept for types / stand fallback helpers).
+ * Hub visuals now come from {@link HUB_SCENE_URL}.
  */
 export type HubPropPlacement = {
   id: string;
@@ -41,11 +100,10 @@ export type HubPropPlacement = {
   z: number;
   scale: number;
   rotationY: number | "faceOrigin";
-  /** Mesh footprint collider in local space (scale=1). Absent = no solid. */
   mesh?: PropMeshLocal;
 };
 
-/** Interactive stands ↔ buildings in the Blender village map. */
+/** Interactive stands ↔ buildings (legacy id map). */
 export const STAND_MAP_OBJECT_ID: Record<StandKind, string> = {
   shop: "modified_stand3",
   build: "Barracks_SecondAge_Level2",
@@ -53,37 +111,112 @@ export const STAND_MAP_OBJECT_ID: Record<StandKind, string> = {
   talent: "Temple_SecondAge_Level1",
 };
 
-const S = HUB_WORLD_SCALE;
+function interactsOf(kind: string) {
+  return (markersDoc.markers ?? []).filter((i) => i.kind === kind);
+}
 
-/** All decorative + building props from the imported map (world-scaled). */
-export const HUB_MAP_PROPS: HubPropPlacement[] = villageProps.props.map((p) => {
-  const raw = p as {
-    id: string;
-    file: string;
-    x: number;
-    z: number;
-    scale: number;
-    rotationY: number;
-    mesh?: PropMeshLocal;
-  };
-  return {
-    id: raw.id,
-    file: raw.file,
-    x: raw.x * S,
-    z: raw.z * S,
-    scale: raw.scale * S,
-    rotationY: raw.rotationY,
-    mesh: raw.mesh,
-  };
+function firstInteract(kind: string) {
+  return interactsOf(kind)[0];
+}
+
+/** @deprecated Hub renders {@link HUB_SCENE_URL} instead of per-prop GLBs. */
+export const HUB_MAP_PROPS: HubPropPlacement[] = [];
+
+/**
+ * @deprecated Prefer oriented {@link InteractZone} half-extents from empty boxes.
+ * Kept as a rough radius fallback for legacy callers.
+ */
+export const STAND_INTERACT_RADIUS = DEFAULT_HALF;
+
+/** Ground plane size from markers + wall extents. */
+function computeGroundSize(): number {
+  let max = 40;
+  for (const m of markersDoc.markers ?? []) {
+    max = Math.max(max, Math.abs(sx(m.x)), Math.abs(sx(m.z)));
+  }
+  for (const w of wallsDoc.walls ?? []) {
+    for (let i = 0; i < w.segs.length; i++) {
+      max = Math.max(max, Math.abs(sx(w.segs[i]!)));
+    }
+  }
+  return Math.max(40, Math.ceil(max * 2 + 24));
+}
+
+export const HUB_GROUND_SIZE = computeGroundSize();
+
+const STAND_KIND_TO_ID: Record<StandKind, string> = {
+  shop: "stand_shop",
+  build: "stand_build",
+  customization: "stand_customization",
+  talent: "stand_talent",
+};
+
+/** Stands driven by Blender Interact empties when present. */
+export const HUB_STANDS: StandDef[] = (["shop", "build", "customization", "talent"] as StandKind[]).map(
+  (kind) => {
+    const fromMap = firstInteract(kind);
+    const fallback = BASE_CITY_STANDS.find((s) => s.kind === kind)!;
+    if (fromMap) {
+      return {
+        id: STAND_KIND_TO_ID[kind],
+        kind,
+        label: fromMap.label ?? fallback.label,
+        ...zoneFromMarker(fromMap),
+      };
+    }
+    return fallback;
+  },
+);
+
+/** Portals from map Interact markers. */
+export const HUB_PORTALS: PortalPadDef[] = (
+  [
+    { kind: "portal_pvp", id: "portal_pvp", label: "PvP Portal", fallbackKind: "pvp" },
+    { kind: "portal_pve", id: "portal_pve", label: "PvE Portal", fallbackKind: "pve" },
+  ] as const
+).map((spec) => {
+  const fromMap = firstInteract(spec.kind);
+  const fallback = BASE_CITY_PORTALS.find((p) => p.id === spec.id)!;
+  if (fromMap) {
+    return {
+      id: spec.id,
+      kind: spec.fallbackKind,
+      label: fromMap.label ?? spec.label,
+      ...zoneFromMarker(fromMap),
+    };
+  }
+  return fallback;
 });
 
-/** Interact distance around stand markers / portals (character-scale). */
-export const STAND_INTERACT_RADIUS = 2.15;
+const spawnIx = firstInteract("spawn");
+export const HUB_SPAWN = spawnIx
+  ? { x: sx(spawnIx.x), z: sx(spawnIx.z) }
+  : { ...HUB_SPAWN_FALLBACK };
 
-/** Ground plane edge length covering the scaled village + margin. */
-export const HUB_GROUND_SIZE = 28 * S;
+export type PracticeDummyDef = InteractZone & { id: string };
 
-/** Vertical portal torus (XY plane): only the left/right legs block on XZ. Center stays open. */
+const dummyMarks = interactsOf("dummy");
+export const HUB_PRACTICE_DUMMIES: PracticeDummyDef[] =
+  dummyMarks.length > 0
+    ? dummyMarks.map((d, i) => ({
+        id: i === 0 ? "practice_dummy" : `practice_dummy_${i}`,
+        ...zoneFromMarker(d),
+      }))
+    : [
+        {
+          id: "practice_dummy",
+          x: PRACTICE_DUMMY.x,
+          z: PRACTICE_DUMMY.z,
+          halfX: DEFAULT_HALF,
+          halfZ: DEFAULT_HALF,
+          rotationY: 0,
+        },
+      ];
+
+/** @deprecated Prefer HUB_PRACTICE_DUMMIES — first dummy for single-target APIs. */
+export const HUB_PRACTICE_DUMMY = HUB_PRACTICE_DUMMIES[0]!;
+
+/** Vertical portal torus: only left/right legs block on XZ. */
 export function portalRingColliders(portal: PortalPadDef): CircleCollider[] {
   return [
     {
@@ -106,7 +239,6 @@ function yawOf(prop: HubPropPlacement): number {
   return prop.rotationY;
 }
 
-/** Place a baked mesh footprint into world space. */
 export function propToMeshCollider(prop: HubPropPlacement): MeshCollider | null {
   if (!prop.mesh) return null;
   const m = prop.mesh;
@@ -131,38 +263,36 @@ export function propToMeshCollider(prop: HubPropPlacement): MeshCollider | null 
   };
 }
 
-export function hubStandProps(): HubPropPlacement[] {
-  const byId = new Map(HUB_MAP_PROPS.map((p) => [p.id, p]));
-  return BASE_CITY_STANDS.map((s) => {
-    const id = STAND_MAP_OBJECT_ID[s.kind];
-    const fromMap = byId.get(id.replace(/[^a-zA-Z0-9_]/g, "_")) ?? byId.get(id);
-    if (fromMap) return fromMap;
-    return {
-      id: s.id,
-      file: "modified/stand1.glb",
-      x: s.x,
-      z: s.z,
-      scale: S,
-      rotationY: "faceOrigin" as const,
-    };
-  });
+export function hubWallColliders(): WallCollider[] {
+  return (wallsDoc.walls ?? []).map((w) => ({
+    id: w.id,
+    shape: "walls" as const,
+    segs: Float32Array.from(w.segs.map(sx)),
+  }));
 }
 
-/** All solid hub obstacles for movement (map props + dummy + portal rings). */
+export function hubStandProps(): HubPropPlacement[] {
+  return HUB_STANDS.map((s) => ({
+    id: s.id,
+    file: "modified/stand1.glb",
+    x: s.x,
+    z: s.z,
+    scale: 1,
+    rotationY: "faceOrigin" as const,
+  }));
+}
+
+/** All solid hub obstacles for movement (Bezier walls + dummies + portal rings). */
 export function hubStaticColliders(): StaticCollider[] {
-  const fromMap: StaticCollider[] = [];
-  for (const p of HUB_MAP_PROPS) {
-    const mesh = propToMeshCollider(p);
-    if (mesh) fromMap.push(mesh);
-  }
+  const walls = hubWallColliders();
   const circles: CircleCollider[] = [
-    {
-      id: "practice_dummy",
-      x: PRACTICE_DUMMY.x,
-      z: PRACTICE_DUMMY.z,
+    ...HUB_PRACTICE_DUMMIES.map((d) => ({
+      id: d.id,
+      x: d.x,
+      z: d.z,
       radius: COLLISION.dummyRadius,
-    },
-    ...BASE_CITY_PORTALS.flatMap(portalRingColliders),
+    })),
+    ...HUB_PORTALS.flatMap(portalRingColliders),
   ];
-  return [...circles, ...fromMap];
+  return [...circles, ...walls];
 }

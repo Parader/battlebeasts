@@ -4,7 +4,7 @@ import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, normaliz
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst } from "./CombatVfx";
-import { abilityVfxColor, CATALOG_PROJECTILES, spawnImpactEffect, usesMeleeSwoopFx, clearCrescentSpawnState } from "./vfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, usesMeleeSwoopFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
@@ -324,8 +324,22 @@ export function useBaseCityRoom(options: Options) {
                         }
                     }
 
-                    if (msg.kind === "hit" && CATALOG_PROJECTILES.has(msg.abilityId)) {
-                        spawnImpactEffect(msg.abilityId, { x: msg.x, z: msg.z, y: 0.7 });
+                    if (msg.kind === "hit" && CATALOG_IMPACT_FX.has(msg.abilityId)) {
+                        const y = msg.abilityId === "crescent" ? 1.05 : 0.7;
+                        let yaw = 0;
+                        if (msg.ownerId) {
+                            const owner = joined.state?.players?.get(msg.ownerId) as
+                                | { yaw?: number }
+                                | undefined;
+                            const localOwner = msg.ownerId === sessionIdRef.current;
+                            yaw = localOwner ? yawRef.current : (owner?.yaw ?? 0);
+                        }
+                        spawnImpactEffect(msg.abilityId, {
+                            x: msg.x,
+                            z: msg.z,
+                            y,
+                            yaw,
+                        });
                     }
                 },
             );

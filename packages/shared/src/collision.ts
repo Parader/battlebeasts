@@ -54,7 +54,14 @@ export type MeshCollider = {
   segs: Float32Array;
 };
 
-export type StaticCollider = CircleCollider | BoxCollider | MeshCollider;
+/** Thin walls from Blender Bezier curves — world XZ segments [ax,az,bx,bz,...]. */
+export type WallCollider = {
+  id: string;
+  shape: "walls";
+  segs: Float32Array;
+};
+
+export type StaticCollider = CircleCollider | BoxCollider | MeshCollider | WallCollider;
 
 /** Hub solids live in hubVillage (buildings / trees / rocks / stands). */
 export { hubStaticColliders as baseCityStaticColliders } from "./hubVillage";
@@ -65,6 +72,10 @@ function isBox(c: StaticCollider): c is BoxCollider {
 
 function isMesh(c: StaticCollider): c is MeshCollider {
   return c.shape === "mesh";
+}
+
+function isWalls(c: StaticCollider): c is WallCollider {
+  return c.shape === "walls";
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -283,8 +294,176 @@ export function separateFromMesh(pos: Vec2, radius: number, mesh: MeshCollider):
   return localToWorldXZ(mesh.x, mesh.z, mesh.yaw, lx, lz);
 }
 
+/** Squared distance from point to segment AB on XZ. */
+export function distPointToSegmentSq(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): number {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const apx = px - ax;
+  const apz = pz - az;
+  const abLenSq = abx * abx + abz * abz;
+  let t = abLenSq > 1e-12 ? (apx * abx + apz * abz) / abLenSq : 0;
+  t = clamp(t, 0, 1);
+  const cx = ax + abx * t;
+  const cz = az + abz * t;
+  const dx = px - cx;
+  const dz = pz - cz;
+  return dx * dx + dz * dz;
+}
+
+/** True if circle overlaps any segment of a wall polyline. */
+export function circleHitsWall(x: number, z: number, radius: number, wall: WallCollider): boolean {
+  const r2 = radius * radius;
+  const segs = wall.segs;
+  for (let i = 0; i < segs.length; i += 4) {
+    if (distPointToSegmentSq(x, z, segs[i]!, segs[i + 1]!, segs[i + 2]!, segs[i + 3]!) <= r2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Segment-segment intersection (XZ), excluding near-parallel misses. */
+function segmentsCross(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  cx: number,
+  cz: number,
+  dx: number,
+  dz: number,
+): boolean {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const cdx = dx - cx;
+  const cdz = dz - cz;
+  const acx = cx - ax;
+  const acz = cz - az;
+  const den = abx * cdz - abz * cdx;
+  if (Math.abs(den) < 1e-12) return false;
+  const t = (acx * cdz - acz * cdx) / den;
+  const u = (acx * abz - acz * abx) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
+
+/**
+ * Projectile blocked by world walls (not players/dummies).
+ * Checks end position + sweep of the travel segment against wall polylines.
+ */
+export function projectileHitsWalls(
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  radius: number,
+  walls: readonly WallCollider[],
+): boolean {
+  for (const wall of walls) {
+    if (circleHitsWall(toX, toZ, radius, wall)) return true;
+    const segs = wall.segs;
+    for (let i = 0; i < segs.length; i += 4) {
+      if (
+        segmentsCross(
+          fromX,
+          fromZ,
+          toX,
+          toZ,
+          segs[i]!,
+          segs[i + 1]!,
+          segs[i + 2]!,
+          segs[i + 3]!,
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function circleHitsAnyWall(
+  x: number,
+  z: number,
+  radius: number,
+  walls: readonly WallCollider[],
+): boolean {
+  for (const wall of walls) {
+    if (circleHitsWall(x, z, radius, wall)) return true;
+  }
+  return false;
+}
+
+/**
+ * Last free progress t∈[0,1] along from→to before a wall blocks the circle.
+ * Thin walls can be skipped by push-out (flip to far side); this ray test stops that.
+ * Returns null when the full segment is clear.
+ */
+export function lastFreeTBeforeWalls(
+  from: Vec2,
+  to: Vec2,
+  radius: number,
+  walls: readonly WallCollider[],
+): number | null {
+  if (!walls.length) return null;
+  if (circleHitsAnyWall(from.x, from.z, radius, walls)) return 0;
+  if (!projectileHitsWalls(from.x, from.z, to.x, to.z, radius, walls)) return null;
+
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) * 0.5;
+    const mx = from.x + (to.x - from.x) * mid;
+    const mz = from.z + (to.z - from.z) * mid;
+    if (projectileHitsWalls(from.x, from.z, mx, mz, radius, walls)) hi = mid;
+    else lo = mid;
+  }
+  return lo;
+}
+
+/** Clamp a desired end pose so the path does not cross / embed in walls. */
+export function clampTargetBeforeWalls(
+  from: Vec2,
+  to: Vec2,
+  radius: number,
+  walls: readonly WallCollider[],
+): Vec2 {
+  const t = lastFreeTBeforeWalls(from, to, radius, walls);
+  if (t == null) return to;
+  if (t <= 1e-8) return { x: from.x, z: from.z };
+  return {
+    x: from.x + (to.x - from.x) * t,
+    z: from.z + (to.z - from.z) * t,
+  };
+}
+
+/** Circle vs world-space wall polylines (Blender CollisionWalls curves). */
+export function separateFromWalls(pos: Vec2, radius: number, wall: WallCollider): Vec2 {
+  let lx = pos.x;
+  let lz = pos.z;
+  let moved = false;
+  const segs = wall.segs;
+  for (let i = 0; i < segs.length; i += 4) {
+    const r = pushFromSegment(lx, lz, radius, segs[i]!, segs[i + 1]!, segs[i + 2]!, segs[i + 3]!);
+    if (r.hit) {
+      lx = r.lx;
+      lz = r.lz;
+      moved = true;
+    }
+  }
+  if (!moved) return pos;
+  return { x: lx, z: lz };
+}
+
 function separateFromStatic(pos: Vec2, radius: number, obstacle: StaticCollider): Vec2 {
   if (isMesh(obstacle)) return separateFromMesh(pos, radius, obstacle);
+  if (isWalls(obstacle)) return separateFromWalls(pos, radius, obstacle);
   if (isBox(obstacle)) return separateFromBox(pos, radius, obstacle);
   return separateFromCircle(pos, radius, obstacle);
 }
@@ -333,6 +512,35 @@ export function playerCollidersExcept(
   return out;
 }
 
+/** Unit / dummy bodies — dashes pass through these; walking does not. */
+export function isUnitObstacle(c: { id: string; shape?: string }): boolean {
+  if (c.id.startsWith("practice_dummy")) return true;
+  return false;
+}
+
+/**
+ * World solids that block forced travel (dash / charge / blink).
+ * Excludes unit circles so movement abilities go through enemies.
+ */
+export function collidersBlockingTravel(
+  staticColliders: readonly StaticCollider[],
+): StaticCollider[] {
+  return staticColliders.filter((c) => !isUnitObstacle(c));
+}
+
+/**
+ * Sweep for dashes / charges: blocked by walls & world props, passes through units.
+ */
+export function sweepTravel(
+  from: Vec2,
+  to: Vec2,
+  radius: number,
+  staticColliders: readonly StaticCollider[],
+  maxStep = 0.22,
+): Vec2 {
+  return sweepMove(from, to, radius, collidersBlockingTravel(staticColliders), [], maxStep);
+}
+
 /** Move then collide — shared by server tick + client prediction. */
 export function moveAndCollide(
   from: Vec2,
@@ -369,6 +577,7 @@ export function moveAndCollide(
 
 /**
  * Sweep `from` → `to` in small steps so dashes can't teleport through solids.
+ * Walls are hard-clamped along the ray first (thin polylines flip push-out otherwise).
  * Stops early when a step is mostly blocked.
  */
 export function sweepMove(
@@ -379,8 +588,11 @@ export function sweepMove(
   dynamicColliders: readonly CircleCollider[] = [],
   maxStep = 0.22,
 ): Vec2 {
-  const dx = to.x - from.x;
-  const dz = to.z - from.z;
+  const walls = staticColliders.filter(isWalls);
+  const target = clampTargetBeforeWalls(from, to, radius, walls);
+
+  const dx = target.x - from.x;
+  const dz = target.z - from.z;
   const dist = length2(dx, dz);
   if (dist < 1e-8) {
     return resolveCollisions(from, radius, staticColliders, dynamicColliders);
@@ -391,9 +603,21 @@ export function sweepMove(
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const desired = { x: from.x + dx * t, z: from.z + dz * t };
+    // Re-check walls each step so sliding around other solids can't re-enter a wall cut.
+    if (walls.length && projectileHitsWalls(p.x, p.z, desired.x, desired.z, radius, walls)) {
+      break;
+    }
     const next = moveAndCollide(p, desired, radius, staticColliders, dynamicColliders);
     const moved = length2(next.x - p.x, next.z - p.z);
     const want = length2(desired.x - p.x, desired.z - p.z);
+    // Reject wall flip-through: push landed on the far side of a thin wall.
+    if (
+      walls.length &&
+      moved > 1e-4 &&
+      projectileHitsWalls(p.x, p.z, next.x, next.z, radius, walls)
+    ) {
+      break;
+    }
     p = next;
     if (want > 1e-4 && moved < want * 0.2) break;
   }

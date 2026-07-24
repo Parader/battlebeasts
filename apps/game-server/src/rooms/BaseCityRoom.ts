@@ -12,19 +12,19 @@ import {
   addCoins,
   applyMovement,
   applyYaw,
-  BASE_CITY_PORTALS,
-  BASE_CITY_STANDS,
   formatCoins,
   formatShopCost,
   formatWallet,
+  HUB_PORTALS,
+  HUB_PRACTICE_DUMMIES,
   HUB_SPAWN,
+  HUB_STANDS,
   normalizeCoins,
   normalizeLoadout,
-  PRACTICE_DUMMY,
   resolvePveTransfer,
   spendCoins,
-  STAND_INTERACT_RADIUS,
   baseCityStaticColliders,
+  pointInInteractZone,
   type PlayerInput,
   type Wallet,
 } from "@battlebeasts/shared";
@@ -41,7 +41,6 @@ import { takePendingLoot } from "../pendingLoot.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
-const INTERACT_RANGE = STAND_INTERACT_RADIUS;
 const DUMMY_COOLDOWN_MS = 1500;
 const DUMMY_COPPER_REWARD = 3;
 const DUMMY_HIT_COPPER = 1;
@@ -60,7 +59,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     this.combat = new CombatSystem(this as never, {
       canHurtPlayers: false,
       onTargetDamaged: (targetId, _damage, attackerSessionId) => {
-        if (targetId !== "practice_dummy") return;
+        if (!targetId.startsWith("practice_dummy")) return;
         const player = this.state.players.get(attackerSessionId);
         const client = this.clients.find((c) => c.sessionId === attackerSessionId);
         if (!player || !client) return;
@@ -72,7 +71,9 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         this.sendInventory(client, player);
       },
     });
-    this.combat.ensurePracticeDummy(PRACTICE_DUMMY.x, PRACTICE_DUMMY.z);
+    for (const d of HUB_PRACTICE_DUMMIES) {
+      this.combat.ensurePracticeDummy(d.x, d.z, d.id);
+    }
     this.combat.setStaticColliders(baseCityStaticColliders());
     this.setPatchRate(1000 / 30);
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
@@ -446,28 +447,27 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     const client = this.clients.find((c) => c.sessionId === sessionId);
     if (!client) return;
 
-    const stand = BASE_CITY_STANDS.find((s) => s.id === interactId);
+    const stand = HUB_STANDS.find((s) => s.id === interactId);
     if (stand) {
-      const dist = Math.hypot(player.x - stand.x, player.z - stand.z);
-      if (dist <= INTERACT_RANGE) {
+      if (pointInInteractZone(player.x, player.z, stand)) {
         client.send("ui", { ui: stand.kind });
         this.sendInventory(client, player);
       }
       return;
     }
 
-    const portal = BASE_CITY_PORTALS.find((p) => p.id === interactId);
+    const portal = HUB_PORTALS.find((p) => p.id === interactId);
     if (portal) {
-      const dist = Math.hypot(player.x - portal.x, player.z - portal.z);
-      if (dist <= INTERACT_RANGE) {
+      if (pointInInteractZone(player.x, player.z, portal)) {
         client.send("ui", { ui: portal.id === "portal_pvp" ? "portal_pvp" : "portal_pve" });
       }
       return;
     }
 
-    if (interactId === INTERACT.PRACTICE_DUMMY) {
-      const d = Math.hypot(player.x - PRACTICE_DUMMY.x, player.z - PRACTICE_DUMMY.z);
-      if (d > INTERACT_RANGE) return;
+    const dummy = HUB_PRACTICE_DUMMIES.find((d) => d.id === interactId);
+    if (dummy || interactId === INTERACT.PRACTICE_DUMMY) {
+      const target = dummy ?? HUB_PRACTICE_DUMMIES[0]!;
+      if (!pointInInteractZone(player.x, player.z, target)) return;
 
       const until = this.dummyCooldownUntil.get(sessionId) ?? 0;
       if (now < until) {

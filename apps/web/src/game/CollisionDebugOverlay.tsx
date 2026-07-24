@@ -1,22 +1,44 @@
 import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
+import { Html } from "@react-three/drei";
 import {
   baseCityStaticColliders,
   localToWorldXZ,
   type MeshCollider,
   type StaticCollider,
+  type WallCollider,
 } from "@battlebeasts/shared";
 
-const Y = 0.08;
+/** Draw above meadow tiles so walls are obvious. */
+const Y = 0.55;
 
 function isMesh(c: StaticCollider): c is MeshCollider {
   return c.shape === "mesh";
+}
+
+function isWalls(c: StaticCollider): c is WallCollider {
+  return c.shape === "walls";
 }
 
 function buildLineGeometry(colliders: readonly StaticCollider[]): THREE.BufferGeometry {
   const positions: number[] = [];
 
   for (const c of colliders) {
+    if (isWalls(c)) {
+      const segs = c.segs;
+      for (let i = 0; i < segs.length; i += 4) {
+        const ax = segs[i]!;
+        const az = segs[i + 1]!;
+        const bx = segs[i + 2]!;
+        const bz = segs[i + 3]!;
+        // Top edge
+        positions.push(ax, Y, az, bx, Y, bz);
+        // Vertical posts so walls read in a top-down camera
+        positions.push(ax, 0.02, az, ax, Y, az);
+      }
+      continue;
+    }
+
     if (isMesh(c)) {
       const s = c.scale;
       const segs = c.segs;
@@ -62,60 +84,44 @@ function buildLineGeometry(colliders: readonly StaticCollider[]): THREE.BufferGe
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  return geo;
-}
-
-function buildFillGeometry(colliders: readonly StaticCollider[]): THREE.BufferGeometry {
-  const positions: number[] = [];
-  const fy = Y * 0.5;
-
-  for (const c of colliders) {
-    if (!isMesh(c)) continue;
-    const s = c.scale;
-    const cell = c.cell * s;
-    for (let row = 0; row < c.rows; row++) {
-      for (let col = 0; col < c.cols; col++) {
-        const bit = row * c.cols + col;
-        if ((c.mask[bit >> 3]! & (1 << (bit & 7))) === 0) continue;
-        const lx0 = (c.ox + col * c.cell) * s;
-        const lz0 = (c.oz + row * c.cell) * s;
-        const lx1 = lx0 + cell;
-        const lz1 = lz0 + cell;
-        const q = [
-          localToWorldXZ(c.x, c.z, c.yaw, lx0, lz0),
-          localToWorldXZ(c.x, c.z, c.yaw, lx1, lz0),
-          localToWorldXZ(c.x, c.z, c.yaw, lx1, lz1),
-          localToWorldXZ(c.x, c.z, c.yaw, lx0, lz1),
-        ];
-        positions.push(
-          q[0]!.x, fy, q[0]!.z,
-          q[1]!.x, fy, q[1]!.z,
-          q[2]!.x, fy, q[2]!.z,
-          q[0]!.x, fy, q[0]!.z,
-          q[2]!.x, fy, q[2]!.z,
-          q[3]!.x, fy, q[3]!.z,
-        );
-      }
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.computeBoundingSphere();
   return geo;
 }
 
 /**
- * Draws hub collision footprints (mesh edges + solid fill + circles).
- * Toggle with F3, or `window.__bbToggleCollision()`.
+ * Draws hub collision (Bezier walls + circles).
+ * Toggle with F9 (F3 is often stolen by the browser), or `window.__bbToggleCollision()`.
  */
 export function CollisionDebugOverlay() {
   const [visible, setVisible] = useState(false);
   const colliders = useMemo(() => baseCityStaticColliders(), []);
+  const summary = useMemo(() => {
+    let walls = 0;
+    let wallSegs = 0;
+    let circles = 0;
+    let meshes = 0;
+    for (const c of colliders) {
+      if (isWalls(c)) {
+        walls++;
+        wallSegs += c.segs.length / 4;
+      } else if (isMesh(c)) meshes++;
+      else if (c.shape === "box") {
+        /* skip */
+      } else circles++;
+    }
+    return { total: colliders.length, walls, wallSegs, circles, meshes };
+  }, [colliders]);
 
   useEffect(() => {
-    const toggle = () => setVisible((v) => !v);
+    const toggle = () =>
+      setVisible((v) => {
+        const next = !v;
+        console.info("[collision debug]", next ? "ON" : "OFF", summary);
+        return next;
+      });
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === "F3") {
+      // F3 opens browser find; F9 is free. Keep F3 with preventDefault as backup.
+      if (e.code === "F9" || e.code === "F3") {
         e.preventDefault();
         toggle();
       }
@@ -126,34 +132,42 @@ export function CollisionDebugOverlay() {
       window.removeEventListener("keydown", onKey);
       delete (window as unknown as { __bbToggleCollision?: () => void }).__bbToggleCollision;
     };
-  }, []);
+  }, [summary]);
 
   const lineGeo = useMemo(() => buildLineGeometry(colliders), [colliders]);
-  const fillGeo = useMemo(() => buildFillGeometry(colliders), [colliders]);
 
   useEffect(() => {
     return () => {
       lineGeo.dispose();
-      fillGeo.dispose();
     };
-  }, [lineGeo, fillGeo]);
+  }, [lineGeo]);
 
   if (!visible) return null;
 
   return (
     <group>
-      <mesh geometry={fillGeo} frustumCulled={false}>
-        <meshBasicMaterial
-          color="#f97316"
-          transparent
-          opacity={0.28}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      <lineSegments geometry={lineGeo} frustumCulled={false}>
-        <lineBasicMaterial color="#fb923c" depthTest={false} />
+      <lineSegments geometry={lineGeo} frustumCulled={false} renderOrder={10}>
+        <lineBasicMaterial color="#ff2d6a" depthTest={false} toneMapped={false} />
       </lineSegments>
+      <Html fullscreen style={{ pointerEvents: "none" }}>
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            left: 12,
+            padding: "6px 10px",
+            background: "rgba(0,0,0,0.65)",
+            color: "#ff8fb3",
+            font: "12px/1.35 ui-monospace, monospace",
+            borderRadius: 6,
+          }}
+        >
+          collision debug (F9)
+          <br />
+          walls {summary.walls} · segs {summary.wallSegs} · circles {summary.circles}
+          {summary.meshes ? ` · meshes ${summary.meshes}` : ""}
+        </div>
+      </Html>
     </group>
   );
 }

@@ -5,15 +5,20 @@ import { BoltCastEffect } from "./effects/boltCast";
 import { BoltImpactEffect } from "./effects/boltImpact";
 import { BoltProjectileEffect } from "./effects/boltProjectile";
 import { CrescentCastEffect } from "./effects/crescentCast";
+import { CrescentImpactEffect } from "./effects/crescentImpact";
 
 export type ProjectileVfxId = "bolt";
 export type CastVfxId = "bolt" | "crescent";
+export type ImpactVfxId = "bolt" | "crescent";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
 export const CATALOG_PROJECTILES = new Set<string>(["bolt"]);
 
 /** Abilities with dedicated cast one-shots (muzzle / swoop). */
 export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent"]);
+
+/** Abilities with dedicated hit impact one-shots. */
+export const CATALOG_IMPACT_FX = new Set<string>(["bolt", "crescent"]);
 
 /**
  * Melee abilities that spawn follow-caster swoops from combat_fx
@@ -27,6 +32,10 @@ export function hasCatalogProjectile(abilityId: string | undefined): boolean {
 
 export function hasCatalogCastFx(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_CAST_FX.has(abilityId);
+}
+
+export function hasCatalogImpactFx(abilityId: string | undefined): boolean {
+  return !!abilityId && CATALOG_IMPACT_FX.has(abilityId);
 }
 
 export function usesMeleeSwoopFx(abilityId: string | undefined): boolean {
@@ -47,7 +56,16 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
     }
     return <BoltCastEffect key={shot.key} shot={shot} follow={ctx} />;
   }
+  if (shot.abilityId === "crescent") {
+    return <CrescentImpactEffect key={shot.key} shot={shot} />;
+  }
   return <BoltImpactEffect key={shot.key} shot={shot} />;
 }
 
-export { BoltProjectileEffect, BoltCastEffect, BoltImpactEffect, CrescentCastEffect };
+export {
+  BoltProjectileEffect,
+  BoltCastEffect,
+  BoltImpactEffect,
+  CrescentCastEffect,
+  CrescentImpactEffect,
+};

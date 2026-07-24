@@ -22,13 +22,18 @@ if (typeof globalThis.ProgressEvent === "undefined") {
   };
 }
 
+// GLTFLoader texture path expects a browser-like `self`
+if (typeof globalThis.self === "undefined") {
+  globalThis.self = globalThis;
+}
+
 import * as THREE from "../apps/web/node_modules/three/build/three.module.js";
 import { GLTFLoader } from "../apps/web/node_modules/three/examples/jsm/loaders/GLTFLoader.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const propsPath = path.join(root, "packages/shared/src/maps/main_village.props.json");
 const mapPath = path.join(root, "packages/shared/src/maps/main_village.map.json");
-const assetsRoot = path.join(root, "apps/web/public/assets/fantasy_rts");
+const assetsRoot = path.join(root, "apps/web/public/assets");
 
 const FOOTPRINT_HEIGHT_FRAC = 0.45;
 /** Local-space cell size for occupancy raster (meters at scale=1). */

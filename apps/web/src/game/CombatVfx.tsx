@@ -1,8 +1,14 @@
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
+import { useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { HUB_PRACTICE_DUMMIES, MOVE_SPEED } from "@battlebeasts/shared";
 import { abilityVfxColor, BoltProjectileEffect, hasCatalogProjectile } from "./vfx";
+import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
+import { CharacterAnimationController, heroAnimationConfig } from "./animation";
+
+useGLTF.preload(CHARACTER_URL);
 
 function LegacyProjectileMesh({ room, id }: { room: Room; id: string }) {
     const mesh = useRef<THREE.Mesh>(null);
@@ -158,11 +164,126 @@ export function CombatFxMeshes({ bursts }: { bursts: FxBurst[] }) {
 }
 
 export function WorldTargets({ room }: { room: Room | null }) {
-    const group = useRef<THREE.Group>(null);
-    const hpMat = useRef<THREE.MeshStandardMaterial>(null);
+    return (
+        <>
+            {HUB_PRACTICE_DUMMIES.map((d) => (
+                <PracticeDummyAvatar key={d.id} room={room} targetId={d.id} />
+            ))}
+        </>
+    );
+}
 
-    useFrame(() => {
-        const t = room?.state?.targets?.get("practice_dummy") as
+const DUMMY_COLOR = "#9ca3af";
+const _down = new THREE.Vector3(0, -1, 0);
+const _origin = new THREE.Vector3();
+const _box = new THREE.Box3();
+const _zeroVel = new THREE.Vector3();
+
+function collectHubTerrainMeshes(root: THREE.Object3D): THREE.Object3D[] {
+    const meshes: THREE.Object3D[] = [];
+    root.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh && o.visible) meshes.push(o);
+    });
+    return meshes;
+}
+
+function findHubTerrainRoot(scene: THREE.Object3D): THREE.Object3D | null {
+    let found: THREE.Object3D | null = null;
+    scene.traverse((o) => {
+        if (found) return;
+        if (o.userData?.bbHubTerrain) found = o;
+    });
+    return found;
+}
+
+/** Topmost terrain hit under (x,z) — prefer meadow/path names when present. */
+function sampleTerrainY(
+    world: THREE.Object3D,
+    x: number,
+    z: number,
+    raycaster: THREE.Raycaster,
+): number | null {
+    const terrain = findHubTerrainRoot(world);
+    const meshes = terrain
+        ? collectHubTerrainMeshes(terrain)
+        : (() => {
+              const all: THREE.Object3D[] = [];
+              world.traverse((o) => {
+                  const m = o as THREE.Mesh;
+                  if (!m.isMesh || !m.visible) return;
+                  const n = m.name.toLowerCase();
+                  if (n.includes("beta_") || n.includes("mixamorig") || n.startsWith("sm_chr")) {
+                      return;
+                  }
+                  all.push(m);
+              });
+              return all;
+          })();
+    if (!meshes.length) return null;
+    _origin.set(x, 80, z);
+    raycaster.set(_origin, _down);
+    const hits = raycaster.intersectObjects(meshes, false);
+    if (!hits.length) return null;
+    const named = hits.find((h) =>
+        /meadow|path|floor|tile|flat|ground/i.test(h.object.name),
+    );
+    const hit = named ?? hits[0]!;
+    return Number.isFinite(hit.point.y) ? hit.point.y : null;
+}
+
+function PracticeDummyAvatar({
+    room,
+    targetId,
+}: {
+    room: Room | null;
+    targetId: string;
+}) {
+    const group = useRef<THREE.Group>(null);
+    const controllerRef = useRef<CharacterAnimationController | null>(null);
+    const groundY = useRef<number | null>(null);
+    const raycaster = useMemo(() => new THREE.Raycaster(), []);
+    const { scene: world } = useThree();
+    const gltf = useGLTF(CHARACTER_URL);
+    const scene = useMemo(() => {
+        const idle =
+            gltf.animations.find((c) => c.name === heroAnimationConfig.idle) ??
+            gltf.animations[0] ??
+            null;
+        const root = prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
+        root.traverse((obj) => {
+            const mesh = obj as THREE.Mesh;
+            if (!mesh.isMesh || !mesh.material) return;
+            mesh.material = Array.isArray(mesh.material)
+                ? mesh.material.map((m) => m.clone())
+                : mesh.material.clone();
+        });
+        tintCharacterSurface(root, DUMMY_COLOR);
+        return root;
+    }, [gltf.scene, gltf.animations]);
+
+    useEffect(() => {
+        const controller = new CharacterAnimationController(
+            scene,
+            gltf.animations,
+            heroAnimationConfig,
+        );
+        controller.setMovementFromYaw(_zeroVel, 0, MOVE_SPEED);
+        controllerRef.current = controller;
+        return () => {
+            controller.dispose();
+            controllerRef.current = null;
+        };
+    }, [scene, gltf.animations]);
+
+    useFrame((_, dt) => {
+        const safeDt = Math.min(0.05, Math.max(0, dt));
+        const controller = controllerRef.current;
+        if (controller) {
+            controller.setMovementFromYaw(_zeroVel, 0, MOVE_SPEED);
+            controller.update(safeDt);
+        }
+
+        const t = room?.state?.targets?.get(targetId) as
             | { x: number; z: number; hp: number; maxHp: number }
             | undefined;
         const g = group.current;
@@ -172,20 +293,26 @@ export function WorldTargets({ room }: { room: Room | null }) {
             return;
         }
         g.visible = true;
-        g.position.set(t.x, 0, t.z);
-        if (hpMat.current) {
-            const ratio = t.maxHp > 0 ? t.hp / t.maxHp : 0;
-            hpMat.current.color.set(ratio > 0.4 ? "#78716c" : "#ef4444");
+
+        if (groundY.current == null) {
+            const y = sampleTerrainY(world, t.x, t.z, raycaster);
+            if (y != null) groundY.current = y;
+        }
+
+        // Place, then snap soles to terrain (idle root Y can lift the mesh).
+        const targetY = groundY.current ?? 0;
+        g.position.set(t.x, targetY, t.z);
+        g.updateMatrixWorld(true);
+        _box.setFromObject(scene);
+        if (Number.isFinite(_box.min.y)) {
+            g.position.y += targetY - _box.min.y;
         }
     });
 
     return (
-        <group ref={group}>
-            <mesh position={[0, 1, 0]} castShadow>
-                <cylinderGeometry args={[0.45, 0.55, 2, 12]} />
-                <meshStandardMaterial ref={hpMat} color="#78716c" />
-            </mesh>
-            <HpBillboard room={room} targetId="practice_dummy" y={2.3} />
+        <group ref={group} userData={{ bbSkipGround: true }}>
+            <primitive object={scene} />
+            <HpBillboard room={room} targetId={targetId} y={2.05} />
         </group>
     );
 }

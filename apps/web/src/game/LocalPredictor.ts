@@ -4,10 +4,12 @@ import {
   MOVE_SPEED,
   applyMovement,
   baseCityStaticColliders,
+  length2,
   resolveCastMoveMul,
   resolveComboContinueMoveMul,
   sampleTravel,
   sweepMove,
+  sweepTravel,
   travelDistance,
   travelDurationMs,
   resolveTravel,
@@ -145,25 +147,31 @@ export class LocalPredictor {
     if (travel.mode === "instant") {
       const dist = travelDistance(def);
       const ideal = sampleTravel(this.state, yaw, dist, 1);
-      const clamped = sweepMove(
+      const clamped = sweepTravel(
         this.state,
         ideal,
         COLLISION.playerRadius,
         this.staticColliders,
-        this.dynamicColliders,
       );
       this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw };
       this.travel = null;
       return;
     }
     if (travel.mode !== "translate") return;
+    const dist = travelDistance(def);
+    const dur = travelDurationMs(def);
+    const from = { x: this.state.x, z: this.state.z };
+    const ideal = sampleTravel(from, yaw, dist, 1);
+    const clamped = sweepTravel(from, ideal, COLLISION.playerRadius, this.staticColliders);
+    const actualDist = length2(clamped.x - from.x, clamped.z - from.z);
+    const scale = dist > 1e-6 ? Math.min(1, actualDist / dist) : 0;
     this.travel = {
-      fromX: this.state.x,
-      fromZ: this.state.z,
+      fromX: from.x,
+      fromZ: from.z,
       yaw,
-      distance: travelDistance(def),
+      distance: dist * scale,
       startMs: performance.now(),
-      durationMs: travelDurationMs(def),
+      durationMs: Math.max(16, dur * Math.max(0.05, scale)),
     };
   }
 
@@ -187,12 +195,11 @@ export class LocalPredictor {
         this.travel.distance,
         1,
       );
-      const clamped = sweepMove(
+      const clamped = sweepTravel(
         { x: this.travel.fromX, z: this.travel.fromZ },
         ideal,
         COLLISION.playerRadius,
         this.staticColliders,
-        this.dynamicColliders,
       );
       this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw: this.travel.yaw };
       this.travel = null;
@@ -202,12 +209,11 @@ export class LocalPredictor {
       const t = this.travel;
       const p = Math.min(1, Math.max(0, (now - t.startMs) / Math.max(1, t.durationMs)));
       const ideal = sampleTravel({ x: t.fromX, z: t.fromZ }, t.yaw, t.distance, p);
-      const clamped = sweepMove(
+      const clamped = sweepTravel(
         { x: t.fromX, z: t.fromZ },
         ideal,
         COLLISION.playerRadius,
         this.staticColliders,
-        this.dynamicColliders,
       );
       this.state = { x: clamped.x, z: clamped.z, yaw: t.yaw };
       return this.state;

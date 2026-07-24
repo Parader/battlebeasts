@@ -7,7 +7,7 @@ export const MOVE_SPEED = 5;
 /** Battlerite-style fixed camera: high pitch looking down. */
 export const CAMERA = {
   pitchDeg: 55,
-  distance: 18,
+  distance: 22,
   fov: 45,
   /** Soft follow of player (1/s). Lower = less shake when strafing. */
   followLambda: 2.2,

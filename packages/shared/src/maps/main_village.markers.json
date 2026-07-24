@@ -1,0 +1,107 @@
+{
+  "version": 2,
+  "coordinateSystem": "threejs-y-up",
+  "source": "village.blend",
+  "exportedAt": "2026-07-24T20:38:06.694712+00:00",
+  "markers": [
+    {
+      "id": "Empty",
+      "kind": "build",
+      "x": -13.134,
+      "z": -9.2194,
+      "halfX": 8.7101,
+      "halfZ": 7.9782,
+      "rotationY": 0.0,
+      "label": "Armoury",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_001",
+      "kind": "talent",
+      "x": 9.1568,
+      "z": -9.1591,
+      "halfX": 6.5752,
+      "halfZ": 6.1789,
+      "rotationY": 0.09466,
+      "label": "Chapel",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_002",
+      "kind": "portal_pve",
+      "x": 36.948,
+      "z": -47.7048,
+      "halfX": 7.8734,
+      "halfZ": 1.3317,
+      "rotationY": 0.0,
+      "label": "PVE",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_003",
+      "kind": "portal_pvp",
+      "x": -1.2493,
+      "z": -70.3697,
+      "halfX": 7.8734,
+      "halfZ": 1.3317,
+      "rotationY": 0.0,
+      "label": "PVP",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_004",
+      "kind": "customization",
+      "x": -47.6862,
+      "z": 0.3888,
+      "halfX": 3.5029,
+      "halfZ": 8.1441,
+      "rotationY": 0.0,
+      "label": "House",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_005",
+      "kind": "shop",
+      "x": 56.3893,
+      "z": -16.0069,
+      "halfX": 9.5137,
+      "halfZ": 10.1492,
+      "rotationY": 0.0,
+      "label": "Shop",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_006",
+      "kind": "spawn",
+      "x": -0.2891,
+      "z": 1.2371,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Spawn",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_007",
+      "kind": "dummy",
+      "x": -5.7636,
+      "z": 50.4014,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Dummy",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_008",
+      "kind": "dummy",
+      "x": 13.992,
+      "z": 50.4014,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Dummy",
+      "emptyDisplay": "CUBE"
+    }
+  ]
+}

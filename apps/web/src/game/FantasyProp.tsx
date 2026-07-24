@@ -4,7 +4,7 @@ import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import * as THREE from "three";
 import type { HubPropPlacement } from "@battlebeasts/shared";
 
-const FANTASY_RTS = "/assets/fantasy_rts";
+const ASSETS = "/assets";
 
 type Props = {
   url: string;
@@ -55,7 +55,7 @@ export function resolvePropYaw(prop: HubPropPlacement): number {
 }
 
 export function hubAssetUrl(file: string): string {
-  return `${FANTASY_RTS}/${file}`;
+  return `${ASSETS}/${file}`;
 }
 
 export function HubProp({ prop }: { prop: HubPropPlacement }) {
