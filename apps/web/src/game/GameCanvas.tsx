@@ -6,7 +6,7 @@ import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import { CAMERA } from "@battlebeasts/shared";
 import { BaseCityScene } from "./BaseCityScene";
 import { ContentScene } from "./ContentScene";
-import type { FxBurst } from "./CombatVfx";
+import type { FxBurst, DamagePopup } from "./CombatVfx";
 import type { PredictedPose, SessionPhase } from "./useBaseCityRoom";
 
 type Props = {
@@ -17,6 +17,7 @@ type Props = {
     phase: SessionPhase;
     contentMode: string | null;
     fxBursts: FxBurst[];
+    damagePopups: DamagePopup[];
 };
 
 const pitch = (CAMERA.pitchDeg * Math.PI) / 180;
@@ -55,6 +56,7 @@ export function GameCanvas({
     phase,
     contentMode,
     fxBursts,
+    damagePopups,
 }: Props) {
     const inContent = phase === "content";
 
@@ -88,6 +90,7 @@ export function GameCanvas({
                     predictedRef={predictedRef}
                     modeLabel={contentMode ?? "content"}
                     fxBursts={fxBursts}
+                    damagePopups={damagePopups}
                 />
             ) : (
                 <BaseCityScene
@@ -96,6 +99,7 @@ export function GameCanvas({
                     predictedRef={predictedRef}
                     onInteract={onInteract}
                     fxBursts={fxBursts}
+                    damagePopups={damagePopups}
                 />
             )}
             <PostFX />

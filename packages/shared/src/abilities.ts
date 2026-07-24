@@ -57,6 +57,21 @@ export interface AbilityTravel {
    * Defaults to timing.impactMs (travel runs with the impact pose).
    */
   durationMs?: number;
+  /**
+   * Wait this long after impact begins before leaving the ground (unscaled ms).
+   * Lets the jump anim plant / crouch before the hop + translate start.
+   */
+  takeoffDelayMs?: number;
+  /**
+   * Defer melee/AoE damage + FX until translate completes (landing).
+   * Travel still starts at impact begin; cooldown still stamps then.
+   */
+  effectOnArrive?: boolean;
+  /**
+   * Horizontal progress remapping over the translate window.
+   * `leap` = soft takeoff/land (smoothstep) matched to a ballistic hop.
+   */
+  progressEase?: "linear" | "leap";
 }
 
 /**
@@ -162,6 +177,36 @@ function scaledCastMs(ms: number): number {
   return Math.max(0, ms * CAST_EXECUTION_SCALE);
 }
 
+/**
+ * Jump Attack (hero.glb) markers @ 30fps.
+ * Frame 19 = leave ground, 47 = landing begin, 54 = grounded.
+ * Windup (start→jump) can run hotter than air (jump→ground) so the cast
+ * feels responsive without changing the leap itself.
+ */
+export const SMASH_JUMP_ATTACK = {
+  fps: 30,
+  /** Skip the slowest crouch settle — cast starts closer to the jump. */
+  startFrame: 8,
+  jumpFrame: 19,
+  landFrame: 47,
+  groundFrame: 54,
+  clipDurationSec: 3.833333,
+  /** Air / land playback (frames 19→54). */
+  playbackRate: 3,
+  /** Plant / windup playback (start→19) — snappier commit. */
+  windupRate: 5.5,
+} as const;
+
+function smashSegmentWallMs(fromFrame: number, toFrame: number, rate: number): number {
+  const frames = Math.max(0, toFrame - fromFrame);
+  return (frames / SMASH_JUMP_ATTACK.fps / Math.max(0.01, rate)) * 1000;
+}
+
+/** Authored ms that yield `wallMs` after CAST_EXECUTION_SCALE. */
+function authoredForWallMs(wallMs: number): number {
+  return wallMs / CAST_EXECUTION_SCALE;
+}
+
 /** Minimal v0 kit — one ability per Battlerite slot. */
 export const ABILITIES: Record<string, AbilityDef> = {
   bolt: {
@@ -197,7 +242,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     range: 2.2,
     shape: "melee",
     damage: 11,
-    radius: 2.0,
+    /** Tight frontal slash — was 2.0 and felt like a wide AoE. */
+    radius: 1.15,
     allowedSlots: ["m1"],
     defaultSlot: "m1",
     combo: {
@@ -216,27 +262,71 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
   smash: {
     id: "smash",
-    name: "Smash",
-    cooldownMs: 2400,
-    range: 2.5,
-    shape: "melee",
-    damage: 32,
-    radius: 2.2,
+    name: "Leap Slam",
+    cooldownMs: 5500,
+    range: 2.8,
+    shape: "aoe",
+    damage: 12,
+    radius: 2.35,
     allowedSlots: ["m2"],
     defaultSlot: "m2",
-    // ~1.0s → melee clip ~2.3×
+    // Windup start→19 (fast), air 19→54 (unchanged rate), then 150ms pose hold.
     timing: {
-      anticipationMs: 280,
-      castMs: 200,
-      impactMs: 200,
-      recoveryMs: 320,
-      anticipationMoveMul: 0.45,
-      castMoveMul: 0.2,
-      impactMoveMul: 0.1,
-      recoveryMoveMul: 0.7,
-      canCancelAnticipation: true,
+      anticipationMs: authoredForWallMs(
+        smashSegmentWallMs(
+          SMASH_JUMP_ATTACK.startFrame,
+          SMASH_JUMP_ATTACK.jumpFrame,
+          SMASH_JUMP_ATTACK.windupRate,
+        ),
+      ),
+      castMs: 0,
+      impactMs: authoredForWallMs(
+        smashSegmentWallMs(
+          SMASH_JUMP_ATTACK.jumpFrame,
+          SMASH_JUMP_ATTACK.groundFrame,
+          SMASH_JUMP_ATTACK.playbackRate,
+        ),
+      ),
+      /** Hold grounded pose (~150ms wall). */
+      recoveryMs: authoredForWallMs(150),
+      anticipationMoveMul: 0,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 0.45,
+      canCancelAnticipation: false,
     },
-    applyOnHit: [{ statusId: "stunned", durationMs: 600, chance: 0.85 }],
+    travel: {
+      mode: "translate",
+      distance: 2.8,
+      takeoffDelayMs: 0,
+      durationMs: authoredForWallMs(
+        smashSegmentWallMs(
+          SMASH_JUMP_ATTACK.jumpFrame,
+          SMASH_JUMP_ATTACK.groundFrame,
+          SMASH_JUMP_ATTACK.playbackRate,
+        ),
+      ),
+      effectOnArrive: true,
+      progressEase: "leap",
+    },
+    iFrames: {
+      startMs: authoredForWallMs(
+        smashSegmentWallMs(
+          SMASH_JUMP_ATTACK.startFrame,
+          SMASH_JUMP_ATTACK.jumpFrame,
+          SMASH_JUMP_ATTACK.windupRate,
+        ),
+      ),
+      durationMs: authoredForWallMs(
+        smashSegmentWallMs(
+          SMASH_JUMP_ATTACK.jumpFrame,
+          SMASH_JUMP_ATTACK.groundFrame,
+          SMASH_JUMP_ATTACK.playbackRate,
+        ),
+      ),
+    },
+    interruptible: false,
+    applyOnHit: [{ statusId: "stunned", durationMs: 1000, chance: 1 }],
   },
   dash: {
     id: "dash",
@@ -521,6 +611,50 @@ export function travelDurationMs(def: AbilityDef): number {
   const raw = travel.durationMs ?? def.timing.impactMs;
   // Explicit travel.durationMs is authored in unscaled ms — scale for global snappiness
   return Math.max(16, scaledCastMs(raw));
+}
+
+/** Scaled ms after impact start before translate / hop leave the ground. */
+export function travelTakeoffDelayMs(def: AbilityDef): number {
+  const raw = resolveTravel(def).takeoffDelayMs ?? 0;
+  return Math.max(0, scaledCastMs(raw));
+}
+
+/** Remap linear 0..1 travel time → path progress for the ability's ease. */
+export function travelProgress01(def: AbilityDef, linear01: number): number {
+  const t = Math.max(0, Math.min(1, linear01));
+  const ease = resolveTravel(def).progressEase ?? "linear";
+  if (ease === "leap") return leapTravelProgress(t);
+  return t;
+}
+
+/**
+ * Horizontal leap pacing — mostly constant airspeed (gentle ends only).
+ */
+export function leapTravelProgress(t01: number): number {
+  const t = Math.max(0, Math.min(1, t01));
+  // Mild smoothstep — avoid a long mid-air coast
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Vertical leap envelope (0..1 height).
+ * Near-triangular arc with almost no apex hang. Ascent is the shorter beat;
+ * descent gets more of the air window so the fall isn't rushed.
+ * Feet return to ground only at t=1.
+ */
+export function leapHopNormalized(t01: number): number {
+  const t = Math.max(0, Math.min(1, t01));
+  if (t <= 0 || t >= 1) return 0;
+
+  // ~30% up matches Jump Attack hips peak (~frame 31 of air 19→54).
+  const apex = 0.34;
+  if (t <= apex) {
+    const u = t / apex;
+    return Math.pow(u, 1.1);
+  }
+  const u = (t - apex) / (1 - apex);
+  // Mild gravity on the way down (not a linear snap).
+  return 1 - Math.pow(u, 1.25);
 }
 
 /** True if elapsedMs since cast start is inside the i-frame window. */

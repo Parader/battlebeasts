@@ -1,5 +1,5 @@
 import { useFrame, useThree } from "@react-three/fiber";
-import { useGLTF } from "@react-three/drei";
+import { Html, useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -7,6 +7,7 @@ import { HUB_PRACTICE_DUMMIES, MOVE_SPEED } from "@battlebeasts/shared";
 import { abilityVfxColor, BoltProjectileEffect, hasCatalogProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
+import { StatusOrnaments, collectStatusRows } from "./StatusOrnaments";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -163,6 +164,82 @@ export function CombatFxMeshes({ bursts }: { bursts: FxBurst[] }) {
     );
 }
 
+export type DamagePopup = {
+    key: number;
+    amount: number;
+    x: number;
+    z: number;
+    /** World Y start (chest / head). */
+    y: number;
+    born: number;
+    life: number;
+    /** Lateral drift so stacked hits fan out. */
+    driftX: number;
+    driftZ: number;
+};
+
+function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
+    const group = useRef<THREE.Group>(null);
+    const el = useRef<HTMLDivElement>(null);
+
+    useFrame(() => {
+        const g = group.current;
+        const node = el.current;
+        if (!g || !node) return;
+        const age = (performance.now() - popup.born) / popup.life;
+        if (age >= 1) {
+            g.visible = false;
+            node.style.opacity = "0";
+            return;
+        }
+        g.visible = true;
+        const rise = age * 1.6;
+        const pop = 1 - Math.pow(1 - Math.min(1, age / 0.12), 3);
+        const fade = age < 0.5 ? 1 : Math.max(0, 1 - (age - 0.5) / 0.5);
+        g.position.set(
+            popup.x + popup.driftX * age,
+            popup.y + rise,
+            popup.z + popup.driftZ * age,
+        );
+        const scale = 0.9 + pop * 0.35;
+        node.style.opacity = String(fade);
+        node.style.transform = `scale(${scale})`;
+    });
+
+    return (
+        <group ref={group} position={[popup.x, popup.y, popup.z]}>
+            <Html center style={{ pointerEvents: "none" }} zIndexRange={[20, 0]}>
+                <div
+                    ref={el}
+                    style={{
+                        color: "#fecaca",
+                        fontWeight: 600,
+                        fontSize: "18px",
+                        fontFamily: "ui-sans-serif, system-ui, sans-serif",
+                        letterSpacing: "0.02em",
+                        textShadow: "0 1px 0 #450a0a, 0 0 8px rgba(127,29,29,0.85)",
+                        whiteSpace: "nowrap",
+                        userSelect: "none",
+                        willChange: "transform, opacity",
+                    }}
+                >
+                    {Math.round(popup.amount)}
+                </div>
+            </Html>
+        </group>
+    );
+}
+
+export function DamagePopups({ popups }: { popups: DamagePopup[] }) {
+    return (
+        <>
+            {popups.map((p) => (
+                <DamagePopupMesh key={p.key} popup={p} />
+            ))}
+        </>
+    );
+}
+
 export function WorldTargets({ room }: { room: Room | null }) {
     return (
         <>
@@ -313,6 +390,15 @@ function PracticeDummyAvatar({
         <group ref={group} userData={{ bbSkipGround: true }}>
             <primitive object={scene} />
             <HpBillboard room={room} targetId={targetId} y={2.05} />
+            <StatusOrnaments
+                headY={2.2}
+                getStatuses={() => {
+                    const t = room?.state?.targets?.get(targetId) as
+                        | { statuses?: Parameters<typeof collectStatusRows>[0] }
+                        | undefined;
+                    return collectStatusRows(t?.statuses);
+                }}
+            />
         </group>
     );
 }

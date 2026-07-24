@@ -32,6 +32,10 @@ export type UpperBodyActionOptions = {
 
 export type FullBodyActionOptions = {
   desiredDuration?: number;
+  /** Explicit mixer timeScale (wins over desiredDuration when set). */
+  timeScale?: number;
+  /** Start the clip at this time (seconds) instead of 0. */
+  startAtSec?: number;
   fadeIn?: number;
   fadeOut?: number;
   /** Default true. Death should pass false. */
@@ -144,6 +148,7 @@ export class CharacterAnimationController {
       castAoE: config.castAoE,
       castMelee: config.castMelee,
       dash: config.dash,
+      jumpAttack: config.jumpAttack,
       hit: config.hit,
       death: config.death,
       heavyCast: config.heavyCast,
@@ -222,14 +227,17 @@ export class CharacterAnimationController {
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);
 
-    for (const key of ["dash", "hit", "death", "heavyCast"] as const) {
+    for (const key of ["dash", "jumpAttack", "hit", "death", "heavyCast"] as const) {
       const name = config[key];
       if (!name) continue;
       const src = resolveClip(clips, name);
       if (!src) continue;
-      // Keep Mixamo hips Y (strip XZ only). Idle-height plant floated the dive;
-      // natural dive Y drops the body through the roll.
-      const prepared = stripHorizontalRootMotion(src);
+      // Dash/death keep Mixamo hips Y. Jump Attack plants hips — Leap Slam hop is
+      // applied on the avatar root so travel timing matches the airborne arc.
+      const prepared =
+        key === "jumpAttack"
+          ? plantHipsRootMotion(stripHorizontalRootMotion(src), this.plantHipsY)
+          : stripHorizontalRootMotion(src);
       this.fullBodyClips.set(key, prepared);
       this.fullBodyClips.set(name, prepared);
       this.fullBodyClips.set(src.name, prepared);
@@ -514,10 +522,15 @@ export class CharacterAnimationController {
     action.paused = false;
     action.setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = true;
-    if (options.desiredDuration && options.desiredDuration > 0 && clip.duration > 0) {
+    if (typeof options.timeScale === "number" && options.timeScale > 0) {
+      action.timeScale = options.timeScale;
+    } else if (options.desiredDuration && options.desiredDuration > 0 && clip.duration > 0) {
       action.timeScale = clip.duration / options.desiredDuration;
     } else {
       action.timeScale = 1;
+    }
+    if (typeof options.startAtSec === "number" && options.startAtSec > 0) {
+      action.time = Math.min(clip.duration, options.startAtSec);
     }
     action.setEffectiveWeight(0);
     action.play();
@@ -564,6 +577,32 @@ export class CharacterAnimationController {
       this.layerMulLowerTarget = 1;
       this.layerMulUpperTarget = 1;
     }
+  }
+
+  /**
+   * Freeze the active full-body override on a specific clip time
+   * (e.g. Leap Slam grounded frame) and keep weight up through recovery.
+   */
+  freezeFullBodyAt(timeSec: number): void {
+    if (this.disposed || !this.overrideAction) return;
+    const action = this.overrideAction;
+    const clip = action.getClip();
+    const t = Math.max(0, Math.min(clip.duration, timeSec));
+    action.paused = true;
+    action.time = t;
+    action.setEffectiveWeight(Math.max(action.getEffectiveWeight(), 1));
+    this.overrideActive = true;
+    this.overrideWeight = 1;
+    this.overrideWeightTarget = 1;
+    this.layerMulLowerTarget = 0;
+    this.layerMulUpperTarget = 0;
+  }
+
+  /** Adjust playback rate of the active full-body override (e.g. windup → air). */
+  setFullBodyTimeScale(timeScale: number): void {
+    if (this.disposed || !this.overrideAction || !(timeScale > 0)) return;
+    this.overrideAction.paused = false;
+    this.overrideAction.timeScale = timeScale;
   }
 
   /** End whatever ability visual is playing (upper cast or full-body). */

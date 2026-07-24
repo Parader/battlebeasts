@@ -19,7 +19,7 @@ import {
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, Projectiles, WorldTargets, type FxBurst } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, type FxBurst, type DamagePopup } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { FollowSun } from "./FollowSun";
 import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
@@ -84,6 +84,7 @@ type Props = {
     predictedRef: MutableRefObject<PredictedPose>;
     onInteract: (id: string) => void;
     fxBursts: FxBurst[];
+    damagePopups: DamagePopup[];
 };
 
 function PortalMarker({
@@ -307,7 +308,7 @@ function LocalPlayerMesh({
     );
 }
 
-export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, fxBursts }: Props) {
+export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, fxBursts, damagePopups }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
     const aimNdc = useRef(new THREE.Vector2(0, 0));
     const { camera, gl } = useThree();
@@ -404,6 +405,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
             <RemotePlayers room={room} localSessionId={localSessionId} />
             <Projectiles room={room} />
             <CombatFxMeshes bursts={fxBursts} />
+            <DamagePopups popups={damagePopups} />
             <VfxWorld
                 room={room}
                 localSessionId={localSessionId}

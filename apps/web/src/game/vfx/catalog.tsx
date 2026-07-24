@@ -6,6 +6,7 @@ import { BoltImpactEffect } from "./effects/boltImpact";
 import { BoltProjectileEffect } from "./effects/boltProjectile";
 import { CrescentCastEffect } from "./effects/crescentCast";
 import { CrescentImpactEffect } from "./effects/crescentImpact";
+import { SmashCrackEffect } from "./effects/smashCrack";
 
 export type ProjectileVfxId = "bolt";
 export type CastVfxId = "bolt" | "crescent";
@@ -17,7 +18,7 @@ export const CATALOG_PROJECTILES = new Set<string>(["bolt"]);
 /** Abilities with dedicated cast one-shots (muzzle / swoop). */
 export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent"]);
 
-/** Abilities with dedicated hit impact one-shots. */
+/** Abilities with dedicated hit impact one-shots (not landing AoE cracks). */
 export const CATALOG_IMPACT_FX = new Set<string>(["bolt", "crescent"]);
 
 /**
@@ -25,6 +26,9 @@ export const CATALOG_IMPACT_FX = new Set<string>(["bolt", "crescent"]);
  * instead of muzzle timing + ground burst rings.
  */
 export const CATALOG_MELEE_SWOOP = new Set<string>(["crescent"]);
+
+/** AoE abilities that replace the legacy expanding ground ring. */
+export const CATALOG_AOE_CRACK = new Set<string>(["smash"]);
 
 export function hasCatalogProjectile(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_PROJECTILES.has(abilityId);
@@ -40,6 +44,10 @@ export function hasCatalogImpactFx(abilityId: string | undefined): boolean {
 
 export function usesMeleeSwoopFx(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_MELEE_SWOOP.has(abilityId);
+}
+
+export function usesAoeCrackFx(abilityId: string | undefined): boolean {
+  return !!abilityId && CATALOG_AOE_CRACK.has(abilityId);
 }
 
 export type VfxFollowContext = {
@@ -59,6 +67,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (shot.abilityId === "crescent") {
     return <CrescentImpactEffect key={shot.key} shot={shot} />;
   }
+  if (shot.abilityId === "smash") {
+    return <SmashCrackEffect key={shot.key} shot={shot} />;
+  }
   return <BoltImpactEffect key={shot.key} shot={shot} />;
 }
 
@@ -68,4 +79,5 @@ export {
   BoltImpactEffect,
   CrescentCastEffect,
   CrescentImpactEffect,
+  SmashCrackEffect,
 };

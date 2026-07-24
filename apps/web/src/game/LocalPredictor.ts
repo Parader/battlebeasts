@@ -12,6 +12,8 @@ import {
   sweepTravel,
   travelDistance,
   travelDurationMs,
+  travelProgress01,
+  travelTakeoffDelayMs,
   resolveTravel,
   type CastPhaseId,
   type CircleCollider,
@@ -26,6 +28,7 @@ export type PredictedState = {
 };
 
 type LocalTravel = {
+  abilityId: string;
   fromX: number;
   fromZ: number;
   yaw: number;
@@ -166,11 +169,12 @@ export class LocalPredictor {
     const actualDist = length2(clamped.x - from.x, clamped.z - from.z);
     const scale = dist > 1e-6 ? Math.min(1, actualDist / dist) : 0;
     this.travel = {
+      abilityId,
       fromX: from.x,
       fromZ: from.z,
       yaw,
       distance: dist * scale,
-      startMs: performance.now(),
+      startMs: performance.now() + travelTakeoffDelayMs(def),
       durationMs: Math.max(16, dur * Math.max(0.05, scale)),
     };
   }
@@ -207,7 +211,9 @@ export class LocalPredictor {
 
     if (this.travel) {
       const t = this.travel;
-      const p = Math.min(1, Math.max(0, (now - t.startMs) / Math.max(1, t.durationMs)));
+      const linear = Math.min(1, Math.max(0, (now - t.startMs) / Math.max(1, t.durationMs)));
+      const def = ABILITIES[t.abilityId];
+      const p = def ? travelProgress01(def, linear) : linear;
       const ideal = sampleTravel({ x: t.fromX, z: t.fromZ }, t.yaw, t.distance, p);
       const clamped = sweepTravel(
         { x: t.fromX, z: t.fromZ },

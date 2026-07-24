@@ -11,6 +11,8 @@ import {
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
+import { smashHopOffsetY } from "./smashHop";
+import { StatusOrnaments, collectStatusRows } from "./StatusOrnaments";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -22,6 +24,7 @@ type RemotePlayerState = {
   disconnected?: boolean;
   castPhase?: string;
   castAbilityId?: string;
+  castPhaseEndsAt?: number;
 };
 
 function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string }) {
@@ -142,7 +145,7 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
       );
     }
 
-    g.position.set(renderPos.current.x, 0, renderPos.current.z);
+    g.position.set(renderPos.current.x, smashHopOffsetY(p), renderPos.current.z);
     g.rotation.y = renderYaw.current;
 
     const speed = Math.hypot(vel.current.x, vel.current.z);
@@ -157,6 +160,14 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
   return (
     <group ref={group}>
       <primitive object={scene} />
+      <StatusOrnaments
+        getStatuses={() => {
+          const p = room.state?.players?.get(sessionId) as
+            | { statuses?: Parameters<typeof collectStatusRows>[0] }
+            | undefined;
+          return collectStatusRows(p?.statuses);
+        }}
+      />
     </group>
   );
 }

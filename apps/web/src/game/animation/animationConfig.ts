@@ -2,6 +2,8 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
+import { SMASH_JUMP_ATTACK } from "@battlebeasts/shared";
+
 export type CharacterAnimationConfig = {
   idle: string;
   runForward: string;
@@ -15,6 +17,8 @@ export type CharacterAnimationConfig = {
   castAoE?: string;
   castMelee?: string;
   dash?: string;
+  /** Full-body leap / jump attack (RMB slam). */
+  jumpAttack?: string;
   hit?: string;
   death?: string;
   heavyCast?: string;
@@ -43,6 +47,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castMelee: "attack",
   heavyCast: "magic_2h",
   dash: "dive",
+  jumpAttack: "Jump Attack",
   locomotionBlendResponsiveness: 12,
   idleBlendResponsiveness: 10,
   locoTimeScaleMin: 0.75,
@@ -95,13 +100,43 @@ export const abilityAnimationBindings: Record<
      * When set, overrides combo-chain compression so the anim isn't frantic.
      */
     comboAnimDurationSec?: number;
+    /**
+     * Playback length for fullBody clips (seconds).
+     * When set, overrides totalCastDuration so long Mixamo clips aren't sped up.
+     */
+    fullBodyAnimDurationSec?: number;
+    /**
+     * Keep clamped full-body end pose through recovery instead of canceling
+     * into loco at impact→recovery.
+     */
+    holdEndPoseOnRecovery?: boolean;
+    /**
+     * When holding end pose, freeze the clip at this time (seconds) —
+     * e.g. Jump Attack ground frame 54 @ 30fps = 1.8.
+     */
+    holdPoseAtSec?: number;
+    /** Play full-body clip at natural speed (timeScale 1). */
+    playNaturalSpeed?: boolean;
+    /** Clip scrub start (seconds). */
+    startAtSec?: number;
+    /** Mixer timeScale during anticipation. */
+    windupTimeScale?: number;
+    /** Mixer timeScale once impact / travel begins. */
+    airTimeScale?: number;
   }
 > = {
   bolt: { upper: "castPrimary" },
   shock: { upper: "castPrimary" },
   nova: { upper: "castAoE" },
   rupture: { upper: "castAoE" },
-  smash: { upper: "castMelee" },
+  smash: {
+    fullBody: "jumpAttack",
+    holdEndPoseOnRecovery: true,
+    holdPoseAtSec: SMASH_JUMP_ATTACK.groundFrame / SMASH_JUMP_ATTACK.fps,
+    startAtSec: SMASH_JUMP_ATTACK.startFrame / SMASH_JUMP_ATTACK.fps,
+    windupTimeScale: SMASH_JUMP_ATTACK.windupRate,
+    airTimeScale: SMASH_JUMP_ATTACK.playbackRate,
+  },
   dash: { fullBody: "dash" },
   crescent: {
     comboUpperOnce: "attack_combo",

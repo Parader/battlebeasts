@@ -6,7 +6,7 @@ import { CAMERA } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, Projectiles, type FxBurst } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, type FxBurst, type DamagePopup } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { TexturedGround } from "./TexturedGround";
 import { FollowSun } from "./FollowSun";
@@ -18,6 +18,7 @@ type Props = {
     predictedRef: MutableRefObject<PredictedPose>;
     modeLabel: string;
     fxBursts: FxBurst[];
+    damagePopups: DamagePopup[];
 };
 
 function LocalMesh({
@@ -42,7 +43,7 @@ function LocalMesh({
 }
 
 /** Minimal content arena — same movement/camera, no hub props. */
-export function ContentScene({ room, localSessionId, predictedRef, fxBursts }: Props) {
+export function ContentScene({ room, localSessionId, predictedRef, fxBursts, damagePopups }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
     const aimNdc = useRef(new THREE.Vector2(0, 0));
     const { camera, gl } = useThree();
@@ -96,6 +97,7 @@ export function ContentScene({ room, localSessionId, predictedRef, fxBursts }: P
             <RemotePlayers room={room} localSessionId={localSessionId} />
             <Projectiles room={room} />
             <CombatFxMeshes bursts={fxBursts} />
+            <DamagePopups popups={damagePopups} />
             <VfxWorld
                 room={room}
                 localSessionId={localSessionId}

@@ -3,8 +3,8 @@ import { Client, Room } from "colyseus.js";
 import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, normalizeLoadout, playerCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
-import type { FxBurst } from "./CombatVfx";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, usesMeleeSwoopFx, clearCrescentSpawnState } from "./vfx";
+import type { FxBurst, DamagePopup } from "./CombatVfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, usesMeleeSwoopFx, usesAoeCrackFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
@@ -13,6 +13,8 @@ const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     dash: "#a3e635",
     hit: "#f87171",
 };
+
+const DAMAGE_POPUP_LIFE_MS = 900;
 
 export type ActiveUi =
     | "customization"
@@ -67,6 +69,7 @@ export function useBaseCityRoom(options: Options) {
     const [cooldownUntil, setCooldownUntil] = useState<Record<string, number>>({});
     const [castFlashId, setCastFlashId] = useState<string | null>(null);
     const [fxBursts, setFxBursts] = useState<FxBurst[]>([]);
+    const [damagePopups, setDamagePopups] = useState<DamagePopup[]>([]);
     const [localHp, setLocalHp] = useState({ hp: 100, maxHp: 100 });
     const [economy, setEconomy] = useState({
         copper: 0,
@@ -77,6 +80,7 @@ export function useBaseCityRoom(options: Options) {
         talents: [] as string[],
     });
     const fxKeyRef = useRef(0);
+    const dmgKeyRef = useRef(0);
 
     const seqRef = useRef(0);
     const keysRef = useRef({ up: false, down: false, left: false, right: false });
@@ -220,6 +224,7 @@ export function useBaseCityRoom(options: Options) {
                     z: number;
                     radius?: number;
                     ownerId?: string;
+                    damage?: number;
                     phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
                     phaseEndsAt?: number;
                     cooldownMs?: number;
@@ -274,10 +279,11 @@ export function useBaseCityRoom(options: Options) {
                         return;
                     }
 
-                    // Follow-caster swoops skip the legacy ground melee ring.
+                    // Follow-caster swoops / crack landings skip the legacy ground ring.
                     const skipGroundBurst =
-                        usesMeleeSwoopFx(msg.abilityId) &&
-                        (msg.kind === "melee" || msg.kind === "hit");
+                        (usesMeleeSwoopFx(msg.abilityId) &&
+                            (msg.kind === "melee" || msg.kind === "hit")) ||
+                        (usesAoeCrackFx(msg.abilityId) && msg.kind === "aoe");
 
                     if (!skipGroundBurst) {
                         const key = ++fxKeyRef.current;
@@ -322,6 +328,34 @@ export function useBaseCityRoom(options: Options) {
                         } else if (msg.kind === "hit") {
                             notifyCrescentHit(payload);
                         }
+                    }
+
+                    if (msg.kind === "aoe" && usesAoeCrackFx(msg.abilityId)) {
+                        spawnImpactEffect(msg.abilityId, {
+                            x: msg.x,
+                            z: msg.z,
+                            y: 0.04,
+                        });
+                    }
+
+                    if (msg.kind === "hit" && typeof msg.damage === "number" && msg.damage > 0) {
+                        const key = ++dmgKeyRef.current;
+                        const ang = Math.random() * Math.PI * 2;
+                        const popup: DamagePopup = {
+                            key,
+                            amount: msg.damage,
+                            x: msg.x,
+                            z: msg.z,
+                            y: 1.35 + Math.random() * 0.25,
+                            born: performance.now(),
+                            life: DAMAGE_POPUP_LIFE_MS,
+                            driftX: Math.cos(ang) * (0.35 + Math.random() * 0.45),
+                            driftZ: Math.sin(ang) * (0.35 + Math.random() * 0.45),
+                        };
+                        setDamagePopups((prev) => [
+                            ...prev.filter((p) => performance.now() - p.born < p.life),
+                            popup,
+                        ]);
                     }
 
                     if (msg.kind === "hit" && CATALOG_IMPACT_FX.has(msg.abilityId)) {
@@ -1006,6 +1040,7 @@ export function useBaseCityRoom(options: Options) {
         cooldownUntil,
         castFlashId,
         fxBursts,
+        damagePopups,
         localHp,
     };
 }

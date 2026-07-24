@@ -15,6 +15,7 @@ import {
   nextCastPhase,
   playerCollidersExcept,
   phaseDurationMs,
+  pointInFront,
   resolveCastMoveMul,
   resolveComboContinueMoveMul,
   resolveCollisions,
@@ -27,6 +28,8 @@ import {
   totalCastDurationMs,
   travelDistance,
   travelDurationMs,
+  travelProgress01,
+  travelTakeoffDelayMs,
   type AbilityDef,
   type CastPhaseId,
   type StaticCollider,
@@ -72,6 +75,8 @@ type ActiveTravel = {
   distance: number;
   startAt: number;
   endAt: number;
+  /** Fire melee/AoE hit + FX when translate completes. */
+  pendingLandingEffect?: boolean;
 };
 
 type ActiveCombo = {
@@ -84,8 +89,8 @@ type ActiveCombo = {
 /**
  * Server-side combat: Anticipation → Cast → Impact → Recovery.
  * Cancel is only valid during anticipation (before commitment / effect).
- * Effect (projectile, hit, travel) resolves at impact start.
- * Travel can be instant or translated; i-frames are per-ability windows.
+ * Effect (projectile, hit, travel) resolves at impact start by default.
+ * Travel with `effectOnArrive` defers melee/AoE damage+FX until landing.
  * Statuses (stun/slow/DoT/…) are owned by StatusSystem.
  */
 export class CombatSystem {
@@ -334,7 +339,9 @@ export class CombatSystem {
         continue;
       }
       const dur = Math.max(1, travel.endAt - travel.startAt);
-      const progress = Math.min(1, Math.max(0, (now - travel.startAt) / dur));
+      const linear = Math.min(1, Math.max(0, (now - travel.startAt) / dur));
+      const def = ABILITIES[travel.abilityId];
+      const progress = def ? travelProgress01(def, linear) : linear;
       const pos = sampleTravel(
         { x: travel.fromX, z: travel.fromZ },
         travel.yaw,
@@ -349,7 +356,13 @@ export class CombatSystem {
       player.x = clamped.x;
       player.z = clamped.z;
       if (now >= travel.endAt) {
+        const pending = travel.pendingLandingEffect;
+        const abilityId = travel.abilityId;
         this.travels.delete(sessionId);
+        if (pending) {
+          const landDef = ABILITIES[abilityId];
+          if (landDef) this.resolveLandingEffect(sessionId, player, landDef, now);
+        }
       }
     }
   }
@@ -489,8 +502,10 @@ export class CombatSystem {
   private fireEffect(sessionId: string, player: PlayerState, def: AbilityDef, now: number) {
     const ownerBody = this.playerBody(sessionId, player);
     const travel = resolveTravel(def);
+    const deferHit = travel.mode === "translate" && travel.effectOnArrive === true;
 
-    // Travel can attach to any shape (dash default; future charges etc.)
+    // Travel can attach to any shape (dash default; leap slam, charges, etc.)
+    let travelLanding: Vec2 | null = null;
     if (travel.mode === "instant") {
       const dist = travelDistance(def);
       const off = dashOffset(player.yaw, dist);
@@ -501,6 +516,7 @@ export class CombatSystem {
       });
       player.x = clamped.x;
       player.z = clamped.z;
+      travelLanding = clamped;
     } else if (travel.mode === "translate") {
       const dist = travelDistance(def);
       const dur = travelDurationMs(def);
@@ -512,14 +528,17 @@ export class CombatSystem {
       const scale = dist > 1e-6 ? Math.min(1, actualDist / dist) : 0;
       const travelDist = dist * scale;
       const travelDur = Math.max(16, dur * Math.max(0.05, scale));
+      const takeoffDelay = travelTakeoffDelayMs(def);
+      travelLanding = clamped;
       this.travels.set(sessionId, {
         abilityId: def.id,
         fromX: player.x,
         fromZ: player.z,
         yaw: player.yaw,
         distance: travelDist,
-        startAt: now,
-        endAt: now + travelDur,
+        startAt: now + takeoffDelay,
+        endAt: now + takeoffDelay + travelDur,
+        pendingLandingEffect: deferHit && (def.shape === "aoe" || def.shape === "melee"),
       });
     }
 
@@ -541,7 +560,54 @@ export class CombatSystem {
           this.room.state.projectiles.set(id, st);
         }
       }
-    } else if (def.shape === "melee") {
+    } else if (def.shape === "melee" && !deferHit) {
+      const center = travelLanding ?? meleeCenter(ownerBody, def);
+      const radius = def.radius ?? def.range;
+      const combo = this.combos.get(sessionId);
+      const comboHit =
+        isComboAbility(def) && (!combo || combo.abilityId === def.id)
+          ? (combo?.hitsDone ?? 0) + 1
+          : undefined;
+      this.fx({
+        kind: "melee",
+        abilityId: def.id,
+        x: center.x,
+        z: center.z,
+        radius,
+        ownerId: sessionId,
+        comboHit,
+      });
+      this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+    } else if (def.shape === "aoe" && !deferHit) {
+      const center =
+        def.id === "rupture"
+          ? ruptureCenter(ownerBody, def)
+          : (travelLanding ?? { x: player.x, z: player.z });
+      const radius = def.radius ?? 3;
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: center.x,
+        z: center.z,
+        radius,
+        ownerId: sessionId,
+      });
+      this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+    }
+    // dash / deferred landing: travel-only here (+ optional self statuses)
+
+    this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
+  }
+
+  /** Melee/AoE resolve when `travel.effectOnArrive` lands. */
+  private resolveLandingEffect(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const ownerBody = this.playerBody(sessionId, player);
+    if (def.shape === "melee") {
       const center = meleeCenter(ownerBody, def);
       const radius = def.radius ?? def.range;
       const combo = this.combos.get(sessionId);
@@ -559,9 +625,16 @@ export class CombatSystem {
         comboHit,
       });
       this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
-    } else if (def.shape === "aoe") {
+      return;
+    }
+    if (def.shape === "aoe") {
+      // Leap Slam: hands hit the ground in front of the caster.
+      const slamReach = def.id === "smash" ? 1.05 : 0;
+      const yaw = this.casts.get(sessionId)?.yaw ?? player.yaw;
       const center =
-        def.id === "rupture" ? ruptureCenter(ownerBody, def) : { x: player.x, z: player.z };
+        slamReach > 0
+          ? pointInFront(ownerBody, yaw, slamReach)
+          : { x: player.x, z: player.z };
       const radius = def.radius ?? 3;
       this.fx({
         kind: "aoe",
@@ -573,9 +646,6 @@ export class CombatSystem {
       });
       this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
     }
-    // dash: travel-only (+ optional self statuses)
-
-    this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
   }
 
   private applyInstant(
@@ -628,6 +698,7 @@ export class CombatSystem {
         z: player.z,
         ownerId: attackerSessionId,
         targetId,
+        damage,
       });
       return true;
     }
@@ -643,6 +714,7 @@ export class CombatSystem {
         z: target.z,
         ownerId: attackerSessionId,
         targetId,
+        damage,
       });
       if (target.hp <= 0) {
         target.hp = target.maxHp;

@@ -13,6 +13,8 @@ import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./ch
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
 import { AimIndicator } from "./AimIndicator";
+import { smashHopOffsetY } from "./smashHop";
+import { StatusOrnaments, collectStatusRows } from "./StatusOrnaments";
 import type { PredictedPose } from "./useBaseCityRoom";
 
 useGLTF.preload(CHARACTER_URL);
@@ -96,7 +98,12 @@ export function CharacterAvatar({
     const p = predictedRef.current;
     const safeDt = Math.max(1e-4, Math.min(0.05, delta));
 
-    g.position.set(p.x, 0, p.z);
+    const me = localSessionId
+      ? (room?.state?.players?.get(localSessionId) as
+          | { castAbilityId?: string; castPhase?: string; castPhaseEndsAt?: number }
+          | undefined)
+      : undefined;
+    g.position.set(p.x, smashHopOffsetY(me), p.z);
     if (aim) aim.rotation.y = p.yaw;
 
     if (!seededMove.current) {
@@ -140,6 +147,15 @@ export function CharacterAvatar({
       <group ref={bodyRef}>
         <primitive object={scene} />
       </group>
+      <StatusOrnaments
+        getStatuses={() => {
+          if (!room || !localSessionId) return [];
+          const me = room.state?.players?.get(localSessionId) as
+            | { statuses?: Parameters<typeof collectStatusRows>[0] }
+            | undefined;
+          return collectStatusRows(me?.statuses);
+        }}
+      />
       <group ref={aimRef}>
         <AimIndicator color={color ?? "#7dd3fc"} />
       </group>

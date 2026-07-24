@@ -14,13 +14,16 @@ export {
   CATALOG_CAST_FX,
   CATALOG_IMPACT_FX,
   CATALOG_MELEE_SWOOP,
+  CATALOG_AOE_CRACK,
   hasCatalogProjectile,
   hasCatalogCastFx,
   hasCatalogImpactFx,
   usesMeleeSwoopFx,
+  usesAoeCrackFx,
   BoltProjectileEffect,
   CrescentCastEffect,
   CrescentImpactEffect,
+  SmashCrackEffect,
   renderOneShot,
 } from "./catalog";
 

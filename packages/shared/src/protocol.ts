@@ -80,6 +80,9 @@ export type ServerMessage =
       radius?: number;
       ownerId?: string;
       targetId?: string;
+      damage?: number;
       phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
       phaseEndsAt?: number;
+      cooldownMs?: number;
+      comboHit?: number;
     };

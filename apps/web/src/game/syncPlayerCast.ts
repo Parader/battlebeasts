@@ -1,6 +1,6 @@
 import type { MutableRefObject } from "react";
 import { Room } from "colyseus.js";
-import { ABILITIES, comboChainDurationMs, totalCastDurationMs } from "@battlebeasts/shared";
+import { ABILITIES, comboChainDurationMs, phaseDurationMs, totalCastDurationMs } from "@battlebeasts/shared";
 import {
   abilityAnimationBindings,
   heroAnimationConfig,
@@ -99,7 +99,20 @@ export function syncPlayerCast(
   }
 
   if (castKey === lastCastId.current) {
-    if (player.castPhase === "recovery" && !comboOnce && !binding.comboFullBody) {
+    if (player.castPhase === "recovery" && binding.holdEndPoseOnRecovery) {
+      if (typeof binding.holdPoseAtSec === "number") {
+        controller.freezeFullBodyAt(binding.holdPoseAtSec);
+      }
+      return;
+    }
+    if (player.castPhase === "impact" && typeof binding.airTimeScale === "number") {
+      controller.setFullBodyTimeScale(binding.airTimeScale);
+    }
+    if (
+      player.castPhase === "recovery" &&
+      !comboOnce &&
+      !binding.comboFullBody
+    ) {
       controller.cancelFullBodyAction();
     }
     return;
@@ -124,6 +137,13 @@ export function syncPlayerCast(
   lastCastId.current = castKey;
 
   const durationSec = def ? totalCastDurationMs(def) / 1000 : undefined;
+  /** Anim covers windup→land; recovery only holds the clamped end pose. */
+  const activePoseSec = def
+    ? (phaseDurationMs(def, "anticipation") +
+        phaseDurationMs(def, "cast") +
+        phaseDurationMs(def, "impact")) /
+      1000
+    : durationSec;
 
   if (binding.comboUpperOnce || binding.comboFullBodyOnce) {
     if ((player.castComboHit ?? 0) !== 1) return;
@@ -175,15 +195,20 @@ export function syncPlayerCast(
     const logical = String(binding.fullBody);
     const mapped = heroAnimationConfig[binding.fullBody];
     const clipName = mapped != null ? String(mapped) : logical;
+    const animSec =
+      binding.fullBodyAnimDurationSec ??
+      (binding.holdEndPoseOnRecovery && !binding.windupTimeScale
+        ? activePoseSec
+        : durationSec);
+    const opts = {
+      desiredDuration: binding.windupTimeScale ? undefined : animSec,
+      timeScale: binding.windupTimeScale,
+      startAtSec: binding.startAtSec,
+      restoreLayers: true,
+    };
     const ok =
-      controller.playFullBodyAction(logical, {
-        desiredDuration: durationSec,
-        restoreLayers: true,
-      }) ||
-      controller.playFullBodyAction(clipName, {
-        desiredDuration: durationSec,
-        restoreLayers: true,
-      });
+      controller.playFullBodyAction(logical, opts) ||
+      controller.playFullBodyAction(clipName, opts);
     if (!ok) lastCastId.current = "";
     return;
   }

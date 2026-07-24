@@ -45,6 +45,8 @@ export type CombatFxEvent = {
   radius?: number;
   ownerId?: string;
   targetId?: string;
+  /** Damage dealt for hit popups (kind === "hit"). */
+  damage?: number;
   /** For cast_phase events. */
   phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
   phaseEndsAt?: number;
@@ -109,7 +111,7 @@ export function dashOffset(yaw: number, distance: number): Vec2 {
   return { x: f.x * distance, z: f.z * distance };
 }
 
-/** Sample a translate path at progress 0..1 (linear for now; easing later). */
+/** Sample a translate path at progress 0..1 (caller may ease progress first). */
 export function sampleTravel(
   from: Vec2,
   yaw: number,
@@ -122,7 +124,8 @@ export function sampleTravel(
 }
 
 export function meleeCenter(owner: CombatBody, def: AbilityDef): Vec2 {
-  const reach = Math.max(0.5, (def.radius ?? def.range) * 0.45);
+  // Reach follows `range`; `radius` is hit width only.
+  const reach = Math.max(0.5, def.range * 0.45);
   return pointInFront(owner, owner.yaw, reach);
 }
 

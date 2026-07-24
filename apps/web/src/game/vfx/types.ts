@@ -1,4 +1,4 @@
-export type SpellEffectId = "bolt" | "crescent";
+export type SpellEffectId = "bolt" | "crescent" | "smash";
 
 export type VfxPose = {
   x: number;

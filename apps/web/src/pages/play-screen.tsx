@@ -64,6 +64,7 @@ export const PlayScreen = () => {
         cooldownUntil,
         castFlashId,
         fxBursts,
+        damagePopups,
         localHp,
     } = useBaseCityRoom({
         endpoint: WS_URL,
@@ -100,6 +101,7 @@ export const PlayScreen = () => {
                 phase={phase}
                 contentMode={contentMode}
                 fxBursts={fxBursts}
+                damagePopups={damagePopups}
             />
 
             <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
