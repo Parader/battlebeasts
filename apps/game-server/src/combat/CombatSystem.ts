@@ -49,6 +49,8 @@ import { StatusSystem } from "../status/StatusSystem.js";
 export type CombatRoomHooks = {
   canHurtPlayers: boolean;
   onTargetDamaged?: (targetId: string, damage: number, attackerSessionId: string) => void;
+  /** Fired when a world target hits 0 HP, before soft-respawn reset. */
+  onTargetKilled?: (targetId: string, killerSessionId: string) => void;
   onPlayerDamaged?: (sessionId: string, damage: number, attackerSessionId: string) => void;
 };
 
@@ -193,7 +195,7 @@ export class CombatSystem {
     this.phaseFx(sessionId, player, abilityId, "interrupt", now, { cooldownMs });
   }
 
-  ensurePracticeDummy(x: number, z: number, id = "practice_dummy") {
+  ensurePracticeDummy(x: number, z: number, id = "practice_dummy", yaw = 0) {
     this.targetSpawns.set(id, { x, z });
     if (this.room.state.targets.has(id)) return;
     const t = new WorldTargetState();
@@ -201,9 +203,42 @@ export class CombatSystem {
     t.kind = "dummy";
     t.x = x;
     t.z = z;
+    t.yaw = yaw;
     t.hp = 200;
     t.maxHp = 200;
     this.room.state.targets.set(t.id, t);
+  }
+
+  /**
+   * Spawn a projectile from an arbitrary body (e.g. practice dummy retaliation).
+   * Aim with `body.yaw` (`atan2(dx, dz)` toward the target).
+   */
+  fireProjectileFrom(
+    ownerId: string,
+    body: CombatBody,
+    abilityId: string,
+  ): boolean {
+    const def = ABILITIES[abilityId];
+    if (!def || def.shape !== "projectile") return false;
+    if (this.sims.size >= COMBAT.maxProjectiles) return false;
+    const id = `p_${this.nextId++}`;
+    const sim = createProjectile(id, body, def);
+    if (!sim) return false;
+    // Owner id on the sim is body.id from createProjectile — force the dummy id.
+    sim.ownerId = ownerId;
+    this.sims.set(id, sim);
+    const st = new ProjectileState();
+    st.id = id;
+    st.ownerSessionId = ownerId;
+    st.abilityId = def.id;
+    st.x = sim.x;
+    st.z = sim.z;
+    st.vx = sim.vx;
+    st.vz = sim.vz;
+    st.radius = sim.hitRadius;
+    st.slowRadius = sim.slowRadius;
+    this.room.state.projectiles.set(id, st);
+    return true;
   }
 
   clearSession(sessionId: string) {
@@ -862,6 +897,7 @@ export class CombatSystem {
         damage,
       });
       if (target.hp <= 0) {
+        this.hooks.onTargetKilled?.(targetId, attackerSessionId);
         target.hp = target.maxHp;
         target.statuses.clear();
         this.knockbacks.delete(targetId);
@@ -870,6 +906,9 @@ export class CombatSystem {
           target.x = spawn.x;
           target.z = spawn.z;
         }
+        target.castAbilityId = "";
+        target.castPhase = "";
+        target.castLockUntil = 0;
       }
       return true;
     }
@@ -897,9 +936,17 @@ export class CombatSystem {
   }
 
   private canHurt(ownerId: string, targetId: string): boolean {
-    if (this.room.state.targets.has(targetId)) return true;
-    if (!this.hooks.canHurtPlayers) return false;
     if (ownerId === targetId) return false;
+    // Dummies don't friendly-fire each other.
+    if (this.room.state.targets.has(ownerId) && this.room.state.targets.has(targetId)) {
+      return false;
+    }
+    if (this.room.state.targets.has(targetId)) return true;
+    // Practice dummies may bolt players even when hub PvP is off.
+    if (this.room.state.targets.has(ownerId) && this.room.state.players.has(targetId)) {
+      return true;
+    }
+    if (!this.hooks.canHurtPlayers) return false;
     return this.room.state.players.has(targetId);
   }
 
@@ -921,7 +968,7 @@ export class CombatSystem {
         id: t.id,
         x: t.x,
         z: t.z,
-        yaw: 0,
+        yaw: t.yaw,
         hp: t.hp,
         maxHp: t.maxHp,
         vulnerable: t.hp > 0,

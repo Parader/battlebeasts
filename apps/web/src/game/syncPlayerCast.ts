@@ -7,7 +7,7 @@ import {
   type CharacterAnimationController,
 } from "./animation";
 
-type CastPlayer = {
+export type CastAnimState = {
   castPhase?: string;
   castAbilityId?: string;
   castComboHit?: number;
@@ -28,21 +28,15 @@ function isComboOnceBinding(binding: ComboOnceBinding): boolean {
 const HOLD_PAD_MS = 40;
 
 /**
- * Drive cast / dash visuals from a player's networked cast fields.
- * Works for local and remote session ids.
- *
- * combo*Once: play once on swing 1, hold through continue windows,
- * cancel if the player stops (hold clamped to continueWindowMs).
+ * Drive cast / dash visuals from networked cast fields.
+ * Used by players and practice dummies.
  */
-export function syncPlayerCast(
+export function syncAbilityCast(
   controller: CharacterAnimationController,
-  room: Room | null,
-  sessionId: string | null,
+  player: CastAnimState | undefined,
   lastCastId: MutableRefObject<string>,
   comboAnimHoldUntil?: MutableRefObject<number>,
 ): void {
-  if (!room || !sessionId) return;
-  const player = room.state?.players?.get(sessionId) as CastPlayer | undefined;
   const now = performance.now();
   const holdingComboAnim =
     Boolean(comboAnimHoldUntil && comboAnimHoldUntil.current > now) &&
@@ -227,4 +221,23 @@ export function syncPlayerCast(
       if (!ok2) lastCastId.current = "";
     }
   }
+}
+
+/**
+ * Drive cast / dash visuals from a player's networked cast fields.
+ * Works for local and remote session ids.
+ *
+ * combo*Once: play once on swing 1, hold through continue windows,
+ * cancel if the player stops (hold clamped to continueWindowMs).
+ */
+export function syncPlayerCast(
+  controller: CharacterAnimationController,
+  room: Room | null,
+  sessionId: string | null,
+  lastCastId: MutableRefObject<string>,
+  comboAnimHoldUntil?: MutableRefObject<number>,
+): void {
+  if (!room || !sessionId) return;
+  const player = room.state?.players?.get(sessionId) as CastAnimState | undefined;
+  syncAbilityCast(controller, player, lastCastId, comboAnimHoldUntil);
 }

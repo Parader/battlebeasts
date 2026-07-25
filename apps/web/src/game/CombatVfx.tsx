@@ -8,6 +8,7 @@ import { abilityVfxColor, BoltProjectileEffect, FrostBallProjectileEffect, hasCa
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
+import { syncAbilityCast } from "./syncPlayerCast";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -357,8 +358,10 @@ function PracticeDummyAvatar({
     room: Room | null;
     targetId: string;
 }) {
-    const group = useRef<THREE.Group>(null);
+    const root = useRef<THREE.Group>(null);
+    const body = useRef<THREE.Group>(null);
     const controllerRef = useRef<CharacterAnimationController | null>(null);
+    const lastCastId = useRef("");
     const groundY = useRef<number | null>(null);
     const lastXZ = useRef<{ x: number; z: number } | null>(null);
     const raycaster = useMemo(() => new THREE.Raycaster(), []);
@@ -369,16 +372,16 @@ function PracticeDummyAvatar({
             gltf.animations.find((c) => c.name === heroAnimationConfig.idle) ??
             gltf.animations[0] ??
             null;
-        const root = prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
-        root.traverse((obj) => {
+        const rootScene = prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
+        rootScene.traverse((obj) => {
             const mesh = obj as THREE.Mesh;
             if (!mesh.isMesh || !mesh.material) return;
             mesh.material = Array.isArray(mesh.material)
                 ? mesh.material.map((m) => m.clone())
                 : mesh.material.clone();
         });
-        tintCharacterSurface(root, DUMMY_COLOR);
-        return root;
+        tintCharacterSurface(rootScene, DUMMY_COLOR);
+        return rootScene;
     }, [gltf.scene, gltf.animations]);
 
     useEffect(() => {
@@ -402,24 +405,32 @@ function PracticeDummyAvatar({
             | {
                   x: number;
                   z: number;
+                  yaw?: number;
                   hp: number;
                   maxHp: number;
+                  castAbilityId?: string;
+                  castPhase?: string;
+                  castLockUntil?: number;
                   statuses?: Parameters<typeof hasStatusId>[0];
               }
             | undefined;
         if (controller) {
+            const yaw = t?.yaw ?? 0;
             controller.setStunned(hasStatusId(t?.statuses, "stunned"));
-            controller.setMovementFromYaw(_zeroVel, 0, MOVE_SPEED);
+            controller.setMovementFromYaw(_zeroVel, yaw, MOVE_SPEED);
+            syncAbilityCast(controller, t, lastCastId);
             controller.update(safeDt);
         }
 
-        const g = group.current;
+        const g = root.current;
+        const b = body.current;
         if (!g) return;
         if (!t) {
             g.visible = false;
             return;
         }
         g.visible = true;
+        if (b) b.rotation.y = t.yaw ?? 0;
 
         const movedFar =
             lastXZ.current != null &&
@@ -441,18 +452,20 @@ function PracticeDummyAvatar({
     });
 
     return (
-        <group ref={group} userData={{ bbSkipGround: true }}>
-            <primitive object={scene} />
+        <group ref={root} userData={{ bbSkipGround: true }}>
+            <group ref={body}>
+                <primitive object={scene} />
+                <StatusOrnaments
+                    headY={2.2}
+                    getStatuses={() => {
+                        const t = room?.state?.targets?.get(targetId) as
+                            | { statuses?: Parameters<typeof collectStatusRows>[0] }
+                            | undefined;
+                        return collectStatusRows(t?.statuses);
+                    }}
+                />
+            </group>
             <HpBillboard room={room} targetId={targetId} y={2.05} />
-            <StatusOrnaments
-                headY={2.2}
-                getStatuses={() => {
-                    const t = room?.state?.targets?.get(targetId) as
-                        | { statuses?: Parameters<typeof collectStatusRows>[0] }
-                        | undefined;
-                    return collectStatusRows(t?.statuses);
-                }}
-            />
         </group>
     );
 }

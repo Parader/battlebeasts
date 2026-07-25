@@ -152,15 +152,27 @@ export const HUB_SPAWN = spawnIx
   ? { x: sx(spawnIx.x), z: sx(spawnIx.z) }
   : { ...HUB_SPAWN_FALLBACK };
 
-export type PracticeDummyDef = InteractZone & { id: string };
+export type PracticeDummyDef = InteractZone & {
+  id: string;
+  /** If false, dummy never retaliates (training dummy on the left). */
+  retaliates?: boolean;
+};
 
 const dummyMarks = interactsOf("dummy");
 export const HUB_PRACTICE_DUMMIES: PracticeDummyDef[] =
   dummyMarks.length > 0
-    ? dummyMarks.map((d, i) => ({
-        id: i === 0 ? "practice_dummy" : `practice_dummy_${i}`,
-        ...zoneFromMarker(d),
-      }))
+    ? (() => {
+        const zones = dummyMarks.map((d, i) => ({
+          id: i === 0 ? "practice_dummy" : `practice_dummy_${i}`,
+          ...zoneFromMarker(d),
+        }));
+        const leftX = Math.min(...zones.map((z) => z.x));
+        return zones.map((z) => ({
+          ...z,
+          // Left pad is passive practice; right one fights back.
+          retaliates: z.x > leftX + 1e-4,
+        }));
+      })()
     : [
         {
           id: "practice_dummy",
@@ -169,6 +181,7 @@ export const HUB_PRACTICE_DUMMIES: PracticeDummyDef[] =
           halfX: DEFAULT_HALF,
           halfZ: DEFAULT_HALF,
           rotationY: 0,
+          retaliates: false,
         },
       ];
 

@@ -64,8 +64,13 @@ export class WorldTargetState extends Schema {
   @type("string") kind = "dummy";
   @type("number") x = 0;
   @type("number") z = 0;
+  @type("number") yaw = 0;
   @type("number") hp = 200;
   @type("number") maxHp = 200;
+  /** Mirror of player cast fields for attack anim sync. */
+  @type("string") castAbilityId = "";
+  @type("string") castPhase = "";
+  @type("number") castLockUntil = 0;
   @type({ map: StatusInstanceState }) statuses = new MapSchema<StatusInstanceState>();
 }
 

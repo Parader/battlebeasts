@@ -906,6 +906,19 @@ export function useBaseCityRoom(options: Options) {
                     lastAckRef.current = serverMe.lastInputSeq;
                 }
 
+                // Soft-respawn / teleport: hard snap when server moved far from prediction.
+                if (serverMe && predictor.isSeeded) {
+                    const jump = Math.hypot(
+                        serverMe.x - predictor.state.x,
+                        serverMe.z - predictor.state.z,
+                    );
+                    if (jump > 6) {
+                        predictor.seed(serverMe.x, serverMe.z, serverMe.yaw);
+                        predictedRef.current = { ...predictor.state };
+                        lastAckRef.current = serverMe.lastInputSeq;
+                    }
+                }
+
                 if (serverMe) {
                     if (serverMe.castPhase) {
                         castPhaseRef.current = serverMe.castPhase;

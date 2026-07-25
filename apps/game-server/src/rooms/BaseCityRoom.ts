@@ -3,6 +3,7 @@ import {
   ABILITIES,
   COSMETIC_COLORS,
   DEFAULT_LOADOUT,
+  HUB_SPAWN,
   INTERACT,
   LOADOUT_SIZE,
   MAX_TALENTS,
@@ -17,10 +18,10 @@ import {
   formatWallet,
   HUB_PORTALS,
   HUB_PRACTICE_DUMMIES,
-  HUB_SPAWN,
   HUB_STANDS,
   normalizeCoins,
   normalizeLoadout,
+  phaseDurationMs,
   resolvePveTransfer,
   spendCoins,
   baseCityStaticColliders,
@@ -44,6 +45,18 @@ import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 const DUMMY_COOLDOWN_MS = 1500;
 const DUMMY_COPPER_REWARD = 3;
 const DUMMY_HIT_COPPER = 1;
+/** How often an aggro'd dummy fires bolt at its attacker. */
+/** Gap after recovery before the dummy starts another cast. */
+const DUMMY_BOLT_GAP_MS = 420;
+
+type DummyAggro = {
+  attackerId: string;
+  /** When the next cast windup may begin. */
+  nextCastAt: number;
+  /** Fire bolt at this time (0 = no pending release). */
+  pendingReleaseAt: number;
+  pendingAimYaw: number;
+};
 
 export class BaseCityRoom extends Room<{ state: BaseCityState }> {
   maxClients = 16;
@@ -51,6 +64,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
   private ownerId: string | null = null;
   private identities = new Map<string, VerifiedIdentity>();
   private dummyCooldownUntil = new Map<string, number>();
+  private dummyAggro = new Map<string, DummyAggro>();
   private combat!: CombatSystem;
 
   onCreate(options: AuthJoinOptions) {
@@ -58,8 +72,25 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     this.ownerId = options.hubOwnerId ?? null;
     this.combat = new CombatSystem(this as never, {
       canHurtPlayers: false,
+      onPlayerDamaged: (sessionId) => {
+        const player = this.state.players.get(sessionId);
+        if (player && player.hp <= 0) {
+          this.softRespawnPlayer(sessionId, player);
+        }
+      },
       onTargetDamaged: (targetId, _damage, attackerSessionId) => {
         if (!targetId.startsWith("practice_dummy")) return;
+        const def = HUB_PRACTICE_DUMMIES.find((d) => d.id === targetId);
+        // Left pad is passive practice; right dummy fights back.
+        if (def?.retaliates !== false) {
+          const prev = this.dummyAggro.get(targetId);
+          this.dummyAggro.set(targetId, {
+            attackerId: attackerSessionId,
+            nextCastAt: prev?.nextCastAt ?? Date.now() + 180,
+            pendingReleaseAt: prev?.pendingReleaseAt ?? 0,
+            pendingAimYaw: prev?.pendingAimYaw ?? 0,
+          });
+        }
         const player = this.state.players.get(attackerSessionId);
         const client = this.clients.find((c) => c.sessionId === attackerSessionId);
         if (!player || !client) return;
@@ -70,9 +101,13 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         void this.persistInventory(attackerSessionId, player);
         this.sendInventory(client, player);
       },
+      onTargetKilled: (targetId) => {
+        this.clearDummyCast(targetId);
+        this.dummyAggro.delete(targetId);
+      },
     });
     for (const d of HUB_PRACTICE_DUMMIES) {
-      this.combat.ensurePracticeDummy(d.x, d.z, d.id);
+      this.combat.ensurePracticeDummy(d.x, d.z, d.id, d.rotationY ?? 0);
     }
     this.combat.setStaticColliders(baseCityStaticColliders());
     this.setPatchRate(1000 / 30);
@@ -441,6 +476,129 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     }
 
     this.combat.tick(dt, now);
+    this.tickDummyAggro(now);
+  }
+
+  /** Aggro'd practice dummies cast bolt (with anim) at their attacker until death. */
+  private clearDummyCast(dummyId: string) {
+    const dummy = this.state.targets.get(dummyId);
+    if (!dummy) return;
+    dummy.castAbilityId = "";
+    dummy.castPhase = "";
+    dummy.castLockUntil = 0;
+  }
+
+  private clearAllDummyAggro() {
+    for (const dummyId of this.dummyAggro.keys()) {
+      this.clearDummyCast(dummyId);
+    }
+    this.dummyAggro.clear();
+  }
+
+  /** Soft-death: full HP at town center, deaggro every dummy. */
+  private softRespawnPlayer(sessionId: string, player: PlayerState) {
+    player.hp = player.maxHp;
+    player.x = HUB_SPAWN.x;
+    player.z = HUB_SPAWN.z;
+    player.yaw = 0;
+    player.castAbilityId = "";
+    player.castPhase = "";
+    player.castLockUntil = 0;
+    player.castPhaseEndsAt = 0;
+    player.castComboHit = 0;
+    player.invulnerable = false;
+    player.statuses.clear();
+    this.combat.clearSession(sessionId);
+    this.clearAllDummyAggro();
+  }
+
+  private tickDummyAggro(now: number) {
+    const bolt = ABILITIES.bolt;
+    if (!bolt) return;
+    const windupMs =
+      phaseDurationMs(bolt, "anticipation") + phaseDurationMs(bolt, "cast");
+    const impactMs = phaseDurationMs(bolt, "impact");
+    const recoveryMs = phaseDurationMs(bolt, "recovery");
+    const totalMs = windupMs + impactMs + recoveryMs;
+    const maxRange = bolt.range ?? 12;
+
+    for (const [dummyId, aggro] of [...this.dummyAggro.entries()]) {
+      const dummy = this.state.targets.get(dummyId);
+      const player = this.state.players.get(aggro.attackerId);
+      if (
+        !dummy ||
+        !player ||
+        player.disconnected ||
+        !dummyId.startsWith("practice_dummy")
+      ) {
+        this.clearDummyCast(dummyId);
+        this.dummyAggro.delete(dummyId);
+        continue;
+      }
+      if (player.hp <= 0) {
+        this.softRespawnPlayer(aggro.attackerId, player);
+        continue;
+      }
+
+      const dx = player.x - dummy.x;
+      const dz = player.z - dummy.z;
+      const dist = Math.hypot(dx, dz);
+      const aimYaw = dist > 1e-4 ? Math.atan2(dx, dz) : dummy.yaw;
+      dummy.yaw = aimYaw;
+
+      // Release: fire projectile at end of cast windup.
+      if (aggro.pendingReleaseAt > 0 && now >= aggro.pendingReleaseAt) {
+        this.combat.fireProjectileFrom(
+          dummyId,
+          {
+            id: dummyId,
+            x: dummy.x,
+            z: dummy.z,
+            yaw: aggro.pendingAimYaw,
+            hp: dummy.hp,
+            maxHp: dummy.maxHp,
+            vulnerable: true,
+          },
+          "bolt",
+        );
+        dummy.castPhase = "impact";
+        aggro.pendingReleaseAt = 0;
+        aggro.nextCastAt = now + impactMs + recoveryMs + DUMMY_BOLT_GAP_MS;
+      }
+
+      // Advance impact → recovery using the stable castLockUntil end stamp.
+      if (dummy.castAbilityId === "bolt" && dummy.castLockUntil > 0) {
+        const castEnd = dummy.castLockUntil;
+        const recoveryStart = castEnd - recoveryMs;
+        const impactStart = recoveryStart - impactMs;
+        if (now >= castEnd) {
+          this.clearDummyCast(dummyId);
+        } else if (now >= recoveryStart) {
+          dummy.castPhase = "recovery";
+        } else if (now >= impactStart) {
+          dummy.castPhase = "impact";
+        }
+      }
+
+      if (dist > maxRange + 0.5 || dist < 1e-4) {
+        // Stay aggro'd but don't start casts out of range.
+        continue;
+      }
+
+      // Begin next cast windup (castLockUntil stays fixed for the whole cast → stable anim key).
+      if (
+        aggro.pendingReleaseAt <= 0 &&
+        now >= aggro.nextCastAt &&
+        !dummy.castAbilityId
+      ) {
+        dummy.castAbilityId = "bolt";
+        dummy.castPhase = "cast";
+        dummy.castLockUntil = now + totalMs;
+        dummy.yaw = aimYaw;
+        aggro.pendingAimYaw = aimYaw;
+        aggro.pendingReleaseAt = now + windupMs;
+      }
+    }
   }
 
   private handleInteract(sessionId: string, player: PlayerState, interactId: string, now: number) {

@@ -280,10 +280,8 @@ function frostBallReleaseWallMs(): number {
 }
 
 function frostBallRecoveryWallMs(): number {
-  const releaseSec = FROST_BALL_CAST.releaseFrame / FROST_BALL_CAST.fps;
-  const restSec = Math.max(0, FROST_BALL_CAST.clipDurationSec - releaseSec);
-  // Aggressive trim — unlock soon after release so combat stays fluid.
-  return (restSec / FROST_BALL_CAST.playbackRate) * 1000 * 0.32;
+  // Keep a brief settle after release — long Mixamo tail blocked follow-up casts.
+  return 100;
 }
 
 /** Authored ms that yield `wallMs` after CAST_EXECUTION_SCALE. */
@@ -431,12 +429,12 @@ export const ABILITIES: Record<string, AbilityDef> = {
     timing: {
       anticipationMs: authoredForWallMs(100),
       castMs: authoredForWallMs(Math.max(16, frostBallReleaseWallMs() - 100)),
-      impactMs: authoredForWallMs(120),
+      impactMs: authoredForWallMs(80),
       recoveryMs: authoredForWallMs(frostBallRecoveryWallMs()),
       anticipationMoveMul: 0.55,
       castMoveMul: 0.35,
       impactMoveMul: 0.45,
-      recoveryMoveMul: 0.85,
+      recoveryMoveMul: 0.95,
       canCancelAnticipation: true,
       /** Cancel through windup until the ball spawns at impact. */
       cancelUntilPhase: "cast",
