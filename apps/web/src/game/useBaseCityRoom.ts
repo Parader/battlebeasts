@@ -9,6 +9,7 @@ import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime"
 import { abilityHudRuntime } from "./abilityHudRuntime";
 import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
+import { playBoltHitSfx, playSlamHitSfx } from "./gameSfx";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     aoe: "#c084fc",
@@ -538,6 +539,7 @@ export function useBaseCityRoom(options: Options) {
                             z: msg.z,
                             y: 0.04,
                         });
+                        if (msg.abilityId === "smash") playSlamHitSfx();
                     }
 
                     if (msg.kind === "aoe" && usesSpikeFx(msg.abilityId)) {
@@ -607,6 +609,10 @@ export function useBaseCityRoom(options: Options) {
                                 followOwnerId: msg.ownerId,
                             },
                         );
+                    }
+
+                    if (msg.kind === "hit" && msg.abilityId === "bolt") {
+                        playBoltHitSfx();
                     }
 
                     if (msg.kind === "hit" && typeof msg.damage === "number" && msg.damage > 0) {

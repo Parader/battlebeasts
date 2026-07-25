@@ -11,6 +11,7 @@ import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnamen
 import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
+import { playBoltCastSfx } from "./gameSfx";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -121,10 +122,16 @@ export function Projectiles({ room }: { room: Room | null }) {
         if (!room?.state?.projectiles) return;
         const now = performance.now();
         const live: string[] = [];
-        room.state.projectiles.forEach((p: { abilityId?: string }, id: string) => {
+        room.state.projectiles.forEach(
+            (p: { abilityId?: string; ownerSessionId?: string }, id: string) => {
             live.push(id);
             if (p.abilityId) abilityById.current.set(id, p.abilityId);
-        });
+            // Bolt cast SFX when the projectile first appears in the world.
+            if (!prevLive.current.has(id) && p.abilityId === "bolt") {
+                playBoltCastSfx(p.ownerSessionId || id);
+            }
+        },
+        );
         live.sort();
 
         for (const id of prevLive.current) {

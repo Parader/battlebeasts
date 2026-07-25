@@ -6,6 +6,7 @@ import { CATALOG_CAST_FX, usesBridgedAoeFx, usesMeleeSwoopFx } from "./catalog";
 import { spawnCastEffect, spawnImpactEffect } from "./runtime";
 import type { VfxHandle } from "./types";
 import { FROST_HAND_FORWARD, FROST_HAND_Y } from "./effects/frostBallCast";
+import { stopBoltCastSfx } from "../gameSfx";
 
 type PlayerCast = {
   x?: number;
@@ -177,6 +178,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         frostHand.current.delete(id);
         gustWave.current.get(id)?.cancel();
         gustWave.current.delete(id);
+        stopBoltCastSfx(id);
       }
     }
   });

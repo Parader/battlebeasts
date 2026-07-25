@@ -21,6 +21,7 @@ import { findBone } from "./vfx/attach";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { InteractPromptBillboard } from "./InteractPromptBillboard";
+import { resetFootsteps, tickFootsteps } from "./gameSfx";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -197,6 +198,7 @@ export function CharacterAvatar({
       velocity.current.set(0, 0, 0);
       prevPos.current.set(p.x, 0, p.z);
       yawLocked.current = true;
+      resetFootsteps();
       controller.setMovement({
         worldVelocity: velocity.current,
         facingYaw: visualYaw.current,
@@ -217,6 +219,8 @@ export function CharacterAvatar({
     const cloaked = hasStatusId(me?.statuses, "cloaked");
     const castingDecoy = me?.castAbilityId === "decoy";
     const speed = Math.hypot(velocity.current.x, velocity.current.z);
+    const hopY = smashHopOffsetY(me);
+    tickFootsteps(speed, safeDt, { muted: cloaked || hopY > 0.08 });
     const movingCloak = cloaked && !castingDecoy && speed > CLOAK_MOVE_SPEED_EPS;
 
     syncPlayerCast(controller, room, localSessionId, lastCastId, comboAnimHoldUntil);

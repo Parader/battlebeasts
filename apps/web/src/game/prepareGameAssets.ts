@@ -3,6 +3,7 @@ import { ARENA_SCENE_URL, HUB_SCENE_URL } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
 import { CHARACTER_URL } from "./characterVisual";
 import { preloadVillageMusic } from "./gameMusic";
+import { preloadCombatSfx } from "./gameSfx";
 import { GROUND_TEXTURE_URLS } from "./TexturedGround";
 
 export type AssetBundle = "hub" | "arena";
@@ -82,6 +83,7 @@ export async function preloadHubAssets(
       () => preloadGltf(hubSceneUrl()),
       () => preloadTextures(GROUND_TEXTURE_URLS),
       () => preloadVillageMusic(),
+      () => preloadCombatSfx(),
     ],
     onProgress,
   );
