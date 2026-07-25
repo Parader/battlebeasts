@@ -10,6 +10,8 @@ const TEX = {
   ao: "/ground_textures/sandy_gravel_02_ao_2k.jpg",
 } as const;
 
+export const GROUND_TEXTURE_URLS = [TEX.diff, TEX.nor, TEX.rough, TEX.ao] as const;
+
 /**
  * World meters per texture repeat. Larger = softer detail, fewer seams.
  * Poly Haven scan is 2.5m; we stretch for top-down readability.

@@ -1,9 +1,14 @@
+import { useState } from "react";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
+import { PatchNotesPanel } from "@/game/ui/PatchNotesPanel";
+import { hasUnseenPatchNotes } from "@/game/patchNotes";
 import { useAuth } from "@/providers/auth-provider";
 
 export const HomeScreen = () => {
     const { ready, configured, user, profile, needsNameSetup, signOut } = useAuth();
+    const [updatesOpen, setUpdatesOpen] = useState(false);
+    const unseen = hasUnseenPatchNotes();
 
     return (
         <div className="relative flex min-h-dvh flex-col overflow-hidden bg-primary">
@@ -45,6 +50,9 @@ export const HomeScreen = () => {
                             </Button>
                         </>
                     )}
+                    <Button size="xl" color="tertiary" onClick={() => setUpdatesOpen(true)}>
+                        {unseen ? "Updates · New" : "Updates"}
+                    </Button>
                 </div>
 
                 {configured && !user && (
@@ -58,6 +66,8 @@ export const HomeScreen = () => {
                     </p>
                 )}
             </div>
+
+            <PatchNotesPanel open={updatesOpen} onClose={() => setUpdatesOpen(false)} />
         </div>
     );
 };

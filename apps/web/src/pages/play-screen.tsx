@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router";
 import { GameCanvas } from "@/game/GameCanvas";
 import { useBaseCityRoom } from "@/game/useBaseCityRoom";
+import { useAssetPreload } from "@/game/useAssetPreload";
+import { useVillageMusic } from "@/game/useVillageMusic";
 import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
+import { SettingsPanel } from "@/game/ui/SettingsPanel";
+import { PatchNotesPanel } from "@/game/ui/PatchNotesPanel";
+import { hasUnseenPatchNotes } from "@/game/patchNotes";
 import { DeathOverlay } from "@/game/ui/DeathOverlay";
 import { HubRoster } from "@/game/ui/HubRoster";
 import { ArenaMatchHud } from "@/game/ui/ArenaMatchHud";
@@ -14,6 +19,7 @@ import { PartyInviteToast } from "@/game/ui/PartyInviteToast";
 import { AbilityBar } from "@/game/ui/AbilityBar";
 import { StatusBar } from "@/game/ui/StatusBar";
 import { ConfirmDialog } from "@/game/ui/ConfirmDialog";
+import { GameLoadingOverlay } from "@/game/ui/GameLoadingOverlay";
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
@@ -68,9 +74,17 @@ export const PlayScreen = () => {
         ready && hubPrefReady && (!user || (Boolean(profile) && !needsNameSetup));
 
     const friendsApi = useFriends(user?.id ?? null, user ? effectiveHubOwnerId : null);
-    const [helpOpen, setHelpOpen] = useState(true);
+    const [helpOpen, setHelpOpen] = useState(false);
     const [friendsOpen, setFriendsOpen] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [updatesOpen, setUpdatesOpen] = useState(false);
     const [confirmReturnHub, setConfirmReturnHub] = useState(false);
+    /** True until hub/arena assets + room are ready (locks combat input). */
+    const [loadingGate, setLoadingGate] = useState(true);
+
+    // Preload needs phase; start with hub until the room reports content.
+    const [assetBundle, setAssetBundle] = useState<"hub" | "arena">("hub");
+    const { progress, assetsReady } = useAssetPreload(assetBundle, canJoinRoom);
 
     const {
         status,
@@ -115,9 +129,34 @@ export const PlayScreen = () => {
         accessToken,
         hubOwnerId: effectiveHubOwnerId,
         enabled: canJoinRoom,
-        inputLocked: friendsOpen,
+        inputLocked: friendsOpen || settingsOpen || updatesOpen || loadingGate,
         onActiveHubOwnerId: (id) => setHubOwnerId(id),
     });
+
+    const inContent = phase === "content";
+    useEffect(() => {
+        setAssetBundle(inContent ? "arena" : "hub");
+    }, [inContent]);
+
+    const roomReady = status === "connected" || status === "error";
+    const playReady = assetsReady && roomReady;
+    useLayoutEffect(() => {
+        setLoadingGate(!playReady);
+    }, [playReady]);
+
+    useVillageMusic(playReady && !inContent);
+
+    const loadingStatusLabel = !assetsReady
+        ? inContent
+            ? "Preparing arena"
+            : "Preparing hub"
+        : status === "connecting"
+          ? "Connecting"
+          : status === "error"
+            ? "Connection issue"
+            : status === "disconnected"
+              ? "Reconnecting"
+              : "Almost ready";
 
     if (!ready) {
         return (
@@ -131,13 +170,11 @@ export const PlayScreen = () => {
         return <Navigate to="/setup/name" replace />;
     }
 
-    const inContent = phase === "content";
     const isArena = Boolean(arenaHud?.matchPhase);
     const arenaAllowRespawn = !isArena || arenaHud?.matchPhase === "rematch_wait";
     const hpMax = Math.max(1, localHp.maxHp);
     const hpPct = Math.max(0, Math.min(100, (localHp.hp / hpMax) * 100));
     const shieldPct = Math.max(0, Math.min(100, (localHp.shield / hpMax) * 100));
-    // Sit on the right of current HP; if that would overflow, overlay the bar's right edge.
     const shieldLeft = Math.min(hpPct, Math.max(0, 100 - shieldPct));
     const isHubOwner = effectiveHubOwnerId === userId;
 
@@ -151,7 +188,14 @@ export const PlayScreen = () => {
                 contentMode={contentMode}
             />
 
-            {combatHudVisible && (
+            {!playReady ? (
+                <GameLoadingOverlay
+                    percent={assetsReady ? 100 : Math.min(95, progress.percent)}
+                    statusLabel={loadingStatusLabel}
+                />
+            ) : null}
+
+            {playReady && combatHudVisible && (
                 <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
                     <div className="bb-hp-tray">
                         <div className="bb-hp-tray__label">
@@ -176,7 +220,7 @@ export const PlayScreen = () => {
                 </div>
             )}
 
-            {diedAt != null && (
+            {playReady && diedAt != null && (
                 <DeathOverlay
                     diedAt={diedAt}
                     animDurationMs={deathAnimMs}
@@ -185,9 +229,9 @@ export const PlayScreen = () => {
                 />
             )}
 
-            {arenaHud && inContent && <ArenaMatchHud hud={arenaHud} />}
+            {playReady && arenaHud && inContent && <ArenaMatchHud hud={arenaHud} />}
 
-            {matchRecap && inContent && (
+            {playReady && matchRecap && inContent && (
                 <MatchRecapPanel
                     recap={matchRecap}
                     rematchReady={Boolean(arenaHud?.rematchReady)}
@@ -196,85 +240,130 @@ export const PlayScreen = () => {
                 />
             )}
 
-            <div data-ui-overlay className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4">
-                <div className="pointer-events-auto flex flex-col gap-2">
-                    <span className="bb-chip text-[0.75rem]">BattleBeasts</span>
-                    <span
-                        className={[
-                            "bb-chip",
-                            status === "connected" ? "bb-chip--ok" : status === "error" ? "bb-chip--err" : "",
-                        ].join(" ")}
-                    >
-                        {status}
-                        {inContent ? ` · ${contentMode ?? "content"}` : phase === "queued" ? " · queued" : ""}
-                    </span>
-                    {configured && user ? (
-                        <span className="bb-chip">
-                            {displayName}
-                            {effectiveHubOwnerId !== userId ? " · visiting" : ""}
+            {playReady ? (
+                <div
+                    data-ui-overlay
+                    className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4"
+                >
+                    <div className="pointer-events-auto flex flex-col gap-2">
+                        <span className="bb-chip text-[0.75rem]">BattleBeasts</span>
+                        <span
+                            className={[
+                                "bb-chip",
+                                status === "connected"
+                                    ? "bb-chip--ok"
+                                    : status === "error"
+                                      ? "bb-chip--err"
+                                      : "",
+                            ].join(" ")}
+                        >
+                            {status}
+                            {inContent
+                                ? ` · ${contentMode ?? "content"}`
+                                : phase === "queued"
+                                  ? " · queued"
+                                  : ""}
                         </span>
-                    ) : (
-                        <span className="bb-chip bb-chip--warn">Guest</span>
-                    )}
-                    {(friendsApi.requests.length > 0 || friendsApi.invites.length > 0) && (
-                        <span className="bb-chip bb-chip--warn">
-                            {friendsApi.requests.length + friendsApi.invites.length} pending
-                        </span>
-                    )}
-                    {!inContent && <span className="bb-chip">{formatWallet(economy)}</span>}
-                    {!inContent && (
-                        <HubRoster
-                            players={hubRoster}
-                            localSessionId={room?.sessionId ?? null}
-                            isHubOwner={isHubOwner}
-                            onKick={kickFromHub}
-                        />
-                    )}
+                        {configured && user ? (
+                            <span className="bb-chip">
+                                {displayName}
+                                {effectiveHubOwnerId !== userId ? " · visiting" : ""}
+                            </span>
+                        ) : (
+                            <span className="bb-chip bb-chip--warn">Guest</span>
+                        )}
+                        {(friendsApi.requests.length > 0 || friendsApi.invites.length > 0) && (
+                            <span className="bb-chip bb-chip--warn">
+                                {friendsApi.requests.length + friendsApi.invites.length} pending
+                            </span>
+                        )}
+                        {!inContent && <span className="bb-chip">{formatWallet(economy)}</span>}
+                        {!inContent && (
+                            <HubRoster
+                                players={hubRoster}
+                                localSessionId={room?.sessionId ?? null}
+                                isHubOwner={isHubOwner}
+                                onKick={kickFromHub}
+                            />
+                        )}
+                    </div>
+                    <div className="pointer-events-auto flex flex-wrap justify-end gap-2">
+                        {party && !inContent && activeUi !== "party_lobby" && (
+                            <button
+                                type="button"
+                                className="bb-btn-brass"
+                                onClick={() => setActiveUi("party_lobby")}
+                            >
+                                Party lobby
+                            </button>
+                        )}
+                        {inContent && (
+                            <button
+                                type="button"
+                                className="bb-btn-brass"
+                                onClick={() => setConfirmReturnHub(true)}
+                            >
+                                Return to city
+                            </button>
+                        )}
+                        {user && !inContent && (
+                            <button
+                                type="button"
+                                className="bb-btn-ink"
+                                onClick={() => setFriendsOpen(true)}
+                            >
+                                Friends
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            className="bb-btn-ink"
+                            onClick={() => setUpdatesOpen(true)}
+                        >
+                            {hasUnseenPatchNotes() ? "Updates · New" : "Updates"}
+                        </button>
+                        <button
+                            type="button"
+                            className="bb-btn-ink"
+                            onClick={() => setSettingsOpen(true)}
+                        >
+                            Settings
+                        </button>
+                        <button
+                            type="button"
+                            className="bb-btn-ink"
+                            onClick={() => setHelpOpen((v) => !v)}
+                        >
+                            Controls
+                        </button>
+                        {user && (
+                            <button type="button" className="bb-btn-ink" onClick={() => void signOut()}>
+                                Sign out
+                            </button>
+                        )}
+                        <a className="bb-btn-ink inline-block no-underline" href="/">
+                            Leave
+                        </a>
+                    </div>
                 </div>
-                <div className="pointer-events-auto flex flex-wrap justify-end gap-2">
-                    {party && !inContent && activeUi !== "party_lobby" && (
-                        <button type="button" className="bb-btn-brass" onClick={() => setActiveUi("party_lobby")}>
-                            Party lobby
-                        </button>
-                    )}
-                    {inContent && (
-                        <button type="button" className="bb-btn-brass" onClick={() => setConfirmReturnHub(true)}>
-                            Return to city
-                        </button>
-                    )}
-                    {user && !inContent && (
-                        <button type="button" className="bb-btn-ink" onClick={() => setFriendsOpen(true)}>
-                            Friends
-                        </button>
-                    )}
-                    <button type="button" className="bb-btn-ink" onClick={() => setHelpOpen((v) => !v)}>
-                        Controls
-                    </button>
-                    {user && (
-                        <button type="button" className="bb-btn-ink" onClick={() => void signOut()}>
-                            Sign out
-                        </button>
-                    )}
-                    <a className="bb-btn-ink inline-block no-underline" href="/">
-                        Leave
-                    </a>
-                </div>
-            </div>
+            ) : null}
 
-            {phase === "queued" && (
+            {playReady && phase === "queued" && (
                 <div
                     data-ui-overlay
                     className="bb-parchment bb-toast pointer-events-auto absolute inset-x-0 top-20 z-30 mx-auto flex max-w-md flex-col items-center gap-2 px-4 py-3 text-center"
                 >
                     <p className="bb-title text-sm">Searching for match…</p>
-                    <p className="text-xs text-[var(--bb-ink-soft)]">{queueModes.join(" · ") || "PvP"}</p>
+                    <p className="text-xs text-[var(--bb-ink-soft)]">
+                        {queueModes.join(" · ") || "PvP"}
+                    </p>
                     <button type="button" className="bb-btn-ink" onClick={cancelQueue}>
                         Cancel queue
                     </button>
                 </div>
             )}
 
-            {matchPause && (
+            {playReady && matchPause && (
                 <div
                     data-ui-overlay
                     className="bb-parchment bb-toast pointer-events-none absolute inset-x-0 top-20 z-30 mx-auto max-w-md px-4 py-3 text-center"
@@ -299,11 +388,11 @@ export const PlayScreen = () => {
                 </div>
             )}
 
-            <StatusBar room={room} sessionId={room?.sessionId ?? null} />
+            {playReady && <StatusBar room={room} sessionId={room?.sessionId ?? null} />}
 
-            <AbilityBar loadout={economy.loadout} />
+            {playReady && <AbilityBar loadout={economy.loadout} />}
 
-            {helpOpen && (
+            {playReady && helpOpen && (
                 <div
                     data-ui-overlay
                     className="bb-parchment bb-toast pointer-events-none absolute bottom-24 left-4 z-20 max-w-sm p-4 text-sm"
@@ -317,7 +406,10 @@ export const PlayScreen = () => {
                         <li>Space can interrupt other casts (missile keeps flying if already fired)</li>
                         <li>In a shop / stand zone, Space opens the menu instead of casting</li>
                         <li>Walk into a portal to open its menu</li>
-                        <li>C / Esc / mouse side buttons — cancel (Bolt: until projectile fires; others: anticipation)</li>
+                        <li>
+                            C / Esc / mouse side buttons — cancel (Bolt: until projectile fires; others:
+                            anticipation)
+                        </li>
                         {!inContent && <li>Practice dummy — damage it with abilities for copper</li>}
                     </ul>
                     {localPlayer && (
@@ -328,7 +420,7 @@ export const PlayScreen = () => {
                 </div>
             )}
 
-            {toast && (
+            {playReady && toast && (
                 <div
                     data-ui-overlay
                     className="bb-parchment bb-toast absolute bottom-24 right-4 z-30 px-4 py-2 text-sm"
@@ -337,17 +429,19 @@ export const PlayScreen = () => {
                 </div>
             )}
 
-            {activeUi && ["customization", "build", "talent", "shop"].includes(activeUi) && (
-                <StandPanel
-                    kind={activeUi as "customization" | "build" | "talent" | "shop"}
-                    onClose={() => setActiveUi(null)}
-                    room={room}
-                    economy={economy}
-                    localSessionId={room?.sessionId ?? null}
-                />
-            )}
+            {playReady &&
+                activeUi &&
+                ["customization", "build", "talent", "shop"].includes(activeUi) && (
+                    <StandPanel
+                        kind={activeUi as "customization" | "build" | "talent" | "shop"}
+                        onClose={() => setActiveUi(null)}
+                        room={room}
+                        economy={economy}
+                        localSessionId={room?.sessionId ?? null}
+                    />
+                )}
 
-            {(activeUi === "portal_pvp" || activeUi === "portal_pve") && (
+            {playReady && (activeUi === "portal_pvp" || activeUi === "portal_pve") && (
                 <PortalPanel
                     kind={activeUi}
                     onClose={() => setActiveUi(null)}
@@ -356,7 +450,7 @@ export const PlayScreen = () => {
                 />
             )}
 
-            {activeUi === "party_lobby" && party && (
+            {playReady && activeUi === "party_lobby" && party && (
                 <PartyLobbyPanel
                     party={party}
                     localSessionId={room?.sessionId ?? null}
@@ -371,7 +465,7 @@ export const PlayScreen = () => {
                 />
             )}
 
-            {partyInvite && (
+            {playReady && partyInvite && (
                 <PartyInviteToast
                     invite={partyInvite}
                     onAccept={() => respondPartyInvite(true)}
@@ -379,7 +473,15 @@ export const PlayScreen = () => {
                 />
             )}
 
-            {user && (
+            {playReady && (
+                <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+            )}
+
+            {playReady && (
+                <PatchNotesPanel open={updatesOpen} onClose={() => setUpdatesOpen(false)} />
+            )}
+
+            {playReady && user && (
                 <FriendsPanel
                     open={friendsOpen}
                     onClose={() => setFriendsOpen(false)}
@@ -408,7 +510,7 @@ export const PlayScreen = () => {
             )}
 
             <ConfirmDialog
-                open={confirmReturnHub}
+                open={playReady && confirmReturnHub}
                 title="Return to city?"
                 message="Leave this match and return to your base city?"
                 confirmLabel="Return to city"

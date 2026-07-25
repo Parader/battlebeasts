@@ -1,7 +1,7 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { Room } from "colyseus.js";
-import { memo, useLayoutEffect, useRef, type MutableRefObject } from "react";
+import { Suspense, memo, useLayoutEffect, useRef, type MutableRefObject } from "react";
 import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import { CAMERA } from "@battlebeasts/shared";
 import { BaseCityScene } from "./BaseCityScene";
@@ -76,20 +76,22 @@ export const GameCanvas = memo(function GameCanvas({
                     inContent ? 55 : 160,
                 ]}
             />
-            {inContent ? (
-                <ContentScene
-                    room={room}
-                    localSessionId={localSessionId}
-                    predictedRef={predictedRef}
-                    modeLabel={contentMode ?? "content"}
-                />
-            ) : (
-                <BaseCityScene
-                    room={room}
-                    localSessionId={localSessionId}
-                    predictedRef={predictedRef}
-                />
-            )}
+            <Suspense fallback={null}>
+                {inContent ? (
+                    <ContentScene
+                        room={room}
+                        localSessionId={localSessionId}
+                        predictedRef={predictedRef}
+                        modeLabel={contentMode ?? "content"}
+                    />
+                ) : (
+                    <BaseCityScene
+                        room={room}
+                        localSessionId={localSessionId}
+                        predictedRef={predictedRef}
+                    />
+                )}
+            </Suspense>
             <PostFX />
         </Canvas>
     );

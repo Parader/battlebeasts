@@ -1,7 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
-  PVE_CONTENTS,
-  PVE_MODIFIERS,
   PVP_PORTAL_MODES,
   pvpModeCapacity,
   pvpModeFitsPlayerCount,
@@ -59,6 +57,17 @@ function BookShell({
   );
 }
 
+function InDevelopmentNotice() {
+  return (
+    <p
+      className="py-10 text-center text-sm font-semibold uppercase tracking-[0.2em] text-[var(--bb-ink-soft)]"
+      style={{ fontFamily: "var(--bb-font-display)" }}
+    >
+      In development
+    </p>
+  );
+}
+
 export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Props) {
   const enabledModes = useMemo(
     () => PVP_PORTAL_MODES.filter((m) => pvpModeFitsPlayerCount(m.id, hubPlayerCount)),
@@ -67,12 +76,26 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
   const [modes, setModes] = useState<string[]>(() =>
     enabledModes[0] ? [enabledModes[0].id] : ["arena_1v1"],
   );
-  const [content, setContent] = useState("dungeon");
-  const [modifiers, setModifiers] = useState<string[]>([]);
 
   const isPvp = kind === "portal_pvp";
   const title = isPvp ? "PvP Portal" : "PvE / Coop Portal";
   const canEnter = isPvp && modes.some((id) => pvpModeFitsPlayerCount(id, hubPlayerCount));
+
+  if (!isPvp) {
+    return (
+      <BookShell
+        title={title}
+        onClose={onClose}
+        footer={
+          <button type="button" className="bb-btn-ink" onClick={onClose}>
+            Close
+          </button>
+        }
+      >
+        <InDevelopmentNotice />
+      </BookShell>
+    );
+  }
 
   return (
     <BookShell
@@ -86,115 +109,59 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
           <button
             type="button"
             className="bb-btn-brass disabled:opacity-45"
-            disabled={!canEnter || (isPvp && modes.length === 0)}
-            title={isPvp ? undefined : "Still in development"}
-            onClick={() =>
-              onConfirm(isPvp ? "pvp" : "pve", isPvp ? { modes } : { content, modifiers })
-            }
+            disabled={!canEnter || modes.length === 0}
+            onClick={() => onConfirm("pvp", { modes })}
           >
-            {isPvp ? "Open party lobby" : "Coming soon"}
+            Open party lobby
           </button>
         </>
       }
     >
       <p className="mb-3 text-sm text-[var(--bb-ink-soft)]">
-        {isPvp
-          ? "Pick the arena modes you want to queue for."
-          : "This part is still in development."}
+        Pick the arena modes you want to queue for.
       </p>
 
-      {isPvp ? (
-        <div className="space-y-2">
-          {PVP_PORTAL_MODES.map((opt) => {
-            const fits = pvpModeFitsPlayerCount(opt.id, hubPlayerCount);
-            const on = modes.includes(opt.id);
-            const cap = pvpModeCapacity(opt.id);
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                disabled={!fits}
-                title={
-                  fits
-                    ? undefined
-                    : `Need a larger mode (${hubPlayerCount} in room, max ${cap})`
-                }
-                className={[
-                  "bb-choice",
-                  on ? "bb-choice--on" : "",
-                  !fits ? "opacity-40" : "",
-                ].join(" ")}
-                onClick={() => {
-                  if (!fits) return;
-                  setModes((prev) =>
-                    prev.includes(opt.id)
-                      ? prev.filter((x) => x !== opt.id)
-                      : [...prev, opt.id],
-                  );
-                }}
-              >
-                <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
-                  {opt.label}
-                </span>
-                {!fits ? (
-                  <span className="mt-0.5 block text-xs text-[var(--bb-ink-soft)]">
-                    too small for this hub
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <p className="bb-title text-xs">Content</p>
-            {PVE_CONTENTS.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                disabled
-                className={["bb-choice", content === opt.id ? "bb-choice--on" : "", "opacity-55"].join(
-                  " ",
-                )}
-                onClick={() => setContent(opt.id)}
-              >
-                <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
-                  {opt.label}
-                </span>
+      <div className="space-y-2">
+        {PVP_PORTAL_MODES.map((opt) => {
+          const fits = pvpModeFitsPlayerCount(opt.id, hubPlayerCount);
+          const on = modes.includes(opt.id);
+          const cap = pvpModeCapacity(opt.id);
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              disabled={!fits}
+              title={
+                fits
+                  ? undefined
+                  : `Need a larger mode (${hubPlayerCount} in room, max ${cap})`
+              }
+              className={[
+                "bb-choice",
+                on ? "bb-choice--on" : "",
+                !fits ? "opacity-40" : "",
+              ].join(" ")}
+              onClick={() => {
+                if (!fits) return;
+                setModes((prev) =>
+                  prev.includes(opt.id)
+                    ? prev.filter((x) => x !== opt.id)
+                    : [...prev, opt.id],
+                );
+              }}
+            >
+              <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
+                {opt.label}
+              </span>
+              {!fits ? (
                 <span className="mt-0.5 block text-xs text-[var(--bb-ink-soft)]">
-                  Still in development
+                  too small for this hub
                 </span>
-              </button>
-            ))}
-          </div>
-          <div className="space-y-2">
-            <p className="bb-title text-xs">Modifiers</p>
-            {PVE_MODIFIERS.map((opt) => {
-              const on = modifiers.includes(opt.id);
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  disabled
-                  className={["bb-choice", on ? "bb-choice--on" : "", "opacity-55"].join(" ")}
-                  onClick={() =>
-                    setModifiers((prev) =>
-                      prev.includes(opt.id)
-                        ? prev.filter((x) => x !== opt.id)
-                        : [...prev, opt.id],
-                    )
-                  }
-                >
-                  <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
-                    {opt.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
     </BookShell>
   );
 }

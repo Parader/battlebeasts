@@ -8,7 +8,6 @@ import {
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
   LOADOUT_SIZE,
-  SHOP_ITEMS,
   SPELL_SLOTS,
   abilitiesForSlot,
   canEquipInSlot,
@@ -404,29 +403,12 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
       )}
 
       {kind === "shop" && (
-        <div className="space-y-3">
-          <p className="text-sm text-[var(--bb-ink-soft)]">
-            The merchant is still in development — shopping is locked for now.
-          </p>
-          <ul className="space-y-2 opacity-55">
-            {Object.values(SHOP_ITEMS).map((item) => (
-              <li
-                key={item.id}
-                className="flex items-center justify-between gap-3 rounded-sm border border-[var(--bb-brass-dim)]/40 bg-[rgba(26,34,28,0.05)] px-3 py-2"
-              >
-                <span className="text-sm font-medium text-[var(--bb-ink)]">{item.name}</span>
-                <button
-                  type="button"
-                  className="bb-btn-ink"
-                  disabled
-                  title="Still in development"
-                >
-                  Coming soon
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <p
+          className="py-10 text-center text-sm font-semibold uppercase tracking-[0.2em] text-[var(--bb-ink-soft)]"
+          style={{ fontFamily: "var(--bb-font-display)" }}
+        >
+          In development
+        </p>
       )}
     </BookShell>
   );
