@@ -119,6 +119,19 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#86efac",
     tag: "HST",
   },
+  /** Electrical augment — +60% move for 3s (Surge). */
+  surged: {
+    id: "surged",
+    name: "Surged",
+    polarity: "buff",
+    mechanic: "haste",
+    durationMs: 3000,
+    moveMul: 1.6,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#67e8f9",
+    tag: "SRG",
+  },
   burning: {
     id: "burning",
     name: "Burning",

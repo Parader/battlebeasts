@@ -399,6 +399,34 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
     applyAuraSlow: [{ statusId: "slowed", durationMs: 1200, chance: 1 }],
   },
+  /**
+   * Electrical augment (Space) — short cast, then +60% move for 3s.
+   * Listed before dash so it is the default Space loadout pick.
+   */
+  surge: {
+    id: "surge",
+    name: "Surge",
+    cooldownMs: 7000,
+    range: 0,
+    shape: "buff",
+    damage: 0,
+    allowedSlots: ["space"],
+    defaultSlot: "space",
+    timing: {
+      anticipationMs: 70,
+      castMs: 90,
+      impactMs: 60,
+      recoveryMs: 100,
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 1,
+      recoveryMoveMul: 1,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnSelf: [{ statusId: "surged", durationMs: 3000 }],
+    interruptsOtherCasts: true,
+  },
   dash: {
     id: "dash",
     name: "Dash",

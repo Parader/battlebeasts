@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, normalizeLoadout, playerCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, normalizeLoadout, playerCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
@@ -865,6 +865,9 @@ export function useBaseCityRoom(options: Options) {
                           lastInputSeq: number;
                           castPhase?: string;
                           castAbilityId?: string;
+                          statuses?: {
+                              forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void;
+                          };
                       }
                     | undefined;
 
@@ -879,6 +882,17 @@ export function useBaseCityRoom(options: Options) {
                     const statics =
                         phaseRef.current === "hub" ? baseCityStaticColliders() : [];
                     predictor.setWorldColliders(statics, dynamics);
+                }
+
+                if (serverMe) {
+                    const statusEntries: { def: NonNullable<ReturnType<typeof getStatus>>; stacks: number }[] = [];
+                    serverMe.statuses?.forEach((row) => {
+                        const def = row.statusId ? getStatus(row.statusId) : undefined;
+                        if (def) statusEntries.push({ def, stacks: row.stacks ?? 1 });
+                    });
+                    predictor.setStatusMoveMul(combineStatusMoveMul(statusEntries));
+                } else {
+                    predictor.setStatusMoveMul(1);
                 }
 
                 if (serverMe && !predictor.isSeeded) {

@@ -150,10 +150,11 @@ export function CharacterAvatar({
     prevPos.current.set(p.x, 0, p.z);
 
     controller.setStunned(hasStatusId(me?.statuses, "stunned"));
+    const speedMul = hasStatusId(me?.statuses, "surged") ? 1.6 : 1;
     controller.setMovement({
       worldVelocity: velocity.current,
       facingYaw: visualYaw.current,
-      maximumSpeed: MOVE_SPEED,
+      maximumSpeed: MOVE_SPEED * speedMul,
     });
     controller.update(safeDt);
   });
@@ -162,16 +163,16 @@ export function CharacterAvatar({
     <group ref={group}>
       <group ref={bodyRef}>
         <primitive object={scene} />
+        <StatusOrnaments
+          getStatuses={() => {
+            if (!room || !localSessionId) return [];
+            const me = room.state?.players?.get(localSessionId) as
+              | { statuses?: Parameters<typeof collectStatusRows>[0] }
+              | undefined;
+            return collectStatusRows(me?.statuses);
+          }}
+        />
       </group>
-      <StatusOrnaments
-        getStatuses={() => {
-          if (!room || !localSessionId) return [];
-          const me = room.state?.players?.get(localSessionId) as
-            | { statuses?: Parameters<typeof collectStatusRows>[0] }
-            | undefined;
-          return collectStatusRows(me?.statuses);
-        }}
-      />
       <group ref={aimRef}>
         <AimIndicator color={color ?? "#7dd3fc"} />
       </group>

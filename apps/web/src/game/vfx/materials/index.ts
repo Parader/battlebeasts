@@ -8,6 +8,7 @@ export { createScrollNoiseMaterial, tickScrollNoise } from "./scrollNoise";
 export { createTrailMaterial } from "./trailMaterial";
 export { createDissolveMaterial, setDissolveThreshold } from "./dissolve";
 export { createRuneMaterial, tickRuneMaterial } from "./rune";
+export { createLightningBoltMaterial, tickLightningBolt } from "./lightningBolt";
 export { createShieldMaterials, tickShieldMaterials } from "./shield";
 export {
   createGroundDecalMaterial,

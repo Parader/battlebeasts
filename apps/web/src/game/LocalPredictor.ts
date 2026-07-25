@@ -68,12 +68,16 @@ function stepPredicted(
 /**
  * Client-side movement prediction.
  * Cast / combo move muls mirror server `resolveCastMoveMul` + continue-window rules.
+ * Status haste/slow multiplies on top (e.g. Surge).
  */
 export class LocalPredictor {
   state: PredictedState = { x: 0, z: 0, yaw: 0 };
   private pending: PlayerInput[] = [];
   private seeded = false;
+  /** Cast / combo window multiplier. */
   moveMul = 1;
+  /** Active status move multiplier (haste/slow). */
+  statusMoveMul = 1;
   /** Ability id while a combo continue-window slow is active. */
   private comboGapAbilityId: string | null = null;
   private comboGapUntil = 0;
@@ -87,6 +91,7 @@ export class LocalPredictor {
     this.seeded = true;
     this.travel = null;
     this.clearMoveMul();
+    this.statusMoveMul = 1;
   }
 
   get isSeeded() {
@@ -99,6 +104,15 @@ export class LocalPredictor {
   ) {
     this.staticColliders = staticColliders;
     this.dynamicColliders = dynamicColliders;
+  }
+
+  /** Sync status-derived move mul from server (combineStatusMoveMul). */
+  setStatusMoveMul(mul: number) {
+    this.statusMoveMul = Number.isFinite(mul) ? Math.max(0, mul) : 1;
+  }
+
+  private effectiveMoveMul(): number {
+    return this.moveMul * this.statusMoveMul;
   }
 
   /**
@@ -229,7 +243,7 @@ export class LocalPredictor {
     this.state = stepPredicted(
       this.state,
       input,
-      this.moveMul,
+      this.effectiveMoveMul(),
       this.staticColliders,
       this.dynamicColliders,
     );
@@ -243,7 +257,7 @@ export class LocalPredictor {
       this.state = stepPredicted(
         this.state,
         input,
-        this.moveMul,
+        this.effectiveMoveMul(),
         this.staticColliders,
         this.dynamicColliders,
       );

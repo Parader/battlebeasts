@@ -159,10 +159,11 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
 
     const speed = Math.hypot(vel.current.x, vel.current.z);
     controller.setStunned(hasStatusId(p.statuses, "stunned"));
+    const speedMul = hasStatusId(p.statuses, "surged") ? 1.6 : 1;
     controller.setMovement({
       worldVelocity: speed > 0.12 ? vel.current : zeroVel.current,
       facingYaw: renderYaw.current,
-      maximumSpeed: MOVE_SPEED,
+      maximumSpeed: MOVE_SPEED * speedMul,
     });
     controller.update(safeDt);
   });

@@ -13,7 +13,7 @@ const SHAPE_TINT: Record<string, string> = {
     melee: "#fb923c",
     dash: "#a3e635",
     aoe: "#c084fc",
-    buff: "#f472b6",
+    buff: "#67e8f9",
 };
 
 function useNow(tick: boolean) {

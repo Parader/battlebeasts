@@ -5,7 +5,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   crescent: "#f8fafc",
   shock: "#facc15",
   smash: "#a16207",
-  surge: "#c084fc",
+  surge: "#67e8f9",
   dash: "#a3e635",
 };
 

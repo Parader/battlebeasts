@@ -136,6 +136,7 @@ export const abilityAnimationBindings: Record<
   frostBall: {
     upper: "castFrost",
   },
+  surge: { upper: "castPrimary" },
   nova: { upper: "castAoE" },
   rupture: { upper: "castAoE" },
   smash: {
