@@ -171,6 +171,23 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#c084fc",
     tag: "PSN",
   },
+  /**
+   * Spikes E venom — 5 dmg × 6 ticks over ~3s (500ms cadence).
+   * duration slightly past the 6th tick so the last pulse lands.
+   */
+  spikeVenom: {
+    id: "spikeVenom",
+    name: "Venom",
+    polarity: "debuff",
+    mechanic: "dot",
+    durationMs: 3200,
+    tickMs: 500,
+    damagePerTick: 5,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#166534",
+    tag: "VEN",
+  },
   bleeding: {
     id: "bleeding",
     name: "Bleeding",

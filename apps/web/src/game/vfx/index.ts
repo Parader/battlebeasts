@@ -15,12 +15,14 @@ export {
   CATALOG_IMPACT_FX,
   CATALOG_MELEE_SWOOP,
   CATALOG_AOE_CRACK,
+  CATALOG_SPIKE_FX,
   hasCatalogProjectile,
   hasCatalogCastFx,
   hasCatalogImpactFx,
   usesMeleeSwoopFx,
   usesAoeCrackFx,
   usesBridgedAoeFx,
+  usesSpikeFx,
   BoltProjectileEffect,
   CrescentCastEffect,
   CrescentImpactEffect,
@@ -29,6 +31,7 @@ export {
   FrostBallProjectileEffect,
   FrostBallCastEffect,
   GraspProjectileEffect,
+  SpikesPopEffect,
   renderOneShot,
 } from "./catalog";
 

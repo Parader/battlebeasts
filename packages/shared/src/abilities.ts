@@ -181,6 +181,12 @@ export interface AbilityDef {
   pullMs?: number;
   /** Minimum distance from pull origin after the yank (default 1.2). */
   pullStopDistance?: number;
+  /** Ground-spike line: number of pops along aim (Spikes). */
+  spikeCount?: number;
+  /** Delay between consecutive spike pops (ms). */
+  spikeStaggerMs?: number;
+  /** Distance of the first spike in front of the caster. */
+  spikeStart?: number;
 }
 
 export const LOADOUT_SIZE = SPELL_SLOTS.length;
@@ -293,6 +299,24 @@ function frostBallReleaseWallMs(): number {
 function frostBallRecoveryWallMs(): number {
   // Keep a brief settle after release — long Mixamo tail blocked follow-up casts.
   return 100;
+}
+
+/**
+ * Standing 1H Magic Attack 03 (hero.glb) @ 30fps — clip ~2.33s (70 frames).
+ * Frame 30 = first venom spike erupts.
+ */
+export const SPIKES_CAST = {
+  fps: 30,
+  releaseFrame: 30,
+  clipDurationSec: 2.333333,
+  /** Compress windup→eruption; keep readable root pop. */
+  playbackRate: 1.75,
+} as const;
+
+function spikesReleaseWallMs(): number {
+  return (
+    (SPIKES_CAST.releaseFrame / SPIKES_CAST.fps / SPIKES_CAST.playbackRate) * 1000
+  );
 }
 
 /** Authored ms that yield `wallMs` after CAST_EXECUTION_SCALE. */
@@ -588,32 +612,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
     applyOnHit: [{ statusId: "slowed", durationMs: 1000, chance: 1 }],
   },
-  shock: {
-    id: "shock",
-    name: "Shock",
-    description: "Aimed electric bolt with a small splash. Hits hard and applies a long slow.",
-    cooldownMs: 5000,
-    range: 8,
-    shape: "projectile",
-    damage: 22,
-    speed: 28,
-    radius: 1.6,
-    spawnOffset: 0.34,
-    allowedSlots: ["e"],
-    // ~1.05s → 1H clip ~2.2×
-    timing: {
-      anticipationMs: 300,
-      castMs: 220,
-      impactMs: 220,
-      recoveryMs: 310,
-      anticipationMoveMul: 0.7,
-      castMoveMul: 0.45,
-      impactMoveMul: 0.35,
-      recoveryMoveMul: 0.9,
-      canCancelAnticipation: true,
-    },
-    applyOnHit: [{ statusId: "slowed", durationMs: 1800 }],
-  },
   /**
    * Grasp (E) — dark stretching arm / hand yank.
    * Anim: magic_1h (Standing 1H Magic Attack 01).
@@ -649,6 +647,39 @@ export const ABILITIES: Record<string, AbilityDef> = {
       cancelUntilPhase: "cast",
     },
     applyOnHit: [{ statusId: "slowed", durationMs: 2000, chance: 1 }],
+  },
+  /**
+   * Spikes (E) — staggered poison needles along the aim line.
+   * Anim: Standing 1H Magic Attack 03 — first spike @ frame 30.
+   */
+  spikes: {
+    id: "spikes",
+    name: "Spikes",
+    description:
+      "Venomous spikes erupt from the ground in a fast staggered line. Narrow path, long reach; poisons anyone caught.",
+    cooldownMs: 5500,
+    range: 10,
+    shape: "aoe",
+    damage: 4,
+    /** Hit width per spike — keep the corridor tight. */
+    radius: 0.55,
+    spikeCount: 9,
+    spikeStaggerMs: 32,
+    spikeStart: 0.85,
+    allowedSlots: ["e"],
+    timing: {
+      anticipationMs: authoredForWallMs(70),
+      castMs: authoredForWallMs(Math.max(16, spikesReleaseWallMs() - 70)),
+      impactMs: authoredForWallMs(220),
+      recoveryMs: authoredForWallMs(140),
+      anticipationMoveMul: 0.55,
+      castMoveMul: 0.35,
+      impactMoveMul: 0.45,
+      recoveryMoveMul: 0.95,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "spikeVenom", chance: 1 }],
   },
   rupture: {
     id: "rupture",
@@ -750,6 +781,9 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
 
   if (def.radius != null && def.radius > 0) {
     parts.push(`AoE ${def.radius}`);
+  }
+  if (def.spikeCount && def.spikeCount > 1) {
+    parts.push(`${def.spikeCount} spikes`);
   }
   if (def.slowRadius != null && def.slowRadius > 0 && def.slowRadius !== def.radius) {
     parts.push(`slow r${def.slowRadius}`);

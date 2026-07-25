@@ -159,6 +159,22 @@ export function ruptureCenter(owner: CombatBody, def: AbilityDef): Vec2 {
   return pointInFront(owner, owner.yaw, Math.max(2, def.range * 0.65));
 }
 
+/** Aim-line sample points for staggered ground spikes (near → far). */
+export function spikeLinePoints(
+  owner: CombatBody,
+  def: AbilityDef,
+): Vec2[] {
+  const count = Math.max(1, Math.floor(def.spikeCount ?? 8));
+  const start = Math.max(0.4, def.spikeStart ?? def.spawnOffset ?? 0.8);
+  const end = Math.max(start + 0.5, def.range > 0 ? def.range : 10);
+  const pts: Vec2[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = count === 1 ? 1 : i / (count - 1);
+    pts.push(pointInFront(owner, owner.yaw, start + (end - start) * t));
+  }
+  return pts;
+}
+
 export function resolveInstantHits(
   center: Vec2,
   radius: number,

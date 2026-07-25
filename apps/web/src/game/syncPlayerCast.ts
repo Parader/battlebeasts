@@ -209,14 +209,15 @@ export function syncAbilityCast(
 
   if (binding.upper) {
     const logical = String(binding.upper);
+    const animSec = binding.upperAnimDurationSec ?? durationSec;
     const ok = controller.playUpperBodyAction(logical, {
-      desiredDuration: durationSec,
+      desiredDuration: animSec,
     });
     if (!ok) {
       const mapped = heroAnimationConfig[binding.upper];
       const ok2 =
         mapped != null
-          ? controller.playUpperBodyAction(String(mapped), { desiredDuration: durationSec })
+          ? controller.playUpperBodyAction(String(mapped), { desiredDuration: animSec })
           : false;
       if (!ok2) lastCastId.current = "";
     }

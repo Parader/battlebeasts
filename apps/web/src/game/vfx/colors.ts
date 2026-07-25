@@ -3,12 +3,12 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   bolt: "#38bdf8",
   frostBall: "#7dd3fc",
   crescent: "#f8fafc",
-  shock: "#facc15",
   smash: "#a16207",
   surge: "#67e8f9",
   gust: "#e2e8f0",
   dash: "#a3e635",
   grasp: "#3b1f54",
+  spikes: "#166534",
   decoy: "#94a3b8",
   rupture: "#b91c1c",
 };

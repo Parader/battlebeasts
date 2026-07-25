@@ -20,6 +20,7 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   crescent: 320,
   smash: 1800,
   gust: 1200,
+  spikes: 560,
 };
 
 /**

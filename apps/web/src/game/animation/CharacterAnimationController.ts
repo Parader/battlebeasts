@@ -155,6 +155,7 @@ export class CharacterAnimationController {
       strafeRight: config.strafeRight,
       castPrimary: config.castPrimary,
       castFrost: config.castFrost,
+      castSpikes: config.castSpikes,
       castAoE: config.castAoE,
       castMelee: config.castMelee,
       dash: config.dash,
@@ -275,6 +276,7 @@ export class CharacterAnimationController {
 
     this.registerUpperCast("castPrimary", config.castPrimary);
     if (config.castFrost) this.registerUpperCast("castFrost", config.castFrost);
+    if (config.castSpikes) this.registerUpperCast("castSpikes", config.castSpikes);
     if (config.castAoE) this.registerUpperCast("castAoE", config.castAoE);
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);

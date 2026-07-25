@@ -23,6 +23,7 @@ import {
   resolveTravel,
   ruptureCenter,
   sampleTravel,
+  spikeLinePoints,
   sweepTravel,
   tickProjectiles,
   totalCastDurationMs,
@@ -107,6 +108,18 @@ type ActiveKnockback = {
   endAt: number;
 };
 
+type PendingSpike = {
+  fireAt: number;
+  x: number;
+  z: number;
+  radius: number;
+  damage: number;
+  ownerId: string;
+  abilityId: string;
+  /** Shared across one wave so a target is only hit once. */
+  hitIds: Set<string>;
+};
+
 /**
  * Server-side combat: Anticipation → Cast → Impact → Recovery.
  * Cancel is only valid during anticipation (before commitment / effect).
@@ -121,6 +134,7 @@ export class CombatSystem {
   private travels = new Map<string, ActiveTravel>();
   private knockbacks = new Map<string, ActiveKnockback>();
   private combos = new Map<string, ActiveCombo>();
+  private pendingSpikes: PendingSpike[] = [];
   /** Original spawn pose for practice dummies (respawn here on death). */
   private targetSpawns = new Map<string, { x: number; z: number }>();
   private nextId = 1;
@@ -344,6 +358,16 @@ export class CombatSystem {
     }
     if ((bag.get(castId) ?? 0) > now) return false;
 
+    // Switching abilities ends an open combo continue window (stop LMB chain when casting RMB, etc.)
+    const openCombo = this.combos.get(sessionId);
+    if (openCombo && openCombo.abilityId !== castId) {
+      const endedId = openCombo.abilityId;
+      const cooldownMs = this.endComboEarly(sessionId, endedId, true, now);
+      if (cooldownMs != null) {
+        this.phaseFx(sessionId, player, endedId, "idle", now, { cooldownMs });
+      }
+    }
+
     const first = nextCastPhase(def, null);
     if (!first) return false;
 
@@ -409,6 +433,7 @@ export class CombatSystem {
     this.advanceKnockbacks(now);
     this.advanceCasts(now);
     this.advanceCombos(now);
+    this.advancePendingSpikes(now);
     this.advanceDecoys(dt, now);
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
@@ -757,20 +782,24 @@ export class CombatSystem {
       });
       this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
     } else if (def.shape === "aoe" && !deferHit) {
-      const center =
-        def.id === "rupture"
-          ? ruptureCenter(ownerBody, def)
-          : (travelLanding ?? { x: player.x, z: player.z });
-      const radius = def.radius ?? 3;
-      this.fx({
-        kind: "aoe",
-        abilityId: def.id,
-        x: center.x,
-        z: center.z,
-        radius,
-        ownerId: sessionId,
-      });
-      this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+      if (def.id === "spikes") {
+        this.scheduleSpikeWave(sessionId, ownerBody, def, now);
+      } else {
+        const center =
+          def.id === "rupture"
+            ? ruptureCenter(ownerBody, def)
+            : (travelLanding ?? { x: player.x, z: player.z });
+        const radius = def.radius ?? 3;
+        this.fx({
+          kind: "aoe",
+          abilityId: def.id,
+          x: center.x,
+          z: center.z,
+          radius,
+          ownerId: sessionId,
+        });
+        this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+      }
     } else if (def.id === "decoy") {
       // Clone + cloak already committed at cast begin (see commitDecoyCast).
     }
@@ -894,6 +923,64 @@ export class CombatSystem {
       });
       this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
     }
+  }
+
+  private scheduleSpikeWave(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const pts = spikeLinePoints(ownerBody, def);
+    const stagger = Math.max(16, def.spikeStaggerMs ?? 32);
+    const radius = def.radius ?? 0.55;
+    const hitIds = new Set<string>();
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i]!;
+      this.pendingSpikes.push({
+        fireAt: now + i * stagger,
+        x: p.x,
+        z: p.z,
+        radius,
+        damage: def.damage,
+        ownerId: sessionId,
+        abilityId: def.id,
+        hitIds,
+      });
+    }
+  }
+
+  private advancePendingSpikes(now: number) {
+    if (this.pendingSpikes.length === 0) return;
+    const remain: PendingSpike[] = [];
+    for (const spike of this.pendingSpikes) {
+      if (now < spike.fireAt) {
+        remain.push(spike);
+        continue;
+      }
+      this.fx({
+        kind: "aoe",
+        abilityId: spike.abilityId,
+        x: spike.x,
+        z: spike.z,
+        radius: spike.radius,
+        ownerId: spike.ownerId,
+      });
+      const hits = resolveInstantHits(
+        { x: spike.x, z: spike.z },
+        spike.radius,
+        spike.damage,
+        spike.ownerId,
+        this.collectBodies(),
+        (o, t) => this.canHurt(o, t),
+      );
+      for (const hit of hits) {
+        if (spike.hitIds.has(hit.targetId)) continue;
+        spike.hitIds.add(hit.targetId);
+        this.applyDamage(hit.targetId, hit.damage, spike.ownerId, spike.abilityId, now);
+      }
+    }
+    this.pendingSpikes = remain;
   }
 
   private applyInstant(

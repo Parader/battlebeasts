@@ -11,10 +11,11 @@ import { GustWaveEffect } from "./effects/gustWave";
 import { FrostBallProjectileEffect } from "./effects/frostBallProjectile";
 import { FrostBallCastEffect } from "./effects/frostBallCast";
 import { GraspProjectileEffect } from "./effects/graspProjectile";
+import { SpikesPopEffect } from "./effects/spikesPop";
 
 export type ProjectileVfxId = "bolt" | "frostBall" | "grasp";
 export type CastVfxId = "bolt" | "crescent" | "frostBall";
-export type ImpactVfxId = "bolt" | "crescent" | "smash" | "gust";
+export type ImpactVfxId = "bolt" | "crescent" | "smash" | "gust" | "spikes";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
 export const CATALOG_PROJECTILES = new Set<string>(["bolt", "frostBall", "grasp"]);
@@ -36,6 +37,9 @@ export const CATALOG_AOE_CRACK = new Set<string>(["smash"]);
 
 /** AoE that skips legacy ring; VFX is owned by SpellVfxBridge (timed to anim). */
 export const CATALOG_AOE_BRIDGED = new Set<string>(["gust"]);
+
+/** Staggered ground spikes — one pop VFX per combat_fx segment. */
+export const CATALOG_SPIKE_FX = new Set<string>(["spikes"]);
 
 export function hasCatalogProjectile(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_PROJECTILES.has(abilityId);
@@ -59,6 +63,10 @@ export function usesAoeCrackFx(abilityId: string | undefined): boolean {
 
 export function usesBridgedAoeFx(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_AOE_BRIDGED.has(abilityId);
+}
+
+export function usesSpikeFx(abilityId: string | undefined): boolean {
+  return !!abilityId && CATALOG_SPIKE_FX.has(abilityId);
 }
 
 export type VfxFollowContext = {
@@ -87,6 +95,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (shot.abilityId === "gust") {
     return <GustWaveEffect key={shot.key} shot={shot} follow={ctx} />;
   }
+  if (shot.abilityId === "spikes") {
+    return <SpikesPopEffect key={shot.key} shot={shot} />;
+  }
   return <BoltImpactEffect key={shot.key} shot={shot} />;
 }
 
@@ -101,4 +112,5 @@ export {
   FrostBallProjectileEffect,
   FrostBallCastEffect,
   GraspProjectileEffect,
+  SpikesPopEffect,
 };

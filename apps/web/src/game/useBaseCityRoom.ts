@@ -4,7 +4,7 @@ import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineS
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, clearCrescentSpawnState } from "./vfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
@@ -279,12 +279,13 @@ export function useBaseCityRoom(options: Options) {
                         return;
                     }
 
-                    // Follow-caster swoops / crack landings skip the legacy ground ring.
+                    // Follow-caster swoops / crack landings / spike pops skip the legacy ground ring.
                     const skipGroundBurst =
                         (usesMeleeSwoopFx(msg.abilityId) &&
                             (msg.kind === "melee" || msg.kind === "hit")) ||
                         (usesAoeCrackFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesBridgedAoeFx(msg.abilityId) && msg.kind === "aoe");
+                        (usesBridgedAoeFx(msg.abilityId) && msg.kind === "aoe") ||
+                        (usesSpikeFx(msg.abilityId) && msg.kind === "aoe");
 
                     if (!skipGroundBurst) {
                         const key = ++fxKeyRef.current;
@@ -337,6 +338,14 @@ export function useBaseCityRoom(options: Options) {
                             z: msg.z,
                             y: 0.04,
                         });
+                    }
+
+                    if (msg.kind === "aoe" && usesSpikeFx(msg.abilityId)) {
+                        spawnImpactEffect(msg.abilityId, {
+                            x: msg.x,
+                            z: msg.z,
+                            y: 0.02,
+                        }, { lifeMs: 560 });
                     }
 
                     if (msg.kind === "hit" && typeof msg.damage === "number" && msg.damage > 0) {
@@ -598,6 +607,30 @@ export function useBaseCityRoom(options: Options) {
         castFlashTimerRef.current = window.setTimeout(() => setCastFlashId(null), 120);
     }, []);
 
+    const clearHeldMouseCasts = useCallback(() => {
+        heldCastSlotsRef.current = { mouse0: false, mouse2: false };
+    }, []);
+
+    /**
+     * Pressing a different ability should preempt hold-to-chain (e.g. LMB crescent).
+     * Clears other mouse holds so the new press can cast / retry when the lock frees.
+     */
+    const beginCastFromSlotInput = useCallback(
+        (slotInput: "mouse0" | "mouse2" | "space" | "q" | "e" | "r") => {
+            if (slotInput === "mouse0") {
+                heldCastSlotsRef.current.mouse0 = true;
+                heldCastSlotsRef.current.mouse2 = false;
+            } else if (slotInput === "mouse2") {
+                heldCastSlotsRef.current.mouse2 = true;
+                heldCastSlotsRef.current.mouse0 = false;
+            } else {
+                clearHeldMouseCasts();
+            }
+            queueCastFromSlotInput(slotInput);
+        },
+        [clearHeldMouseCasts, queueCastFromSlotInput],
+    );
+
     const queueCancelCast = useCallback(() => {
         if (inputLockedRef.current) return;
         const abilityId = castingAbilityRef.current;
@@ -655,25 +688,25 @@ export function useBaseCityRoom(options: Options) {
                 case "Space":
                     if (down) {
                         e.preventDefault();
-                        queueCastFromSlotInput("space");
+                        beginCastFromSlotInput("space");
                     }
                     break;
                 case "KeyQ":
                     if (down) {
                         e.preventDefault();
-                        queueCastFromSlotInput("q");
+                        beginCastFromSlotInput("q");
                     }
                     break;
                 case "KeyE":
                     if (down) {
                         e.preventDefault();
-                        queueCastFromSlotInput("e");
+                        beginCastFromSlotInput("e");
                     }
                     break;
                 case "KeyR":
                     if (down) {
                         e.preventDefault();
-                        queueCastFromSlotInput("r");
+                        beginCastFromSlotInput("r");
                     }
                     break;
                 case "KeyC":
@@ -693,7 +726,7 @@ export function useBaseCityRoom(options: Options) {
             window.removeEventListener("keydown", down);
             window.removeEventListener("keyup", up);
         };
-    }, [queueCastFromSlotInput, queueCancelCast]);
+    }, [beginCastFromSlotInput, queueCancelCast]);
 
     useEffect(() => {
         const onMouseDown = (e: MouseEvent) => {
@@ -701,12 +734,10 @@ export function useBaseCityRoom(options: Options) {
             const target = e.target as HTMLElement | null;
             if (target?.closest?.("[data-ui-overlay]")) return;
             if (e.button === 0) {
-                heldCastSlotsRef.current.mouse0 = true;
-                queueCastFromSlotInput("mouse0");
+                beginCastFromSlotInput("mouse0");
             } else if (e.button === 2) {
                 e.preventDefault();
-                heldCastSlotsRef.current.mouse2 = true;
-                queueCastFromSlotInput("mouse2");
+                beginCastFromSlotInput("mouse2");
             }
         };
         const onMouseUp = (e: MouseEvent) => {
@@ -768,7 +799,7 @@ export function useBaseCityRoom(options: Options) {
             window.removeEventListener("blur", clearHeld);
             window.removeEventListener("contextmenu", onContextMenu);
         };
-    }, [queueCastFromSlotInput, tryMouseCancelCast]);
+    }, [beginCastFromSlotInput, tryMouseCancelCast]);
 
     useEffect(() => {
         if (options.enabled === false) return;
@@ -953,9 +984,9 @@ export function useBaseCityRoom(options: Options) {
                 if (keys.down) moveZ += 1;
                 if (keys.up) moveZ -= 1;
 
-                // Hold-to-cast: re-fire as soon as CD + cast lock allow
-                if (heldCastSlotsRef.current.mouse0) queueCastFromSlotInput("mouse0");
+                // Hold-to-cast: only the active mouse hold re-fires (other was cleared on new press)
                 if (heldCastSlotsRef.current.mouse2) queueCastFromSlotInput("mouse2");
+                else if (heldCastSlotsRef.current.mouse0) queueCastFromSlotInput("mouse0");
 
                 if (predictor.isSeeded) {
                     seqRef.current += 1;
