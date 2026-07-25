@@ -21,6 +21,7 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   smash: 1800,
   gust: 1200,
   spikes: 560,
+  frostMist: 3800,
 };
 
 /**
@@ -69,8 +70,20 @@ class VfxRuntime {
     );
   }
 
+  /** End a follow-owner one-shot early (e.g. cancel Frost Mist channel). */
+  cancelFollowOwner(abilityId: string, ownerId: string): void {
+    const n = this.shots.filter(
+      (s) => !(s.abilityId === abilityId && s.followOwnerId === ownerId),
+    );
+    if (n.length !== this.shots.length) {
+      this.shots = n;
+      this.emit();
+    }
+  }
+
   /** Drop expired shots; call from the render loop. */
   prune(now = performance.now()): void {
+    if (this.shots.length === 0) return;
     const before = this.shots.length;
     this.shots = this.shots.filter((s) => now - s.born < s.life);
     if (this.shots.length !== before) this.emit();
@@ -104,6 +117,9 @@ class VfxRuntime {
       followOwnerId: opts?.followOwnerId,
       followSpawnOffset: opts?.followSpawnOffset,
       variant: opts?.variant,
+      radius: opts?.radius,
+      startRadius: opts?.startRadius,
+      growMs: opts?.growMs,
     };
     this.shots = [...this.shots, shot];
     this.emit();
@@ -139,4 +155,8 @@ export function spawnImpactEffect(
   opts?: VfxSpawnOpts,
 ): VfxHandle {
   return vfxRuntime.spawnImpactEffect(abilityId, pose, opts);
+}
+
+export function cancelFollowOwnerVfx(abilityId: string, ownerId: string): void {
+  vfxRuntime.cancelFollowOwner(abilityId, ownerId);
 }

@@ -93,6 +93,11 @@ export function syncAbilityCast(
   }
 
   if (castKey === lastCastId.current) {
+    // Local cancel already faded this cast — don't re-drive hold/air scales from
+    // stale schema; wait until cast fields clear and the idle branch runs.
+    if (controller.getState().upperBody === "idle" && controller.getState().fullBody === "none") {
+      return;
+    }
     if (player.castPhase === "recovery" && binding.holdEndPoseOnRecovery) {
       if (typeof binding.holdPoseAtSec === "number") {
         controller.freezeFullBodyAt(binding.holdPoseAtSec);
@@ -210,15 +215,16 @@ export function syncAbilityCast(
   if (binding.upper) {
     const logical = String(binding.upper);
     const animSec = binding.upperAnimDurationSec ?? durationSec;
-    const ok = controller.playUpperBodyAction(logical, {
-      desiredDuration: animSec,
-    });
+    const opts = {
+      desiredDuration: binding.upperTimeScale != null ? undefined : animSec,
+      timeScale: binding.upperTimeScale,
+      holdAtSec: binding.upperHoldAtSec,
+    };
+    const ok = controller.playUpperBodyAction(logical, opts);
     if (!ok) {
       const mapped = heroAnimationConfig[binding.upper];
       const ok2 =
-        mapped != null
-          ? controller.playUpperBodyAction(String(mapped), { desiredDuration: animSec })
-          : false;
+        mapped != null ? controller.playUpperBodyAction(String(mapped), opts) : false;
       if (!ok2) lastCastId.current = "";
     }
   }

@@ -3,6 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import { renderOneShot } from "./catalog";
 import { vfxRuntime } from "./runtime";
+import { VfxWarmup } from "./VfxWarmup";
 import type { OneShotEffect } from "./types";
 
 type Props = {
@@ -27,5 +28,10 @@ export function VfxWorld({ room, localSessionId, predictedRef }: Props) {
 
   const ctx = { room, localSessionId, predictedRef };
 
-  return <>{shots.map((shot) => renderOneShot(shot, ctx))}</>;
+  return (
+    <>
+      <VfxWarmup />
+      {shots.map((shot) => renderOneShot(shot, ctx))}
+    </>
+  );
 }

@@ -13,16 +13,19 @@ type StatusMapLike = {
   forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void;
 } | null | undefined;
 
+/** Shared empty list — avoid allocating when a unit has no statuses. */
+const EMPTY_STATUS_ROWS: StatusRowLite[] = [];
+
 /** Read active status rows from a Colyseus MapSchema-like object. */
 export function collectStatusRows(map: StatusMapLike): StatusRowLite[] {
-  if (!map) return [];
+  if (!map) return EMPTY_STATUS_ROWS;
   const rows: StatusRowLite[] = [];
   map.forEach((row) => {
     if (row?.statusId && STATUSES[row.statusId]) {
       rows.push({ statusId: row.statusId, stacks: row.stacks ?? 1 });
     }
   });
-  return rows;
+  return rows.length === 0 ? EMPTY_STATUS_ROWS : rows;
 }
 
 export function hasStatusId(map: StatusMapLike, statusId: string): boolean {
@@ -70,6 +73,8 @@ export function StatusOrnaments({ getStatuses, headY = 2.15 }: Props) {
   const poisonWisps = useRef<(THREE.Mesh | null)[]>([]);
   const bleed = useRef<THREE.Group>(null);
   const slow = useRef<THREE.Group>(null);
+  const rooted = useRef<THREE.Group>(null);
+  const rootShards = useRef<(THREE.Mesh | null)[]>([]);
   const surge = useRef<THREE.Group>(null);
   const bolts = useRef<(THREE.Mesh | null)[]>([]);
 
@@ -104,6 +109,31 @@ export function StatusOrnaments({ getStatuses, headY = 2.15 }: Props) {
   );
   const bleedMats = useMemo(() => [0, 1, 2, 3].map(() => basicMat("#f87171", 0.65)), []);
   const slowMat = useMemo(() => basicMat("#93c5fd", 0.5), []);
+  const rootIceMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: "#0c4a6e",
+        emissive: "#7dd3fc",
+        emissiveIntensity: 0.55,
+        roughness: 0.35,
+        metalness: 0.15,
+        transparent: true,
+        opacity: 0.92,
+      }),
+    [],
+  );
+  const rootGlowMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#e0f2fe",
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+    [],
+  );
   const boltMats = useMemo(
     () =>
       Array.from({ length: BOLT_COUNT }, (_, i) =>
@@ -154,10 +184,24 @@ export function StatusOrnaments({ getStatuses, headY = 2.15 }: Props) {
 
   useFrame(({ clock }, dt) => {
     const rows = getStatuses();
-    const has = (id: string) => rows.some((r) => r.statusId === id);
-    const poisoned = rows.some((r) => POISON_STATUS_IDS.has(r.statusId));
     const t = clock.elapsedTime;
     const safeDt = Math.min(0.05, dt);
+
+    if (rows.length === 0) {
+      if (stun.current) stun.current.visible = false;
+      if (poison.current) poison.current.visible = false;
+      if (bleed.current) bleed.current.visible = false;
+      if (slow.current) slow.current.visible = false;
+      if (rooted.current) rooted.current.visible = false;
+      if (surge.current) surge.current.visible = false;
+      moveSeeded.current = false;
+      trailDir.current.x = 0;
+      trailDir.current.z = -1;
+      return;
+    }
+
+    const has = (id: string) => rows.some((r) => r.statusId === id);
+    const poisoned = rows.some((r) => POISON_STATUS_IDS.has(r.statusId));
 
     if (stun.current) {
       stun.current.visible = has("stunned");
@@ -212,10 +256,25 @@ export function StatusOrnaments({ getStatuses, headY = 2.15 }: Props) {
       }
     }
     if (slow.current) {
-      slow.current.visible = has("slowed");
+      slow.current.visible = has("slowed") || has("frostChill");
       if (slow.current.visible) {
         slow.current.rotation.y += safeDt * 0.9;
         slow.current.position.y = 0.12 + 0.03 * Math.sin(t * 2);
+        const chillStacks = rows.find((r) => r.statusId === "frostChill")?.stacks ?? 0;
+        slowMat.opacity = 0.32 + Math.min(10, chillStacks) * 0.05;
+      }
+    }
+    if (rooted.current) {
+      rooted.current.visible = has("rooted");
+      if (rooted.current.visible) {
+        for (let i = 0; i < rootShards.current.length; i++) {
+          const mesh = rootShards.current[i];
+          if (!mesh) continue;
+          const pulse = 0.85 + 0.15 * Math.sin(t * 5 + i);
+          mesh.scale.y = pulse;
+        }
+        rootIceMat.emissiveIntensity = 0.4 + 0.25 * (0.5 + 0.5 * Math.sin(t * 4));
+        rootGlowMat.opacity = 0.28 + 0.15 * (0.5 + 0.5 * Math.sin(t * 3.2));
       }
     }
 
@@ -280,7 +339,8 @@ export function StatusOrnaments({ getStatuses, headY = 2.15 }: Props) {
       }
     } else {
       moveSeeded.current = false;
-      trailDir.current = { x: 0, z: -1 };
+      trailDir.current.x = 0;
+      trailDir.current.z = -1;
       for (const m of bolts.current) {
         if (m) m.visible = false;
       }
@@ -346,6 +406,51 @@ export function StatusOrnaments({ getStatuses, headY = 2.15 }: Props) {
           <ringGeometry args={[0.3, 0.38, 20]} />
           <primitive object={slowMat} attach="material" />
         </mesh>
+      </group>
+
+      <group ref={rooted} position={[0, 0.02, 0]} visible={false}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+          <ringGeometry args={[0.22, 0.42, 20]} />
+          <primitive object={rootGlowMat} attach="material" />
+        </mesh>
+        {/* Outer ring — tall thin ice needles */}
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+          const a = (i / 8) * Math.PI * 2 + 0.12;
+          const h = 0.72 + (i % 3) * 0.12;
+          const lean = 0.18 + (i % 2) * 0.08;
+          return (
+            <mesh
+              key={`outer-${i}`}
+              ref={(el) => {
+                rootShards.current[i] = el;
+              }}
+              material={rootIceMat}
+              position={[Math.cos(a) * 0.34, h * 0.48, Math.sin(a) * 0.34]}
+              rotation={[lean, a + Math.PI / 2, (i % 2 === 0 ? 0.08 : -0.1)]}
+            >
+              <coneGeometry args={[0.038, h, 3]} />
+            </mesh>
+          );
+        })}
+        {/* Inner ring — shorter jagged shards */}
+        {[0, 1, 2, 3, 4].map((i) => {
+          const a = (i / 5) * Math.PI * 2 + 0.4;
+          const h = 0.42 + (i % 2) * 0.1;
+          const idx = 8 + i;
+          return (
+            <mesh
+              key={`inner-${i}`}
+              ref={(el) => {
+                rootShards.current[idx] = el;
+              }}
+              material={rootIceMat}
+              position={[Math.cos(a) * 0.18, h * 0.45, Math.sin(a) * 0.18]}
+              rotation={[0.55, a, 0.2]}
+            >
+              <coneGeometry args={[0.028, h, 3]} />
+            </mesh>
+          );
+        })}
       </group>
 
       <group ref={surge} visible={false}>

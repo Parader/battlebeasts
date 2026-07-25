@@ -6,6 +6,11 @@ export const COLLISION = {
   playerRadius: 0.45,
   /** Practice dummy cylinder (~0.5 visual radius). Not scaled with hub. */
   dummyRadius: 0.55,
+  /**
+   * Extra separation so we don't micro-stick / jitter after push-out
+   * (float error leaves a hair of overlap every frame).
+   */
+  skin: 0.02,
 } as const;
 
 export type CircleCollider = {
@@ -125,7 +130,7 @@ export function separateFromCircle(pos: Vec2, radius: number, obstacle: CircleCo
   const dx = pos.x - obstacle.x;
   const dz = pos.z - obstacle.z;
   const dist = length2(dx, dz);
-  const minDist = radius + obstacle.radius;
+  const minDist = radius + obstacle.radius + COLLISION.skin;
   if (dist >= minDist) return pos;
   if (dist < 1e-8) {
     return { x: obstacle.x + minDist, z: obstacle.z };
@@ -147,14 +152,14 @@ export function separateFromBox(pos: Vec2, radius: number, box: BoxCollider): Ve
     const penX = box.halfX - Math.abs(lx);
     const penZ = box.halfZ - Math.abs(lz);
     if (penX < penZ) {
-      lx = lx >= 0 ? box.halfX + radius : -box.halfX - radius;
+      lx = lx >= 0 ? box.halfX + radius + COLLISION.skin : -box.halfX - radius - COLLISION.skin;
     } else {
-      lz = lz >= 0 ? box.halfZ + radius : -box.halfZ - radius;
+      lz = lz >= 0 ? box.halfZ + radius + COLLISION.skin : -box.halfZ - radius - COLLISION.skin;
     }
   } else {
     const dist = Math.sqrt(distSq);
     if (dist >= radius) return pos;
-    const push = radius / dist;
+    const push = (radius + COLLISION.skin) / dist;
     lx = closestX + ox * push;
     lz = closestZ + oz * push;
   }
@@ -193,17 +198,18 @@ function pushFromSegment(
   let ox = lx - cx;
   let oz = lz - cz;
   const distSq = ox * ox + oz * oz;
-  if (distSq >= radius * radius) return { lx, lz, hit: false };
+  const sep = radius + COLLISION.skin;
+  if (distSq >= sep * sep) return { lx, lz, hit: false };
   if (distSq < 1e-12) {
     // On the segment — push along segment normal (perpendicular)
     const len = Math.sqrt(abLenSq);
-    if (len < 1e-8) return { lx: lx + radius, lz, hit: true };
+    if (len < 1e-8) return { lx: lx + sep, lz, hit: true };
     ox = -abz / len;
     oz = abx / len;
-    return { lx: cx + ox * radius, lz: cz + oz * radius, hit: true };
+    return { lx: cx + ox * sep, lz: cz + oz * sep, hit: true };
   }
   const dist = Math.sqrt(distSq);
-  const push = radius / dist;
+  const push = sep / dist;
   return { lx: cx + ox * push, lz: cz + oz * push, hit: true };
 }
 
@@ -569,7 +575,7 @@ export function sweepTravel(
   return sweepMove(from, to, radius, collidersBlockingTravel(staticColliders), [], maxStep);
 }
 
-/** Move then collide — shared by server tick + client prediction. */
+/** Move then collide with wall-slide — shared by server tick + client prediction. */
 export function moveAndCollide(
   from: Vec2,
   desired: Vec2,
@@ -577,13 +583,16 @@ export function moveAndCollide(
   staticColliders: readonly StaticCollider[],
   dynamicColliders: readonly CircleCollider[] = [],
 ): Vec2 {
-  const full = resolveCollisions(desired, radius, staticColliders, dynamicColliders);
-  const blocked =
-    length2(full.x - desired.x, full.z - desired.z) > 1e-4 &&
-    length2(desired.x - from.x, desired.z - from.z) > 1e-4;
+  const want = length2(desired.x - from.x, desired.z - from.z);
+  if (want < 1e-8) {
+    return resolveCollisions(from, radius, staticColliders, dynamicColliders);
+  }
 
+  const full = resolveCollisions(desired, radius, staticColliders, dynamicColliders);
+  const blocked = length2(full.x - desired.x, full.z - desired.z) > 1e-4;
   if (!blocked) return full;
 
+  // Axis slides — strong for axis-aligned props.
   const onlyX = resolveCollisions(
     { x: desired.x, z: from.z },
     radius,
@@ -596,10 +605,42 @@ export function moveAndCollide(
     staticColliders,
     dynamicColliders,
   );
-  const dx = length2(onlyX.x - from.x, onlyX.z - from.z);
-  const dz = length2(onlyZ.x - from.x, onlyZ.z - from.z);
-  if (dx >= dz && dx > 1e-6) return onlyX;
-  if (dz > 1e-6) return onlyZ;
+
+  // Tangent slide along the push-out normal (diagonal walls / Bezier segs).
+  let slide: Vec2 | null = null;
+  const pushX = full.x - desired.x;
+  const pushZ = full.z - desired.z;
+  const pushLen = length2(pushX, pushZ);
+  if (pushLen > 1e-6) {
+    const nx = pushX / pushLen;
+    const nz = pushZ / pushLen;
+    const vx = desired.x - from.x;
+    const vz = desired.z - from.z;
+    const into = vx * nx + vz * nz;
+    const sx = vx - nx * Math.max(0, into);
+    const sz = vz - nz * Math.max(0, into);
+    if (length2(sx, sz) > 1e-6) {
+      slide = resolveCollisions(
+        { x: from.x + sx, z: from.z + sz },
+        radius,
+        staticColliders,
+        dynamicColliders,
+      );
+    }
+  }
+
+  // Prefer the candidate that travels farthest (keeps locomotion fluid along walls).
+  let best = full;
+  let bestDist = length2(full.x - from.x, full.z - from.z);
+  for (const c of [onlyX, onlyZ, slide]) {
+    if (!c) continue;
+    const d = length2(c.x - from.x, c.z - from.z);
+    if (d > bestDist + 1e-6) {
+      best = c;
+      bestDist = d;
+    }
+  }
+  if (bestDist > 1e-6) return best;
   return resolveCollisions(from, radius, staticColliders, dynamicColliders);
 }
 
@@ -647,7 +688,8 @@ export function sweepMove(
       break;
     }
     p = next;
-    if (want > 1e-4 && moved < want * 0.2) break;
+    // Only abort when effectively stuck — allow partial slides along walls.
+    if (want > 1e-4 && moved < 1e-5) break;
   }
   return p;
 }

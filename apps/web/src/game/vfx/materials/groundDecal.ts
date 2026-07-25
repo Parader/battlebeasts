@@ -63,6 +63,9 @@ uniform float uInnerRatio;
 uniform float uHalfAngle;
 uniform float uArcSpan;
 uniform float uAspect;
+/** 0 = normal cone; >0 = pie-slice radius clip via uSectorRanges. */
+uniform float uSectorCount;
+uniform float uSectorRanges[24];
 varying vec2 vUv;
 ${NOISE_GLSL}
 
@@ -89,7 +92,17 @@ float shapeMask(vec2 p) {
   }
   if (uShape < 2.5) {
     float inAngle = 1.0 - smoothstep(uHalfAngle, uHalfAngle + soft * 2.0, abs(ang));
-    float inRange = 1.0 - smoothstep(uProgress * mix(0.85, 1.1, edgeNoise) - soft, uProgress + soft * 0.35, r);
+    float maxR = uProgress;
+    if (uSectorCount > 0.5) {
+      float span = max(uHalfAngle * 2.0, 0.0001);
+      float u = clamp((ang + uHalfAngle) / span, 0.0, 0.9999);
+      float fi = u * uSectorCount;
+      int i0 = int(floor(fi));
+      int i1 = min(i0 + 1, int(uSectorCount) - 1);
+      float fr = fract(fi);
+      maxR = mix(uSectorRanges[i0], uSectorRanges[i1], fr);
+    }
+    float inRange = 1.0 - smoothstep(maxR * mix(0.85, 1.1, edgeNoise) - soft, maxR + soft * 0.35, r);
     return inAngle * inRange;
   }
   if (uShape < 3.5) {
@@ -249,6 +262,8 @@ export function createGroundDecalMaterial(
       uHalfAngle: { value: preset.halfAngle ?? 0.55 },
       uArcSpan: { value: preset.arcSpan ?? Math.PI * 0.9 },
       uAspect: { value: preset.aspect ?? 2.2 },
+      uSectorCount: { value: 0 },
+      uSectorRanges: { value: new Array(24).fill(1) },
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -266,6 +281,32 @@ export function setGroundDecalProgress(mat: THREE.ShaderMaterial, progress01: nu
 
 export function setGroundDecalOpacity(mat: THREE.ShaderMaterial, opacity: number): void {
   mat.uniforms.uOpacity!.value = opacity;
+}
+
+export function setGroundDecalHalfAngle(mat: THREE.ShaderMaterial, halfAngle: number): void {
+  mat.uniforms.uHalfAngle!.value = halfAngle;
+}
+
+/**
+ * Pie-slice occlusion for cones. `ranges` are 0..1 of plane radius (r=1 at mesh edge).
+ * Pass null to disable and use normal uProgress radial expand.
+ */
+export function setGroundDecalSectorRanges(
+  mat: THREE.ShaderMaterial,
+  ranges: ArrayLike<number> | null,
+  count = 24,
+): void {
+  if (!ranges || count <= 0) {
+    mat.uniforms.uSectorCount!.value = 0;
+    return;
+  }
+  const n = Math.min(24, count, ranges.length);
+  const arr = mat.uniforms.uSectorRanges!.value as number[];
+  for (let i = 0; i < n; i++) {
+    arr[i] = Math.max(0, Math.min(1, ranges[i] ?? 1));
+  }
+  for (let i = n; i < 24; i++) arr[i] = 0;
+  mat.uniforms.uSectorCount!.value = n;
 }
 
 export function tickGroundDecal(mat: THREE.ShaderMaterial, dt: number, _spin = 0): void {

@@ -1,12 +1,15 @@
-import { useFrame } from "@react-three/fiber";
-import { useRef, type MutableRefObject } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 
 type Props = {
     /** Live player ground position. */
     target: MutableRefObject<THREE.Vector3>;
     pitchDeg: number;
+    /** Default / max follow distance. */
     distance: number;
+    /** Closest zoom via scroll (defaults to ~55% of max). */
+    minDistance?: number;
     fov: number;
     followLambda: number;
     cursorLambda: number;
@@ -18,21 +21,47 @@ type Props = {
  * - Fixed world yaw/pitch (never spins with the mouse)
  * - Soft-follows the player so quick back/forth barely shakes the view
  * - Cursor pulls the look-at so the character can sit up to ~cursorInfluence of half-screen opposite the cursor
+ * - Scroll wheel zooms between minDistance and distance
  */
 export function FixedFollowCamera({
     target,
     pitchDeg,
     distance,
+    minDistance,
     fov,
     followLambda,
     cursorLambda,
     cursorInfluence,
 }: Props) {
+    const { gl } = useThree();
     const softPlayer = useRef(new THREE.Vector3());
     const softCursor = useRef(new THREE.Vector2(0, 0));
     const focus = useRef(new THREE.Vector3());
     const desiredCam = useRef(new THREE.Vector3());
     const seeded = useRef(false);
+    const liveDist = useRef(distance);
+    const zoomMin = minDistance ?? distance * 0.55;
+    const zoomMax = distance;
+
+    useEffect(() => {
+        liveDist.current = THREE.MathUtils.clamp(liveDist.current, zoomMin, zoomMax);
+    }, [zoomMin, zoomMax]);
+
+    useEffect(() => {
+        const el = gl.domElement;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            // Scroll up → closer; scroll down → farther (capped at max).
+            const step = Math.sign(e.deltaY) * Math.min(1.8, 0.55 + Math.abs(e.deltaY) * 0.012);
+            liveDist.current = THREE.MathUtils.clamp(
+                liveDist.current + step,
+                zoomMin,
+                zoomMax,
+            );
+        };
+        el.addEventListener("wheel", onWheel, { passive: false });
+        return () => el.removeEventListener("wheel", onWheel);
+    }, [gl, zoomMin, zoomMax]);
 
     useFrame((state, dt) => {
         const { camera, size, pointer } = state;
@@ -43,6 +72,7 @@ export function FixedFollowCamera({
         const px = typeof pointer?.x === "number" ? pointer.x : 0;
         const py = typeof pointer?.y === "number" ? pointer.y : 0;
         const safeDt = Math.min(0.05, Math.max(0, dt));
+        const dist = liveDist.current;
 
         if (!seeded.current) {
             softPlayer.current.set(t.x, t.y, t.z);
@@ -69,7 +99,7 @@ export function FixedFollowCamera({
             camera instanceof THREE.PerspectiveCamera
                 ? THREE.MathUtils.degToRad(camera.fov)
                 : THREE.MathUtils.degToRad(fov);
-        const halfH = Math.tan(vFov * 0.5) * distance;
+        const halfH = Math.tan(vFov * 0.5) * dist;
         const halfW = halfH * aspect;
         const pitch = THREE.MathUtils.degToRad(pitchDeg);
         // Pitched view stretches ground depth relative to screen Y
@@ -83,8 +113,8 @@ export function FixedFollowCamera({
 
         desiredCam.current.set(
             focus.current.x,
-            focus.current.y + Math.sin(pitch) * distance,
-            focus.current.z + Math.cos(pitch) * distance,
+            focus.current.y + Math.sin(pitch) * dist,
+            focus.current.z + Math.cos(pitch) * dist,
         );
         camera.position.copy(desiredCam.current);
         camera.lookAt(focus.current.x, focus.current.y + 0.8, focus.current.z);

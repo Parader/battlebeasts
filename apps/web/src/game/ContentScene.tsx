@@ -109,6 +109,7 @@ export function ContentScene({ room, localSessionId, predictedRef, fxBursts, dam
                 target={localPos}
                 pitchDeg={CAMERA.pitchDeg}
                 distance={CAMERA.distance}
+                minDistance={CAMERA.minDistance}
                 fov={CAMERA.fov}
                 followLambda={CAMERA.followLambda}
                 cursorLambda={CAMERA.cursorLambda}

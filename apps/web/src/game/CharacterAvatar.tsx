@@ -100,6 +100,17 @@ export function CharacterAvatar({
     };
   }, [scene, animations, debug]);
 
+  useEffect(() => {
+    const onLocalCancel = () => {
+      // Fade cast out immediately, but keep lastCastId so schema lag cannot
+      // restart the same cast via syncPlayerCast (castKey still matches).
+      comboAnimHoldUntil.current = 0;
+      controllerRef.current?.cancelAbilityAnimation();
+    };
+    window.addEventListener("bb-cast-anim-cancel", onLocalCancel);
+    return () => window.removeEventListener("bb-cast-anim-cancel", onLocalCancel);
+  }, []);
+
   useFrame((_, delta) => {
     const g = group.current;
     const body = bodyRef.current;

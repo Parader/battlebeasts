@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -20,6 +20,8 @@ export type CharacterAnimationConfig = {
   castFrost?: string;
   /** Spikes / Standing 1H Magic Attack 03. */
   castSpikes?: string;
+  /** Frost Mist / Standing 2H Magic Attack 03. */
+  castFrostMist?: string;
   castAoE?: string;
   castMelee?: string;
   dash?: string;
@@ -56,6 +58,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castPrimary: "magic_1h",
   castFrost: "Standing 1H Magic Attack 02",
   castSpikes: "Standing 1H Magic Attack 03",
+  castFrostMist: "Standing 2H Magic Attack 03",
   castAoE: "magic_aoe",
   castMelee: "attack",
   heavyCast: "magic_2h",
@@ -125,6 +128,10 @@ export const abilityAnimationBindings: Record<
      * When set, overrides totalCastDuration so release frames stay on beat.
      */
     upperAnimDurationSec?: number;
+    /** Explicit upper-cast mixer timeScale (wins over upperAnimDurationSec). */
+    upperTimeScale?: number;
+    /** Freeze upper cast at this clip time (seconds) for channel holds. */
+    upperHoldAtSec?: number;
     /**
      * Keep clamped full-body end pose through recovery instead of canceling
      * into loco at impact→recovery.
@@ -150,6 +157,11 @@ export const abilityAnimationBindings: Record<
   spikes: {
     upper: "castSpikes",
     upperAnimDurationSec: SPIKES_CAST.clipDurationSec / SPIKES_CAST.playbackRate,
+  },
+  frostMist: {
+    upper: "castFrostMist",
+    upperTimeScale: FROST_MIST_CAST.playbackRate,
+    upperHoldAtSec: FROST_MIST_CAST.holdFrame / FROST_MIST_CAST.fps,
   },
   frostBall: {
     upper: "castFrost",

@@ -486,7 +486,10 @@ function PracticeDummyAvatar({
     const controllerRef = useRef<CharacterAnimationController | null>(null);
     const lastCastId = useRef("");
     const groundY = useRef<number | null>(null);
-    const lastXZ = useRef<{ x: number; z: number } | null>(null);
+    const lastXZ = useRef({ x: 0, z: 0 });
+    const lastXZSeeded = useRef(false);
+    /** Cached sole lift so we don't Box3.setFromObject every frame. */
+    const footLift = useRef<number | null>(null);
     const raycaster = useMemo(() => new THREE.Raycaster(), []);
     const { scene: world } = useThree();
     const gltf = useGLTF(CHARACTER_URL);
@@ -508,6 +511,7 @@ function PracticeDummyAvatar({
     }, [gltf.scene, gltf.animations]);
 
     useEffect(() => {
+        footLift.current = null;
         const controller = new CharacterAnimationController(
             scene,
             gltf.animations,
@@ -556,22 +560,25 @@ function PracticeDummyAvatar({
         if (b) b.rotation.y = t.yaw ?? 0;
 
         const movedFar =
-            lastXZ.current != null &&
+            lastXZSeeded.current &&
             Math.hypot(t.x - lastXZ.current.x, t.z - lastXZ.current.z) > 1.5;
         if (groundY.current == null || movedFar) {
             const y = sampleTerrainY(world, t.x, t.z, raycaster);
             if (y != null) groundY.current = y;
         }
-        lastXZ.current = { x: t.x, z: t.z };
+        lastXZ.current.x = t.x;
+        lastXZ.current.z = t.z;
+        lastXZSeeded.current = true;
 
-        // Place, then snap soles to terrain (idle root Y can lift the mesh).
+        // Place soles on terrain; measure foot lift once (model local extent is fixed).
         const targetY = groundY.current ?? 0;
-        g.position.set(t.x, targetY, t.z);
-        g.updateMatrixWorld(true);
-        _box.setFromObject(scene);
-        if (Number.isFinite(_box.min.y)) {
-            g.position.y += targetY - _box.min.y;
+        if (footLift.current == null) {
+            g.position.set(t.x, targetY, t.z);
+            g.updateMatrixWorld(true);
+            _box.setFromObject(scene);
+            footLift.current = Number.isFinite(_box.min.y) ? targetY - _box.min.y : 0;
         }
+        g.position.set(t.x, targetY + footLift.current, t.z);
     });
 
     return (

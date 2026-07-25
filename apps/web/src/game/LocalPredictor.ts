@@ -5,10 +5,10 @@ import {
   applyMovement,
   baseCityStaticColliders,
   length2,
+  moveAndCollide,
   resolveCastMoveMul,
   resolveComboContinueMoveMul,
   sampleTravel,
-  sweepMove,
   sweepTravel,
   travelDistance,
   travelDurationMs,
@@ -55,7 +55,8 @@ function stepPredicted(
 ): PredictedState {
   const next = { ...state, yaw: input.yaw };
   const desired = applyMovement(next, input, MOVE_SPEED * moveMul);
-  const clamped = sweepMove(
+  // Match server walk: slide with moveAndCollide (sweep is for dashes / long travel).
+  const clamped = moveAndCollide(
     next,
     desired,
     COLLISION.playerRadius,
@@ -155,6 +156,11 @@ export class LocalPredictor {
     this.comboGapAbilityId = null;
     this.comboGapUntil = 0;
     this.moveMul = 1;
+  }
+
+  /** True while a combo continue-window slow is still active. */
+  isInComboGap(): boolean {
+    return Boolean(this.comboGapAbilityId && performance.now() < this.comboGapUntil);
   }
 
   beginTravelFromCast(abilityId: string, yaw: number) {

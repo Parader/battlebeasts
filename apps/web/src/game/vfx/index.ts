@@ -1,9 +1,11 @@
 export type { SpellEffectId, VfxPose, VfxHandle, OneShotEffect, VfxSpawnOpts } from "./types";
 export { ABILITY_VFX_COLOR, abilityVfxColor } from "./colors";
-export { spawnCastEffect, spawnImpactEffect, vfxRuntime } from "./runtime";
+export { spawnCastEffect, spawnImpactEffect, cancelFollowOwnerVfx, vfxRuntime } from "./runtime";
 export { spawnTrail } from "./spawnTrail";
 export { VfxWorld } from "./VfxWorld";
 export { SpellVfxBridge } from "./SpellVfxBridge";
+export { VfxWarmup } from "./VfxWarmup";
+export { warmSpellMaterials } from "./preloadVfx";
 export {
   notifyCrescentHit,
   notifyCrescentMelee,
@@ -23,6 +25,7 @@ export {
   usesAoeCrackFx,
   usesBridgedAoeFx,
   usesSpikeFx,
+  usesFrostMistFx,
   BoltProjectileEffect,
   CrescentCastEffect,
   CrescentImpactEffect,
@@ -32,6 +35,7 @@ export {
   FrostBallCastEffect,
   GraspProjectileEffect,
   SpikesPopEffect,
+  FrostMistConeEffect,
   renderOneShot,
 } from "./catalog";
 

@@ -1,4 +1,4 @@
-import { getStatus, type StatusApplication } from "./statuses";
+import { frostChillSlowPercent, getStatus, type StatusApplication } from "./statuses";
 
 export type AbilityShape = "projectile" | "aoe" | "dash" | "melee" | "buff";
 
@@ -32,10 +32,10 @@ export interface AbilityTiming {
   canCancelAnticipation?: boolean;
   /**
    * Latest phase where player cancel is allowed (inclusive).
-   * Default `"anticipation"`. Use `"cast"` to allow cancel until the effect fires (impact).
-   * Never cancelable during impact/recovery.
+   * Default `"anticipation"`. Use `"cast"` until the effect fires; `"impact"` for
+   * channelled sprays (e.g. Frost Mist) that stay cancelable while ticking.
    */
-  cancelUntilPhase?: "anticipation" | "cast";
+  cancelUntilPhase?: "anticipation" | "cast" | "impact";
   /** Block starting other abilities until recovery ends (default true). */
   blocksOtherCasts?: boolean;
 }
@@ -187,6 +187,14 @@ export interface AbilityDef {
   spikeStaggerMs?: number;
   /** Distance of the first spike in front of the caster. */
   spikeStart?: number;
+  /** Frost Mist: half-angle of the spray cone (radians). */
+  coneHalfAngle?: number;
+  /** Frost Mist: starting cone length before it expands to `range`. */
+  mistStartRange?: number;
+  /** Frost Mist: number of damage/chill ticks while spraying. */
+  mistTicks?: number;
+  /** Frost Mist: ms to ease cone from mistStartRange → range. */
+  mistGrowMs?: number;
 }
 
 export const LOADOUT_SIZE = SPELL_SLOTS.length;
@@ -317,6 +325,39 @@ function spikesReleaseWallMs(): number {
   return (
     (SPIKES_CAST.releaseFrame / SPIKES_CAST.fps / SPIKES_CAST.playbackRate) * 1000
   );
+}
+
+/**
+ * Standing 2H Magic Attack 03 (hero.glb) @ 30fps — clip ~4.33s (130 frames).
+ * Frame 34 = frost mist spray begins.
+ */
+export const FROST_MIST_CAST = {
+  fps: 30,
+  releaseFrame: 34,
+  /** Freeze the 2H cast here while the mist channel keeps spraying. */
+  holdFrame: 58,
+  clipDurationSec: 4.333333,
+  /** Compress windup; keep a readable spray channel after release. */
+  playbackRate: 1.55,
+  mistTickMs: 250,
+  /** Wall-clock to ease from start → full cone (fluid, not stepped). */
+  mistGrowMs: 180,
+  /**
+   * Total spray ticks — after grow, hold fully formed ~2.5–3s
+   * (11 × 250ms ≈ 2.75s at full size).
+   */
+  mistTicks: 14,
+} as const;
+
+function frostMistReleaseWallMs(): number {
+  return (
+    (FROST_MIST_CAST.releaseFrame / FROST_MIST_CAST.fps / FROST_MIST_CAST.playbackRate) *
+    1000
+  );
+}
+
+function frostMistSprayWallMs(): number {
+  return FROST_MIST_CAST.mistTicks * FROST_MIST_CAST.mistTickMs;
 }
 
 /** Authored ms that yield `wallMs` after CAST_EXECUTION_SCALE. */
@@ -681,6 +722,41 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
     applyOnHit: [{ statusId: "spikeVenom", chance: 1 }],
   },
+  /**
+   * Frost Mist (R) — expanding ice spray cone.
+   * Anim: Standing 2H Magic Attack 03 — mist starts @ frame 34.
+   * Progressive chill: +10% per tick onto current slow (20% if unsowed); root at 100%.
+   */
+  frostMist: {
+    id: "frostMist",
+    name: "Frost Mist",
+    description:
+      "Spray an expanding cone of frost. Ticks damage and deepens chill — stacking onto whatever slow they already have — until they freeze solid at the feet.",
+    cooldownMs: 12000,
+    range: 11,
+    shape: "aoe",
+    damage: 3,
+    /** Max half-angle once fully spread (~40°). */
+    coneHalfAngle: 0.7,
+    mistStartRange: 3.2,
+    mistTicks: FROST_MIST_CAST.mistTicks,
+    mistGrowMs: FROST_MIST_CAST.mistGrowMs,
+    tickMs: FROST_MIST_CAST.mistTickMs,
+    allowedSlots: ["r"],
+    defaultSlot: "r",
+    timing: {
+      anticipationMs: authoredForWallMs(90),
+      castMs: authoredForWallMs(Math.max(16, frostMistReleaseWallMs() - 90)),
+      impactMs: authoredForWallMs(frostMistSprayWallMs()),
+      recoveryMs: authoredForWallMs(160),
+      anticipationMoveMul: 0.5,
+      castMoveMul: 0.4,
+      impactMoveMul: 0.35,
+      recoveryMoveMul: 0.8,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "impact",
+    },
+  },
   rupture: {
     id: "rupture",
     name: "Rupture",
@@ -692,7 +768,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     damage: 40,
     radius: 2.8,
     allowedSlots: ["r"],
-    defaultSlot: "r",
     // ~1.5s → AoE clip ~2.2×
     timing: {
       anticipationMs: 450,
@@ -744,7 +819,10 @@ function formatStatusApp(app: StatusApplication): string | null {
   if (!st) return app.statusId;
   const dur = app.durationMs ?? st.durationMs;
   const bits: string[] = [st.name];
-  if (typeof st.moveMul === "number" && st.moveMul !== 1) {
+  if (st.id === "frostChill") {
+    const stacks = Math.max(1, app.stacks ?? 1);
+    bits.push(`${frostChillSlowPercent(stacks)}% chill`);
+  } else if (typeof st.moveMul === "number" && st.moveMul !== 1) {
     if (st.moveMul < 1) {
       bits.push(`${Math.round((1 - st.moveMul) * 100)}% slow`);
     } else {
@@ -784,6 +862,12 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
   }
   if (def.spikeCount && def.spikeCount > 1) {
     parts.push(`${def.spikeCount} spikes`);
+  }
+  if (def.mistTicks && def.mistTicks > 1) {
+    parts.push(`${def.mistTicks} ticks`);
+  }
+  if (def.coneHalfAngle != null && def.coneHalfAngle > 0) {
+    parts.push(`cone ${Math.round((def.coneHalfAngle * 2 * 180) / Math.PI)}°`);
   }
   if (def.slowRadius != null && def.slowRadius > 0 && def.slowRadius !== def.radius) {
     parts.push(`slow r${def.slowRadius}`);
@@ -893,19 +977,20 @@ export function comboSwingVariant(comboHit: number | undefined, poseCount = 3): 
 
 /**
  * Whether the player may cancel during this phase.
- * Cancel is never allowed once impact has fired the effect.
+ * Recovery is never cancelable. Impact only when `cancelUntilPhase: "impact"`.
  */
 export function canPlayerCancelCast(
   def: AbilityDef,
   phase: CastPhaseId | string,
 ): boolean {
-  if (phase !== "anticipation" && phase !== "cast") return false;
+  if (phase !== "anticipation" && phase !== "cast" && phase !== "impact") return false;
   if (def.timing.canCancelAnticipation === false && !def.timing.cancelUntilPhase) {
     return false;
   }
   const until = def.timing.cancelUntilPhase ?? "anticipation";
   if (until === "anticipation") return phase === "anticipation";
-  return phase === "anticipation" || phase === "cast";
+  if (until === "cast") return phase === "anticipation" || phase === "cast";
+  return phase === "anticipation" || phase === "cast" || phase === "impact";
 }
 
 /** Total lockout from anticipation through end of recovery. */

@@ -78,6 +78,7 @@ export type ServerMessage =
       x: number;
       z: number;
       radius?: number;
+      yaw?: number;
       ownerId?: string;
       targetId?: string;
       damage?: number;

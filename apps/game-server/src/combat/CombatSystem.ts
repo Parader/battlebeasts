@@ -21,6 +21,7 @@ import {
   resolveCollisions,
   resolveInstantHits,
   resolveTravel,
+  resolveConeHits,
   ruptureCenter,
   sampleTravel,
   spikeLinePoints,
@@ -32,6 +33,7 @@ import {
   travelProgress01,
   travelTakeoffDelayMs,
   normalize2,
+  nextFrostChillStacks,
   type AbilityDef,
   type CastPhaseId,
   type StaticCollider,
@@ -120,6 +122,22 @@ type PendingSpike = {
   hitIds: Set<string>;
 };
 
+type PendingFrostMist = {
+  ownerId: string;
+  abilityId: string;
+  startedAt: number;
+  nextTickAt: number;
+  tickIndex: number;
+  ticksTotal: number;
+  tickMs: number;
+  growMs: number;
+  damage: number;
+  startRange: number;
+  endRange: number;
+  halfAngleStart: number;
+  halfAngleEnd: number;
+};
+
 /**
  * Server-side combat: Anticipation → Cast → Impact → Recovery.
  * Cancel is only valid during anticipation (before commitment / effect).
@@ -135,6 +153,7 @@ export class CombatSystem {
   private knockbacks = new Map<string, ActiveKnockback>();
   private combos = new Map<string, ActiveCombo>();
   private pendingSpikes: PendingSpike[] = [];
+  private pendingFrostMist: PendingFrostMist[] = [];
   /** Original spawn pose for practice dummies (respawn here on death). */
   private targetSpawns = new Map<string, { x: number; z: number }>();
   private nextId = 1;
@@ -207,6 +226,7 @@ export class CombatSystem {
     const now = Date.now();
     this.travels.delete(sessionId);
     const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
+    this.clearPendingFrostMist(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "cancel", now, { cooldownMs });
   }
@@ -220,6 +240,7 @@ export class CombatSystem {
     if (!cast) return;
     const abilityId = cast.abilityId;
     const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
+    this.clearPendingFrostMist(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "interrupt", now, { cooldownMs });
   }
@@ -423,6 +444,7 @@ export class CombatSystem {
 
     this.revealCloak(sessionId);
     const cooldownMs = this.endComboEarly(sessionId, def.id, cast.effectFired, now);
+    this.clearPendingFrostMist(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, def.id, "cancel", now, { cooldownMs });
     return true;
@@ -434,6 +456,7 @@ export class CombatSystem {
     this.advanceCasts(now);
     this.advanceCombos(now);
     this.advancePendingSpikes(now);
+    this.advancePendingFrostMist(now);
     this.advanceDecoys(dt, now);
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
@@ -567,6 +590,7 @@ export class CombatSystem {
       const player = this.room.state.players.get(sessionId);
       if (!player || player.disconnected || player.hp <= 0) {
         this.endComboEarly(sessionId, cast.abilityId, cast.effectFired, now);
+        this.clearPendingFrostMist(sessionId);
         if (player) this.clearCastState(sessionId, player);
         else {
           this.casts.delete(sessionId);
@@ -784,6 +808,8 @@ export class CombatSystem {
     } else if (def.shape === "aoe" && !deferHit) {
       if (def.id === "spikes") {
         this.scheduleSpikeWave(sessionId, ownerBody, def, now);
+      } else if (def.id === "frostMist") {
+        this.scheduleFrostMist(sessionId, def, now);
       } else {
         const center =
           def.id === "rupture"
@@ -950,6 +976,35 @@ export class CombatSystem {
     }
   }
 
+  private scheduleFrostMist(sessionId: string, def: AbilityDef, now: number) {
+    const ticks = Math.max(1, Math.floor(def.mistTicks ?? 14));
+    const tickMs = Math.max(80, def.tickMs ?? 250);
+    const growMs = Math.max(120, def.mistGrowMs ?? 180);
+    const endRange = Math.max(2, def.range);
+    const startRange = Math.min(endRange, def.mistStartRange ?? endRange * 0.3);
+    const halfEnd = def.coneHalfAngle ?? 0.7;
+    this.pendingFrostMist.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      startedAt: now,
+      nextTickAt: now,
+      tickIndex: 0,
+      ticksTotal: ticks,
+      tickMs,
+      growMs,
+      damage: def.damage,
+      startRange,
+      endRange,
+      halfAngleStart: Math.max(0.2, halfEnd * 0.35),
+      halfAngleEnd: halfEnd,
+    });
+  }
+
+  private clearPendingFrostMist(ownerId: string) {
+    if (this.pendingFrostMist.length === 0) return;
+    this.pendingFrostMist = this.pendingFrostMist.filter((m) => m.ownerId !== ownerId);
+  }
+
   private advancePendingSpikes(now: number) {
     if (this.pendingSpikes.length === 0) return;
     const remain: PendingSpike[] = [];
@@ -981,6 +1036,79 @@ export class CombatSystem {
       }
     }
     this.pendingSpikes = remain;
+  }
+
+  private advancePendingFrostMist(now: number) {
+    if (this.pendingFrostMist.length === 0) return;
+    const remain: PendingFrostMist[] = [];
+    for (const mist of this.pendingFrostMist) {
+      if (now < mist.nextTickAt) {
+        remain.push(mist);
+        continue;
+      }
+      const owner = this.room.state.players.get(mist.ownerId);
+      if (!owner || owner.hp <= 0) continue;
+
+      // Linear grow so ground + storm advance evenly, then hold full cone.
+      const t = Math.min(1, Math.max(0, (now - mist.startedAt) / mist.growMs));
+      const length = mist.startRange + (mist.endRange - mist.startRange) * t;
+      const halfAngle =
+        mist.halfAngleStart + (mist.halfAngleEnd - mist.halfAngleStart) * t;
+
+      this.fx({
+        kind: "aoe",
+        abilityId: mist.abilityId,
+        x: owner.x,
+        z: owner.z,
+        radius: length,
+        yaw: owner.yaw,
+        ownerId: mist.ownerId,
+        /** 1 = channel start (client spawns the continuous cone once). */
+        comboHit: mist.tickIndex + 1,
+      });
+
+      const walls = this.staticColliders.filter(
+        (c): c is Extract<StaticCollider, { shape: "walls" }> => c.shape === "walls",
+      );
+      const hits = resolveConeHits(
+        { x: owner.x, z: owner.z },
+        owner.yaw,
+        length,
+        halfAngle,
+        mist.damage,
+        mist.ownerId,
+        this.collectBodies(),
+        (o, tid) => this.canHurt(o, tid),
+        { walls, softOcclude: true },
+      );
+      for (const hit of hits) {
+        this.applyRawDamage(hit.targetId, hit.damage, mist.ownerId, mist.abilityId);
+        const baseSlowPct = this.statuses.getSlowPercent(hit.targetId, "frostChill");
+        const { stacks, totalSlowPct } = nextFrostChillStacks(
+          baseSlowPct,
+          this.statuses.getStacks(hit.targetId, "frostChill"),
+        );
+        if (stacks > 0) {
+          this.statuses.apply(hit.targetId, "frostChill", mist.ownerId, now, {
+            stacks,
+            setStacks: true,
+            durationMs: 2200,
+          });
+        }
+        if (totalSlowPct >= 100) {
+          this.statuses.apply(hit.targetId, "rooted", mist.ownerId, now, {
+            durationMs: 1500,
+          });
+        }
+      }
+
+      mist.tickIndex += 1;
+      if (mist.tickIndex < mist.ticksTotal) {
+        mist.nextTickAt = now + mist.tickMs;
+        remain.push(mist);
+      }
+    }
+    this.pendingFrostMist = remain;
   }
 
   private applyInstant(

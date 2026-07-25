@@ -5,8 +5,10 @@ import type { GroundDecalPreset, GroundShape } from "../kit/types";
 import {
   applyGroundDecalPreset,
   createGroundDecalMaterial,
+  setGroundDecalHalfAngle,
   setGroundDecalOpacity,
   setGroundDecalProgress,
+  setGroundDecalSectorRanges,
   tickGroundDecal,
 } from "../materials/groundDecal";
 import { softEnvelope } from "../easing";
@@ -36,6 +38,13 @@ export type GroundDecalProps = {
    * in the first ~8% (for charge / telegraph grows).
    */
   growExpand?: boolean;
+  /**
+   * Live pie-slice max radii (0..1 of `radius`). When present, cone uses
+   * these instead of a uniform radial expand (Frost Mist occlusion).
+   */
+  sectorRangesRef?: { current: Float32Array | null };
+  /** Live cone half-angle (radians) — e.g. mist grow. */
+  halfAngleRef?: { current: number };
 };
 
 /**
@@ -56,6 +65,8 @@ export function GroundDecal({
   opacityMulRef,
   progressRef,
   growExpand = false,
+  sectorRangesRef,
+  halfAngleRef,
 }: GroundDecalProps) {
   const mesh = useRef<THREE.Mesh>(null);
   const resolvedShape = shape ?? preset.shape;
@@ -79,14 +90,33 @@ export function GroundDecal({
     const m = mesh.current;
     if (!m) return;
 
-    let age = progressRef?.current ?? progress;
-    if (born !== undefined && lifeMs > 0) {
+    // Prefer live progressRef (e.g. frost mist grow) over born/life channel age.
+    let age = progress;
+    if (progressRef) {
+      age = progressRef.current;
+    } else if (born !== undefined && lifeMs > 0) {
       age = (performance.now() - born) / lifeMs;
     }
     const spin = preset.spin ?? 0;
     if (spin !== 0) m.rotation.z += spin * dt;
 
     const mul = (opacityMulRef?.current ?? opacityMul) * 1;
+
+    if (halfAngleRef) {
+      setGroundDecalHalfAngle(mat, halfAngleRef.current);
+    }
+
+    const sectors = sectorRangesRef?.current ?? null;
+    if (sectors) {
+      setGroundDecalSectorRanges(mat, sectors, sectors.length);
+      // Radial extent comes from sector ranges (already includes grow + occlusion).
+      setGroundDecalProgress(mat, 1);
+      setGroundDecalOpacity(mat, preset.opacity * mul);
+      m.visible = mul > 0.02;
+      tickGroundDecal(mat, dt, spin);
+      return;
+    }
+    setGroundDecalSectorRanges(mat, null);
 
     if (age === undefined) {
       setGroundDecalProgress(mat, 1);

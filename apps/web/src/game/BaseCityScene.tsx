@@ -417,6 +417,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
                 target={localPos}
                 pitchDeg={CAMERA.pitchDeg}
                 distance={CAMERA.distance}
+                minDistance={CAMERA.minDistance}
                 fov={CAMERA.fov}
                 followLambda={CAMERA.followLambda}
                 cursorLambda={CAMERA.cursorLambda}

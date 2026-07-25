@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, normalizeLoadout, unitCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, normalizeLoadout, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, type PlayerInput } from "@battlebeasts/shared";
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, clearCrescentSpawnState } from "./vfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
@@ -13,6 +13,11 @@ const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     dash: "#a3e635",
     hit: "#f87171",
 };
+
+/** Reused empty static collider list for non-hub phases. */
+const EMPTY_STATICS: ReturnType<typeof baseCityStaticColliders> = [];
+/** Hub walls/portals — singleton; never rebuild per frame. */
+const HUB_STATICS = baseCityStaticColliders();
 
 const DAMAGE_POPUP_LIFE_MS = 900;
 
@@ -94,6 +99,8 @@ export function useBaseCityRoom(options: Options) {
     const pendingInteractRef = useRef<string | undefined>(undefined);
     const pendingCastRef = useRef<string | undefined>(undefined);
     const pendingCancelRef = useRef(false);
+    /** Optimistic cancel — ignore stale schema cast slow until server clears. */
+    const localCastCancelledRef = useRef(false);
     const awaitingCastAckRef = useRef(false);
     const castingAbilityRef = useRef<string | null>(null);
     const castPhaseRef = useRef<string>("");
@@ -233,12 +240,22 @@ export function useBaseCityRoom(options: Options) {
                     const isLocal = msg.ownerId === sessionIdRef.current;
 
                     if (msg.kind === "cast_phase") {
+                        if (
+                            (msg.phase === "cancel" || msg.phase === "interrupt") &&
+                            usesFrostMistFx(msg.abilityId) &&
+                            msg.ownerId
+                        ) {
+                            cancelFollowOwnerVfx(msg.abilityId, msg.ownerId);
+                        }
                         if (isLocal) {
                             awaitingCastAckRef.current = false;
                             const ended =
                                 msg.phase === "idle" ||
                                 msg.phase === "cancel" ||
                                 msg.phase === "interrupt";
+                            // Keep localCastCancelled until schema clears — combat_fx often
+                            // arrives first; clearing the flag early lets stale castPhase
+                            // re-apply cast slow and stick after cancel.
                             castPhaseRef.current = ended ? "" : (msg.phase ?? "");
                             castingAbilityRef.current = ended ? null : msg.abilityId;
 
@@ -252,7 +269,7 @@ export function useBaseCityRoom(options: Options) {
                                 } else {
                                     predictorRef.current.clearMoveMul();
                                 }
-                            } else if (msg.phase) {
+                            } else if (msg.phase && !localCastCancelledRef.current) {
                                 predictorRef.current.applyCastMove(msg.abilityId, msg.phase);
                             }
 
@@ -279,13 +296,14 @@ export function useBaseCityRoom(options: Options) {
                         return;
                     }
 
-                    // Follow-caster swoops / crack landings / spike pops skip the legacy ground ring.
+                    // Follow-caster swoops / crack landings / spike pops / frost mist skip the legacy ground ring.
                     const skipGroundBurst =
                         (usesMeleeSwoopFx(msg.abilityId) &&
                             (msg.kind === "melee" || msg.kind === "hit")) ||
                         (usesAoeCrackFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesBridgedAoeFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesSpikeFx(msg.abilityId) && msg.kind === "aoe");
+                        (usesSpikeFx(msg.abilityId) && msg.kind === "aoe") ||
+                        (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe");
 
                     if (!skipGroundBurst) {
                         const key = ++fxKeyRef.current;
@@ -346,6 +364,41 @@ export function useBaseCityRoom(options: Options) {
                             z: msg.z,
                             y: 0.02,
                         }, { lifeMs: 560 });
+                    }
+
+                    if (
+                        msg.kind === "aoe" &&
+                        usesFrostMistFx(msg.abilityId) &&
+                        (msg.comboHit ?? 1) === 1
+                    ) {
+                        // One continuous cone for the whole channel (first tick only).
+                        let yaw = typeof msg.yaw === "number" ? msg.yaw : 0;
+                        if (msg.ownerId) {
+                            const owner = joined.state?.players?.get(msg.ownerId) as
+                                | { yaw?: number }
+                                | undefined;
+                            const localOwner = msg.ownerId === sessionIdRef.current;
+                            yaw = localOwner ? yawRef.current : (owner?.yaw ?? yaw);
+                        }
+                        const mistDef = ABILITIES.frostMist;
+                        const channelMs =
+                            FROST_MIST_CAST.mistTicks * FROST_MIST_CAST.mistTickMs + 350;
+                        spawnImpactEffect(
+                            msg.abilityId,
+                            {
+                                x: msg.x,
+                                z: msg.z,
+                                y: 0.04,
+                                yaw,
+                            },
+                            {
+                                lifeMs: channelMs,
+                                radius: mistDef?.range ?? 11,
+                                startRadius: mistDef?.mistStartRange ?? 3.2,
+                                growMs: FROST_MIST_CAST.mistGrowMs,
+                                followOwnerId: msg.ownerId,
+                            },
+                        );
                     }
 
                     if (msg.kind === "hit" && typeof msg.damage === "number" && msg.damage > 0) {
@@ -599,6 +652,7 @@ export function useBaseCityRoom(options: Options) {
 
         pendingCastRef.current = abilityId;
         awaitingCastAckRef.current = true;
+        localCastCancelledRef.current = false;
         castPhaseRef.current = "anticipation";
         castingAbilityRef.current = abilityId;
         predictorRef.current.applyCastMove(abilityId, "anticipation");
@@ -639,11 +693,17 @@ export function useBaseCityRoom(options: Options) {
         const def = ABILITIES[abilityId];
         if (!def || !canPlayerCancelCast(def, phase)) return;
         pendingCancelRef.current = true;
+        localCastCancelledRef.current = true;
         awaitingCastAckRef.current = false;
         // Optimistic local clear; server confirms via cast_phase cancel
         castPhaseRef.current = "";
         castingAbilityRef.current = null;
         predictorRef.current.clearMoveMul();
+        const sid = sessionIdRef.current;
+        if (sid && usesFrostMistFx(abilityId)) {
+            cancelFollowOwnerVfx(abilityId, sid);
+        }
+        window.dispatchEvent(new CustomEvent("bb-cast-anim-cancel"));
     }, []);
 
     /** True when a mouse press should cancel instead of starting/queuing a cast. */
@@ -915,8 +975,7 @@ export function useBaseCityRoom(options: Options) {
                         targetsMap?.entries() ?? null,
                         r.sessionId,
                     );
-                    const statics =
-                        phaseRef.current === "hub" ? baseCityStaticColliders() : [];
+                    const statics = phaseRef.current === "hub" ? HUB_STATICS : EMPTY_STATICS;
                     predictor.setWorldColliders(statics, dynamics);
                 }
 
@@ -951,7 +1010,14 @@ export function useBaseCityRoom(options: Options) {
                 }
 
                 if (serverMe) {
-                    if (serverMe.castPhase) {
+                    if (localCastCancelledRef.current) {
+                        // Stale schema still shows the cast we cancelled — keep full move speed
+                        // and don't resurrect castPhaseRef until the server clears.
+                        if (!serverMe.castPhase) {
+                            localCastCancelledRef.current = false;
+                            if (!predictor.isInComboGap()) predictor.clearMoveMul();
+                        }
+                    } else if (serverMe.castPhase) {
                         castPhaseRef.current = serverMe.castPhase;
                         castingAbilityRef.current = serverMe.castAbilityId || null;
                         awaitingCastAckRef.current = false;
@@ -959,9 +1025,16 @@ export function useBaseCityRoom(options: Options) {
                             predictor.applyCastMove(serverMe.castAbilityId, serverMe.castPhase);
                         }
                     } else if (!pendingCastRef.current && !awaitingCastAckRef.current) {
+                        const hadCast =
+                            castPhaseRef.current !== "" || castingAbilityRef.current != null;
                         castPhaseRef.current = "";
                         castingAbilityRef.current = null;
-                        // Do not clearMoveMul here — continue-window slow is owned by combat_fx
+                        // combat_fx often clears moveMul before schema drops castPhase; the
+                        // branch above can re-apply cast slow, then leave it stuck when schema
+                        // finally clears. Restore full speed unless a combo gap owns the mul.
+                        if (hadCast && !predictor.isInComboGap()) {
+                            predictor.clearMoveMul();
+                        }
                     }
                 }
 

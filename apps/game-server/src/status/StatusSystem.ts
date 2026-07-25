@@ -1,6 +1,7 @@
 import {
   STATUSES,
   combineStatusMoveMul,
+  combineStatusSlowPercent,
   getStatus,
   rollStatusChance,
   statusesBlockCast,
@@ -49,6 +50,19 @@ export class StatusSystem {
     return Boolean(host?.statuses.get(statusId));
   }
 
+  getStacks(targetId: string, statusId: string): number {
+    const host = this.getHost(targetId);
+    return host?.statuses.get(statusId)?.stacks ?? 0;
+  }
+
+  /** Additive slow % from all statuses, optionally excluding one id (e.g. frostChill). */
+  getSlowPercent(targetId: string, excludeStatusId?: string): number {
+    const entries = this.entries(targetId).filter(
+      (e) => !excludeStatusId || e.def.id !== excludeStatusId,
+    );
+    return combineStatusSlowPercent(entries);
+  }
+
   applyApplications(
     targetId: string,
     apps: StatusApplication[] | undefined,
@@ -70,7 +84,7 @@ export class StatusSystem {
     statusId: string,
     sourceId: string,
     now: number,
-    opts?: { durationMs?: number; stacks?: number },
+    opts?: { durationMs?: number; stacks?: number; /** Replace stacks instead of adding. */ setStacks?: boolean },
   ): boolean {
     const def = getStatus(statusId);
     const host = this.getHost(targetId);
@@ -82,10 +96,39 @@ export class StatusSystem {
     }
 
     const duration = opts?.durationMs ?? def.durationMs;
-    const addStacks = Math.max(1, opts?.stacks ?? 1);
+    const requested = opts?.stacks ?? 1;
     const maxStacks = def.maxStacks ?? 1;
     const rule = def.stackRule ?? "refresh";
     const existing = host.statuses.get(statusId);
+
+    if (opts?.setStacks) {
+      const stacks = Math.min(maxStacks, Math.max(0, requested));
+      if (stacks <= 0) {
+        if (existing) host.statuses.delete(statusId);
+        return false;
+      }
+      if (existing) {
+        existing.stacks = stacks;
+        existing.expiresAt = now + duration;
+        existing.sourceId = sourceId;
+        if (def.tickMs) existing.nextTickAt = Math.min(existing.nextTickAt || now + def.tickMs, now + def.tickMs);
+      } else {
+        const row = new StatusInstanceState();
+        row.id = statusId;
+        row.statusId = statusId;
+        row.expiresAt = now + duration;
+        row.stacks = stacks;
+        row.sourceId = sourceId;
+        row.nextTickAt = def.tickMs ? now + def.tickMs : 0;
+        host.statuses.set(statusId, row);
+      }
+      if (def.mechanic === "stun" || def.blocksCast) {
+        this.hooks.onInterruptCast?.(targetId);
+      }
+      return true;
+    }
+
+    const addStacks = Math.max(1, requested);
 
     if (existing) {
       if (rule === "ignore") return false;

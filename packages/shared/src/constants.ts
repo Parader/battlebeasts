@@ -7,7 +7,10 @@ export const MOVE_SPEED = 5;
 /** Battlerite-style fixed camera: high pitch looking down. */
 export const CAMERA = {
   pitchDeg: 55,
+  /** Default + max follow distance (scroll zoom cannot go farther). */
   distance: 22,
+  /** Closest zoom via scroll. */
+  minDistance: 12,
   fov: 45,
   /** Soft follow of player (1/s). Lower = less shake when strafing. */
   followLambda: 2.2,

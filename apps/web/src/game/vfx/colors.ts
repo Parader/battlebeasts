@@ -9,6 +9,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   dash: "#a3e635",
   grasp: "#3b1f54",
   spikes: "#166534",
+  frostMist: "#7dd3fc",
   decoy: "#94a3b8",
   rupture: "#b91c1c",
 };

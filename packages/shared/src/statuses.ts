@@ -80,7 +80,7 @@ export const STATUSES: Record<string, StatusDef> = {
     moveMul: 0,
     maxStacks: 1,
     stackRule: "refresh",
-    color: "#a3e635",
+    color: "#7dd3fc",
     tag: "ROT",
   },
   silenced: {
@@ -201,26 +201,102 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#f87171",
     tag: "BLD",
   },
+  /**
+   * Frost Mist chill — each stack = +10% slow (additive with other slows).
+   * Mist ticks set stacks so total slow grows by 10% (20% if not already slowed).
+   * At 100% total slow the ability also applies `rooted`.
+   */
+  frostChill: {
+    id: "frostChill",
+    name: "Chilled",
+    polarity: "debuff",
+    mechanic: "slow",
+    durationMs: 2200,
+    /** Placeholder; real mul comes from stack via frostChillMoveMul. */
+    moveMul: 0.9,
+    maxStacks: 10,
+    stackRule: "stack",
+    color: "#bae6fd",
+    tag: "CHL",
+  },
 };
+
+/** Max frost chill stacks (10% each → 100%). */
+export const FROST_CHILL_MAX_STACKS = 10;
+
+/** Slow percent from frostChill alone (stack 1 = 10%, … 10 = 100%). */
+export function frostChillSlowPercent(stacks: number): number {
+  const s = Math.max(0, Math.min(FROST_CHILL_MAX_STACKS, Math.floor(stacks)));
+  return s * 10;
+}
+
+export function frostChillMoveMul(stacks: number): number {
+  return Math.max(0, 1 - frostChillSlowPercent(stacks) / 100);
+}
+
+/**
+ * Next frost stacks so mist adds 10% to current total slow (20% if unsowed).
+ * `baseSlowPct` is slow from statuses other than frostChill.
+ */
+export function nextFrostChillStacks(
+  baseSlowPct: number,
+  currentFrostStacks: number,
+): { stacks: number; totalSlowPct: number } {
+  const base = Math.max(0, Math.min(100, baseSlowPct));
+  const currentTotal = Math.min(100, base + frostChillSlowPercent(currentFrostStacks));
+  const nextTotal = currentTotal <= 0 ? 20 : Math.min(100, currentTotal + 10);
+  const needFrost = Math.max(0, nextTotal - base);
+  const stacks = Math.max(0, Math.min(FROST_CHILL_MAX_STACKS, Math.round(needFrost / 10)));
+  return {
+    stacks,
+    totalSlowPct: Math.min(100, base + frostChillSlowPercent(stacks)),
+  };
+}
 
 export function getStatus(id: string): StatusDef | undefined {
   return STATUSES[id];
 }
 
-/** Multiplicative move factor from a list of active status defs (+ stacks for DoT visuals only). */
+/** Additive slow percent from active statuses (roots/stuns → 100). */
+export function combineStatusSlowPercent(
+  entries: { def: StatusDef; stacks: number }[],
+): number {
+  let pct = 0;
+  for (const { def, stacks } of entries) {
+    if (def.blocksMove || def.mechanic === "stun" || def.mechanic === "root") {
+      return 100;
+    }
+    if (def.id === "frostChill") {
+      pct += frostChillSlowPercent(stacks);
+      continue;
+    }
+    if (typeof def.moveMul === "number" && def.moveMul < 1) {
+      pct += (1 - def.moveMul) * 100;
+    }
+  }
+  return Math.min(100, Math.max(0, pct));
+}
+
+/** Move factor from statuses — slows add as percents; hastes multiply. */
 export function combineStatusMoveMul(
   entries: { def: StatusDef; stacks: number }[],
 ): number {
-  let mul = 1;
-  for (const { def } of entries) {
+  let haste = 1;
+  let slowPct = 0;
+  for (const { def, stacks } of entries) {
     if (def.blocksMove || def.mechanic === "stun" || def.mechanic === "root") {
       return 0;
     }
+    if (def.id === "frostChill") {
+      slowPct += frostChillSlowPercent(stacks);
+      continue;
+    }
     if (typeof def.moveMul === "number") {
-      mul *= def.moveMul;
+      if (def.moveMul < 1) slowPct += (1 - def.moveMul) * 100;
+      else if (def.moveMul > 1) haste *= def.moveMul;
     }
   }
-  return mul;
+  return Math.max(0, (1 - Math.min(100, slowPct) / 100) * haste);
 }
 
 export function statusesBlockMove(entries: { def: StatusDef }[]): boolean {

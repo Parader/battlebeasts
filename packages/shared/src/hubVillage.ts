@@ -216,10 +216,15 @@ export function hubWallColliders(): WallCollider[] {
   }));
 }
 
+/** Cached hub solids — wall segs are large; never rebuild per frame. */
+let hubStaticsCache: StaticCollider[] | null = null;
+
 /** All solid hub obstacles for movement (Bezier walls + portal rings).
  * Practice dummies are not static — walk solids come from live `state.targets`. */
 export function hubStaticColliders(): StaticCollider[] {
+  if (hubStaticsCache) return hubStaticsCache;
   const walls = hubWallColliders();
   const circles: CircleCollider[] = [...HUB_PORTALS.flatMap(portalRingColliders)];
-  return [...circles, ...walls];
+  hubStaticsCache = [...circles, ...walls];
+  return hubStaticsCache;
 }

@@ -2,7 +2,10 @@ import { ABILITIES, type AbilityDef } from "./abilities";
 import { length2, normalize2 } from "./sim";
 import type { Vec2 } from "./protocol";
 import type { WallCollider } from "./collision";
-import { projectileHitsWalls } from "./collision";
+import { lastFreeTBeforeWalls, projectileHitsWalls } from "./collision";
+
+/** Angular pie slices for cone wall occlusion (Frost Mist). */
+export const CONE_OCCLUSION_SECTORS = 24;
 
 export const COMBAT = {
   playerHitRadius: 0.55,
@@ -61,6 +64,8 @@ export type CombatFxEvent = {
   x: number;
   z: number;
   radius?: number;
+  /** Facing for oriented FX (frost mist cone, etc.). */
+  yaw?: number;
   ownerId?: string;
   targetId?: string;
   /** Damage dealt for hit popups (kind === "hit"). */
@@ -173,6 +178,230 @@ export function spikeLinePoints(
     pts.push(pointInFront(owner, owner.yaw, start + (end - start) * t));
   }
   return pts;
+}
+
+/**
+ * Facing cone test (XZ). `halfAngle` in radians; `targetRadius` softens the rim.
+ */
+export function inFacingCone(
+  origin: Vec2,
+  yaw: number,
+  length: number,
+  halfAngle: number,
+  target: Vec2,
+  targetRadius = COMBAT.playerHitRadius,
+): boolean {
+  const dx = target.x - origin.x;
+  const dz = target.z - origin.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist > length + targetRadius) return false;
+  if (dist <= targetRadius * 0.35) return true;
+  const fx = Math.sin(yaw);
+  const fz = Math.cos(yaw);
+  const nx = dx / dist;
+  const nz = dz / dist;
+  const dot = fx * nx + fz * nz;
+  const rim = Math.asin(Math.min(1, targetRadius / Math.max(dist, 1e-4)));
+  return dot >= Math.cos(Math.max(0.05, halfAngle + rim));
+}
+
+/** Signed angle of target relative to facing yaw (−π…π). */
+export function angleFromFacing(origin: Vec2, yaw: number, target: Vec2): number {
+  const dx = target.x - origin.x;
+  const dz = target.z - origin.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 1e-6) return 0;
+  const fx = Math.sin(yaw);
+  const fz = Math.cos(yaw);
+  const nx = dx / dist;
+  const nz = dz / dist;
+  const dot = fx * nx + fz * nz;
+  const cross = fx * nz - fz * nx;
+  return Math.atan2(cross, dot);
+}
+
+/** Map a bearing within ±halfAngle to a pie-slice index, or null if outside. */
+export function coneSectorIndex(
+  origin: Vec2,
+  yaw: number,
+  halfAngle: number,
+  target: Vec2,
+  sectors = CONE_OCCLUSION_SECTORS,
+): number | null {
+  const ang = angleFromFacing(origin, yaw, target);
+  const span = Math.max(1e-4, 2 * halfAngle);
+  if (Math.abs(ang) > halfAngle + 0.25) return null;
+  const u = (ang + halfAngle) / span;
+  return Math.min(sectors - 1, Math.max(0, Math.floor(u * sectors)));
+}
+
+/**
+ * Hard wall clip length per pie sector (mid-angle ray). Soft unit occlusion is separate.
+ */
+export function coneSectorRanges(
+  origin: Vec2,
+  yaw: number,
+  length: number,
+  halfAngle: number,
+  walls: readonly WallCollider[],
+  sectors = CONE_OCCLUSION_SECTORS,
+  wallRadius = COMBAT.projectileHitRadius,
+): Float32Array {
+  const ranges = new Float32Array(sectors);
+  const len = Math.max(0, length);
+  for (let i = 0; i < sectors; i++) {
+    const u = (i + 0.5) / sectors;
+    const ang = yaw + (-halfAngle + u * 2 * halfAngle);
+    const to = {
+      x: origin.x + Math.sin(ang) * len,
+      z: origin.z + Math.cos(ang) * len,
+    };
+    const t = lastFreeTBeforeWalls(origin, to, wallRadius, walls);
+    ranges[i] = t == null ? len : len * Math.max(0, t);
+  }
+  return ranges;
+}
+
+/**
+ * Max travel along one world-yaw ray: walls hard-clip; nearest unit soft-stops
+ * at its near edge (that unit is still hittable for gameplay).
+ */
+export function coneRayMaxLength(
+  origin: Vec2,
+  rayYaw: number,
+  length: number,
+  walls: readonly WallCollider[],
+  bodies: readonly { id: string; x: number; z: number; hp?: number; vulnerable?: boolean }[],
+  ownerId: string | null,
+  opts?: {
+    wallRadius?: number;
+    bodyRadius?: number;
+    /** Skip this body as a soft occluder (the intended hit target). */
+    excludeId?: string | null;
+  },
+): number {
+  const len = Math.max(0, length);
+  if (len <= 0) return 0;
+  const wallRadius = opts?.wallRadius ?? COMBAT.projectileHitRadius;
+  const bodyRadius = opts?.bodyRadius ?? COMBAT.playerHitRadius;
+  const excludeId = opts?.excludeId ?? null;
+  const to = {
+    x: origin.x + Math.sin(rayYaw) * len,
+    z: origin.z + Math.cos(rayYaw) * len,
+  };
+  const t = lastFreeTBeforeWalls(origin, to, wallRadius, walls);
+  let max = t == null ? len : len * Math.max(0, t);
+
+  const nx = Math.sin(rayYaw);
+  const nz = Math.cos(rayYaw);
+  for (const b of bodies) {
+    if (ownerId && b.id === ownerId) continue;
+    if (excludeId && b.id === excludeId) continue;
+    if (b.vulnerable === false) continue;
+    if (typeof b.hp === "number" && b.hp <= 0) continue;
+    const bx = b.x - origin.x;
+    const bz = b.z - origin.z;
+    const along = bx * nx + bz * nz;
+    if (along <= 0 || along >= max) continue;
+    const perp = Math.abs(bx * nz - bz * nx);
+    if (perp > bodyRadius) continue;
+    // Soft stop at near edge of the front body.
+    const near = Math.max(0, along - Math.sqrt(Math.max(0, bodyRadius * bodyRadius - perp * perp)));
+    if (near < max) max = near;
+  }
+  return max;
+}
+
+/**
+ * True when another body sits on the ray to `target` and soft-blocks (front body still hits).
+ */
+export function coneRaySoftOccluded(
+  origin: Vec2,
+  target: Vec2,
+  targetId: string,
+  bodies: readonly CombatBody[],
+  ownerId: string,
+  softEpsilon = COMBAT.playerHitRadius * 0.5,
+): boolean {
+  const dx = target.x - origin.x;
+  const dz = target.z - origin.z;
+  const distT = Math.hypot(dx, dz);
+  if (distT < 1e-4) return false;
+  const nx = dx / distT;
+  const nz = dz / distT;
+  const R = COMBAT.playerHitRadius;
+
+  for (const b of bodies) {
+    if (b.id === targetId || b.id === ownerId) continue;
+    if (b.vulnerable === false || b.hp <= 0) continue;
+    const bx = b.x - origin.x;
+    const bz = b.z - origin.z;
+    const along = bx * nx + bz * nz;
+    if (along <= 0 || along >= distT - softEpsilon) continue;
+    const perp = Math.abs(bx * nz - bz * nx);
+    if (perp <= R) return true;
+  }
+  return false;
+}
+
+export type ResolveConeHitsOpts = {
+  walls?: readonly WallCollider[];
+  /** Soft unit cover (front takes hit, behind safe). Default false. */
+  softOcclude?: boolean;
+};
+
+/**
+ * Cone hits. With `walls` / `softOcclude`, reach matches `coneRayMaxLength`
+ * (same clip as Frost Mist VFX): only targets the mist can touch.
+ */
+export function resolveConeHits(
+  origin: Vec2,
+  yaw: number,
+  length: number,
+  halfAngle: number,
+  damage: number,
+  ownerId: string,
+  bodies: CombatBody[],
+  canHurt: (ownerId: string, targetId: string) => boolean,
+  opts?: ResolveConeHitsOpts,
+): { targetId: string; damage: number; hpAfter: number }[] {
+  const walls = opts?.walls ?? [];
+  const softOcclude = opts?.softOcclude === true;
+  const occlude = walls.length > 0 || softOcclude;
+
+  const hits: { targetId: string; damage: number; hpAfter: number }[] = [];
+  for (const body of bodies) {
+    if (body.id === ownerId) continue;
+    if (body.vulnerable === false) continue;
+    if (body.hp <= 0) continue;
+    if (!canHurt(ownerId, body.id)) continue;
+    if (!inFacingCone(origin, yaw, length, halfAngle, body, COMBAT.playerHitRadius)) {
+      continue;
+    }
+
+    if (occlude) {
+      const dx = body.x - origin.x;
+      const dz = body.z - origin.z;
+      const dist = Math.hypot(dx, dz);
+      // Same yaw convention as movement: x=sin(yaw), z=cos(yaw).
+      const rayYaw = dist > 1e-6 ? Math.atan2(dx, dz) : yaw;
+      const maxLen = coneRayMaxLength(
+        origin,
+        rayYaw,
+        length,
+        walls,
+        softOcclude ? bodies : [],
+        ownerId,
+        { excludeId: body.id },
+      );
+      // Reach must overlap the target circle — same footprint the VFX soft-stops at.
+      if (dist > maxLen + COMBAT.playerHitRadius) continue;
+    }
+
+    const nextHp = Math.max(0, body.hp - damage);
+    hits.push({ targetId: body.id, damage, hpAfter: nextHp });
+  }
+  return hits;
 }
 
 export function resolveInstantHits(

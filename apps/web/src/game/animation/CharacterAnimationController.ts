@@ -25,6 +25,10 @@ import {
 
 export type UpperBodyActionOptions = {
   desiredDuration?: number;
+  /** Explicit mixer timeScale (wins over desiredDuration when set). */
+  timeScale?: number;
+  /** Pause and hold the clip at this time (seconds) once reached. */
+  holdAtSec?: number;
   fadeIn?: number;
   fadeOut?: number;
   onComplete?: () => void;
@@ -109,6 +113,8 @@ export class CharacterAnimationController {
   private activeCastName: string | null = null;
   private upperGen = 0;
   private castOnComplete: (() => void) | null = null;
+  /** When set, freeze the active upper cast once clip time reaches this. */
+  private upperHoldAtSec: number | null = null;
 
   private overrideAction: THREE.AnimationAction | null = null;
   private overrideActive = false;
@@ -156,6 +162,7 @@ export class CharacterAnimationController {
       castPrimary: config.castPrimary,
       castFrost: config.castFrost,
       castSpikes: config.castSpikes,
+      castFrostMist: config.castFrostMist,
       castAoE: config.castAoE,
       castMelee: config.castMelee,
       dash: config.dash,
@@ -277,6 +284,7 @@ export class CharacterAnimationController {
     this.registerUpperCast("castPrimary", config.castPrimary);
     if (config.castFrost) this.registerUpperCast("castFrost", config.castFrost);
     if (config.castSpikes) this.registerUpperCast("castSpikes", config.castSpikes);
+    if (config.castFrostMist) this.registerUpperCast("castFrostMist", config.castFrostMist);
     if (config.castAoE) this.registerUpperCast("castAoE", config.castAoE);
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);
@@ -359,7 +367,7 @@ export class CharacterAnimationController {
       (this.layerMulUpperTarget - this.layerMulUpper) * (1 - Math.exp(-LAYER_DAMP * dt));
 
     // Cast weight is driven explicitly so fadeIn can't fight per-frame loco writes
-    const castFade = this.casting ? 18 : 14;
+    const castFade = this.casting ? 18 : 20;
     this.castWeight += (this.castWeightTarget - this.castWeight) * (1 - Math.exp(-castFade * dt));
     if (!this.casting && this.castWeight < 0.01) this.castWeight = 0;
 
@@ -456,11 +464,18 @@ export class CharacterAnimationController {
 
     if (this.activeCast) {
       this.activeCast.enabled = true;
-      if (!this.activeCast.isRunning() && this.casting) {
+      // Don't call play() on a held/paused cast — that fights the hold freeze every frame.
+      if (
+        this.casting &&
+        this.upperHoldAtSec == null &&
+        !this.activeCast.isRunning() &&
+        !this.activeCast.paused
+      ) {
         this.activeCast.play();
       }
       this.activeCast.setEffectiveWeight(this.castWeight * this.layerMulUpper);
       if (!this.casting && this.castWeight < 0.01) {
+        this.activeCast.paused = false;
         this.activeCast.stop();
         this.activeCast = null;
       }
@@ -485,6 +500,13 @@ export class CharacterAnimationController {
       this.overrideAction.setEffectiveWeight(this.overrideWeight);
     }
 
+    if (this.casting && this.activeCast && this.upperHoldAtSec != null) {
+      if (this.activeCast.time >= this.upperHoldAtSec) {
+        this.activeCast.time = this.upperHoldAtSec;
+        this.activeCast.paused = true;
+      }
+    }
+
     this.mixer.update(dt);
   }
 
@@ -497,7 +519,7 @@ export class CharacterAnimationController {
       return false;
     }
 
-    if (this.casting && this.activeCast === action && action.isRunning()) {
+    if (this.casting && this.activeCast === action && (action.isRunning() || action.paused)) {
       return true;
     }
 
@@ -511,11 +533,18 @@ export class CharacterAnimationController {
     }
 
     const clip = action.getClip();
-    if (options.desiredDuration && options.desiredDuration > 0 && clip.duration > 0) {
+    if (typeof options.timeScale === "number" && options.timeScale > 0) {
+      action.timeScale = options.timeScale;
+    } else if (options.desiredDuration && options.desiredDuration > 0 && clip.duration > 0) {
       action.timeScale = clip.duration / options.desiredDuration;
     } else {
       action.timeScale = 1;
     }
+
+    this.upperHoldAtSec =
+      typeof options.holdAtSec === "number" && options.holdAtSec > 0
+        ? Math.min(clip.duration, options.holdAtSec)
+        : null;
 
     action.reset();
     action.enabled = true;
@@ -557,7 +586,12 @@ export class CharacterAnimationController {
     this.castWeightTarget = 0;
     this.castOnComplete = null;
     this.activeCastName = null;
-    // activeCast kept until weight hits 0 so update can fade it out
+    this.upperHoldAtSec = null;
+    // Release held freeze so weight can fade; keep activeCast until weight hits 0
+    // so hips hand off to loco instead of hard-stopping mid-pose.
+    if (this.activeCast) {
+      this.activeCast.paused = false;
+    }
     if (this.overrideActive) {
       if (this.activeCast) {
         this.activeCast.setEffectiveWeight(0);
