@@ -19,6 +19,7 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   bolt: 380,
   crescent: 320,
   smash: 1800,
+  gust: 1200,
 };
 
 /**
@@ -53,8 +54,18 @@ class VfxRuntime {
     );
   }
 
-  spawnImpactEffect(abilityId: SpellEffectId | string, pose: VfxPose): VfxHandle {
-    return this.push("impact", abilityId, pose, IMPACT_LIFE_MS[abilityId] ?? 280);
+  spawnImpactEffect(
+    abilityId: SpellEffectId | string,
+    pose: VfxPose,
+    opts?: VfxSpawnOpts,
+  ): VfxHandle {
+    return this.push(
+      "impact",
+      abilityId,
+      pose,
+      opts?.lifeMs ?? IMPACT_LIFE_MS[abilityId] ?? 280,
+      opts,
+    );
   }
 
   /** Drop expired shots; call from the render loop. */
@@ -124,6 +135,7 @@ export function spawnCastEffect(
 export function spawnImpactEffect(
   abilityId: SpellEffectId | string,
   pose: VfxPose,
+  opts?: VfxSpawnOpts,
 ): VfxHandle {
-  return vfxRuntime.spawnImpactEffect(abilityId, pose);
+  return vfxRuntime.spawnImpactEffect(abilityId, pose, opts);
 }

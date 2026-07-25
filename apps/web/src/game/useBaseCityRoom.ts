@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, normalizeLoadout, playerCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, normalizeLoadout, unitCollidersExcept, slotIndexForInput, type PlayerInput } from "@battlebeasts/shared";
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, usesMeleeSwoopFx, usesAoeCrackFx, clearCrescentSpawnState } from "./vfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
@@ -283,7 +283,8 @@ export function useBaseCityRoom(options: Options) {
                     const skipGroundBurst =
                         (usesMeleeSwoopFx(msg.abilityId) &&
                             (msg.kind === "melee" || msg.kind === "hit")) ||
-                        (usesAoeCrackFx(msg.abilityId) && msg.kind === "aoe");
+                        (usesAoeCrackFx(msg.abilityId) && msg.kind === "aoe") ||
+                        (usesBridgedAoeFx(msg.abilityId) && msg.kind === "aoe");
 
                     if (!skipGroundBurst) {
                         const key = ++fxKeyRef.current;
@@ -874,9 +875,13 @@ export function useBaseCityRoom(options: Options) {
                 const playersMap = r.state?.players as
                     | Map<string, { x: number; z: number; disconnected?: boolean; hp?: number }>
                     | undefined;
+                const targetsMap = r.state?.targets as
+                    | Map<string, { x: number; z: number; hp?: number }>
+                    | undefined;
                 if (playersMap) {
-                    const dynamics = playerCollidersExcept(
+                    const dynamics = unitCollidersExcept(
                         playersMap.entries(),
+                        targetsMap?.entries() ?? null,
                         r.sessionId,
                     );
                     const statics =

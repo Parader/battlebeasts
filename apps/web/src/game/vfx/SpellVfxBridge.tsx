@@ -1,9 +1,9 @@
 import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import { useRef } from "react";
-import { ABILITIES, phaseDurationMs } from "@battlebeasts/shared";
-import { CATALOG_CAST_FX, usesMeleeSwoopFx } from "./catalog";
-import { spawnCastEffect } from "./runtime";
+import { ABILITIES, phaseDurationMs, totalCastDurationMs } from "@battlebeasts/shared";
+import { CATALOG_CAST_FX, usesBridgedAoeFx, usesMeleeSwoopFx } from "./catalog";
+import { spawnCastEffect, spawnImpactEffect } from "./runtime";
 import type { VfxHandle } from "./types";
 import { FROST_HAND_FORWARD, FROST_HAND_Y } from "./effects/frostBallCast";
 
@@ -30,6 +30,7 @@ type PendingMuzzle = {
 /**
  * Fires muzzle VFX slightly before impact (during late cast).
  * Frost Ball spawns a hand charge at anticipation instead.
+ * Gust spawns suck→blow ground VFX at anticipation (timed to anim frames).
  * Cast FX follow the caster via `followOwnerId`.
  * Melee swoops (crescent) spawn from combat_fx instead.
  */
@@ -38,6 +39,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
   const pending = useRef(new Map<string, PendingMuzzle>());
   const fired = useRef(new Set<string>());
   const frostHand = useRef(new Map<string, VfxHandle>());
+  const gustWave = useRef(new Map<string, VfxHandle>());
 
   useFrame(() => {
     if (!room?.state?.players) return;
@@ -51,6 +53,22 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       const catalog =
         !!abilityId && CATALOG_CAST_FX.has(abilityId) && !usesMeleeSwoopFx(abilityId);
       const isFrost = abilityId === "frostBall";
+      const isGust = usesBridgedAoeFx(abilityId);
+
+      // Gust: ground wave starts with anticipation so frame 48/54 line up.
+      if (isGust && phase === "anticipation" && prev !== "anticipation") {
+        gustWave.current.get(sessionId)?.cancel();
+        const def = ABILITIES[abilityId];
+        const lifeMs = def ? totalCastDurationMs(def) + 280 : 2200;
+        gustWave.current.set(
+          sessionId,
+          spawnImpactEffect(
+            abilityId,
+            { x: raw.x ?? 0, z: raw.z ?? 0, y: 0.04, yaw: raw.yaw ?? 0 },
+            { followOwnerId: sessionId, followSpawnOffset: 0, lifeMs },
+          ),
+        );
+      }
 
       // Frost: charge in the hand from anticipation until release.
       if (catalog && isFrost && phase === "anticipation" && prev !== "anticipation") {
@@ -99,12 +117,17 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         if (phase === "cancel" || phase === "interrupt" || phase === "idle" || phase === "") {
           frostHand.current.get(sessionId)?.cancel();
           frostHand.current.delete(sessionId);
+          gustWave.current.get(sessionId)?.cancel();
+          gustWave.current.delete(sessionId);
         }
       }
 
       // Clear frost handle after impact (shot may still finish its soft fade)
       if (isFrost && phase === "impact" && prev !== "impact") {
         frostHand.current.delete(sessionId);
+      }
+      if (isGust && phase === "recovery" && prev !== "recovery") {
+        gustWave.current.delete(sessionId);
       }
 
       // Fire when lead time is reached (still casting or just hitting impact)
@@ -140,6 +163,8 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         fired.current.delete(id);
         frostHand.current.get(id)?.cancel();
         frostHand.current.delete(id);
+        gustWave.current.get(id)?.cancel();
+        gustWave.current.delete(id);
       }
     }
   });

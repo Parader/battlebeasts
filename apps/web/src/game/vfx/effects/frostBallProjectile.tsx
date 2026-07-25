@@ -10,9 +10,12 @@ import { FROST_BALL_CAST } from "@battlebeasts/shared";
 
 /** Quick spawn fade — readable, not a pop. */
 const APPEAR_SEC = 0.16;
+/** After server despawn — keep coasting and dissolve. */
+const FADE_OUT_SEC = 0.42;
 
 /**
  * Slow-moving frost orb — spins in place, frost ring follows for the slow shell.
+ * On despawn, coasts on last velocity and fades instead of popping out.
  */
 export function FrostBallProjectileEffect({ room, id }: { room: Room; id: string }) {
   const group = useRef<THREE.Group>(null);
@@ -31,6 +34,8 @@ export function FrostBallProjectileEffect({ room, id }: { room: Room; id: string
   const seeded = useRef(false);
   const appear = useRef(0);
   const auraFade = useRef(0);
+  const fadingOut = useRef(false);
+  const fadeOut = useRef(1);
 
   useFrame((_, dt) => {
     const p = room.state?.projectiles?.get(id) as
@@ -43,18 +48,57 @@ export function FrostBallProjectileEffect({ room, id }: { room: Room; id: string
         }
       | undefined;
     const g = group.current;
-    if (!p || !g) {
-      if (g) g.visible = false;
-      seeded.current = false;
-      appear.current = 0;
-      auraFade.current = 0;
+    if (!g) return;
+
+    const safeDt = Math.min(0.05, Math.max(0, dt));
+
+    // Server removed the projectile — coast + fade
+    if (!p) {
+      if (!seeded.current) {
+        g.visible = false;
+        return;
+      }
+      fadingOut.current = true;
+      fadeOut.current = Math.max(0, fadeOut.current - safeDt / FADE_OUT_SEC);
+      if (fadeOut.current <= 0.01) {
+        g.visible = false;
+        seeded.current = false;
+        fadingOut.current = false;
+        return;
+      }
+
+      const { vx, vz } = lastServer.current;
+      const coast = 0.45 + 0.55 * fadeOut.current;
+      renderPos.current.x += vx * safeDt * coast;
+      renderPos.current.z += vz * safeDt * coast;
+
+      g.visible = true;
+      g.position.set(renderPos.current.x, 0, renderPos.current.z);
+
+      if (orb.current) {
+        orb.current.position.y = renderPos.current.y;
+        orb.current.rotation.x += safeDt * 2.4;
+        orb.current.rotation.y += safeDt * 3.6;
+        orb.current.rotation.z += safeDt * 1.1;
+        const s = 0.75 + 0.25 * fadeOut.current;
+        orb.current.scale.setScalar(s);
+      }
+
+      const fo = fadeOut.current * fadeOut.current;
+      auraFade.current = fo;
+      coreMat.opacity = fo;
+      glowMat.opacity = fo * 0.45;
+      if (light.current) light.current.intensity = fo * 1.8;
       return;
     }
+
+    // Live projectile
+    fadingOut.current = false;
+    fadeOut.current = 1;
     g.visible = true;
 
     const vx = p.vx ?? 0;
     const vz = p.vz ?? 0;
-    const safeDt = Math.min(0.05, Math.max(0, dt));
 
     if (!seeded.current) {
       renderPos.current.set(p.x, FROST_BALL_CAST.handY, p.z);
@@ -96,6 +140,7 @@ export function FrostBallProjectileEffect({ room, id }: { room: Room; id: string
       orb.current.rotation.x += safeDt * 2.4;
       orb.current.rotation.y += safeDt * 3.6;
       orb.current.rotation.z += safeDt * 1.1;
+      orb.current.scale.setScalar(1);
     }
 
     const nextColor = abilityVfxColor(p.abilityId ?? "frostBall");

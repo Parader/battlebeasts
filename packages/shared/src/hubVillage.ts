@@ -11,8 +11,7 @@ import {
   type PortalPadDef,
   type StandDef,
 } from "./stands";
-import type { CircleCollider, MeshCollider, StaticCollider, WallCollider } from "./collision";
-import { COLLISION, decodeMeshMask } from "./collision";
+import type { CircleCollider, StaticCollider, WallCollider } from "./collision";
 import villageMarkers from "./maps/main_village.markers.json";
 import villageWalls from "./maps/main_village.walls.json";
 
@@ -74,43 +73,6 @@ function zoneFromMarker(m: NonNullable<MarkerDoc["markers"]>[number]): InteractZ
   };
 }
 
-/** Baked mesh footprint at asset scale=1 (legacy prop bake; unused by scene hub). */
-export type PropMeshLocal = {
-  ox: number;
-  oz: number;
-  cell: number;
-  cols: number;
-  rows: number;
-  mask: string;
-  segs: number[];
-  cx: number;
-  cz: number;
-  hx: number;
-  hz: number;
-};
-
-/**
- * Legacy per-prop placement (kept for types / stand fallback helpers).
- * Hub visuals now come from {@link HUB_SCENE_URL}.
- */
-export type HubPropPlacement = {
-  id: string;
-  file: string;
-  x: number;
-  z: number;
-  scale: number;
-  rotationY: number | "faceOrigin";
-  mesh?: PropMeshLocal;
-};
-
-/** Interactive stands ↔ buildings (legacy id map). */
-export const STAND_MAP_OBJECT_ID: Record<StandKind, string> = {
-  shop: "modified_stand3",
-  build: "Barracks_SecondAge_Level2",
-  customization: "Houses_SecondAge_2_Level1",
-  talent: "Temple_SecondAge_Level1",
-};
-
 function interactsOf(kind: string) {
   return (markersDoc.markers ?? []).filter((i) => i.kind === kind);
 }
@@ -118,9 +80,6 @@ function interactsOf(kind: string) {
 function firstInteract(kind: string) {
   return interactsOf(kind)[0];
 }
-
-/** @deprecated Hub renders {@link HUB_SCENE_URL} instead of per-prop GLBs. */
-export const HUB_MAP_PROPS: HubPropPlacement[] = [];
 
 /**
  * @deprecated Prefer oriented {@link InteractZone} half-extents from empty boxes.
@@ -234,35 +193,6 @@ export function portalRingColliders(portal: PortalPadDef): CircleCollider[] {
   ];
 }
 
-function yawOf(prop: HubPropPlacement): number {
-  if (prop.rotationY === "faceOrigin") return Math.atan2(-prop.x, -prop.z);
-  return prop.rotationY;
-}
-
-export function propToMeshCollider(prop: HubPropPlacement): MeshCollider | null {
-  if (!prop.mesh) return null;
-  const m = prop.mesh;
-  return {
-    id: prop.id,
-    shape: "mesh",
-    x: prop.x,
-    z: prop.z,
-    yaw: yawOf(prop),
-    scale: prop.scale,
-    cx: m.cx,
-    cz: m.cz,
-    hx: m.hx,
-    hz: m.hz,
-    ox: m.ox,
-    oz: m.oz,
-    cell: m.cell,
-    cols: m.cols,
-    rows: m.rows,
-    mask: decodeMeshMask(m.mask),
-    segs: Float32Array.from(m.segs),
-  };
-}
-
 export function hubWallColliders(): WallCollider[] {
   return (wallsDoc.walls ?? []).map((w) => ({
     id: w.id,
@@ -271,28 +201,10 @@ export function hubWallColliders(): WallCollider[] {
   }));
 }
 
-export function hubStandProps(): HubPropPlacement[] {
-  return HUB_STANDS.map((s) => ({
-    id: s.id,
-    file: "modified/stand1.glb",
-    x: s.x,
-    z: s.z,
-    scale: 1,
-    rotationY: "faceOrigin" as const,
-  }));
-}
-
-/** All solid hub obstacles for movement (Bezier walls + dummies + portal rings). */
+/** All solid hub obstacles for movement (Bezier walls + portal rings).
+ * Practice dummies are not static — walk solids come from live `state.targets`. */
 export function hubStaticColliders(): StaticCollider[] {
   const walls = hubWallColliders();
-  const circles: CircleCollider[] = [
-    ...HUB_PRACTICE_DUMMIES.map((d) => ({
-      id: d.id,
-      x: d.x,
-      z: d.z,
-      radius: COLLISION.dummyRadius,
-    })),
-    ...HUB_PORTALS.flatMap(portalRingColliders),
-  ];
+  const circles: CircleCollider[] = [...HUB_PORTALS.flatMap(portalRingColliders)];
   return [...circles, ...walls];
 }

@@ -73,6 +73,11 @@ float shapeMask(vec2 p) {
   float edgeNoise = fbm(p * uNoiseScale * 0.9 + 2.3);
 
   if (uShape < 0.5) {
+    // Wind uses a smooth disc so radial streams aren't chopped by jagged lobes
+    if (uStyle > 3.5 && uStyle < 4.5) {
+      float edge = max(uProgress, 0.02);
+      return 1.0 - smoothstep(edge - soft * 5.0, edge + soft * 3.0, r);
+    }
     // Jagged blast radius — warp + secondary lobe so it isn't a clean disk
     float lobe = fbm(p * uNoiseScale * 1.6 + 7.1);
     float edge = uProgress * mix(0.48, 1.22, edgeNoise * 0.7 + lobe * 0.3);
@@ -176,9 +181,36 @@ void main() {
     col = mix(uColorEdge, uColorCore, rip * (1.0 - r));
     alpha *= 0.35 + rip * 0.4;
   } else if (style < 4.5) {
-    float streak = smoothstep(0.6, 0.9, n) * smoothstep(0.3, 0.7, abs(p.x + n2 * 0.3));
-    col = mix(uColorEdge, uColorCore, streak);
-    alpha *= streak * 0.85;
+    // wind — on discs, streams race center → edge with the blast front
+    float ang = atan(p.x, p.y);
+    float swirl = fbm(vec2(ang * 2.4, 1.7));
+    float spokes = abs(sin(ang * 9.0 + swirl * 3.5));
+    spokes = pow(smoothstep(0.42, 0.98, spokes), 1.55);
+
+    if (uShape < 0.5) {
+      float front = max(uProgress, 0.04);
+      float rn = clamp(r / front, 0.0, 1.15);
+      // Soft tip — streams reach the edge without hard cuts
+      float tip = 1.0 - smoothstep(0.88, 1.1, rn);
+      // Mild spiral — mostly radial, slight curve (not a whirlpool)
+      float twist = rn * 0.85 - uTime * 0.08;
+      float angCurve = ang + twist * (0.45 + swirl * 0.15);
+      float curved = abs(sin(angCurve * 7.5 + swirl * 2.2));
+      curved = pow(smoothstep(0.38, 0.98, curved), 1.45);
+      float ray = curved * tip * smoothstep(0.0, 0.04, rn);
+      // Brightness rides outward along each stream (slow crawl)
+      float flow = 0.5 + 0.5 * sin((rn * 5.0 - uTime * 0.4) * 6.2831853);
+      flow = mix(0.55, 1.0, flow);
+      float leading = smoothstep(0.6, 1.0, rn) * tip;
+      float stream = ray * flow + curved * leading * 0.4;
+      col = mix(uColorEdge, mix(uColorMid, uColorCore, stream), clamp(stream, 0.0, 1.0));
+      alpha = mask * (0.12 + clamp(stream, 0.0, 1.0) * 0.88);
+    } else {
+      float ripple = sin((r * 22.0 - uTime * 6.0) + n * 2.0) * 0.5 + 0.5;
+      float gust = mix(ripple * 0.4, 1.0, spokes);
+      col = mix(uColorEdge, mix(uColorMid, uColorCore, spokes), gust);
+      alpha *= 0.3 + gust * 0.7;
+    }
   } else {
     float pulse = 0.65 + 0.35 * sin(uTime * 3.0 + n * 6.0);
     float blot = smoothstep(0.35, 0.75, n2);

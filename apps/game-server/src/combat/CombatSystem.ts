@@ -13,7 +13,7 @@ import {
   meleeCenter,
   moveAndCollide,
   nextCastPhase,
-  playerCollidersExcept,
+  unitCollidersExcept,
   phaseDurationMs,
   pointInFront,
   resolveCastMoveMul,
@@ -79,11 +79,15 @@ type ActiveTravel = {
   pendingLandingEffect?: boolean;
 };
 
-type ActiveCombo = {
-  abilityId: string;
-  hitsDone: number;
-  /** After a swing ends; 0 while still casting that swing. */
-  continueUntil: number;
+type ActiveKnockback = {
+  targetId: string;
+  kind: "player" | "target";
+  fromX: number;
+  fromZ: number;
+  toX: number;
+  toZ: number;
+  startAt: number;
+  endAt: number;
 };
 
 /**
@@ -98,7 +102,10 @@ export class CombatSystem {
   private cds = new Map<string, Map<string, number>>();
   private casts = new Map<string, ActiveCast>();
   private travels = new Map<string, ActiveTravel>();
+  private knockbacks = new Map<string, ActiveKnockback>();
   private combos = new Map<string, ActiveCombo>();
+  /** Original spawn pose for practice dummies (respawn here on death). */
+  private targetSpawns = new Map<string, { x: number; z: number }>();
   private nextId = 1;
   private hooks: CombatRoomHooks;
   private staticColliders: StaticCollider[] = [];
@@ -132,7 +139,11 @@ export class CombatSystem {
       desired,
       COLLISION.playerRadius,
       this.staticColliders,
-      playerCollidersExcept(this.room.state.players.entries(), sessionId),
+      unitCollidersExcept(
+        this.room.state.players.entries(),
+        this.room.state.targets.entries(),
+        sessionId,
+      ),
     );
   }
 
@@ -142,7 +153,11 @@ export class CombatSystem {
       pos,
       COLLISION.playerRadius,
       this.staticColliders,
-      playerCollidersExcept(this.room.state.players.entries(), sessionId),
+      unitCollidersExcept(
+        this.room.state.players.entries(),
+        this.room.state.targets.entries(),
+        sessionId,
+      ),
     );
   }
 
@@ -179,6 +194,7 @@ export class CombatSystem {
   }
 
   ensurePracticeDummy(x: number, z: number, id = "practice_dummy") {
+    this.targetSpawns.set(id, { x, z });
     if (this.room.state.targets.has(id)) return;
     const t = new WorldTargetState();
     t.id = id;
@@ -296,6 +312,7 @@ export class CombatSystem {
 
   tick(dt: number, now: number) {
     this.advanceTravels(now);
+    this.advanceKnockbacks(now);
     this.advanceCasts(now);
     this.advanceCombos(now);
     this.syncAllInvulnerable(now);
@@ -345,6 +362,44 @@ export class CombatSystem {
       if (!st) continue;
       st.x = sim.x;
       st.z = sim.z;
+    }
+  }
+
+  private advanceKnockbacks(now: number) {
+    for (const [id, kb] of [...this.knockbacks.entries()]) {
+      const dur = Math.max(1, kb.endAt - kb.startAt);
+      const linear = Math.min(1, Math.max(0, (now - kb.startAt) / dur));
+      // Ease-out so the shove hits hard then settles.
+      const t = 1 - (1 - linear) * (1 - linear);
+      const ideal = {
+        x: kb.fromX + (kb.toX - kb.fromX) * t,
+        z: kb.fromZ + (kb.toZ - kb.fromZ) * t,
+      };
+      const clamped = this.sweepPlayerPos(
+        id,
+        { x: kb.fromX, z: kb.fromZ },
+        ideal,
+      );
+
+      if (kb.kind === "player") {
+        const player = this.room.state.players.get(id);
+        if (!player) {
+          this.knockbacks.delete(id);
+          continue;
+        }
+        player.x = clamped.x;
+        player.z = clamped.z;
+      } else {
+        const target = this.room.state.targets.get(id);
+        if (!target) {
+          this.knockbacks.delete(id);
+          continue;
+        }
+        target.x = clamped.x;
+        target.z = clamped.z;
+      }
+
+      if (now >= kb.endAt) this.knockbacks.delete(id);
     }
   }
 
@@ -677,9 +732,81 @@ export class CombatSystem {
     const hits = resolveInstantHits(center, radius, damage, ownerId, this.collectBodies(), (o, t) =>
       this.canHurt(o, t),
     );
+    const def = ABILITIES[abilityId];
+    const knock = def?.knockback ?? 0;
+    const knockMs = def?.knockbackMs ?? 220;
     for (const hit of hits) {
       this.applyDamage(hit.targetId, hit.damage, ownerId, abilityId, now);
+      if (knock > 0) this.applyKnockback(center, hit.targetId, knock, knockMs, now);
     }
+  }
+
+  /** Schedule a radial shove (translated over knockbackMs, not teleported). */
+  private applyKnockback(
+    center: { x: number; z: number },
+    targetId: string,
+    distance: number,
+    durationMs: number,
+    now: number,
+  ) {
+    const dur = Math.max(80, durationMs);
+
+    const player = this.room.state.players.get(targetId);
+    if (player) {
+      if (player.invulnerable) return;
+      // Knockback wins over their own dash/leap travel.
+      this.travels.delete(targetId);
+      let dx = player.x - center.x;
+      let dz = player.z - center.z;
+      let len = Math.hypot(dx, dz);
+      if (len < 1e-4) {
+        dx = Math.sin(player.yaw);
+        dz = Math.cos(player.yaw);
+        len = 1;
+      }
+      const nx = dx / len;
+      const nz = dz / len;
+      const from = { x: player.x, z: player.z };
+      const ideal = { x: player.x + nx * distance, z: player.z + nz * distance };
+      const clamped = this.sweepPlayerPos(targetId, from, ideal);
+      this.knockbacks.set(targetId, {
+        targetId,
+        kind: "player",
+        fromX: from.x,
+        fromZ: from.z,
+        toX: clamped.x,
+        toZ: clamped.z,
+        startAt: now,
+        endAt: now + dur,
+      });
+      return;
+    }
+
+    const target = this.room.state.targets.get(targetId);
+    if (!target) return;
+    let dx = target.x - center.x;
+    let dz = target.z - center.z;
+    let len = Math.hypot(dx, dz);
+    if (len < 1e-4) {
+      dx = 1;
+      dz = 0;
+      len = 1;
+    }
+    const nx = dx / len;
+    const nz = dz / len;
+    const from = { x: target.x, z: target.z };
+    const ideal = { x: target.x + nx * distance, z: target.z + nz * distance };
+    const clamped = this.sweepPlayerPos(targetId, from, ideal);
+    this.knockbacks.set(targetId, {
+      targetId,
+      kind: "target",
+      fromX: from.x,
+      fromZ: from.z,
+      toX: clamped.x,
+      toZ: clamped.z,
+      startAt: now,
+      endAt: now + dur,
+    });
   }
 
   private applyDamage(
@@ -737,6 +864,12 @@ export class CombatSystem {
       if (target.hp <= 0) {
         target.hp = target.maxHp;
         target.statuses.clear();
+        this.knockbacks.delete(targetId);
+        const spawn = this.targetSpawns.get(targetId);
+        if (spawn) {
+          target.x = spawn.x;
+          target.z = spawn.z;
+        }
       }
       return true;
     }

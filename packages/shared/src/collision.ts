@@ -512,6 +512,34 @@ export function playerCollidersExcept(
   return out;
 }
 
+/** Practice dummies / world targets as live pose circles (opt-in; not used for hub walk). */
+export function targetColliders(
+  targets: Iterable<[string, { x: number; z: number; hp?: number }]>,
+): CircleCollider[] {
+  const out: CircleCollider[] = [];
+  for (const [id, t] of targets) {
+    if (typeof t.hp === "number" && t.hp <= 0) continue;
+    out.push({
+      id,
+      x: t.x,
+      z: t.z,
+      radius: COLLISION.dummyRadius,
+    });
+  }
+  return out;
+}
+
+/** Players (except self) + optional living targets for walk collision. */
+export function unitCollidersExcept(
+  players: Iterable<[string, { x: number; z: number; disconnected?: boolean; hp?: number }]>,
+  targets: Iterable<[string, { x: number; z: number; hp?: number }]> | null | undefined,
+  exceptPlayerId: string,
+): CircleCollider[] {
+  const out = playerCollidersExcept(players, exceptPlayerId);
+  if (targets) out.push(...targetColliders(targets));
+  return out;
+}
+
 /** Unit / dummy bodies — dashes pass through these; walking does not. */
 export function isUnitObstacle(c: { id: string; shape?: string }): boolean {
   if (c.id.startsWith("practice_dummy")) return true;

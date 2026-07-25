@@ -166,6 +166,10 @@ export interface AbilityDef {
   allowedSlots: SpellSlotId[];
   /** Preferred slot when building the default kit. */
   defaultSlot: SpellSlotId;
+  /** Radial knockback distance (world units) on AoE/melee hit. */
+  knockback?: number;
+  /** Knockback translate duration in ms (default 220). */
+  knockbackMs?: number;
 }
 
 export const LOADOUT_SIZE = SPELL_SLOTS.length;
@@ -208,9 +212,49 @@ export const SMASH_JUMP_ATTACK = {
   windupRate: 5.5,
 } as const;
 
+/**
+ * magic_aoe (hero.glb) @ 30fps — clip is 3.3s (99 frames).
+ * Suck finishes at frame 48; blow / push effect triggers at frame 54.
+ * playbackRate compresses the whole cast (anim + VFX + lockout) together.
+ */
+export const GUST_AOE_CAST = {
+  fps: 30,
+  /** Inward pull starts (clip start). */
+  suckStartFrame: 0,
+  /** Inward pull finishes — air fully gathered. */
+  suckEndFrame: 48,
+  /** Outward blast / gameplay impact. */
+  blowFrame: 54,
+  /** Measured from hero.glb `magic_aoe`. */
+  clipDurationSec: 3.3,
+  /** Snappy combat pace (~0.95s full cast; blow ~0.52s). */
+  playbackRate: 3.45,
+} as const;
+
 function smashSegmentWallMs(fromFrame: number, toFrame: number, rate: number): number {
   const frames = Math.max(0, toFrame - fromFrame);
   return (frames / SMASH_JUMP_ATTACK.fps / Math.max(0.01, rate)) * 1000;
+}
+
+function gustFrameWallMs(frame: number): number {
+  return (
+    (frame / GUST_AOE_CAST.fps / Math.max(0.01, GUST_AOE_CAST.playbackRate)) * 1000
+  );
+}
+
+function gustRecoveryWallMs(): number {
+  const blowWall = gustFrameWallMs(GUST_AOE_CAST.blowFrame);
+  const impactHold = 160 / GUST_AOE_CAST.playbackRate;
+  const totalWall = (GUST_AOE_CAST.clipDurationSec / GUST_AOE_CAST.playbackRate) * 1000;
+  return Math.max(80, totalWall - blowWall - impactHold);
+}
+
+function gustAnticipationWallMs(): number {
+  return 120 / GUST_AOE_CAST.playbackRate;
+}
+
+function gustImpactHoldWallMs(): number {
+  return 160 / GUST_AOE_CAST.playbackRate;
 }
 
 /**
@@ -238,8 +282,8 @@ function frostBallReleaseWallMs(): number {
 function frostBallRecoveryWallMs(): number {
   const releaseSec = FROST_BALL_CAST.releaseFrame / FROST_BALL_CAST.fps;
   const restSec = Math.max(0, FROST_BALL_CAST.clipDurationSec - releaseSec);
-  // Trim the clip tail so we unlock a bit before the Mixamo pose fully settles.
-  return (restSec / FROST_BALL_CAST.playbackRate) * 1000 * 0.78;
+  // Aggressive trim — unlock soon after release so combat stays fluid.
+  return (restSec / FROST_BALL_CAST.playbackRate) * 1000 * 0.32;
 }
 
 /** Authored ms that yield `wallMs` after CAST_EXECUTION_SCALE. */
@@ -371,8 +415,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
   frostBall: {
     id: "frostBall",
     name: "Frost Ball",
-    cooldownMs: 4500,
-    range: 10,
+    cooldownMs: 2800,
+    range: 12.5,
     shape: "projectile",
     damage: 3,
     speed: 3.5,
@@ -462,29 +506,38 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnSelf: [{ statusId: "hasted", durationMs: 900 }],
     interruptsOtherCasts: true,
   },
-  nova: {
-    id: "nova",
-    name: "Nova",
+  /**
+   * Gust (Q) — circular push wave. Replaces Nova.
+   * Hits shove targets outward, then slow them briefly.
+   */
+  gust: {
+    id: "gust",
+    name: "Gust",
     cooldownMs: 6000,
     range: 0,
     shape: "aoe",
-    damage: 24,
+    damage: 12,
     radius: 3.5,
+    knockback: 9.5,
+    knockbackMs: 320,
     allowedSlots: ["q"],
     defaultSlot: "q",
-    // ~1.4s → AoE clip ~2.3×
+    // magic_aoe: suck ends @48, blow @54 — wall times scale with playbackRate
     timing: {
-      anticipationMs: 400,
-      castMs: 300,
-      impactMs: 300,
-      recoveryMs: 400,
+      anticipationMs: authoredForWallMs(gustAnticipationWallMs()),
+      castMs: authoredForWallMs(
+        Math.max(16, gustFrameWallMs(GUST_AOE_CAST.blowFrame) - gustAnticipationWallMs()),
+      ),
+      impactMs: authoredForWallMs(gustImpactHoldWallMs()),
+      recoveryMs: authoredForWallMs(gustRecoveryWallMs()),
       anticipationMoveMul: 0.25,
       castMoveMul: 0.1,
       impactMoveMul: 0,
       recoveryMoveMul: 0.55,
       canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
     },
-    applyOnHit: [{ statusId: "burning", stacks: 1 }],
+    applyOnHit: [{ statusId: "slowed", durationMs: 1000, chance: 1 }],
   },
   shock: {
     id: "shock",

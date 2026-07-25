@@ -81,27 +81,61 @@ function LegacyProjectileMesh({ room, id }: { room: Room; id: string }) {
     );
 }
 
-function ProjectileRouter({ room, id }: { room: Room; id: string }) {
-    const abilityId = (room.state?.projectiles?.get(id) as { abilityId?: string } | undefined)
-        ?.abilityId;
+function ProjectileRouter({
+    room,
+    id,
+    knownAbilityId,
+}: {
+    room: Room;
+    id: string;
+    knownAbilityId?: string;
+}) {
+    const abilityId =
+        (room.state?.projectiles?.get(id) as { abilityId?: string } | undefined)?.abilityId ??
+        knownAbilityId;
     if (abilityId === "frostBall") {
         return <FrostBallProjectileEffect room={room} id={id} />;
     }
     if (hasCatalogProjectile(abilityId)) {
         return <BoltProjectileEffect room={room} id={id} />;
     }
+    if (!room.state?.projectiles?.get(id)) return null;
     return <LegacyProjectileMesh room={room} id={id} />;
 }
 
 export function Projectiles({ room }: { room: Room | null }) {
     const [ids, setIds] = useState<string[]>([]);
     const keyRef = useRef("");
+    /** Frost balls held after server despawn so the client can coast + fade. */
+    const fading = useRef(new Map<string, number>());
+    const abilityById = useRef(new Map<string, string>());
+    const prevLive = useRef(new Set<string>());
 
     useFrame(() => {
         if (!room?.state?.projectiles) return;
-        const next: string[] = [];
-        room.state.projectiles.forEach((_p: unknown, id: string) => next.push(id));
-        next.sort();
+        const now = performance.now();
+        const live: string[] = [];
+        room.state.projectiles.forEach((p: { abilityId?: string }, id: string) => {
+            live.push(id);
+            if (p.abilityId) abilityById.current.set(id, p.abilityId);
+        });
+        live.sort();
+
+        for (const id of prevLive.current) {
+            if (!live.includes(id) && abilityById.current.get(id) === "frostBall") {
+                fading.current.set(id, now + 480);
+            }
+        }
+        prevLive.current = new Set(live);
+
+        for (const [id, until] of [...fading.current.entries()]) {
+            if (now >= until || live.includes(id)) {
+                fading.current.delete(id);
+                if (!live.includes(id)) abilityById.current.delete(id);
+            }
+        }
+
+        const next = [...live, ...fading.current.keys()].sort();
         const key = next.join("|");
         if (key !== keyRef.current) {
             keyRef.current = key;
@@ -113,7 +147,12 @@ export function Projectiles({ room }: { room: Room | null }) {
     return (
         <>
             {ids.map((id) => (
-                <ProjectileRouter key={id} room={room} id={id} />
+                <ProjectileRouter
+                    key={id}
+                    room={room}
+                    id={id}
+                    knownAbilityId={abilityById.current.get(id)}
+                />
             ))}
         </>
     );
@@ -321,6 +360,7 @@ function PracticeDummyAvatar({
     const group = useRef<THREE.Group>(null);
     const controllerRef = useRef<CharacterAnimationController | null>(null);
     const groundY = useRef<number | null>(null);
+    const lastXZ = useRef<{ x: number; z: number } | null>(null);
     const raycaster = useMemo(() => new THREE.Raycaster(), []);
     const { scene: world } = useThree();
     const gltf = useGLTF(CHARACTER_URL);
@@ -381,10 +421,14 @@ function PracticeDummyAvatar({
         }
         g.visible = true;
 
-        if (groundY.current == null) {
+        const movedFar =
+            lastXZ.current != null &&
+            Math.hypot(t.x - lastXZ.current.x, t.z - lastXZ.current.z) > 1.5;
+        if (groundY.current == null || movedFar) {
             const y = sampleTerrainY(world, t.x, t.z, raycaster);
             if (y != null) groundY.current = y;
         }
+        lastXZ.current = { x: t.x, z: t.z };
 
         // Place, then snap soles to terrain (idle root Y can lift the mesh).
         const targetY = groundY.current ?? 0;
