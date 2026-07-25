@@ -48,10 +48,9 @@ export async function listFriends(userId: string): Promise<FriendRow[]> {
 
     return (profiles ?? []).map((p) => {
         const pr = presenceMap.get(p.id);
-        const fresh =
-            pr?.status === "online" &&
-            pr.last_seen &&
-            Date.now() - new Date(pr.last_seen).getTime() < 60_000;
+        const ageMs = pr?.last_seen ? Date.now() - new Date(pr.last_seen).getTime() : Infinity;
+        // Heartbeat ~12s; allow a few missed beats + clock skew before Offline.
+        const fresh = pr?.status === "online" && ageMs < 90_000;
         return {
             id: p.id,
             display_name: p.display_name,
@@ -132,10 +131,18 @@ export async function respondHubInvite(inviteId: string, accept: boolean): Promi
 
 export async function heartbeatPresence(hubOwnerId: string | null) {
     if (!supabase) return;
-    await supabase.rpc("heartbeat_presence", { p_hub_owner_id: hubOwnerId });
+    const { error } = await supabase.rpc("heartbeat_presence", {
+        p_hub_owner_id: hubOwnerId,
+    });
+    if (error) {
+        console.warn("[presence] heartbeat failed", error.message);
+    }
 }
 
 export async function setPresenceOffline() {
     if (!supabase) return;
-    await supabase.rpc("set_presence_offline");
+    const { error } = await supabase.rpc("set_presence_offline");
+    if (error) {
+        console.warn("[presence] offline failed", error.message);
+    }
 }

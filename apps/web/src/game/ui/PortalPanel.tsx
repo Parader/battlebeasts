@@ -1,131 +1,163 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { PVE_CONTENTS, PVE_MODIFIERS, PVP_MODES } from "@battlebeasts/shared";
-import { Button } from "@/components/base/buttons/button";
-import { CloseButton } from "@/components/base/buttons/close-button";
-import { Checkbox } from "@/components/base/checkbox/checkbox";
-import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
-import { Heading } from "react-aria-components";
 
 type Props = {
-    kind: "portal_pvp" | "portal_pve";
-    onClose: () => void;
-    onConfirm: (portal: "pvp" | "pve", params: { modes?: string[]; content?: string; modifiers?: string[] }) => void;
+  kind: "portal_pvp" | "portal_pve";
+  onClose: () => void;
+  onConfirm: (
+    portal: "pvp" | "pve",
+    params: { modes?: string[]; content?: string; modifiers?: string[] },
+  ) => void;
 };
 
+function BookShell({
+  title,
+  onClose,
+  children,
+  footer,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer: ReactNode;
+}) {
+  return (
+    <div
+      className="bb-overlay-dim fixed inset-0 z-40 flex items-center justify-center p-4"
+      data-ui-overlay
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
+      <div
+        role="dialog"
+        aria-modal
+        aria-label={title}
+        className="bb-parchment bb-book-panel relative z-10 w-full max-w-md"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="relative mb-3 flex items-start justify-between gap-3">
+          <h2 className="bb-title text-lg">{title}</h2>
+          <button type="button" className="bb-btn-ink !px-2 !py-1 text-[10px]" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="bb-brass-rule mb-4" />
+        {children}
+        <div className="mt-5 flex justify-end gap-2">{footer}</div>
+      </div>
+    </div>
+  );
+}
+
 export function PortalPanel({ kind, onClose, onConfirm }: Props) {
-    const [modes, setModes] = useState<string[]>(["arena_2v2"]);
-    const [content, setContent] = useState("dungeon");
-    const [modifiers, setModifiers] = useState<string[]>([]);
+  const [modes, setModes] = useState<string[]>(["arena_2v2"]);
+  const [content, setContent] = useState("dungeon");
+  const [modifiers, setModifiers] = useState<string[]>([]);
 
-    const isPvp = kind === "portal_pvp";
-    const title = isPvp ? "PvP Portal" : "PvE / Coop Portal";
+  const isPvp = kind === "portal_pvp";
+  const title = isPvp ? "PvP Portal" : "PvE / Coop Portal";
 
-    return (
-        <ModalOverlay
-            isOpen
-            onOpenChange={(next) => {
-                if (!next) onClose();
-            }}
-            isDismissable
-        >
-            <Modal className="w-full max-w-md">
-                <Dialog>
-                    <div className="w-full rounded-2xl bg-primary p-5 shadow-xl ring-1 ring-secondary">
-                        <div className="mb-4 flex items-center justify-between">
-                            <Heading slot="title" className="text-lg font-semibold text-primary">
-                                {title}
-                            </Heading>
-                            <CloseButton onClick={onClose} />
-                        </div>
+  return (
+    <BookShell
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="bb-btn-ink" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="bb-btn-brass"
+            onClick={() =>
+              onConfirm(isPvp ? "pvp" : "pve", isPvp ? { modes } : { content, modifiers })
+            }
+          >
+            Enter
+          </button>
+        </>
+      }
+    >
+      <p className="mb-3 text-sm text-[var(--bb-ink-soft)]">
+        {isPvp
+          ? "Select modes to queue for. Needs another hunter in queue — no solo matches."
+          : "Choose content and optional modifiers, then enter."}
+      </p>
 
-                        <p className="mb-3 text-sm text-tertiary">
-                            {isPvp
-                                ? "Select modes to queue for. Needs another hunter in queue — no solo matches."
-                                : "Choose content and optional modifiers, then enter."}
-                        </p>
-
-                        {isPvp ? (
-                            <div className="space-y-2">
-                                {PVP_MODES.map((opt) => (
-                                    <Checkbox
-                                        key={opt.id}
-                                        isSelected={modes.includes(opt.id)}
-                                        onChange={(isSelected) => {
-                                            setModes((prev) =>
-                                                isSelected
-                                                    ? [...prev.filter((x) => x !== opt.id), opt.id]
-                                                    : prev.filter((x) => x !== opt.id),
-                                            );
-                                        }}
-                                        label={opt.label}
-                                    />
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                <div className="space-y-2">
-                                    {PVE_CONTENTS.map((opt) => (
-                                        <label
-                                            key={opt.id}
-                                            className="flex cursor-pointer items-start gap-3 rounded-lg bg-secondary px-3 py-2"
-                                        >
-                                            <input
-                                                type="radio"
-                                                name="pve-content"
-                                                className="mt-1"
-                                                checked={content === opt.id}
-                                                onChange={() => setContent(opt.id)}
-                                            />
-                                            <span>
-                                                <span className="block text-sm font-medium text-primary">{opt.label}</span>
-                                                <span className="text-xs text-tertiary">{opt.description}</span>
-                                            </span>
-                                        </label>
-                                    ))}
-                                </div>
-                                <div className="space-y-2">
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-tertiary">
-                                        Modifiers
-                                    </p>
-                                    {PVE_MODIFIERS.map((mod) => (
-                                        <Checkbox
-                                            key={mod.id}
-                                            isSelected={modifiers.includes(mod.id)}
-                                            onChange={(isSelected) => {
-                                                setModifiers((prev) =>
-                                                    isSelected
-                                                        ? [...prev.filter((x) => x !== mod.id), mod.id]
-                                                        : prev.filter((x) => x !== mod.id),
-                                                );
-                                            }}
-                                            label={mod.label}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="mt-5 flex justify-end gap-2">
-                            <Button color="secondary" onClick={onClose}>
-                                Cancel
-                            </Button>
-                            <Button
-                                color="primary"
-                                isDisabled={isPvp && modes.length === 0}
-                                onClick={() => {
-                                    if (isPvp) {
-                                        onConfirm("pvp", { modes });
-                                    } else {
-                                        onConfirm("pve", { content, modifiers });
-                                    }
-                                }}
-                            >
-                                {isPvp ? "Queue" : "Enter"}
-                            </Button>
-                        </div>
-                    </div>
-                </Dialog>
-            </Modal>
-        </ModalOverlay>
-    );
+      {isPvp ? (
+        <div className="space-y-2">
+          {PVP_MODES.map((opt) => {
+            const on = modes.includes(opt.id);
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                className={["bb-choice", on ? "bb-choice--on" : ""].join(" ")}
+                onClick={() =>
+                  setModes((prev) =>
+                    prev.includes(opt.id)
+                      ? prev.filter((x) => x !== opt.id)
+                      : [...prev, opt.id],
+                  )
+                }
+              >
+                <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
+                  {opt.label}
+                </span>
+                <span className="mt-0.5 block text-xs text-[var(--bb-ink-soft)]">{opt.description}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <p className="bb-title text-xs">Content</p>
+            {PVE_CONTENTS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={["bb-choice", content === opt.id ? "bb-choice--on" : ""].join(" ")}
+                onClick={() => setContent(opt.id)}
+              >
+                <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
+                  {opt.label}
+                </span>
+                <span className="mt-0.5 block text-xs text-[var(--bb-ink-soft)]">{opt.description}</span>
+              </button>
+            ))}
+          </div>
+          <div className="space-y-2">
+            <p className="bb-title text-xs">Modifiers</p>
+            {PVE_MODIFIERS.map((opt) => {
+              const on = modifiers.includes(opt.id);
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={["bb-choice", on ? "bb-choice--on" : ""].join(" ")}
+                  onClick={() =>
+                    setModifiers((prev) =>
+                      prev.includes(opt.id)
+                        ? prev.filter((x) => x !== opt.id)
+                        : [...prev, opt.id],
+                    )
+                  }
+                >
+                  <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
+                    {opt.label}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-[var(--bb-ink-soft)]">
+                    {opt.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </BookShell>
+  );
 }

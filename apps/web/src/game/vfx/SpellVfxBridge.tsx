@@ -71,27 +71,39 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       }
 
       // Frost: charge in the hand from anticipation until release.
-      if (catalog && isFrost && phase === "anticipation" && prev !== "anticipation") {
-        frostHand.current.get(sessionId)?.cancel();
-        const def = ABILITIES[abilityId];
-        const chargeMs = def
-          ? phaseDurationMs(def, "anticipation") + phaseDurationMs(def, "cast") + 90
-          : 520;
-        const yaw = raw.yaw ?? 0;
-        const x = (raw.x ?? 0) + Math.sin(yaw) * FROST_HAND_FORWARD;
-        const z = (raw.z ?? 0) + Math.cos(yaw) * FROST_HAND_FORWARD;
-        frostHand.current.set(
-          sessionId,
-          spawnCastEffect(
-            abilityId,
-            { x, z, yaw, y: FROST_HAND_Y },
-            {
-              followOwnerId: sessionId,
-              followSpawnOffset: FROST_HAND_FORWARD,
-              lifeMs: chargeMs,
-            },
-          ),
-        );
+      // Anticipation is short (~100ms) and often skipped in schema patches —
+      // also start on cast if we never saw anticipation.
+      if (catalog && isFrost) {
+        const enteringAnticipation = phase === "anticipation" && prev !== "anticipation";
+        const missedAnticipation =
+          phase === "cast" &&
+          prev !== "anticipation" &&
+          prev !== "cast" &&
+          !frostHand.current.has(sessionId);
+        if (enteringAnticipation || missedAnticipation) {
+          frostHand.current.get(sessionId)?.cancel();
+          const def = ABILITIES[abilityId];
+          const chargeMs = def
+            ? (enteringAnticipation
+                ? phaseDurationMs(def, "anticipation") + phaseDurationMs(def, "cast")
+                : phaseDurationMs(def, "cast")) + 120
+            : 520;
+          const yaw = raw.yaw ?? 0;
+          const x = (raw.x ?? 0) + Math.sin(yaw) * FROST_HAND_FORWARD;
+          const z = (raw.z ?? 0) + Math.cos(yaw) * FROST_HAND_FORWARD;
+          frostHand.current.set(
+            sessionId,
+            spawnCastEffect(
+              abilityId,
+              { x, z, yaw, y: FROST_HAND_Y },
+              {
+                followOwnerId: sessionId,
+                followSpawnOffset: FROST_HAND_FORWARD,
+                lifeMs: chargeMs,
+              },
+            ),
+          );
+        }
       }
 
       // Bolt-style: schedule muzzle when cast phase begins

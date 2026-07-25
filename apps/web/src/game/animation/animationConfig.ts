@@ -139,6 +139,7 @@ export const abilityAnimationBindings: Record<
 > = {
   bolt: { upper: "castPrimary" },
   shock: { upper: "castPrimary" },
+  grasp: { upper: "castPrimary" },
   frostBall: {
     upper: "castFrost",
   },

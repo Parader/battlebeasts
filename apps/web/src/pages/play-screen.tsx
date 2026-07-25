@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router";
-import { Button } from "@/components/base/buttons/button";
-import { Badge } from "@/components/base/badges/badges";
 import { GameCanvas } from "@/game/GameCanvas";
 import { useBaseCityRoom } from "@/game/useBaseCityRoom";
 import { StandPanel } from "@/game/ui/StandPanel";
@@ -24,7 +22,7 @@ function PauseCountdown({ until }: { until: number }) {
         }, 250);
         return () => window.clearInterval(id);
     }, [until]);
-    return <p className="mt-2 text-sm font-medium text-primary">{left}s remaining</p>;
+    return <p className="mt-2 text-sm text-[var(--bb-ink-soft)]">{left}s remaining</p>;
 }
 
 export const PlayScreen = () => {
@@ -105,16 +103,16 @@ export const PlayScreen = () => {
             />
 
             <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
-                <div className="min-w-[12rem] rounded-full bg-slate-950/70 px-3 py-1.5 ring-1 ring-white/20 backdrop-blur-sm">
-                    <div className="mb-0.5 flex justify-between text-[10px] font-semibold uppercase tracking-wide text-white/70">
+                <div className="bb-hp-tray">
+                    <div className="bb-hp-tray__label">
                         <span>HP</span>
                         <span className="tabular-nums">
                             {Math.round(localHp.hp)}/{Math.round(localHp.maxHp)}
                         </span>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                    <div className="bb-hp-tray__track">
                         <div
-                            className="h-full rounded-full bg-emerald-400 transition-[width] duration-150"
+                            className="bb-hp-tray__fill"
                             style={{
                                 width: `${Math.max(0, Math.min(100, (localHp.hp / Math.max(1, localHp.maxHp)) * 100))}%`,
                             }}
@@ -125,79 +123,82 @@ export const PlayScreen = () => {
 
             <div data-ui-overlay className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4">
                 <div className="pointer-events-auto flex flex-col gap-2">
-                    <Badge color="brand" size="lg">
-                        BattleBeasts
-                    </Badge>
-                    <Badge color={status === "connected" ? "success" : status === "error" ? "error" : "gray"} size="md">
+                    <span className="bb-chip text-[0.75rem]">BattleBeasts</span>
+                    <span
+                        className={[
+                            "bb-chip",
+                            status === "connected" ? "bb-chip--ok" : status === "error" ? "bb-chip--err" : "",
+                        ].join(" ")}
+                    >
                         {status}
                         {inContent ? ` · ${contentMode ?? "content"}` : phase === "queued" ? " · queued" : ""}
-                    </Badge>
+                    </span>
                     {configured && user ? (
-                        <Badge color="gray" size="sm">
+                        <span className="bb-chip">
                             {displayName}
                             {effectiveHubOwnerId !== userId ? " · visiting" : ""}
-                        </Badge>
+                        </span>
                     ) : (
-                        <Badge color="warning" size="sm">
-                            Guest
-                        </Badge>
+                        <span className="bb-chip bb-chip--warn">Guest</span>
                     )}
                     {(friendsApi.requests.length > 0 || friendsApi.invites.length > 0) && (
-                        <Badge color="brand" size="sm">
+                        <span className="bb-chip bb-chip--warn">
                             {friendsApi.requests.length + friendsApi.invites.length} pending
-                        </Badge>
+                        </span>
                     )}
-                    {!inContent && (
-                        <Badge color="gray" size="sm">
-                            {formatWallet(economy)}
-                        </Badge>
-                    )}
+                    {!inContent && <span className="bb-chip">{formatWallet(economy)}</span>}
                 </div>
-                <div className="pointer-events-auto flex gap-2">
+                <div className="pointer-events-auto flex flex-wrap justify-end gap-2">
                     {inContent && (
-                        <Button size="sm" color="primary" onClick={returnToHub}>
+                        <button type="button" className="bb-btn-brass" onClick={returnToHub}>
                             Return to city
-                        </Button>
+                        </button>
                     )}
                     {user && !inContent && (
-                        <Button size="sm" color="secondary" onClick={() => setFriendsOpen(true)}>
+                        <button type="button" className="bb-btn-ink" onClick={() => setFriendsOpen(true)}>
                             Friends
-                        </Button>
+                        </button>
                     )}
-                    <Button size="sm" color="secondary" onClick={() => setHelpOpen((v) => !v)}>
+                    <button type="button" className="bb-btn-ink" onClick={() => setHelpOpen((v) => !v)}>
                         Controls
-                    </Button>
+                    </button>
                     {user && (
-                        <Button size="sm" color="secondary" onClick={() => void signOut()}>
+                        <button type="button" className="bb-btn-ink" onClick={() => void signOut()}>
                             Sign out
-                        </Button>
+                        </button>
                     )}
-                    <Button size="sm" color="tertiary" href="/">
+                    <a className="bb-btn-ink inline-block no-underline" href="/">
                         Leave
-                    </Button>
+                    </a>
                 </div>
             </div>
 
             {phase === "queued" && (
-                <div className="pointer-events-auto absolute inset-x-0 top-20 z-30 mx-auto flex max-w-md flex-col items-center gap-2 rounded-xl bg-primary/95 px-4 py-3 text-center shadow-lg ring-1 ring-secondary">
-                    <p className="text-sm font-semibold text-primary">Searching for match…</p>
-                    <p className="text-xs text-tertiary">{queueModes.join(" · ") || "PvP"}</p>
-                    <Button size="sm" color="secondary" onClick={cancelQueue}>
+                <div
+                    data-ui-overlay
+                    className="bb-parchment bb-toast pointer-events-auto absolute inset-x-0 top-20 z-30 mx-auto flex max-w-md flex-col items-center gap-2 px-4 py-3 text-center"
+                >
+                    <p className="bb-title text-sm">Searching for match…</p>
+                    <p className="text-xs text-[var(--bb-ink-soft)]">{queueModes.join(" · ") || "PvP"}</p>
+                    <button type="button" className="bb-btn-ink" onClick={cancelQueue}>
                         Cancel queue
-                    </Button>
+                    </button>
                 </div>
             )}
 
             {matchPause && (
-                <div className="pointer-events-none absolute inset-x-0 top-20 z-30 mx-auto max-w-md rounded-xl bg-primary/95 px-4 py-3 text-center shadow-lg ring-1 ring-secondary">
-                    <p className="text-sm font-semibold text-primary">
+                <div
+                    data-ui-overlay
+                    className="bb-parchment bb-toast pointer-events-none absolute inset-x-0 top-20 z-30 mx-auto max-w-md px-4 py-3 text-center"
+                >
+                    <p className="bb-title text-sm">
                         {matchPause.reason === "resume_grace"
                             ? "Get ready"
                             : matchPause.reason === "pvp_reconnect"
                               ? "PvP paused"
                               : "Encounter paused"}
                     </p>
-                    <p className="mt-1 text-xs text-tertiary">
+                    <p className="mt-1 text-xs text-[var(--bb-ink-soft)]">
                         {matchPause.reason === "resume_grace"
                             ? "Match resumes shortly"
                             : `Waiting for ${matchPause.playerName ?? "hunter"}${
@@ -221,10 +222,11 @@ export const PlayScreen = () => {
             {helpOpen && (
                 <div
                     data-ui-overlay
-                    className="pointer-events-none absolute bottom-24 left-4 z-20 max-w-sm rounded-xl bg-primary/90 p-4 text-sm text-secondary shadow-lg ring-1 ring-secondary"
+                    className="bb-parchment bb-toast pointer-events-none absolute bottom-24 left-4 z-20 max-w-sm p-4 text-sm"
                 >
-                    <p className="font-semibold text-primary">Controls</p>
-                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                    <p className="bb-title text-sm">Controls</p>
+                    <div className="bb-brass-rule my-2" />
+                    <ul className="mt-1 list-disc space-y-1 pl-4 text-[var(--bb-ink-soft)]">
                         <li>WASD / arrows — move</li>
                         <li>Mouse aim — character yaw</li>
                         <li>LMB / RMB / Space / Q / E / R — cast</li>
@@ -234,7 +236,7 @@ export const PlayScreen = () => {
                         {!inContent && <li>Practice dummy — damage it with abilities for copper</li>}
                     </ul>
                     {localPlayer && (
-                        <p className="mt-3 text-tertiary">
+                        <p className="mt-3 text-xs text-[var(--bb-ink-soft)]">
                             Pos {localPlayer.x.toFixed(1)}, {localPlayer.z.toFixed(1)}
                         </p>
                     )}
@@ -244,7 +246,7 @@ export const PlayScreen = () => {
             {toast && (
                 <div
                     data-ui-overlay
-                    className="absolute bottom-24 right-4 z-30 rounded-lg bg-primary px-4 py-2 text-sm text-primary shadow-lg ring-1 ring-secondary"
+                    className="bb-parchment bb-toast absolute bottom-24 right-4 z-30 px-4 py-2 text-sm"
                 >
                     {toast}
                 </div>

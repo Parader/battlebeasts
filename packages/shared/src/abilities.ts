@@ -1,4 +1,4 @@
-import type { StatusApplication } from "./statuses";
+import { getStatus, type StatusApplication } from "./statuses";
 
 export type AbilityShape = "projectile" | "aoe" | "dash" | "melee" | "buff";
 
@@ -120,6 +120,8 @@ export type SpellSlot = (typeof SPELL_SLOTS)[number];
 export interface AbilityDef {
   id: string;
   name: string;
+  /** Armoury blurb — what the spell does in plain language. */
+  description?: string;
   cooldownMs: number;
   range: number;
   shape: AbilityShape;
@@ -164,12 +166,21 @@ export interface AbilityDef {
    * Q-only spells cannot appear in R, etc.
    */
   allowedSlots: SpellSlotId[];
-  /** Preferred slot when building the default kit. */
-  defaultSlot: SpellSlotId;
+  /** Preferred slot when building the default kit (omit for alternate picks). */
+  defaultSlot?: SpellSlotId;
   /** Radial knockback distance (world units) on AoE/melee hit. */
   knockback?: number;
   /** Knockback translate duration in ms (default 220). */
   knockbackMs?: number;
+  /**
+   * Pull hit targets toward the effect origin / caster (world units).
+   * Stops short of overlapping the caster (`pullStopDistance`).
+   */
+  pull?: number;
+  /** Pull translate duration in ms (default 280). */
+  pullMs?: number;
+  /** Minimum distance from pull origin after the yank (default 1.2). */
+  pullStopDistance?: number;
 }
 
 export const LOADOUT_SIZE = SPELL_SLOTS.length;
@@ -294,6 +305,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   bolt: {
     id: "bolt",
     name: "Bolt",
+    description: "Fast single-target magic bolt. Low cooldown primary poke.",
     cooldownMs: 350,
     range: 12,
     shape: "projectile",
@@ -320,6 +332,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
   crescent: {
     id: "crescent",
     name: "Crescent",
+    description:
+      "Close-range slash combo — three quick hits. Chain swings or stop early to start cooldown.",
     cooldownMs: 550,
     range: 2.2,
     shape: "melee",
@@ -345,6 +359,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
   smash: {
     id: "smash",
     name: "Leap Slam",
+    description:
+      "Leap to your aim and slam the ground. Airborne iframes; stuns enemies on landing.",
     cooldownMs: 5500,
     range: 2.8,
     shape: "aoe",
@@ -413,14 +429,16 @@ export const ABILITIES: Record<string, AbilityDef> = {
   frostBall: {
     id: "frostBall",
     name: "Frost Ball",
+    description:
+      "Slow drifting frost orb with a ground aura. Ticks damage and refreshes slow on anyone standing in the disc until it expires.",
     cooldownMs: 2800,
     range: 12.5,
     shape: "projectile",
     damage: 3,
     speed: 3.5,
-    /** Damage + slow share the same aura radius. */
-    radius: 4.5,
-    slowRadius: 4.5,
+    /** Damage + slow share the same aura radius (matches frost disc visual). */
+    radius: 3.9,
+    slowRadius: 3.9,
     tickMs: 250,
     aura: true,
     spawnOffset: FROST_BALL_CAST.spawnOffset,
@@ -448,6 +466,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   surge: {
     id: "surge",
     name: "Surge",
+    description: "Crackling self-buff — burst of move speed. Can interrupt your other casts.",
     cooldownMs: 7000,
     range: 0,
     shape: "buff",
@@ -472,6 +491,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   dash: {
     id: "dash",
     name: "Dash",
+    description: "Dive forward with brief iframes, then a short haste. Cuts other casts.",
     cooldownMs: 4000,
     range: 5,
     shape: "dash",
@@ -512,6 +532,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
   decoy: {
     id: "decoy",
     name: "Decoy",
+    description:
+      "Spawn an identical clone that drifts with your move (or stands still), then cloak for a short time. Invisible to enemies / ghost to yourself. Casting or interacting reveals you; you can still take damage.",
     cooldownMs: 8000,
     range: 0,
     shape: "buff",
@@ -539,6 +561,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
   gust: {
     id: "gust",
     name: "Gust",
+    description:
+      "Circular push wave at your feet. Knocks enemies outward, then slows them briefly.",
     cooldownMs: 6000,
     range: 0,
     shape: "aoe",
@@ -567,6 +591,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   shock: {
     id: "shock",
     name: "Shock",
+    description: "Aimed electric bolt with a small splash. Hits hard and applies a long slow.",
     cooldownMs: 5000,
     range: 8,
     shape: "projectile",
@@ -575,7 +600,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     radius: 1.6,
     spawnOffset: 0.34,
     allowedSlots: ["e"],
-    defaultSlot: "e",
     // ~1.05s → 1H clip ~2.2×
     timing: {
       anticipationMs: 300,
@@ -590,9 +614,47 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
     applyOnHit: [{ statusId: "slowed", durationMs: 1800 }],
   },
+  /**
+   * Grasp (E) — dark stretching arm / hand yank.
+   * Anim: magic_1h (Standing 1H Magic Attack 01).
+   */
+  grasp: {
+    id: "grasp",
+    name: "Grasp",
+    description:
+      "Stretch a dark hand forward and yank an enemy toward you. Light damage, then slows them briefly.",
+    cooldownMs: 7000,
+    range: 12,
+    shape: "projectile",
+    damage: 5,
+    speed: 26,
+    radius: 0.55,
+    spawnOffset: 0.42,
+    pull: 8,
+    pullMs: 320,
+    pullStopDistance: 1.35,
+    allowedSlots: ["e"],
+    defaultSlot: "e",
+    // Timed to magic_1h (~2.33s) at a snappy combat pace.
+    timing: {
+      anticipationMs: 260,
+      castMs: 180,
+      impactMs: 200,
+      recoveryMs: 280,
+      anticipationMoveMul: 0.55,
+      castMoveMul: 0.35,
+      impactMoveMul: 0.4,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "slowed", durationMs: 2000, chance: 1 }],
+  },
   rupture: {
     id: "rupture",
     name: "Rupture",
+    description:
+      "Long-windup ground rupture at range. Heavy burst damage; applies bleed and a chance to poison.",
     cooldownMs: 10000,
     range: 10,
     shape: "aoe",
@@ -638,6 +700,93 @@ export function isComboAbility(def: AbilityDef | undefined): boolean {
 /** Choosable spells for a hotbar slot (Spells UI catalog). */
 export function abilitiesForSlot(slotId: SpellSlotId): AbilityDef[] {
   return Object.values(ABILITIES).filter((a) => a.allowedSlots.includes(slotId));
+}
+
+function formatSeconds(ms: number): string {
+  const s = ms / 1000;
+  if (Number.isInteger(s)) return `${s}s`;
+  return `${parseFloat(s.toFixed(2))}s`;
+}
+
+function formatStatusApp(app: StatusApplication): string | null {
+  const st = getStatus(app.statusId);
+  if (!st) return app.statusId;
+  const dur = app.durationMs ?? st.durationMs;
+  const bits: string[] = [st.name];
+  if (typeof st.moveMul === "number" && st.moveMul !== 1) {
+    if (st.moveMul < 1) {
+      bits.push(`${Math.round((1 - st.moveMul) * 100)}% slow`);
+    } else {
+      bits.push(`+${Math.round((st.moveMul - 1) * 100)}% move`);
+    }
+  }
+  if (st.mechanic === "stun") bits.push("stun");
+  if (st.mechanic === "stealth") bits.push("stealth");
+  if (st.mechanic === "dot" && st.damagePerTick && st.tickMs) {
+    bits.push(`${st.damagePerTick} dmg / ${formatSeconds(st.tickMs)}`);
+  }
+  if (app.stacks && app.stacks > 1) bits.push(`×${app.stacks}`);
+  if (typeof app.chance === "number" && app.chance < 1) {
+    bits.push(`${Math.round(app.chance * 100)}%`);
+  }
+  bits.push(formatSeconds(dur));
+  return bits.join(" ");
+}
+
+/**
+ * Compact mechanical line for the Spells armoury — derived from live ability data
+ * so numbers stay in sync with combat.
+ */
+export function formatAbilityArmoryStats(def: AbilityDef): string {
+  const parts: string[] = [`CD ${formatSeconds(def.cooldownMs)}`];
+
+  if (def.aura && def.damage > 0 && def.tickMs) {
+    parts.push(`${def.damage} dmg / ${formatSeconds(def.tickMs)}`);
+  } else if (def.combo && def.damage > 0) {
+    parts.push(`${def.damage}×${def.combo.hits} dmg`);
+  } else if (def.damage > 0) {
+    parts.push(`${def.damage} dmg`);
+  }
+
+  if (def.radius != null && def.radius > 0) {
+    parts.push(`AoE ${def.radius}`);
+  }
+  if (def.slowRadius != null && def.slowRadius > 0 && def.slowRadius !== def.radius) {
+    parts.push(`slow r${def.slowRadius}`);
+  }
+  if (def.range > 0 && def.shape !== "buff" && def.shape !== "aoe") {
+    parts.push(`range ${def.range}`);
+  } else if (def.shape === "aoe" && def.range > 0) {
+    parts.push(`range ${def.range}`);
+  }
+  if (def.knockback) {
+    parts.push(`knockback ${def.knockback}`);
+  }
+  if (def.pull) {
+    parts.push(`pull ${def.pull}`);
+  }
+  if (def.travel?.mode === "translate" || def.shape === "dash") {
+    const dist = def.travel?.distance ?? def.range;
+    if (dist > 0) parts.push(`travel ${dist}`);
+  }
+  if (def.iFrames) {
+    parts.push(`iframes ${formatSeconds(def.iFrames.durationMs)}`);
+  }
+
+  for (const app of def.applyOnHit ?? []) {
+    const line = formatStatusApp(app);
+    if (line) parts.push(line);
+  }
+  for (const app of def.applyAuraSlow ?? []) {
+    const line = formatStatusApp(app);
+    if (line) parts.push(`aura ${line}`);
+  }
+  for (const app of def.applyOnSelf ?? []) {
+    const line = formatStatusApp(app);
+    if (line) parts.push(`self ${line}`);
+  }
+
+  return parts.join(" · ");
 }
 
 function defaultAbilityForSlot(slotId: SpellSlotId): string {

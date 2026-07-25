@@ -14,6 +14,28 @@ import {
     type HubInviteRow,
 } from "@/lib/friends";
 
+/** Cancels a pending offline mark when we remount (React Strict Mode / hub switch). */
+let presenceOfflineTimer: number | null = null;
+let presenceEpoch = 0;
+
+function cancelPendingOffline() {
+    if (presenceOfflineTimer != null) {
+        window.clearTimeout(presenceOfflineTimer);
+        presenceOfflineTimer = null;
+    }
+}
+
+function schedulePresenceOffline(epoch: number) {
+    cancelPendingOffline();
+    presenceOfflineTimer = window.setTimeout(() => {
+        presenceOfflineTimer = null;
+        // Only go offline if nothing remounted / re-hearted after this epoch.
+        if (epoch === presenceEpoch) {
+            void setPresenceOffline();
+        }
+    }, 750);
+}
+
 export function useFriends(userId: string | null, hubOwnerId: string | null) {
     const [friends, setFriends] = useState<FriendRow[]>([]);
     const [requests, setRequests] = useState<FriendRequestRow[]>([]);
@@ -49,24 +71,40 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
     useEffect(() => {
         void refresh();
         if (!userId) return;
-        const id = window.setInterval(() => void refresh(), 10_000);
+        const id = window.setInterval(() => void refresh(), 8_000);
         return () => window.clearInterval(id);
     }, [userId, refresh]);
 
+    // Heartbeat while on the play screen — do NOT mark offline on hubOwnerId churn.
     useEffect(() => {
         if (!userId) return;
-        void heartbeatPresence(hubOwnerId);
-        const id = window.setInterval(() => void heartbeatPresence(hubOwnerId), 20_000);
+
+        const epoch = ++presenceEpoch;
+        cancelPendingOffline();
+
+        const beat = () => {
+            void heartbeatPresence(hubOwnerId);
+        };
+        beat();
+        const id = window.setInterval(beat, 12_000);
+
+        const onVisible = () => {
+            if (document.visibilityState === "visible") beat();
+        };
+        document.addEventListener("visibilitychange", onVisible);
 
         const onUnload = () => {
+            cancelPendingOffline();
             void setPresenceOffline();
         };
         window.addEventListener("pagehide", onUnload);
 
         return () => {
             window.clearInterval(id);
+            document.removeEventListener("visibilitychange", onVisible);
             window.removeEventListener("pagehide", onUnload);
-            void setPresenceOffline();
+            // Delayed so Strict Mode remount / hub switch can cancel before we go offline.
+            schedulePresenceOffline(epoch);
         };
     }, [userId, hubOwnerId]);
 

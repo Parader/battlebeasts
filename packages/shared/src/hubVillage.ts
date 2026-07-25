@@ -22,8 +22,10 @@ export {
   type InteractZone,
 } from "./stands";
 
-/** Single-scene hub visual (Blender Collection → glTF). */
-export const HUB_SCENE_URL = "/assets/maps/village.glb";
+/** Single-scene hub visual (Blender Collection → glTF). Cache-bust on re-export. */
+export const HUB_SCENE_URL = `/assets/maps/village.glb?v=${encodeURIComponent(
+  (villageMarkers as { exportedAt?: string }).exportedAt ?? "1",
+)}`;
 
 /**
  * Blender village is authored at oversized RTS placement sizes.

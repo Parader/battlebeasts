@@ -434,7 +434,10 @@ export class CombatSystem {
       if (def?.aura) {
         this.applyRawDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId);
       } else {
-        this.applyDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId);
+        this.applyDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId, now);
+      }
+      if (def?.pull && def.pull > 0) {
+        this.applyPull(hit.ownerId, hit.targetId, def.pull, def.pullMs ?? 280, now, def.pullStopDistance);
       }
     }
     for (const slow of slows) {
@@ -979,6 +982,72 @@ export class CombatSystem {
       startAt: now,
       endAt: now + dur,
     });
+  }
+
+  /**
+   * Yank a target toward the owner (Grasp). Stops at `stopDistance` so they
+   * don't occupy the caster.
+   */
+  private applyPull(
+    ownerId: string,
+    targetId: string,
+    distance: number,
+    durationMs: number,
+    now: number,
+    stopDistance = 1.2,
+  ) {
+    if (distance <= 0) return;
+    const owner = this.room.state.players.get(ownerId);
+    if (!owner) return;
+
+    const origin = { x: owner.x, z: owner.z };
+    const minDist = Math.max(0.6, stopDistance);
+    const dur = Math.max(80, durationMs);
+
+    const schedule = (
+      kind: "player" | "target",
+      fromX: number,
+      fromZ: number,
+      invulnerable?: boolean,
+    ) => {
+      if (invulnerable) return;
+      if (kind === "player") this.travels.delete(targetId);
+
+      let dx = origin.x - fromX;
+      let dz = origin.z - fromZ;
+      let len = Math.hypot(dx, dz);
+      if (len < 1e-4) return;
+      if (len <= minDist + 0.05) return;
+
+      const nx = dx / len;
+      const nz = dz / len;
+      const travel = Math.min(distance, Math.max(0, len - minDist));
+      if (travel < 0.05) return;
+
+      const from = { x: fromX, z: fromZ };
+      const ideal = { x: fromX + nx * travel, z: fromZ + nz * travel };
+      const clamped = this.sweepPlayerPos(targetId, from, ideal);
+      this.knockbacks.set(targetId, {
+        targetId,
+        kind,
+        fromX: from.x,
+        fromZ: from.z,
+        toX: clamped.x,
+        toZ: clamped.z,
+        startAt: now,
+        endAt: now + dur,
+      });
+    };
+
+    const player = this.room.state.players.get(targetId);
+    if (player) {
+      schedule("player", player.x, player.z, player.invulnerable);
+      return;
+    }
+    const target = this.room.state.targets.get(targetId);
+    if (target) {
+      schedule("target", target.x, target.z);
+    }
   }
 
   private applyDamage(

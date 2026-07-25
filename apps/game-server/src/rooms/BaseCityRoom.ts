@@ -48,6 +48,8 @@ const DUMMY_HIT_COPPER = 1;
 /** How often an aggro'd dummy fires bolt at its attacker. */
 /** Gap after recovery before the dummy starts another cast. */
 const DUMMY_BOLT_GAP_MS = 420;
+/** Drop aggro if the dummy hasn't been damaged for this long. */
+const DUMMY_DEAGGRO_MS = 5000;
 
 type DummyAggro = {
   attackerId: string;
@@ -56,6 +58,8 @@ type DummyAggro = {
   /** Fire bolt at this time (0 = no pending release). */
   pendingReleaseAt: number;
   pendingAimYaw: number;
+  /** Last time this dummy took damage from its aggro target. */
+  lastHitAt: number;
 };
 
 export class BaseCityRoom extends Room<{ state: BaseCityState }> {
@@ -83,12 +87,14 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         const def = HUB_PRACTICE_DUMMIES.find((d) => d.id === targetId);
         // Left pad is passive practice; right dummy fights back.
         if (def?.retaliates !== false) {
+          const now = Date.now();
           const prev = this.dummyAggro.get(targetId);
           this.dummyAggro.set(targetId, {
             attackerId: attackerSessionId,
-            nextCastAt: prev?.nextCastAt ?? Date.now() + 180,
+            nextCastAt: prev?.nextCastAt ?? now + 180,
             pendingReleaseAt: prev?.pendingReleaseAt ?? 0,
             pendingAimYaw: prev?.pendingAimYaw ?? 0,
+            lastHitAt: now,
           });
         }
         const player = this.state.players.get(attackerSessionId);
@@ -540,6 +546,12 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
       }
       if (player.hp <= 0) {
         this.softRespawnPlayer(aggro.attackerId, player);
+        continue;
+      }
+
+      if (now - aggro.lastHitAt >= DUMMY_DEAGGRO_MS) {
+        this.clearDummyCast(dummyId);
+        this.dummyAggro.delete(dummyId);
         continue;
       }
 

@@ -7,6 +7,11 @@ import { projectileHitsWalls } from "./collision";
 export const COMBAT = {
   playerHitRadius: 0.55,
   projectileHitRadius: 0.35,
+  /**
+   * Ground-aura ticks (Frost Ball shell, etc.): treat as "feet in the disc"
+   * so gameplay matches the painted radius (no +playerHitRadius overshoot).
+   */
+  auraFootRadius: 0.12,
   maxProjectiles: 64,
 } as const;
 
@@ -247,7 +252,7 @@ export function tickProjectiles(
           p.slowRadius,
           body.x,
           body.z,
-          COMBAT.playerHitRadius,
+          COMBAT.auraFootRadius,
         );
         if (!inSlow) continue;
 
@@ -259,7 +264,7 @@ export function tickProjectiles(
         });
 
         if (
-          circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, COMBAT.playerHitRadius)
+          circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, COMBAT.auraFootRadius)
         ) {
           const hpAfter = Math.max(0, body.hp - p.damage);
           hits.push({

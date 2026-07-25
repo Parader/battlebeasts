@@ -8,6 +8,9 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   surge: "#67e8f9",
   gust: "#e2e8f0",
   dash: "#a3e635",
+  grasp: "#3b1f54",
+  decoy: "#94a3b8",
+  rupture: "#b91c1c",
 };
 
 export function abilityVfxColor(abilityId: string, fallback = "#38bdf8"): string {

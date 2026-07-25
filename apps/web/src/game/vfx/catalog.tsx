@@ -10,13 +10,14 @@ import { SmashCrackEffect } from "./effects/smashCrack";
 import { GustWaveEffect } from "./effects/gustWave";
 import { FrostBallProjectileEffect } from "./effects/frostBallProjectile";
 import { FrostBallCastEffect } from "./effects/frostBallCast";
+import { GraspProjectileEffect } from "./effects/graspProjectile";
 
-export type ProjectileVfxId = "bolt" | "frostBall";
+export type ProjectileVfxId = "bolt" | "frostBall" | "grasp";
 export type CastVfxId = "bolt" | "crescent" | "frostBall";
 export type ImpactVfxId = "bolt" | "crescent" | "smash" | "gust";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
-export const CATALOG_PROJECTILES = new Set<string>(["bolt", "frostBall"]);
+export const CATALOG_PROJECTILES = new Set<string>(["bolt", "frostBall", "grasp"]);
 
 /** Abilities with dedicated cast one-shots (muzzle / swoop / hand charge). */
 export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent", "frostBall"]);
@@ -99,4 +100,5 @@ export {
   GustWaveEffect,
   FrostBallProjectileEffect,
   FrostBallCastEffect,
+  GraspProjectileEffect,
 };

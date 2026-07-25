@@ -28,6 +28,7 @@ export {
   GustWaveEffect,
   FrostBallProjectileEffect,
   FrostBallCastEffect,
+  GraspProjectileEffect,
   renderOneShot,
 } from "./catalog";
 

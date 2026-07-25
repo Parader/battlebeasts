@@ -286,7 +286,7 @@ def objects_in_collection(name: str) -> set[bpy.types.Object]:
 
 
 def export_glb(out_path: str) -> None:
-    """Export scene meshes for visuals; skip CollisionWalls and empties/curves."""
+    """Export scene meshes for visuals; skip wall curves + empties (not meshes)."""
     wall_objs = objects_in_collection(WALL_COLLECTION)
     view = bpy.context.view_layer
 
@@ -294,11 +294,14 @@ def export_glb(out_path: str) -> None:
     for obj in view.objects:
         obj.select_set(False)
     selected: list = []
+    meshes_also_in_walls = 0
     for obj in bpy.context.scene.objects:
         if obj.type != "MESH":
             continue
+        # CollisionWalls may also contain props linked by mistake — still export
+        # those meshes. Only curves in that collection are collision (JSON path).
         if obj in wall_objs:
-            continue
+            meshes_also_in_walls += 1
         if obj.hide_get() or obj.hide_viewport or obj.hide_render:
             continue
         try:
@@ -307,6 +310,12 @@ def export_glb(out_path: str) -> None:
             pass
         obj.select_set(True)
         selected.append(obj)
+
+    if meshes_also_in_walls:
+        print(
+            f"[export_village] note: {meshes_also_in_walls} meshes also live in "
+            f"'{WALL_COLLECTION}' — including them in the GLB (walls JSON uses curves only)"
+        )
 
     if not selected:
         raise RuntimeError("No mesh objects selected for village.glb export")

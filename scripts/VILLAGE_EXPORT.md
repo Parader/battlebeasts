@@ -11,8 +11,8 @@ Exports `village.blend` into the game as one visual GLB + wall polylines + inter
 
 | Piece | Where / how |
 |-------|-------------|
-| Visuals | Mesh objects in the scene (empties + `CollisionWalls` are skipped for the GLB) |
-| Walls | Bezier/poly **curves** in collection **`CollisionWalls`** |
+| Visuals | Mesh objects in the scene (empties skipped; **wall curves** skipped — meshes linked into `CollisionWalls` are still exported) |
+| Walls | Bezier/poly **curves** in collection **`CollisionWalls`** only |
 | Interacts | Empties (**Cube** display) with custom property **`Interact`** and/or **`Label`**. Scale the empty box to set the ground interact pad. |
 
 Recognized interact / label values (case-insensitive):
