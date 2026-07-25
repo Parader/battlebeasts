@@ -23,6 +23,10 @@ export type CharacterAnimationConfig = {
   dash?: string;
   /** Full-body leap / jump attack (RMB slam). */
   jumpAttack?: string;
+  /** Idle → crouch (Decoy enter). */
+  idleToCrouch?: string;
+  /** Loop while cloaked and moving. */
+  crouchWalk?: string;
   hit?: string;
   death?: string;
   heavyCast?: string;
@@ -54,6 +58,8 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   heavyCast: "magic_2h",
   dash: "dive",
   jumpAttack: "Jump Attack",
+  idleToCrouch: "Standing To Crouched",
+  crouchWalk: "Crouched Walking",
   locomotionBlendResponsiveness: 12,
   idleBlendResponsiveness: 10,
   locoTimeScaleMin: 0.75,
@@ -137,6 +143,12 @@ export const abilityAnimationBindings: Record<
     upper: "castFrost",
   },
   surge: { upper: "castPrimary" },
+  decoy: {
+    fullBody: "idleToCrouch",
+    holdEndPoseOnRecovery: true,
+    /** Standing To Crouched natural length (~0.67s). */
+    fullBodyAnimDurationSec: 0.67,
+  },
   gust: { upper: "castAoE" },
   rupture: { upper: "castAoE" },
   smash: {

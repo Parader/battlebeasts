@@ -505,7 +505,35 @@ export const ABILITIES: Record<string, AbilityDef> = {
     interruptsOtherCasts: true,
   },
   /**
-   * Gust (Q) — circular push wave. Replaces Nova.
+   * Decoy (Q) — clone appears instantly (hides the cast), then caster crouches into cloak.
+   * Invisible to enemies / ghost to self for 2s; any cast or interact reveals.
+   * Still takes damage while cloaked.
+   */
+  decoy: {
+    id: "decoy",
+    name: "Decoy",
+    cooldownMs: 8000,
+    range: 0,
+    shape: "buff",
+    damage: 0,
+    allowedSlots: ["q"],
+    defaultSlot: "q",
+    // Timed to Standing To Crouched (~0.67s @ natural speed).
+    timing: {
+      anticipationMs: 40,
+      castMs: 420,
+      impactMs: 100,
+      recoveryMs: 180,
+      anticipationMoveMul: 0.55,
+      castMoveMul: 0.35,
+      impactMoveMul: 0.45,
+      recoveryMoveMul: 0.75,
+      canCancelAnticipation: false,
+    },
+    applyOnSelf: [{ statusId: "cloaked", durationMs: 2000 }],
+  },
+  /**
+   * Gust (Q) — circular push wave. Alternate Q pick (Decoy is default).
    * Hits shove targets outward, then slow them briefly.
    */
   gust: {
@@ -519,7 +547,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     knockback: 9.5,
     knockbackMs: 320,
     allowedSlots: ["q"],
-    defaultSlot: "q",
     // magic_aoe: suck ends @48, blow @54 — wall times scale with playbackRate
     timing: {
       anticipationMs: authoredForWallMs(gustAnticipationWallMs()),

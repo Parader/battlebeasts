@@ -465,9 +465,12 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         if (input.cancelCast) {
           this.combat.tryCancelCast(sessionId, player, now);
         }
-        if (input.castId) {
-          this.combat.tryBeginCast(sessionId, player, input.castId, now);
-        }
+          if (input.castId) {
+            this.combat.tryBeginCast(sessionId, player, input.castId, now, {
+              moveX: input.moveX,
+              moveZ: input.moveZ,
+            });
+          }
 
         if (input.interactId) {
           this.handleInteract(sessionId, player, input.interactId, now);
@@ -540,11 +543,26 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         continue;
       }
 
-      const dx = player.x - dummy.x;
-      const dz = player.z - dummy.z;
+      // While cloaked, shoot the drifting decoy — never the invisible player.
+      const aimAt = this.resolveDummyAimPoint(aggro.attackerId);
+      if (!aimAt) {
+        // Cloaked with no decoy left: hold fire, stay aggro'd.
+        if (aggro.pendingReleaseAt > 0) {
+          aggro.pendingReleaseAt = 0;
+          this.clearDummyCast(dummyId);
+        }
+        continue;
+      }
+
+      const dx = aimAt.x - dummy.x;
+      const dz = aimAt.z - dummy.z;
       const dist = Math.hypot(dx, dz);
       const aimYaw = dist > 1e-4 ? Math.atan2(dx, dz) : dummy.yaw;
       dummy.yaw = aimYaw;
+      // Keep mid-cast bolts tracking the decoy as it drifts.
+      if (aggro.pendingReleaseAt > 0) {
+        aggro.pendingAimYaw = aimYaw;
+      }
 
       // Release: fire projectile at end of cast windup.
       if (aggro.pendingReleaseAt > 0 && now >= aggro.pendingReleaseAt) {
@@ -601,9 +619,30 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     }
   }
 
+  /**
+   * Aim point for dummy retaliation.
+   * Cloaked → owner's decoy (null if none). Otherwise → player.
+   */
+  private resolveDummyAimPoint(attackerId: string): { x: number; z: number } | null {
+    const player = this.state.players.get(attackerId);
+    if (!player) return null;
+    if (player.statuses.get("cloaked")) {
+      let decoy: { x: number; z: number } | null = null;
+      this.state.decoys.forEach((d) => {
+        if (!decoy && d.ownerSessionId === attackerId) {
+          decoy = { x: d.x, z: d.z };
+        }
+      });
+      return decoy;
+    }
+    return { x: player.x, z: player.z };
+  }
+
   private handleInteract(sessionId: string, player: PlayerState, interactId: string, now: number) {
     const client = this.clients.find((c) => c.sessionId === sessionId);
     if (!client) return;
+
+    this.combat.revealCloak(sessionId);
 
     const stand = HUB_STANDS.find((s) => s.id === interactId);
     if (stand) {

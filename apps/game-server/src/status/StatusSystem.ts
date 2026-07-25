@@ -38,6 +38,17 @@ export class StatusSystem {
     host.statuses.clear();
   }
 
+  remove(targetId: string, statusId: string) {
+    const host = this.getHost(targetId);
+    if (!host) return;
+    host.statuses.delete(statusId);
+  }
+
+  has(targetId: string, statusId: string): boolean {
+    const host = this.getHost(targetId);
+    return Boolean(host?.statuses.get(statusId));
+  }
+
   applyApplications(
     targetId: string,
     apps: StatusApplication[] | undefined,

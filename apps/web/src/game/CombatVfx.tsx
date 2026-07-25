@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { HUB_PRACTICE_DUMMIES, MOVE_SPEED } from "@battlebeasts/shared";
 import { abilityVfxColor, BoltProjectileEffect, FrostBallProjectileEffect, hasCatalogProjectile } from "./vfx";
-import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
+import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { syncAbilityCast } from "./syncPlayerCast";
@@ -288,6 +288,126 @@ export function WorldTargets({ room }: { room: Room | null }) {
         <>
             {HUB_PRACTICE_DUMMIES.map((d) => (
                 <PracticeDummyAvatar key={d.id} room={room} targetId={d.id} />
+            ))}
+        </>
+    );
+}
+
+type DecoyNet = {
+    x: number;
+    z: number;
+    yaw: number;
+    vx: number;
+    vz: number;
+    color: string;
+    expiresAt: number;
+};
+
+function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
+    const group = useRef<THREE.Group>(null);
+    const controllerRef = useRef<CharacterAnimationController | null>(null);
+    const renderPos = useRef(new THREE.Vector3());
+    const renderYaw = useRef(0);
+    const vel = useRef(new THREE.Vector3());
+    const colorRef = useRef("#4ade80");
+    const seeded = useRef(false);
+    const gltf = useGLTF(CHARACTER_URL);
+    const scene = useMemo(() => {
+        const idle =
+            gltf.animations.find((c) => c.name === heroAnimationConfig.idle) ??
+            gltf.animations[0] ??
+            null;
+        return prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
+    }, [gltf.scene, gltf.animations]);
+
+    useEffect(() => {
+        const controller = new CharacterAnimationController(
+            scene,
+            gltf.animations,
+            heroAnimationConfig,
+        );
+        controllerRef.current = controller;
+        return () => {
+            controller.dispose();
+            controllerRef.current = null;
+        };
+    }, [scene, gltf.animations]);
+
+    useFrame((_, dt) => {
+        const d = room.state?.decoys?.get(decoyId) as DecoyNet | undefined;
+        const g = group.current;
+        const controller = controllerRef.current;
+        if (!d || !g || !controller) {
+            if (g) g.visible = false;
+            seeded.current = false;
+            return;
+        }
+        g.visible = true;
+        const safeDt = Math.max(1e-4, Math.min(0.05, dt));
+
+        if (!seeded.current) {
+            renderPos.current.set(d.x, 0, d.z);
+            renderYaw.current = d.yaw;
+            seeded.current = true;
+            colorRef.current = d.color;
+            tintCharacterSurface(scene, d.color);
+            setCharacterOpacity(scene, 1);
+        }
+        if (d.color !== colorRef.current) {
+            colorRef.current = d.color;
+            tintCharacterSurface(scene, d.color);
+        }
+
+        // Coast with server velocity between patches, soft-correct to authority.
+        renderPos.current.x += d.vx * safeDt;
+        renderPos.current.z += d.vz * safeDt;
+        const blend = 1 - Math.exp(-14 * safeDt);
+        renderPos.current.x = THREE.MathUtils.lerp(renderPos.current.x, d.x, blend);
+        renderPos.current.z = THREE.MathUtils.lerp(renderPos.current.z, d.z, blend);
+        renderYaw.current = THREE.MathUtils.lerp(renderYaw.current, d.yaw, blend);
+
+        g.position.set(renderPos.current.x, 0, renderPos.current.z);
+        g.rotation.y = renderYaw.current;
+
+        vel.current.set(d.vx, 0, d.vz);
+        const speed = Math.hypot(d.vx, d.vz);
+        controller.setMovement({
+            worldVelocity: speed > 0.08 ? vel.current : _zeroVel,
+            facingYaw: renderYaw.current,
+            maximumSpeed: MOVE_SPEED,
+        });
+        controller.update(safeDt);
+    });
+
+    return (
+        <group ref={group}>
+            <primitive object={scene} />
+        </group>
+    );
+}
+
+/** Visual clones from Decoy (Q). */
+export function Decoys({ room }: { room: Room | null }) {
+    const [ids, setIds] = useState<string[]>([]);
+    const prevKey = useRef("");
+
+    useFrame(() => {
+        if (!room?.state?.decoys) return;
+        const next: string[] = [];
+        room.state.decoys.forEach((_d: unknown, id: string) => next.push(id));
+        next.sort();
+        const key = next.join("|");
+        if (key !== prevKey.current) {
+            prevKey.current = key;
+            setIds(next);
+        }
+    });
+
+    if (!room) return null;
+    return (
+        <>
+            {ids.map((id) => (
+                <DecoyAvatar key={id} room={room} decoyId={id} />
             ))}
         </>
     );

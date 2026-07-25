@@ -74,6 +74,20 @@ export class WorldTargetState extends Schema {
   @type({ map: StatusInstanceState }) statuses = new MapSchema<StatusInstanceState>();
 }
 
+/** Visual clone from Decoy (Q) — drifts or idles; not a combat body. */
+export class DecoyState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") yaw = 0;
+  @type("number") vx = 0;
+  @type("number") vz = 0;
+  @type("string") color = "#4ade80";
+  /** Server epoch ms when this decoy despawns. */
+  @type("number") expiresAt = 0;
+}
+
 export class BaseCityState extends Schema {
   @type("number") tick = 0;
   @type("boolean") paused = false;
@@ -84,4 +98,5 @@ export class BaseCityState extends Schema {
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
   @type({ map: ProjectileState }) projectiles = new MapSchema<ProjectileState>();
   @type({ map: WorldTargetState }) targets = new MapSchema<WorldTargetState>();
+  @type({ map: DecoyState }) decoys = new MapSchema<DecoyState>();
 }

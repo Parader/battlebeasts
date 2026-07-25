@@ -80,7 +80,15 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
       }
       return;
     }
-    g.visible = true;
+
+    // Cloaked players are fully invisible to others (still hittable server-side).
+    // Keep dead-reckoning so uncloak doesn't teleport the mesh.
+    const cloaked = hasStatusId(p.statuses, "cloaked");
+    if (cloaked) {
+      g.visible = false;
+    } else {
+      g.visible = true;
+    }
 
     const now = performance.now();
     const safeDt = Math.max(1e-4, Math.min(0.05, dt));
@@ -132,6 +140,13 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
     if (err > 2.5) {
       renderPos.current.set(p.x, 0, p.z);
       vel.current.set(0, 0, 0);
+    }
+
+    g.position.set(renderPos.current.x, smashHopOffsetY(p), renderPos.current.z);
+    if (cloaked) {
+      renderYaw.current = p.yaw;
+      g.rotation.y = renderYaw.current;
+      return;
     }
 
     // Sync casts before reading override state so dash locks facing this frame

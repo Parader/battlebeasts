@@ -30,6 +30,7 @@ import {
   travelDurationMs,
   travelProgress01,
   travelTakeoffDelayMs,
+  normalize2,
   type AbilityDef,
   type CastPhaseId,
   type StaticCollider,
@@ -40,6 +41,7 @@ import {
 } from "@battlebeasts/shared";
 import {
   BaseCityState,
+  DecoyState,
   PlayerState,
   ProjectileState,
   WorldTargetState,
@@ -67,7 +69,20 @@ type ActiveCast = {
   castStartedAt: number;
   yaw: number;
   effectFired: boolean;
+  /** Stick direction frozen at cast start (Decoy drift). */
+  moveX: number;
+  moveZ: number;
 };
+
+export type CastBeginOpts = {
+  moveX?: number;
+  moveZ?: number;
+};
+
+/** How long the decoy clone stays in the world after spawn. */
+const DECOY_LIFE_MS = 2500;
+/** Drift speed matches walk so the clone sells the fake. */
+const DECOY_SPEED = MOVE_SPEED;
 
 type ActiveTravel = {
   abilityId: string;
@@ -247,12 +262,26 @@ export class CombatSystem {
     this.travels.delete(sessionId);
     this.combos.delete(sessionId);
     this.statuses.clearTarget(sessionId);
+    this.clearOwnedDecoys(sessionId);
     for (const [id, sim] of this.sims) {
       if (sim.ownerId === sessionId) {
         this.sims.delete(id);
         this.room.state.projectiles.delete(id);
       }
     }
+  }
+
+  /** Strip cloaked — called when the player casts, cancels, or interacts. */
+  revealCloak(sessionId: string) {
+    this.statuses.remove(sessionId, "cloaked");
+  }
+
+  clearOwnedDecoys(sessionId: string) {
+    const toDelete: string[] = [];
+    this.room.state.decoys.forEach((d, id) => {
+      if (d.ownerSessionId === sessionId) toDelete.push(id);
+    });
+    for (const id of toDelete) this.room.state.decoys.delete(id);
   }
 
   getMoveMultiplier(sessionId: string): number {
@@ -278,7 +307,13 @@ export class CombatSystem {
     return base * this.getMoveMultiplier(sessionId);
   }
 
-  tryBeginCast(sessionId: string, player: PlayerState, castId: string, now: number): boolean {
+  tryBeginCast(
+    sessionId: string,
+    player: PlayerState,
+    castId: string,
+    now: number,
+    opts?: CastBeginOpts,
+  ): boolean {
     const loadout = player.loadout.split(",").filter(Boolean);
     if (!loadout.includes(castId)) return false;
     const def = ABILITIES[castId];
@@ -312,14 +347,33 @@ export class CombatSystem {
     const first = nextCastPhase(def, null);
     if (!first) return false;
 
+    // Any successful new cast breaks cloak (including re-casting Decoy).
+    this.revealCloak(sessionId);
+
+    const moveX = opts?.moveX ?? 0;
+    const moveZ = opts?.moveZ ?? 0;
+
     this.beginComboHitIndex(sessionId, player, def);
 
     if (first === "impact") {
+      // Seed cast early so fireEffect can read move stick for Decoy.
+      this.casts.set(sessionId, {
+        abilityId: def.id,
+        phase: "impact",
+        phaseEndsAt: now,
+        castStartedAt: now,
+        yaw: player.yaw,
+        effectFired: false,
+        moveX,
+        moveZ,
+      });
       this.fireEffect(sessionId, player, def, now);
       const cooldownMs = this.onEffectResolved(sessionId, def, now);
       this.enterPhase(sessionId, player, def, "impact", now, now, {
         cooldownMs,
         comboHit: this.comboHitFor(sessionId, def.id),
+        moveX,
+        moveZ,
       });
       const live = this.casts.get(sessionId);
       if (live) live.effectFired = true;
@@ -327,7 +381,11 @@ export class CombatSystem {
       return true;
     }
 
-    this.enterPhase(sessionId, player, def, first, now, now);
+    this.enterPhase(sessionId, player, def, first, now, now, { moveX, moveZ });
+    // Decoy: clone + cloak commit immediately so the fake appears before the crouch.
+    if (def.id === "decoy") {
+      this.commitDecoyCast(sessionId, player, def, now);
+    }
     this.syncInvulnerable(sessionId, player, now);
     return true;
   }
@@ -339,6 +397,7 @@ export class CombatSystem {
     if (!def) return false;
     if (!canPlayerCancelCast(def, cast.phase)) return false;
 
+    this.revealCloak(sessionId);
     const cooldownMs = this.endComboEarly(sessionId, def.id, cast.effectFired, now);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, def.id, "cancel", now, { cooldownMs });
@@ -350,6 +409,7 @@ export class CombatSystem {
     this.advanceKnockbacks(now);
     this.advanceCasts(now);
     this.advanceCombos(now);
+    this.advanceDecoys(dt, now);
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
 
@@ -556,7 +616,12 @@ export class CombatSystem {
     phase: CastPhaseId,
     now: number,
     castStartedAt: number,
-    fxExtra?: { cooldownMs?: number; comboHit?: number },
+    fxExtra?: {
+      cooldownMs?: number;
+      comboHit?: number;
+      moveX?: number;
+      moveZ?: number;
+    },
   ) {
     const duration = Math.max(16, phaseDurationMs(def, phase));
 
@@ -568,6 +633,8 @@ export class CombatSystem {
       castStartedAt,
       yaw: prev?.yaw ?? player.yaw,
       effectFired: prev?.effectFired ?? false,
+      moveX: fxExtra?.moveX ?? prev?.moveX ?? 0,
+      moveZ: fxExtra?.moveZ ?? prev?.moveZ ?? 0,
     };
     this.casts.set(sessionId, cast);
 
@@ -701,10 +768,80 @@ export class CombatSystem {
         ownerId: sessionId,
       });
       this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+    } else if (def.id === "decoy") {
+      // Clone + cloak already committed at cast begin (see commitDecoyCast).
     }
     // dash / deferred landing: travel-only here (+ optional self statuses)
 
+    if (def.id !== "decoy") {
+      this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
+    }
+  }
+
+  /**
+   * Spawn the drifting clone and apply cloak on cast start — before crouch anim —
+   * so observers see the decoy first and miss that a spell was cast.
+   */
+  private commitDecoyCast(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    if (!cast || cast.effectFired) return;
+    this.spawnDecoy(sessionId, player, now);
     this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
+    const cooldownMs = this.onEffectResolved(sessionId, def, now);
+    cast.effectFired = true;
+    if (cooldownMs != null) {
+      this.phaseFx(sessionId, player, def.id, cast.phase, cast.phaseEndsAt, {
+        cooldownMs,
+      });
+    }
+  }
+
+  private spawnDecoy(sessionId: string, player: PlayerState, now: number) {
+    this.clearOwnedDecoys(sessionId);
+    const cast = this.casts.get(sessionId);
+    const dir = normalize2(cast?.moveX ?? 0, cast?.moveZ ?? 0);
+    const drifting = length2(dir.x, dir.z) > 1e-4;
+    const id = `decoy_${this.nextId++}`;
+    const d = new DecoyState();
+    d.id = id;
+    d.ownerSessionId = sessionId;
+    d.x = player.x;
+    d.z = player.z;
+    d.yaw = player.yaw;
+    d.vx = drifting ? dir.x * DECOY_SPEED : 0;
+    d.vz = drifting ? dir.z * DECOY_SPEED : 0;
+    d.color = player.color || "#4ade80";
+    d.expiresAt = now + DECOY_LIFE_MS;
+    this.room.state.decoys.set(id, d);
+  }
+
+  private advanceDecoys(dt: number, now: number) {
+    const expired: string[] = [];
+    this.room.state.decoys.forEach((d, id) => {
+      if (now >= d.expiresAt) {
+        expired.push(id);
+        return;
+      }
+      if (Math.abs(d.vx) < 1e-6 && Math.abs(d.vz) < 1e-6) return;
+      const from = { x: d.x, z: d.z };
+      const desired = { x: d.x + d.vx * dt, z: d.z + d.vz * dt };
+      const next = sweepTravel(from, desired, COLLISION.playerRadius, this.staticColliders);
+      // Stop if a wall fully blocked the step.
+      if (length2(next.x - from.x, next.z - from.z) < 1e-5) {
+        d.vx = 0;
+        d.vz = 0;
+      } else {
+        d.x = next.x;
+        d.z = next.z;
+        // Keep release-time facing — do not turn into the drift direction.
+      }
+    });
+    for (const id of expired) this.room.state.decoys.delete(id);
   }
 
   /** Melee/AoE resolve when `travel.effectOnArrive` lands. */
@@ -883,6 +1020,21 @@ export class CombatSystem {
       return true;
     }
 
+    const decoy = this.room.state.decoys.get(targetId);
+    if (decoy) {
+      this.fx({
+        kind: "hit",
+        abilityId,
+        x: decoy.x,
+        z: decoy.z,
+        ownerId: attackerSessionId,
+        targetId,
+        damage,
+      });
+      this.room.state.decoys.delete(targetId);
+      return true;
+    }
+
     const target = this.room.state.targets.get(targetId);
     if (target) {
       target.hp = Math.max(0, target.hp - damage);
@@ -942,6 +1094,10 @@ export class CombatSystem {
       return false;
     }
     if (this.room.state.targets.has(targetId)) return true;
+    // Decoy clones absorb hits (dummy bolts while owner is cloaked, etc.).
+    if (this.room.state.decoys.has(targetId)) {
+      return this.room.state.targets.has(ownerId) || this.room.state.players.has(ownerId);
+    }
     // Practice dummies may bolt players even when hub PvP is off.
     if (this.room.state.targets.has(ownerId) && this.room.state.players.has(targetId)) {
       return true;
@@ -972,6 +1128,17 @@ export class CombatSystem {
         hp: t.hp,
         maxHp: t.maxHp,
         vulnerable: t.hp > 0,
+      });
+    });
+    this.room.state.decoys.forEach((d) => {
+      bodies.push({
+        id: d.id,
+        x: d.x,
+        z: d.z,
+        yaw: d.yaw,
+        hp: 1,
+        maxHp: 1,
+        vulnerable: true,
       });
     });
     return bodies;

@@ -343,7 +343,10 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
             this.combat.tryCancelCast(sessionId, player, now);
           }
           if (input.castId) {
-            this.combat.tryBeginCast(sessionId, player, input.castId, now);
+            this.combat.tryBeginCast(sessionId, player, input.castId, now, {
+              moveX: input.moveX,
+              moveZ: input.moveZ,
+            });
           }
         }
       }

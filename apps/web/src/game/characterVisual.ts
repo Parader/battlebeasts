@@ -57,6 +57,12 @@ export function prepareCharacterScene(
     if (!mesh.isMesh) return;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    // Clone mats so tint/opacity on one avatar (e.g. local cloak) never leaks to decoys/remotes.
+    if (mesh.material) {
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map((m) => m.clone())
+        : mesh.material.clone();
+    }
     const mats = Array.isArray(mesh.material)
       ? mesh.material
       : mesh.material
@@ -66,6 +72,11 @@ export function prepareCharacterScene(
       const std = m as THREE.MeshStandardMaterial;
       if ("side" in std) std.side = THREE.FrontSide;
       if ("envMapIntensity" in std) std.envMapIntensity = 1;
+      if ("opacity" in std) {
+        std.transparent = false;
+        std.opacity = 1;
+        std.depthWrite = true;
+      }
     }
   });
 
@@ -274,6 +285,28 @@ export function tintCharacterSurface(scene: THREE.Object3D, color: string): void
     for (const m of mats) {
       const std = m as THREE.MeshStandardMaterial;
       if ("color" in std && std.color) std.color.set(color);
+    }
+  });
+}
+
+/** Ghost opacity for self-cloaked; 1 = solid. Affects visible character surface mats. */
+export function setCharacterOpacity(scene: THREE.Object3D, opacity: number): void {
+  const o = Math.max(0, Math.min(1, opacity));
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material || !mesh.visible) return;
+    const name = mesh.name.toLowerCase();
+    const isHeroOutfit = mesh.name.startsWith("SM_Chr_");
+    const isMixamoSurface = name.includes("surface");
+    if (!isHeroOutfit && !isMixamoSurface) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const std = m as THREE.MeshStandardMaterial;
+      if (!("opacity" in std)) continue;
+      std.transparent = o < 0.999;
+      std.opacity = o;
+      std.depthWrite = o >= 0.999;
+      std.needsUpdate = true;
     }
   });
 }

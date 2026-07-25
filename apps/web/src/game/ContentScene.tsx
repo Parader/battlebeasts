@@ -6,7 +6,7 @@ import { CAMERA } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, type FxBurst, type DamagePopup } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, Decoys, type FxBurst, type DamagePopup } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { TexturedGround } from "./TexturedGround";
 import { FollowSun } from "./FollowSun";
@@ -95,6 +95,7 @@ export function ContentScene({ room, localSessionId, predictedRef, fxBursts, dam
                 color={localColor}
             />
             <RemotePlayers room={room} localSessionId={localSessionId} />
+            <Decoys room={room} />
             <Projectiles room={room} />
             <CombatFxMeshes bursts={fxBursts} />
             <DamagePopups popups={damagePopups} />

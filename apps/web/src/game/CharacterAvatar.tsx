@@ -9,15 +9,20 @@ import {
   heroAnimationConfig,
   debugPrintAnimationAssets,
 } from "./animation";
-import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
+import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { syncPlayerCast } from "./syncPlayerCast";
-import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
+import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS, shortestAngleDelta } from "./visualYaw";
 import { AimIndicator } from "./AimIndicator";
 import { smashHopOffsetY } from "./smashHop";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
+import { findBone } from "./vfx/attach";
 import type { PredictedPose } from "./useBaseCityRoom";
 
 useGLTF.preload(CHARACTER_URL);
+
+/** Max head yaw toward cursor while crouch-walking (rad). */
+const CLOAK_HEAD_LOOK_MAX = 0.9;
+const CLOAK_MOVE_SPEED_EPS = 0.35;
 
 type Props = {
   predictedRef: MutableRefObject<PredictedPose>;
@@ -33,6 +38,7 @@ type Props = {
  * Gameplay owns root transform; animations never apply horizontal root motion.
  * Visual yaw is smoothed (and locked during full-body overrides like dash).
  * Aim ring follows instant gameplay yaw.
+ * While cloaked: crouch-walk aligned to move; head only looks at cursor.
  */
 export function CharacterAvatar({
   predictedRef,
@@ -45,6 +51,7 @@ export function CharacterAvatar({
   const bodyRef = useRef<THREE.Group>(null);
   const aimRef = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
+  const headBoneRef = useRef<THREE.Object3D | null>(null);
   const prevPos = useRef(new THREE.Vector3());
   const velocity = useRef(new THREE.Vector3());
   const lastCastId = useRef("");
@@ -52,6 +59,7 @@ export function CharacterAvatar({
   const seededMove = useRef(false);
   const visualYaw = useRef(0);
   const yawLocked = useRef(false);
+  const cloakedRef = useRef(false);
 
   const gltf = useGLTF(CHARACTER_URL);
   const scene = useMemo(() => {
@@ -75,6 +83,9 @@ export function CharacterAvatar({
       heroAnimationConfig,
     );
     controllerRef.current = controller;
+    headBoneRef.current =
+      findBone(scene, "mixamorig:Head", { partial: true }) ??
+      findBone(scene, "head", { partial: true });
 
     if (debug) {
       debugPrintAnimationAssets(scene, animations, "[hero.glb]");
@@ -85,6 +96,7 @@ export function CharacterAvatar({
     return () => {
       controller.dispose();
       controllerRef.current = null;
+      headBoneRef.current = null;
     };
   }, [scene, animations, debug]);
 
@@ -117,6 +129,18 @@ export function CharacterAvatar({
       seededMove.current = true;
     }
 
+    velocity.current.set(
+      (p.x - prevPos.current.x) / safeDt,
+      0,
+      (p.z - prevPos.current.z) / safeDt,
+    );
+    prevPos.current.set(p.x, 0, p.z);
+
+    const cloaked = hasStatusId(me?.statuses, "cloaked");
+    const castingDecoy = me?.castAbilityId === "decoy";
+    const speed = Math.hypot(velocity.current.x, velocity.current.z);
+    const movingCloak = cloaked && !castingDecoy && speed > CLOAK_MOVE_SPEED_EPS;
+
     syncPlayerCast(controller, room, localSessionId, lastCastId, comboAnimHoldUntil);
 
     // Jump Attack keeps mouse aim; dash still locks facing for the dive.
@@ -125,12 +149,25 @@ export function CharacterAvatar({
       fullBodyName === "jumpAttack" ||
       fullBodyName === "Jump Attack" ||
       me?.castAbilityId === "smash";
+    const crouchWalkActive = cloaked && !castingDecoy;
+
     yawLocked.current =
-      controller.getState().fullBody === "override" && !jumpAim;
+      (controller.getState().fullBody === "override" && !jumpAim && !crouchWalkActive) ||
+      false;
 
     if (jumpAim) {
-      // Instant aim — Leap Slam facing is mouse-driven, not damp-smoothed.
       visualYaw.current = p.yaw;
+    } else if (crouchWalkActive) {
+      // Body faces travel direction; idle keeps last move facing.
+      if (movingCloak) {
+        const moveYaw = Math.atan2(velocity.current.x, velocity.current.z);
+        visualYaw.current = dampYawClamped(
+          visualYaw.current,
+          moveYaw,
+          VISUAL_YAW_RESPONSIVENESS * 1.15,
+          safeDt,
+        );
+      }
     } else if (!yawLocked.current) {
       visualYaw.current = dampYawClamped(
         visualYaw.current,
@@ -142,21 +179,37 @@ export function CharacterAvatar({
 
     body.rotation.y = visualYaw.current;
 
-    velocity.current.set(
-      (p.x - prevPos.current.x) / safeDt,
-      0,
-      (p.z - prevPos.current.z) / safeDt,
-    );
-    prevPos.current.set(p.x, 0, p.z);
+    if (cloaked !== cloakedRef.current) {
+      cloakedRef.current = cloaked;
+      setCharacterOpacity(scene, cloaked ? 0.32 : 1);
+      if (!cloaked) {
+        controller.setCrouchLoco(false);
+      }
+    }
+
+    if (crouchWalkActive) {
+      const speed01 = Math.min(1, speed / (MOVE_SPEED * 1.05));
+      controller.setCrouchLoco(true, { moving: movingCloak, speed01 });
+    } else if (!castingDecoy) {
+      controller.setCrouchLoco(false);
+    }
 
     controller.setStunned(hasStatusId(me?.statuses, "stunned"));
     const speedMul = hasStatusId(me?.statuses, "surged") ? 1.6 : 1;
     controller.setMovement({
       worldVelocity: velocity.current,
-      facingYaw: visualYaw.current,
+      facingYaw: crouchWalkActive ? visualYaw.current : visualYaw.current,
       maximumSpeed: MOVE_SPEED * speedMul,
     });
     controller.update(safeDt);
+
+    // Head only toward cursor while cloaked (after mixer writes bones).
+    const head = headBoneRef.current;
+    if (head && crouchWalkActive) {
+      const deltaYaw = shortestAngleDelta(visualYaw.current, p.yaw);
+      const look = Math.max(-CLOAK_HEAD_LOOK_MAX, Math.min(CLOAK_HEAD_LOOK_MAX, deltaYaw));
+      head.rotation.y += look;
+    }
   });
 
   return (

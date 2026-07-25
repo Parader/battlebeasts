@@ -12,6 +12,7 @@ export type StatusMechanic =
   | "silence" // can move, no cast
   | "slow" // moveMul < 1
   | "haste" // moveMul > 1
+  | "stealth" // invisible to enemies; still takes damage
   | "dot" // periodic damage (fire, poison, bleed…)
   | "shield"; // absorb (stub for later)
 
@@ -131,6 +132,18 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#67e8f9",
     tag: "SRG",
+  },
+  /** Decoy cloak — invisible to enemies, ghost to self; still takes hits. */
+  cloaked: {
+    id: "cloaked",
+    name: "Cloaked",
+    polarity: "buff",
+    mechanic: "stealth",
+    durationMs: 2000,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#c4b5fd",
+    tag: "CLK",
   },
   burning: {
     id: "burning",

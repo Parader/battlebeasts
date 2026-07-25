@@ -117,6 +117,8 @@ export class CharacterAnimationController {
   private overrideWeight = 0;
   private overrideWeightTarget = 0;
   private restoreAfterOverride = true;
+  /** Cloaked crouch-walk mode (loops Crouched Walking; cancelled with cloak). */
+  private crouchLoco = false;
 
   private readonly listeners: Array<{
     target: THREE.AnimationMixer;
@@ -277,13 +279,14 @@ export class CharacterAnimationController {
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);
 
-    for (const key of ["dash", "jumpAttack", "hit", "death", "heavyCast"] as const) {
+    for (const key of ["dash", "jumpAttack", "idleToCrouch", "crouchWalk", "hit", "death", "heavyCast"] as const) {
       const name = config[key];
       if (!name) continue;
       const src = resolveClip(clips, name);
       if (!src) continue;
       // Dash/death keep Mixamo hips Y. Jump Attack plants hips — Leap Slam hop is
       // applied on the avatar root so travel timing matches the airborne arc.
+      // Crouch clips keep vertical motion so the pose reads.
       const prepared =
         key === "jumpAttack"
           ? plantHipsRootMotion(stripHorizontalRootMotion(src), this.plantHipsY)
@@ -566,6 +569,8 @@ export class CharacterAnimationController {
   playFullBodyAction(animationName: string, options: FullBodyActionOptions = {}): boolean {
     if (this.disposed) return false;
 
+    this.crouchLoco = false;
+
     const clip =
       this.fullBodyClips.get(animationName) ??
       (() => {
@@ -660,8 +665,9 @@ export class CharacterAnimationController {
   /** End dash / hit override and restore loco layers. */
   cancelFullBodyAction(): void {
     if (this.disposed) return;
-    if (!this.overrideActive && this.overrideWeight < 0.01) return;
+    if (!this.overrideActive && this.overrideWeight < 0.01 && !this.crouchLoco) return;
 
+    this.crouchLoco = false;
     this.overrideGen++;
     this.overrideActive = false;
     this.overrideName = null;
@@ -671,6 +677,116 @@ export class CharacterAnimationController {
       this.layerMulLowerTarget = 1;
       this.layerMulUpperTarget = 1;
     }
+  }
+
+  /**
+   * While cloaked: loop Crouched Walking aligned with move speed.
+   * Idle → pause at start frame (crouched stance). Disable when cloak ends.
+   */
+  setCrouchLoco(
+    enabled: boolean,
+    opts?: { moving?: boolean; speed01?: number },
+  ): void {
+    if (this.disposed) return;
+    if (!enabled) {
+      if (this.crouchLoco) this.cancelFullBodyAction();
+      return;
+    }
+
+    const moving = Boolean(opts?.moving);
+    const speed01 = Math.max(0, Math.min(1, opts?.speed01 ?? 0));
+
+    if (!this.crouchLoco || this.overrideName !== "crouchWalk" || !this.overrideAction) {
+      if (!this.playCrouchWalkLoop()) return;
+    }
+
+    this.crouchLoco = true;
+    const action = this.overrideAction;
+    if (!action) return;
+
+    if (moving) {
+      action.paused = false;
+      action.timeScale = 0.7 + speed01 * 0.55;
+    } else {
+      action.paused = true;
+      action.time = 0;
+      action.timeScale = 1;
+    }
+    action.setEffectiveWeight(1);
+    this.overrideActive = true;
+    this.overrideWeight = 1;
+    this.overrideWeightTarget = 1;
+    this.layerMulLower = 0;
+    this.layerMulUpper = 0;
+    this.layerMulLowerTarget = 0;
+    this.layerMulUpperTarget = 0;
+  }
+
+  isCrouchLoco(): boolean {
+    return this.crouchLoco;
+  }
+
+  /** Looping full-body crouch walk (no finished → cancel). */
+  private playCrouchWalkLoop(): boolean {
+    const clip =
+      this.fullBodyClips.get("crouchWalk") ??
+      this.fullBodyClips.get(this.config.crouchWalk ?? "") ??
+      (() => {
+        const name = this.config.crouchWalk;
+        if (!name) return null;
+        const src = resolveClip(this.sourceClips, name);
+        return src ? stripHorizontalRootMotion(src) : null;
+      })();
+
+    if (!clip) {
+      console.warn("[CharacterAnimation] crouch walk clip missing");
+      return false;
+    }
+
+    this.overrideGen++;
+    this.upperGen++;
+    this.casting = false;
+    this.castWeightTarget = 0;
+    this.castWeight = 0;
+    this.activeCastName = null;
+    if (this.activeCast) {
+      this.activeCast.setEffectiveWeight(0);
+      this.activeCast.stop();
+      this.activeCast = null;
+    }
+
+    this.restoreAfterOverride = true;
+    this.layerMulLower = 0;
+    this.layerMulUpper = 0;
+    this.layerMulLowerTarget = 0;
+    this.layerMulUpperTarget = 0;
+    for (const a of this.lowerActions.values()) a.setEffectiveWeight(0);
+    for (const a of this.legsOnlyActions.values()) a.setEffectiveWeight(0);
+    for (const a of this.upperLocoActions.values()) a.setEffectiveWeight(0);
+
+    if (this.overrideAction) {
+      this.overrideAction.setEffectiveWeight(0);
+      this.overrideAction.stop();
+      this.overrideAction = null;
+    }
+
+    const action = this.mixer.clipAction(clip);
+    action.reset();
+    action.enabled = true;
+    action.paused = false;
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.clampWhenFinished = false;
+    action.timeScale = 1;
+    action.setEffectiveWeight(1);
+    action.play();
+
+    this.overrideAction = action;
+    this.overrideActive = true;
+    this.overrideName = "crouchWalk";
+    this.overrideWeight = 1;
+    this.overrideWeightTarget = 1;
+    this.crouchLoco = true;
+    return true;
   }
 
   /**

@@ -19,7 +19,7 @@ import {
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, type FxBurst, type DamagePopup } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, type FxBurst, type DamagePopup } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { FollowSun } from "./FollowSun";
 import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
@@ -395,6 +395,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
             ))}
 
             <WorldTargets room={room} />
+            <Decoys room={room} />
 
             <LocalPlayerMesh
                 predictedRef={predictedRef}
