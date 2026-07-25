@@ -139,6 +139,88 @@ export const TALENTS: Record<string, TalentDef> = {
   focused: { id: "focused", name: "Focused", description: "-10% ability cooldowns" },
 };
 
-export const COSMETIC_COLORS = ["#4ade80", "#60a5fa", "#f472b6", "#ef4444"] as const;
+/** Whole-body hide tints (Appearance stand). */
+export const COSMETIC_COLORS = [
+  "#f8fafc", // frost
+  "#e7e5e4", // bone
+  "#fcd34d", // sand
+  "#fb923c", // amber
+  "#ef4444", // crimson
+  "#f472b6", // blossom
+  "#c084fc", // violet
+  "#60a5fa", // sky
+  "#22d3ee", // aqua
+  "#4ade80", // moss
+  "#a3e635", // lime
+  "#84cc16", // leaf
+  "#2dd4bf", // teal
+  "#94a3b8", // slate
+  "#a8a29e", // stone
+  "#78716c", // clay
+] as const;
+
+/** Ink / marking colors for creature patterns (independent of hide tint). */
+export const COSMETIC_PATTERN_COLORS = [
+  "#1f2937",
+  "#7f1d1d",
+  "#1e3a8a",
+  "#14532d",
+  "#78350f",
+  "#4c1d95",
+  "#0f766e",
+  "#a16207",
+] as const;
+
+export const DEFAULT_COSMETIC_PATTERN_COLOR = COSMETIC_PATTERN_COLORS[0];
+
+/** Full-body creature hide patterns (applied as UV albedo on Beta_Surface). */
+export type CosmeticPatternId =
+  | "plain"
+  | "scales"
+  | "stripes"
+  | "spots"
+  | "plates"
+  | "mottle"
+  | "serpent";
+
+export interface CosmeticPatternDef {
+  id: CosmeticPatternId;
+  name: string;
+  description: string;
+}
+
+export const COSMETIC_PATTERNS: readonly CosmeticPatternDef[] = [
+  { id: "plain", name: "Plain", description: "Solid hide — tint only." },
+  { id: "scales", name: "Scales", description: "Overlapping reptile scales." },
+  { id: "stripes", name: "Stripes", description: "Bold tiger-like bands." },
+  { id: "spots", name: "Spots", description: "Leopard-style rosettes." },
+  { id: "plates", name: "Plates", description: "Hex armored chitin." },
+  { id: "mottle", name: "Mottle", description: "Speckled beast hide." },
+  { id: "serpent", name: "Serpent", description: "Coiling diamond bands." },
+] as const;
+
+export const DEFAULT_COSMETIC_PATTERN: CosmeticPatternId = "plain";
+
+export function isCosmeticPatternId(value: unknown): value is CosmeticPatternId {
+  return (
+    typeof value === "string" &&
+    COSMETIC_PATTERNS.some((p) => p.id === value)
+  );
+}
+
+export function normalizeCosmeticPattern(value: unknown): CosmeticPatternId {
+  return isCosmeticPatternId(value) ? value : DEFAULT_COSMETIC_PATTERN;
+}
+
+export function isCosmeticPatternColor(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    (COSMETIC_PATTERN_COLORS as readonly string[]).includes(value)
+  );
+}
+
+export function normalizeCosmeticPatternColor(value: unknown): string {
+  return isCosmeticPatternColor(value) ? value : DEFAULT_COSMETIC_PATTERN_COLOR;
+}
 
 export const MAX_TALENTS = 2;

@@ -7,11 +7,13 @@ import { MOVE_SPEED } from "@battlebeasts/shared";
 import {
   CharacterAnimationController,
   heroAnimationConfig,
+  playRandomDeath,
 } from "./animation";
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
 import { smashHopOffsetY } from "./smashHop";
+import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndicator";
 
@@ -21,7 +23,10 @@ type RemotePlayerState = {
   x: number;
   z: number;
   yaw: number;
+  hp?: number;
   color: string;
+  pattern?: string;
+  patternColor?: string;
   disconnected?: boolean;
   castPhase?: string;
   castAbilityId?: string;
@@ -51,8 +56,12 @@ function RemotePlayerAvatar({
   const zeroVel = useRef(new THREE.Vector3());
   const lastServer = useRef({ x: 0, z: 0, t: 0 });
   const colorRef = useRef("#60a5fa");
+  const patternRef = useRef("plain");
+  const patternColorRef = useRef("#1f2937");
   const seeded = useRef(false);
   const yawLocked = useRef(false);
+  const wasDeadRef = useRef(false);
+  const deathSinkRef = useRef<DeathSinkState | null>(null);
 
   const gltf = useGLTF(CHARACTER_URL);
   const scene = useMemo(() => {
@@ -112,13 +121,26 @@ function RemotePlayerAvatar({
       seeded.current = true;
       if (p.color) {
         colorRef.current = p.color;
-        tintCharacterSurface(scene, p.color);
+        patternRef.current = p.pattern ?? "plain";
+        patternColorRef.current = p.patternColor ?? "#1f2937";
+        tintCharacterSurface(scene, p.color, patternRef.current, patternColorRef.current);
       }
     }
 
-    if (p.color && p.color !== colorRef.current) {
-      colorRef.current = p.color;
-      tintCharacterSurface(scene, p.color);
+    if (
+      (p.color && p.color !== colorRef.current) ||
+      (p.pattern ?? "plain") !== patternRef.current ||
+      (p.patternColor ?? "#1f2937") !== patternColorRef.current
+    ) {
+      colorRef.current = p.color || colorRef.current;
+      patternRef.current = p.pattern ?? "plain";
+      patternColorRef.current = p.patternColor ?? "#1f2937";
+      tintCharacterSurface(
+        scene,
+        colorRef.current,
+        patternRef.current,
+        patternColorRef.current,
+      );
     }
 
     const serverMoved = p.x !== lastServer.current.x || p.z !== lastServer.current.z;
@@ -153,12 +175,49 @@ function RemotePlayerAvatar({
       vel.current.set(0, 0, 0);
     }
 
-    g.position.set(renderPos.current.x, smashHopOffsetY(p), renderPos.current.z);
+    g.position.set(
+      renderPos.current.x,
+      smashHopOffsetY(p) + deathSinkOffsetY(deathSinkRef.current),
+      renderPos.current.z,
+    );
     const aim = aimRef.current;
     if (cloaked) {
       renderYaw.current = p.yaw;
       g.rotation.y = renderYaw.current;
       if (aim) aim.rotation.y = 0;
+      return;
+    }
+
+    const dead = typeof p.hp === "number" && p.hp <= 0;
+    if (dead && !wasDeadRef.current) {
+      wasDeadRef.current = true;
+      lastCastId.current = "";
+      comboAnimHoldUntil.current = 0;
+      controller.cancelAbilityAnimation();
+      const played = playRandomDeath(controller, animations);
+      deathSinkRef.current = startDeathSink(played?.duration ?? 2.6);
+    } else if (!dead && wasDeadRef.current) {
+      wasDeadRef.current = false;
+      deathSinkRef.current = null;
+      controller.cancelFullBodyAction();
+    }
+
+    if (dead) {
+      g.position.set(
+        renderPos.current.x,
+        smashHopOffsetY(p) + deathSinkOffsetY(deathSinkRef.current),
+        renderPos.current.z,
+      );
+      vel.current.set(0, 0, 0);
+      yawLocked.current = true;
+      g.rotation.y = renderYaw.current;
+      if (aim) aim.rotation.y = p.yaw - renderYaw.current;
+      controller.setMovement({
+        worldVelocity: zeroVel.current,
+        facingYaw: renderYaw.current,
+        maximumSpeed: MOVE_SPEED,
+      });
+      controller.update(safeDt);
       return;
     }
 

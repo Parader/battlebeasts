@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, isChannelAbility, normalizeLoadout, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, type PlayerInput } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, isChannelAbility, normalizeLoadout, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, type PlayerInput } from "@battlebeasts/shared";
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
@@ -75,7 +75,10 @@ export function useBaseCityRoom(options: Options) {
     const [castFlashId, setCastFlashId] = useState<string | null>(null);
     const [fxBursts, setFxBursts] = useState<FxBurst[]>([]);
     const [damagePopups, setDamagePopups] = useState<DamagePopup[]>([]);
-    const [localHp, setLocalHp] = useState({ hp: 100, maxHp: 100 });
+    const [localHp, setLocalHp] = useState({ hp: 100, maxHp: 100, shield: 0 });
+    const [diedAt, setDiedAt] = useState<number | null>(null);
+    const [deathAnimMs, setDeathAnimMs] = useState(3000);
+    const diedAtRef = useRef<number | null>(null);
     const [economy, setEconomy] = useState({
         copper: 0,
         silver: 0,
@@ -632,16 +635,21 @@ export function useBaseCityRoom(options: Options) {
     applyTransferRef.current = applyTransfer;
 
     useEffect(() => {
-        const locked = Boolean(options.inputLocked) || activeUi !== null || Boolean(matchPause);
+        const locked =
+            Boolean(options.inputLocked) ||
+            activeUi !== null ||
+            Boolean(matchPause) ||
+            diedAt != null;
         inputLockedRef.current = locked;
         activeUiRef.current = activeUi;
         matchPauseRef.current = matchPause;
+        diedAtRef.current = diedAt;
         if (locked) {
             keysRef.current = { up: false, down: false, left: false, right: false };
             heldCastSlotsRef.current = { mouse0: false, mouse2: false };
             pendingCastRef.current = undefined;
         }
-    }, [options.inputLocked, activeUi, matchPause]);
+    }, [options.inputLocked, activeUi, matchPause, diedAt]);
 
     useEffect(() => {
         loadoutRef.current = normalizeLoadout(economy.loadout);
@@ -972,7 +980,14 @@ export function useBaseCityRoom(options: Options) {
             const detail = (e as CustomEvent<string>).detail;
             if (detail) pendingInteractRef.current = detail;
         };
+        const onDeathAnim = (e: Event) => {
+            const durationSec = (e as CustomEvent<{ durationSec?: number }>).detail?.durationSec;
+            if (typeof durationSec === "number" && durationSec > 0) {
+                setDeathAnimMs(Math.round(durationSec * 1000));
+            }
+        };
         window.addEventListener("bb-send-interact", onInteractRequest as EventListener);
+        window.addEventListener("bb-death-anim", onDeathAnim as EventListener);
 
         const loop = (now: number) => {
             const dt = Math.min(0.05, (now - last) / 1000);
@@ -1129,6 +1144,9 @@ export function useBaseCityRoom(options: Options) {
                               talents?: string;
                               hp?: number;
                               maxHp?: number;
+                              statuses?: {
+                                  forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void;
+                              };
                           }
                         | undefined;
                     if (me && typeof me.copper === "number") {
@@ -1142,7 +1160,21 @@ export function useBaseCityRoom(options: Options) {
                         }));
                     }
                     if (me && typeof me.hp === "number") {
-                        setLocalHp({ hp: me.hp, maxHp: me.maxHp ?? 100 });
+                        const shieldRows: { statusId?: string; stacks?: number }[] = [];
+                        me.statuses?.forEach((row) => {
+                            shieldRows.push({ statusId: row.statusId, stacks: row.stacks });
+                        });
+                        setLocalHp({
+                            hp: me.hp,
+                            maxHp: me.maxHp ?? 100,
+                            shield: totalShieldAbsorb(shieldRows),
+                        });
+                        if (me.hp <= 0) {
+                            setDiedAt((prev) => prev ?? Date.now());
+                        } else if (diedAtRef.current != null) {
+                            setDiedAt(null);
+                            setDeathAnimMs(3000);
+                        }
                     }
                 }
             }
@@ -1153,6 +1185,7 @@ export function useBaseCityRoom(options: Options) {
         return () => {
             cancelAnimationFrame(raf);
             window.removeEventListener("bb-send-interact", onInteractRequest as EventListener);
+            window.removeEventListener("bb-death-anim", onDeathAnim as EventListener);
         };
     }, []);
 
@@ -1178,6 +1211,11 @@ export function useBaseCityRoom(options: Options) {
 
     const returnToHub = useCallback(() => {
         roomRef.current?.send("return_hub");
+    }, []);
+
+    const requestRespawn = useCallback(() => {
+        if (diedAtRef.current == null) return;
+        roomRef.current?.send("respawn");
     }, []);
 
     useEffect(() => {
@@ -1210,5 +1248,8 @@ export function useBaseCityRoom(options: Options) {
         fxBursts,
         damagePopups,
         localHp,
+        diedAt,
+        deathAnimMs,
+        requestRespawn,
     };
 }

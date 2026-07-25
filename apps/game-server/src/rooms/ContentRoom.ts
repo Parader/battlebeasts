@@ -5,8 +5,11 @@ import {
   RECONNECT_RESUME_GRACE_MS,
   ROOM,
   TICK_MS,
+  RESPAWN_LOCK_MS,
   applyMovement,
   applyYaw,
+  normalizeCosmeticPattern,
+  normalizeCosmeticPatternColor,
   normalizeLoadout,
   type PlayerInput,
 } from "@battlebeasts/shared";
@@ -42,6 +45,9 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
   /** Clears the post-reconnect 3s countdown if someone drops again. */
   private resumeGraceClear: (() => void) | null = null;
   private combat!: CombatSystem;
+  /** Join spawn pose — respawn returns here. */
+  private spawnBySession = new Map<string, { x: number; z: number; yaw: number }>();
+  private diedAtBySession = new Map<string, number>();
 
   onCreate(options: ContentJoinOptions) {
     this.setState(new BaseCityState());
@@ -54,15 +60,7 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
       onPlayerDamaged: (sessionId) => {
         const p = this.state.players.get(sessionId);
         if (p && p.hp <= 0) {
-          // Soft respawn after a short beat for the playable slice
-          this.clock.setTimeout(() => {
-            const again = this.state.players.get(sessionId);
-            if (again && again.hp <= 0) {
-              again.hp = again.maxHp;
-              again.x = 0;
-              again.z = 0;
-            }
-          }, 2500);
+          this.onPlayerDied(sessionId, p);
         }
       },
     });
@@ -79,6 +77,14 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
 
     this.onMessage("return_hub", (client) => {
       this.sendHome(client);
+    });
+
+    this.onMessage("respawn", (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || player.hp > 0) return;
+      const diedAt = this.diedAtBySession.get(client.sessionId) ?? 0;
+      if (Date.now() < diedAt + RESPAWN_LOCK_MS) return;
+      this.softRespawnPlayer(client.sessionId, player);
     });
   }
 
@@ -117,17 +123,32 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
     player.id = verified.userId;
     player.displayName = verified.displayName;
     player.color = options.color ?? "#4ade80";
+    player.pattern = normalizeCosmeticPattern(
+      (options as { pattern?: string }).pattern,
+    );
+    player.patternColor = normalizeCosmeticPatternColor(
+      (options as { patternColor?: string }).patternColor,
+    );
     const spawnIndex = this.state.players.size;
     const angle = (spawnIndex / Math.max(1, this.maxClients)) * Math.PI * 2;
     player.x = Math.cos(angle) * 4;
     player.z = Math.sin(angle) * 4;
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, []);
+    this.spawnBySession.set(client.sessionId, {
+      x: player.x,
+      z: player.z,
+      yaw: player.yaw,
+    });
 
     if (!verified.isGuest) {
       void loadEconomy(verified.userId).then((eco) => {
         const p = this.state.players.get(client.sessionId);
-        if (p) p.loadout = normalizeLoadout(eco.abilityIds).join(",");
+        if (!p) return;
+        p.loadout = normalizeLoadout(eco.abilityIds).join(",");
+        if (eco.pattern) p.pattern = normalizeCosmeticPattern(eco.pattern);
+        if (eco.patternColor) p.patternColor = normalizeCosmeticPatternColor(eco.patternColor);
+        if (eco.color) p.color = eco.color;
       });
     }
 
@@ -245,6 +266,39 @@ export class ContentRoom extends Room<{ state: BaseCityState }> {
     this.state.players.delete(sessionId);
     this.inputs.delete(sessionId);
     this.identities.delete(sessionId);
+    this.spawnBySession.delete(sessionId);
+    this.diedAtBySession.delete(sessionId);
+    this.combat.clearSession(sessionId);
+  }
+
+  private onPlayerDied(sessionId: string, player: PlayerState) {
+    if (!this.diedAtBySession.has(sessionId)) {
+      this.diedAtBySession.set(sessionId, Date.now());
+    }
+    player.castAbilityId = "";
+    player.castPhase = "";
+    player.castLockUntil = 0;
+    player.castPhaseEndsAt = 0;
+    player.castComboHit = 0;
+    player.invulnerable = false;
+    player.statuses.clear();
+    this.combat.clearSession(sessionId);
+  }
+
+  private softRespawnPlayer(sessionId: string, player: PlayerState) {
+    const spawn = this.spawnBySession.get(sessionId) ?? { x: 0, z: 0, yaw: 0 };
+    player.hp = player.maxHp;
+    player.x = spawn.x;
+    player.z = spawn.z;
+    player.yaw = spawn.yaw;
+    player.castAbilityId = "";
+    player.castPhase = "";
+    player.castLockUntil = 0;
+    player.castPhaseEndsAt = 0;
+    player.castComboHit = 0;
+    player.invulnerable = false;
+    player.statuses.clear();
+    this.diedAtBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
   }
 

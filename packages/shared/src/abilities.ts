@@ -380,6 +380,9 @@ export const GROOVE_CAST = {
   healTickMs: 550,
   /** Heal aura / dance channel wall time. */
   channelMs: 12 * 550,
+  /** Solo pulse (nobody healed): absorb shield granted each tick. */
+  soloShieldPerTick: 4,
+  soloShieldDurationMs: 8000,
   anticipationMs: 120,
   castMs: 180,
   recoveryMs: 140,
@@ -788,12 +791,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
    * Groove (R) — Jazz Dancing heal channel.
    * Self-centered AoE heals in ticks while aura + dance stay up (~6.6s; cancel anytime).
    * Others get full ticks; caster gets half of total HP restored to others. 40% DR while channeling.
+   * Lonely pulses (no HP restored to others) grant +4 absorb shield for 8s (stacks).
    */
   groove: {
     id: "groove",
     name: "Groove",
     description:
-      "Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. 40% damage resistance while channeling. Cancel anytime.",
+      "Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. If a pulse heals nobody, gain a 4 HP shield for 8s (stacks). 40% damage resistance while channeling. Cancel anytime.",
     cooldownMs: 10000,
     range: 0,
     shape: "aoe",

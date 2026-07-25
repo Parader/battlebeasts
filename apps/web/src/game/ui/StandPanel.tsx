@@ -1,8 +1,12 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Room } from "colyseus.js";
 import {
   ABILITIES,
   COSMETIC_COLORS,
+  COSMETIC_PATTERN_COLORS,
+  COSMETIC_PATTERNS,
+  DEFAULT_COSMETIC_PATTERN,
+  DEFAULT_COSMETIC_PATTERN_COLOR,
   LOADOUT_SIZE,
   MAX_TALENTS,
   SHOP_ITEMS,
@@ -14,9 +18,13 @@ import {
   formatAbilityArmoryStats,
   formatShopCost,
   formatWallet,
+  normalizeCosmeticPattern,
+  normalizeCosmeticPatternColor,
   normalizeLoadout,
 } from "@battlebeasts/shared";
 import { SpellSlotGlyph } from "./InputGlyph";
+import { AppearancePreview } from "./AppearancePreview";
+import { getCreaturePatternTexture } from "../creaturePatterns";
 
 type Kind = "customization" | "build" | "talent" | "shop";
 
@@ -34,6 +42,7 @@ type Props = {
   onClose: () => void;
   room: Room | null;
   economy: Economy;
+  localSessionId?: string | null;
 };
 
 const TITLES: Record<Kind, string> = {
@@ -47,11 +56,13 @@ function BookShell({
   title,
   subtitle,
   onClose,
+  wide,
   children,
 }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -70,7 +81,10 @@ function BookShell({
         role="dialog"
         aria-modal
         aria-label={title}
-        className="bb-parchment bb-book-panel relative z-10 w-full max-w-lg"
+        className={[
+          "bb-parchment bb-book-panel relative z-10 w-full",
+          wide ? "max-w-3xl" : "max-w-lg",
+        ].join(" ")}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative mb-3 flex items-start justify-between gap-3">
@@ -89,7 +103,172 @@ function BookShell({
   );
 }
 
-export function StandPanel({ kind, onClose, room, economy }: Props) {
+function PatternSwatch({
+  patternId,
+  patternColor,
+}: {
+  patternId: string;
+  patternColor: string;
+}) {
+  const url = useMemo(() => {
+    if (patternId === "plain") return null;
+    const tex = getCreaturePatternTexture(patternId, patternColor, "#d1d5db");
+    const img = tex?.image as HTMLCanvasElement | undefined;
+    return img?.toDataURL?.() ?? null;
+  }, [patternId, patternColor]);
+
+  if (!url) {
+    return (
+      <span
+        className="block size-full rounded-[2px]"
+        style={{ background: "linear-gradient(135deg,#e5e7eb,#9ca3af)" }}
+      />
+    );
+  }
+  return (
+    <span
+      className="block size-full rounded-[2px] bg-cover bg-center"
+      style={{ backgroundImage: `url(${url})` }}
+    />
+  );
+}
+
+function AppearanceEditor({
+  room,
+  localSessionId,
+}: {
+  room: Room | null;
+  localSessionId?: string | null;
+}) {
+  const me = localSessionId
+    ? (room?.state?.players?.get(localSessionId) as
+        | { color?: string; pattern?: string; patternColor?: string }
+        | undefined)
+    : undefined;
+  const [color, setColor] = useState(me?.color ?? COSMETIC_COLORS[0]);
+  const [pattern, setPattern] = useState(
+    normalizeCosmeticPattern(me?.pattern ?? DEFAULT_COSMETIC_PATTERN),
+  );
+  const [patternColor, setPatternColor] = useState(
+    normalizeCosmeticPatternColor(me?.patternColor ?? DEFAULT_COSMETIC_PATTERN_COLOR),
+  );
+
+  useEffect(() => {
+    if (me?.color && (COSMETIC_COLORS as readonly string[]).includes(me.color)) {
+      setColor(me.color);
+    }
+    if (me?.pattern) setPattern(normalizeCosmeticPattern(me.pattern));
+    if (me?.patternColor) setPatternColor(normalizeCosmeticPatternColor(me.patternColor));
+  }, [me?.color, me?.pattern, me?.patternColor]);
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)] sm:items-start">
+      <div className="space-y-4">
+        <p className="text-xs text-[var(--bb-ink-soft)]">
+          Changes save to your account when signed in, and load next time you join.
+        </p>
+        <div>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--bb-ink-soft)]">
+            Hide tint
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {COSMETIC_COLORS.map((c) => {
+              const on = c === color;
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  className={[
+                    "size-10 rounded-sm ring-2 transition",
+                    on ? "ring-[var(--bb-brass)] scale-105" : "ring-[var(--bb-brass-dim)]",
+                  ].join(" ")}
+                  style={{ backgroundColor: c }}
+                  onClick={() => {
+                    setColor(c);
+                    room?.send("set_color", { color: c });
+                  }}
+                  aria-label={`Hide tint ${c}`}
+                  aria-pressed={on}
+                />
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--bb-ink-soft)]">
+            Pattern color
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {COSMETIC_PATTERN_COLORS.map((c) => {
+              const on = c === patternColor;
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  className={[
+                    "size-8 rounded-sm ring-2 transition",
+                    on ? "ring-[var(--bb-brass)] scale-105" : "ring-[var(--bb-brass-dim)]",
+                  ].join(" ")}
+                  style={{ backgroundColor: c }}
+                  onClick={() => {
+                    setPatternColor(c);
+                    room?.send("set_pattern_color", { patternColor: c });
+                  }}
+                  aria-label={`Pattern color ${c}`}
+                  aria-pressed={on}
+                  disabled={pattern === "plain"}
+                />
+              );
+            })}
+          </div>
+          {pattern === "plain" ? (
+            <p className="mt-1 text-[10px] text-[var(--bb-ink-soft)]">
+              Pick a pattern first — plain hide has no markings.
+            </p>
+          ) : null}
+        </div>
+        <div>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--bb-ink-soft)]">
+            Creature pattern
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {COSMETIC_PATTERNS.map((p) => {
+              const on = p.id === pattern;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={["bb-choice !p-2 text-left", on ? "bb-choice--on" : ""].join(" ")}
+                  onClick={() => {
+                    setPattern(p.id);
+                    room?.send("set_pattern", { pattern: p.id, patternColor });
+                  }}
+                  aria-pressed={on}
+                >
+                  <span className="mb-1.5 block h-9 w-full overflow-hidden rounded-[2px] ring-1 ring-black/10">
+                    <PatternSwatch patternId={p.id} patternColor={patternColor} />
+                  </span>
+                  <span
+                    className="block text-xs font-semibold"
+                    style={{ fontFamily: "var(--bb-font-display)" }}
+                  >
+                    {p.name}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-[var(--bb-ink-soft)]">
+                    {p.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <AppearancePreview color={color} pattern={pattern} patternColor={patternColor} />
+    </div>
+  );
+}
+
+export function StandPanel({ kind, onClose, room, economy, localSessionId }: Props) {
   const [draftLoadout, setDraftLoadout] = useState(() => normalizeLoadout(economy.loadout));
   const [draftTalents, setDraftTalents] = useState(() => economy.talents);
   const [selectedSlot, setSelectedSlot] = useState(0);
@@ -122,20 +301,14 @@ export function StandPanel({ kind, onClose, room, economy }: Props) {
     draftLoadout.length === LOADOUT_SIZE && new Set(draftLoadout).size === LOADOUT_SIZE;
 
   return (
-    <BookShell title={TITLES[kind]} subtitle={formatWallet(economy)} onClose={onClose}>
+    <BookShell
+      title={TITLES[kind]}
+      subtitle={formatWallet(economy)}
+      onClose={onClose}
+      wide={kind === "customization"}
+    >
       {kind === "customization" && (
-        <div className="flex flex-wrap gap-2">
-          {COSMETIC_COLORS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className="size-10 rounded-sm ring-2 ring-[var(--bb-brass-dim)]"
-              style={{ backgroundColor: color }}
-              onClick={() => room?.send("set_color", { color })}
-              aria-label={`Color ${color}`}
-            />
-          ))}
-        </div>
+        <AppearanceEditor room={room} localSessionId={localSessionId} />
       )}
 
       {kind === "build" && (
@@ -206,11 +379,14 @@ export function StandPanel({ kind, onClose, room, economy }: Props) {
           </ul>
           <button
             type="button"
-            className="bb-btn-brass"
+            className="bb-btn-brass w-full disabled:opacity-40"
             disabled={!loadoutReady}
-            onClick={() => room?.send("set_loadout", { abilityIds: draftLoadout })}
+            onClick={() => {
+              if (!loadoutReady) return;
+              room?.send("set_loadout", { abilityIds: draftLoadout });
+            }}
           >
-            Inscribe loadout
+            Save loadout
           </button>
         </div>
       )}

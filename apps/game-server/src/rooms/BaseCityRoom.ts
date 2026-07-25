@@ -2,11 +2,14 @@ import { Room, Client } from "@colyseus/core";
 import {
   ABILITIES,
   COSMETIC_COLORS,
+  DEFAULT_COSMETIC_PATTERN,
+  DEFAULT_COSMETIC_PATTERN_COLOR,
   DEFAULT_LOADOUT,
   HUB_SPAWN,
   INTERACT,
   LOADOUT_SIZE,
   MAX_TALENTS,
+  RESPAWN_LOCK_MS,
   SHOP_ITEMS,
   TALENTS,
   TICK_MS,
@@ -20,6 +23,8 @@ import {
   HUB_PRACTICE_DUMMIES,
   HUB_STANDS,
   normalizeCoins,
+  normalizeCosmeticPattern,
+  normalizeCosmeticPatternColor,
   normalizeLoadout,
   phaseDurationMs,
   resolvePveTransfer,
@@ -36,6 +41,9 @@ import {
   saveInventory,
   saveLoadout,
   saveProfileColor,
+  saveProfilePattern,
+  saveProfilePatternColor,
+  saveProfileAppearance,
   saveTalents,
 } from "../persistence.js";
 import { takePendingLoot } from "../pendingLoot.js";
@@ -69,6 +77,10 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
   private identities = new Map<string, VerifiedIdentity>();
   private dummyCooldownUntil = new Map<string, number>();
   private dummyAggro = new Map<string, DummyAggro>();
+  /** Join / soft spawn pose — respawn returns here. */
+  private spawnBySession = new Map<string, { x: number; z: number; yaw: number }>();
+  /** Epoch ms when the player hit 0 HP (respawn gate). */
+  private diedAtBySession = new Map<string, number>();
   private combat!: CombatSystem;
 
   onCreate(options: AuthJoinOptions) {
@@ -79,7 +91,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
       onPlayerDamaged: (sessionId) => {
         const player = this.state.players.get(sessionId);
         if (player && player.hp <= 0) {
-          this.softRespawnPlayer(sessionId, player);
+          this.onPlayerDied(sessionId, player);
         }
       },
       onTargetDamaged: (targetId, _damage, attackerSessionId) => {
@@ -129,6 +141,12 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     this.onMessage("set_color", (client, message: { color: string }) => {
       void this.handleSetColor(client, message.color);
     });
+    this.onMessage("set_pattern", (client, message: { pattern: string; patternColor?: string }) => {
+      void this.handleSetPattern(client, message.pattern, message.patternColor);
+    });
+    this.onMessage("set_pattern_color", (client, message: { patternColor: string }) => {
+      void this.handleSetPatternColor(client, message.patternColor);
+    });
 
     this.onMessage("shop_buy", (client, message: { itemId: string }) => {
       void this.handleShopBuy(client, message.itemId);
@@ -157,6 +175,14 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         client.send("queue_status", { queued: false });
         client.send("toast", { message: "Left queue" });
       }
+    });
+
+    this.onMessage("respawn", (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || player.hp > 0) return;
+      const diedAt = this.diedAtBySession.get(client.sessionId) ?? 0;
+      if (Date.now() < diedAt + RESPAWN_LOCK_MS) return;
+      this.softRespawnPlayer(client.sessionId, player);
     });
   }
 
@@ -196,6 +222,8 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         verified.color && (COSMETIC_COLORS as readonly string[]).includes(verified.color)
           ? verified.color
           : COSMETIC_COLORS[0];
+      player.pattern = DEFAULT_COSMETIC_PATTERN;
+      player.patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
     } else {
       const eco = await loadEconomy(verified.userId);
       player.copper = eco.copper;
@@ -210,6 +238,8 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
           : verified.color && (COSMETIC_COLORS as readonly string[]).includes(verified.color)
             ? verified.color
             : COSMETIC_COLORS[0]);
+      player.pattern = normalizeCosmeticPattern(eco.pattern);
+      player.patternColor = normalizeCosmeticPatternColor(eco.patternColor);
       if (player.copper === 0 && player.silver === 0 && player.gold === 0 && player.essence === 0) {
         const soft = normalizeCoins({ copper: 50, silver: 1, gold: 0 });
         player.copper = soft.copper;
@@ -222,6 +252,11 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
 
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, []);
+    this.spawnBySession.set(client.sessionId, {
+      x: player.x,
+      z: player.z,
+      yaw: player.yaw,
+    });
 
     const loot = takePendingLoot(verified.userId);
     if (loot && (loot.copper > 0 || loot.silver > 0 || loot.gold > 0 || loot.essence > 0)) {
@@ -267,6 +302,8 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     this.inputs.delete(client.sessionId);
     this.identities.delete(client.sessionId);
     this.dummyCooldownUntil.delete(client.sessionId);
+    this.spawnBySession.delete(client.sessionId);
+    this.diedAtBySession.delete(client.sessionId);
     this.combat.clearSession(client.sessionId);
   }
 
@@ -318,9 +355,67 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     player.color = color;
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
-      await saveProfileColor(identity.userId, color);
+      const ok = await saveProfileColor(identity.userId, color);
+      client.send("toast", {
+        message: ok ? "Hide tint saved to your account" : "Tint applied (account save failed)",
+      });
+      return;
     }
-    client.send("toast", { message: "Color updated" });
+    client.send("toast", { message: "Hide tint updated (sign in to save)" });
+  }
+
+  private async handleSetPattern(
+    client: Client,
+    pattern: string,
+    patternColor?: string,
+  ) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const next = normalizeCosmeticPattern(pattern);
+    player.pattern = next;
+    if (patternColor != null) {
+      player.patternColor = normalizeCosmeticPatternColor(patternColor);
+    }
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      const ok = await saveProfileAppearance(identity.userId, {
+        pattern: next,
+        ...(patternColor != null
+          ? { patternColor: normalizeCosmeticPatternColor(patternColor) }
+          : {}),
+      });
+      client.send("toast", {
+        message: ok ? `Pattern saved to your account` : `Pattern applied (account save failed)`,
+      });
+      return;
+    }
+    client.send("toast", { message: `Pattern: ${next} (sign in to save)` });
+  }
+
+  private async handleSetPatternColor(client: Client, patternColor: string) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    await this.applyPatternColor(client, player, patternColor);
+  }
+
+  private async applyPatternColor(
+    client: Client,
+    player: PlayerState,
+    patternColor: string,
+  ) {
+    const next = normalizeCosmeticPatternColor(patternColor);
+    player.patternColor = next;
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      const ok = await saveProfilePatternColor(identity.userId, next);
+      client.send("toast", {
+        message: ok
+          ? "Pattern color saved to your account"
+          : "Pattern color applied (account save failed)",
+      });
+      return;
+    }
+    client.send("toast", { message: "Pattern color updated (sign in to save)" });
   }
 
   private async handleShopBuy(client: Client, itemId: string) {
@@ -455,6 +550,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
       while (queue.length > 0) {
         const input = queue.shift()!;
         player.lastInputSeq = input.seq;
+        if (player.hp <= 0) continue;
 
         const speed = this.combat.getEffectiveMoveSpeed(sessionId);
         const from = { x: player.x, z: player.z };
@@ -471,12 +567,12 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         if (input.cancelCast) {
           this.combat.tryCancelCast(sessionId, player, now);
         }
-          if (input.castId) {
-            this.combat.tryBeginCast(sessionId, player, input.castId, now, {
-              moveX: input.moveX,
-              moveZ: input.moveZ,
-            });
-          }
+        if (input.castId) {
+          this.combat.tryBeginCast(sessionId, player, input.castId, now, {
+            moveX: input.moveX,
+            moveZ: input.moveZ,
+          });
+        }
 
         if (input.interactId) {
           this.handleInteract(sessionId, player, input.interactId, now);
@@ -504,12 +600,11 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     this.dummyAggro.clear();
   }
 
-  /** Soft-death: full HP at town center, deaggro every dummy. */
-  private softRespawnPlayer(sessionId: string, player: PlayerState) {
-    player.hp = player.maxHp;
-    player.x = HUB_SPAWN.x;
-    player.z = HUB_SPAWN.z;
-    player.yaw = 0;
+  /** Soft-death: clear combat state; body stays until client requests respawn. */
+  private onPlayerDied(sessionId: string, player: PlayerState) {
+    if (!this.diedAtBySession.has(sessionId)) {
+      this.diedAtBySession.set(sessionId, Date.now());
+    }
     player.castAbilityId = "";
     player.castPhase = "";
     player.castLockUntil = 0;
@@ -517,6 +612,35 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     player.castComboHit = 0;
     player.invulnerable = false;
     player.statuses.clear();
+    this.combat.clearSession(sessionId);
+    // Drop dummy aggro without auto-respawning.
+    for (const [dummyId, aggro] of [...this.dummyAggro.entries()]) {
+      if (aggro.attackerId === sessionId) {
+        this.clearDummyCast(dummyId);
+        this.dummyAggro.delete(dummyId);
+      }
+    }
+  }
+
+  /** Full HP at last spawn; clears combat leftover. */
+  private softRespawnPlayer(sessionId: string, player: PlayerState) {
+    const spawn = this.spawnBySession.get(sessionId) ?? {
+      x: HUB_SPAWN.x,
+      z: HUB_SPAWN.z,
+      yaw: 0,
+    };
+    player.hp = player.maxHp;
+    player.x = spawn.x;
+    player.z = spawn.z;
+    player.yaw = spawn.yaw;
+    player.castAbilityId = "";
+    player.castPhase = "";
+    player.castLockUntil = 0;
+    player.castPhaseEndsAt = 0;
+    player.castComboHit = 0;
+    player.invulnerable = false;
+    player.statuses.clear();
+    this.diedAtBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
     this.clearAllDummyAggro();
   }
@@ -545,7 +669,8 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         continue;
       }
       if (player.hp <= 0) {
-        this.softRespawnPlayer(aggro.attackerId, player);
+        this.clearDummyCast(dummyId);
+        this.dummyAggro.delete(dummyId);
         continue;
       }
 

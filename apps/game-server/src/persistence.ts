@@ -13,6 +13,14 @@ export type EconomySnapshot = Wallet & {
   abilityIds: string[];
   talentIds: string[];
   color?: string;
+  pattern?: string;
+  patternColor?: string;
+};
+
+export type ProfileAppearance = {
+  color?: string;
+  pattern?: string;
+  patternColor?: string;
 };
 
 const DEFAULT_ECO: EconomySnapshot = {
@@ -33,8 +41,12 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     supabase.from("inventory").select("resource_id, quantity").eq("user_id", userId),
     supabase.from("loadouts").select("ability_ids").eq("user_id", userId).maybeSingle(),
     supabase.from("talents").select("talent_ids").eq("user_id", userId).maybeSingle(),
-    supabase.from("profiles").select("color").eq("id", userId).maybeSingle(),
+    supabase.from("profiles").select("color, pattern, pattern_color").eq("id", userId).maybeSingle(),
   ]);
+
+  if (profile.error) {
+    console.warn("[persistence] load profile appearance failed:", profile.error.message);
+  }
 
   const qty = (id: string) => inv.data?.find((r) => r.resource_id === id)?.quantity ?? 0;
   // Legacy scrap row → copper if migration not applied yet
@@ -48,6 +60,8 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     ),
     talentIds: Array.isArray(talents.data?.talent_ids) ? talents.data.talent_ids : [],
     color: profile.data?.color ?? undefined,
+    pattern: profile.data?.pattern ?? undefined,
+    patternColor: profile.data?.pattern_color ?? undefined,
   };
 }
 
@@ -81,7 +95,38 @@ export async function saveTalents(userId: string, talentIds: string[]): Promise<
   );
 }
 
-export async function saveProfileColor(userId: string, color: string): Promise<void> {
-  if (!supabase) return;
-  await supabase.from("profiles").update({ color, updated_at: new Date().toISOString() }).eq("id", userId);
+/** Persist hide tint / pattern / ink on the account profile. */
+export async function saveProfileAppearance(
+  userId: string,
+  appearance: ProfileAppearance,
+): Promise<boolean> {
+  if (!supabase) return false;
+  const patch: Record<string, string> = {
+    updated_at: new Date().toISOString(),
+  };
+  if (appearance.color != null) patch.color = appearance.color;
+  if (appearance.pattern != null) patch.pattern = appearance.pattern;
+  if (appearance.patternColor != null) patch.pattern_color = appearance.patternColor;
+
+  const { error } = await supabase.from("profiles").update(patch).eq("id", userId);
+  if (error) {
+    console.warn("[persistence] saveProfileAppearance failed:", error.message, patch);
+    return false;
+  }
+  return true;
+}
+
+export async function saveProfileColor(userId: string, color: string): Promise<boolean> {
+  return saveProfileAppearance(userId, { color });
+}
+
+export async function saveProfilePattern(userId: string, pattern: string): Promise<boolean> {
+  return saveProfileAppearance(userId, { pattern });
+}
+
+export async function saveProfilePatternColor(
+  userId: string,
+  patternColor: string,
+): Promise<boolean> {
+  return saveProfileAppearance(userId, { patternColor });
 }

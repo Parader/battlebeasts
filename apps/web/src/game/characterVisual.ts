@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
+import { getCreaturePatternTexture } from "./creaturePatterns";
 
 /** Desired standing height in world meters. */
 export const CHARACTER_TARGET_HEIGHT = 1.7;
@@ -272,8 +273,18 @@ function findBone(root: THREE.Object3D, key: string): THREE.Object3D | null {
 /**
  * Tint the visible character surface. Supports Mixamo Beta_Surface meshes
  * and hero.glb materials (lambert1 / any colored material on visible SM_Chr_*).
+ *
+ * With a pattern: albedo map bakes hide tint + pattern ink; material.color is white
+ * so markings keep their true color. Plain: no map, material.color = hide tint.
  */
-export function tintCharacterSurface(scene: THREE.Object3D, color: string): void {
+export function tintCharacterSurface(
+  scene: THREE.Object3D,
+  color: string,
+  patternId?: string | null,
+  patternColor?: string | null,
+): void {
+  const patternMap = getCreaturePatternTexture(patternId, patternColor, color);
+  const useMap = Boolean(patternMap);
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material || !mesh.visible) return;
@@ -284,7 +295,17 @@ export function tintCharacterSurface(scene: THREE.Object3D, color: string): void
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
       const std = m as THREE.MeshStandardMaterial;
-      if ("color" in std && std.color) std.color.set(color);
+      if ("color" in std && std.color) {
+        // White when mapped so baked hide/ink colors display correctly.
+        std.color.set(useMap ? "#ffffff" : color);
+      }
+      if ("map" in std) {
+        if (std.map !== patternMap) {
+          std.map = patternMap;
+          std.needsUpdate = true;
+        }
+        if (patternMap) patternMap.needsUpdate = true;
+      }
     }
   });
 }

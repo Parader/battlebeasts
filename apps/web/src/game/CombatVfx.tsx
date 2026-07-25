@@ -3,7 +3,7 @@ import { Html, useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { HUB_PRACTICE_DUMMIES, MOVE_SPEED } from "@battlebeasts/shared";
+import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, totalShieldAbsorb } from "@battlebeasts/shared";
 import { abilityVfxColor, BoltProjectileEffect, FrostBallProjectileEffect, GraspProjectileEffect, hasCatalogProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
@@ -309,6 +309,8 @@ type DecoyNet = {
     vx: number;
     vz: number;
     color: string;
+    pattern?: string;
+    patternColor?: string;
     expiresAt: number;
 };
 
@@ -319,6 +321,8 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
     const renderYaw = useRef(0);
     const vel = useRef(new THREE.Vector3());
     const colorRef = useRef("#4ade80");
+    const patternRef = useRef("plain");
+    const patternColorRef = useRef("#1f2937");
     const seeded = useRef(false);
     const gltf = useGLTF(CHARACTER_URL);
     const scene = useMemo(() => {
@@ -359,12 +363,30 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
             renderYaw.current = d.yaw;
             seeded.current = true;
             colorRef.current = d.color;
-            tintCharacterSurface(scene, d.color);
+            patternRef.current = d.pattern ?? "plain";
+            patternColorRef.current = d.patternColor ?? "#1f2937";
+            tintCharacterSurface(
+                scene,
+                d.color,
+                patternRef.current,
+                patternColorRef.current,
+            );
             setCharacterOpacity(scene, 1);
         }
-        if (d.color !== colorRef.current) {
+        if (
+            d.color !== colorRef.current ||
+            (d.pattern ?? "plain") !== patternRef.current ||
+            (d.patternColor ?? "#1f2937") !== patternColorRef.current
+        ) {
             colorRef.current = d.color;
-            tintCharacterSurface(scene, d.color);
+            patternRef.current = d.pattern ?? "plain";
+            patternColorRef.current = d.patternColor ?? "#1f2937";
+            tintCharacterSurface(
+                scene,
+                d.color,
+                patternRef.current,
+                patternColorRef.current,
+            );
         }
 
         // Coast with server velocity between patches, soft-correct to authority.
@@ -623,13 +645,38 @@ function HpBillboard({
     y: number;
 }) {
     const fill = useRef<THREE.Mesh>(null);
+    const shield = useRef<THREE.Mesh>(null);
     useFrame(() => {
-        const t = room?.state?.targets?.get(targetId) as { hp: number; maxHp: number } | undefined;
+        const t = room?.state?.targets?.get(targetId) as
+            | {
+                  hp: number;
+                  maxHp: number;
+                  statuses?: { forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void };
+              }
+            | undefined;
         const m = fill.current;
+        const s = shield.current;
         if (!m || !t) return;
-        const ratio = Math.max(0, Math.min(1, t.hp / Math.max(1, t.maxHp)));
+        const maxHp = Math.max(1, t.maxHp);
+        const ratio = Math.max(0, Math.min(1, t.hp / maxHp));
         m.scale.x = Math.max(0.001, ratio);
         m.position.x = -0.5 * (1 - ratio);
+
+        if (s) {
+            const rows: { statusId?: string; stacks?: number }[] = [];
+            t.statuses?.forEach((row) => {
+                if (row?.statusId) rows.push(row);
+            });
+            const shieldRatio = Math.max(0, Math.min(1, totalShieldAbsorb(rows) / maxHp));
+            if (shieldRatio <= 0) {
+                s.visible = false;
+            } else {
+                s.visible = true;
+                s.scale.x = Math.max(0.001, shieldRatio);
+                const left = Math.min(ratio, Math.max(0, 1 - shieldRatio));
+                s.position.x = -0.5 + left + shieldRatio * 0.5;
+            }
+        }
     });
     return (
         <group position={[0, y, 0]}>
@@ -640,6 +687,10 @@ function HpBillboard({
             <mesh ref={fill} position={[0, 0, 0.01]}>
                 <planeGeometry args={[1, 0.1]} />
                 <meshBasicMaterial color="#4ade80" />
+            </mesh>
+            <mesh ref={shield} position={[0, 0, 0.02]} visible={false}>
+                <planeGeometry args={[1, 0.1]} />
+                <meshBasicMaterial color="#60a5fa" />
             </mesh>
         </group>
     );

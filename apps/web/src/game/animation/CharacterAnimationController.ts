@@ -44,7 +44,12 @@ export type FullBodyActionOptions = {
   loop?: boolean;
   fadeIn?: number;
   fadeOut?: number;
-  /** Default true. Death should pass false. */
+  /**
+   * After the clip finishes, freeze on the last frame until cancelFullBodyAction.
+   * Used for death poses.
+   */
+  holdEndPose?: boolean;
+  /** Default true. When false, fade override out on finish without restoring loco. */
   restoreLayers?: boolean;
   onComplete?: () => void;
 };
@@ -125,6 +130,10 @@ export class CharacterAnimationController {
   private overrideWeight = 0;
   private overrideWeightTarget = 0;
   private restoreAfterOverride = true;
+  /** When true, freeze on the last frame *after* the clip finishes (death). */
+  private overrideHoldEndPose = false;
+  /** Actively clamped on last frame (set when finished fires). */
+  private overrideHoldingEndPose = false;
   /** Cloaked crouch-walk mode (loops Crouched Walking; cancelled with cloak). */
   private crouchLoco = false;
 
@@ -493,11 +502,37 @@ export class CharacterAnimationController {
         this.overrideAction.stop();
         this.overrideAction = null;
       }
+      this.overrideHoldEndPose = false;
+      this.overrideHoldingEndPose = false;
     }
     if (this.overrideAction) {
       this.overrideAction.enabled = true;
-      if (!this.overrideAction.isRunning() && this.overrideActive) {
-        this.overrideAction.play();
+      if (this.overrideHoldingEndPose && this.overrideActive) {
+        const clip = this.overrideAction.getClip();
+        this.overrideAction.paused = true;
+        this.overrideAction.time = Math.max(0, clip.duration);
+        this.overrideWeightTarget = 1;
+        this.layerMulLowerTarget = 0;
+        this.layerMulUpperTarget = 0;
+        this.layerMulLower = 0;
+        this.layerMulUpper = 0;
+      } else if (this.overrideActive && !this.overrideAction.isRunning()) {
+        const clip = this.overrideAction.getClip();
+        const atEnd =
+          this.overrideAction.clampWhenFinished &&
+          clip.duration > 0 &&
+          this.overrideAction.time >= clip.duration - 1e-3;
+        if (atEnd) {
+          this.overrideAction.paused = true;
+          if (this.overrideHoldEndPose) {
+            this.overrideHoldingEndPose = true;
+            this.overrideWeightTarget = 1;
+            this.layerMulLowerTarget = 0;
+            this.layerMulUpperTarget = 0;
+          }
+        } else if (!this.overrideAction.paused) {
+          this.overrideAction.play();
+        }
       }
       this.overrideAction.setEffectiveWeight(this.overrideWeight);
     }
@@ -613,7 +648,12 @@ export class CharacterAnimationController {
       this.fullBodyClips.get(animationName) ??
       (() => {
         const src = resolveClip(this.sourceClips, animationName);
-        return src ? stripHorizontalRootMotion(src) : null;
+        if (!src) return null;
+        // Cache prepared death / one-shot clips so duration & playback stay stable.
+        const prepared = stripHorizontalRootMotion(src);
+        this.fullBodyClips.set(animationName, prepared);
+        this.fullBodyClips.set(src.name, prepared);
+        return prepared;
       })();
 
     if (!clip) {
@@ -634,6 +674,8 @@ export class CharacterAnimationController {
     }
 
     this.restoreAfterOverride = options.restoreLayers !== false;
+    this.overrideHoldEndPose = Boolean(options.holdEndPose);
+    this.overrideHoldingEndPose = false;
 
     // Snap loco layers off so Jump isn't averaged with run/strafe weights
     this.layerMulLower = 0;
@@ -660,6 +702,7 @@ export class CharacterAnimationController {
     const looping = Boolean(options.loop);
     action.setLoop(looping ? THREE.LoopRepeat : THREE.LoopOnce, looping ? Infinity : 1);
     action.clampWhenFinished = !looping;
+    // Natural Mixamo length unless caller retimes explicitly.
     if (typeof options.timeScale === "number" && options.timeScale > 0) {
       action.timeScale = options.timeScale;
     } else if (options.desiredDuration && options.desiredDuration > 0 && clip.duration > 0) {
@@ -690,6 +733,21 @@ export class CharacterAnimationController {
       this.unlisten(this.mixer, "finished", onFinished);
       if (gen !== this.overrideGen || this.overrideAction !== action) return;
 
+      if (this.overrideHoldEndPose) {
+        // Freeze on the last frame until gameplay cancels (respawn).
+        action.paused = true;
+        action.time = Math.max(0, clip.duration);
+        action.setEffectiveWeight(1);
+        this.overrideHoldingEndPose = true;
+        this.overrideActive = true;
+        this.overrideWeightTarget = 1;
+        this.overrideWeight = 1;
+        this.layerMulLowerTarget = 0;
+        this.layerMulUpperTarget = 0;
+        options.onComplete?.();
+        return;
+      }
+
       // Hold clamp pose until gameplay clears the ability (cancelFullBodyAction),
       // or restore immediately if this was a fire-and-forget one-shot.
       if (!this.restoreAfterOverride) {
@@ -712,6 +770,8 @@ export class CharacterAnimationController {
     if (!this.overrideActive && this.overrideWeight < 0.01 && !this.crouchLoco) return;
 
     this.crouchLoco = false;
+    this.overrideHoldEndPose = false;
+    this.overrideHoldingEndPose = false;
     this.overrideGen++;
     this.overrideActive = false;
     this.overrideName = null;
@@ -857,6 +917,12 @@ export class CharacterAnimationController {
     if (this.disposed || !this.overrideAction || !(timeScale > 0)) return;
     this.overrideAction.paused = false;
     this.overrideAction.timeScale = timeScale;
+  }
+
+  /** Duration (seconds) of the active full-body clip at timeScale 1, or 0. */
+  getActiveFullBodyDuration(): number {
+    if (!this.overrideAction) return 0;
+    return Math.max(0, this.overrideAction.getClip().duration);
   }
 
   /** End whatever ability visual is playing (upper cast or full-body). */

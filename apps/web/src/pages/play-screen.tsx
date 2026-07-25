@@ -5,6 +5,7 @@ import { useBaseCityRoom } from "@/game/useBaseCityRoom";
 import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
+import { DeathOverlay } from "@/game/ui/DeathOverlay";
 import { AbilityBar } from "@/game/ui/AbilityBar";
 import { StatusBar } from "@/game/ui/StatusBar";
 import { useAuth } from "@/providers/auth-provider";
@@ -64,6 +65,9 @@ export const PlayScreen = () => {
         fxBursts,
         damagePopups,
         localHp,
+        diedAt,
+        deathAnimMs,
+        requestRespawn,
     } = useBaseCityRoom({
         endpoint: WS_URL,
         userId,
@@ -88,6 +92,11 @@ export const PlayScreen = () => {
     }
 
     const inContent = phase === "content";
+    const hpMax = Math.max(1, localHp.maxHp);
+    const hpPct = Math.max(0, Math.min(100, (localHp.hp / hpMax) * 100));
+    const shieldPct = Math.max(0, Math.min(100, (localHp.shield / hpMax) * 100));
+    // Sit on the right of current HP; if that would overflow, overlay the bar's right edge.
+    const shieldLeft = Math.min(hpPct, Math.max(0, 100 - shieldPct));
 
     return (
         <div className="relative h-dvh w-full overflow-hidden bg-black">
@@ -108,18 +117,26 @@ export const PlayScreen = () => {
                         <span>HP</span>
                         <span className="tabular-nums">
                             {Math.round(localHp.hp)}/{Math.round(localHp.maxHp)}
+                            {localHp.shield > 0 ? (
+                                <span className="bb-hp-tray__shield-amt"> +{Math.round(localHp.shield)}</span>
+                            ) : null}
                         </span>
                     </div>
                     <div className="bb-hp-tray__track">
-                        <div
-                            className="bb-hp-tray__fill"
-                            style={{
-                                width: `${Math.max(0, Math.min(100, (localHp.hp / Math.max(1, localHp.maxHp)) * 100))}%`,
-                            }}
-                        />
+                        <div className="bb-hp-tray__fill" style={{ width: `${hpPct}%` }} />
+                        {shieldPct > 0 ? (
+                            <div
+                                className="bb-hp-tray__shield"
+                                style={{ left: `${shieldLeft}%`, width: `${shieldPct}%` }}
+                            />
+                        ) : null}
                     </div>
                 </div>
             </div>
+
+            {diedAt != null && (
+                <DeathOverlay diedAt={diedAt} animDurationMs={deathAnimMs} onRespawn={requestRespawn} />
+            )}
 
             <div data-ui-overlay className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4">
                 <div className="pointer-events-auto flex flex-col gap-2">
@@ -258,6 +275,7 @@ export const PlayScreen = () => {
                     onClose={() => setActiveUi(null)}
                     room={room}
                     economy={economy}
+                    localSessionId={room?.sessionId ?? null}
                 />
             )}
 

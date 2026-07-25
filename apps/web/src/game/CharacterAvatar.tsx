@@ -8,12 +8,14 @@ import {
   CharacterAnimationController,
   heroAnimationConfig,
   debugPrintAnimationAssets,
+  playRandomDeath,
 } from "./animation";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS, shortestAngleDelta } from "./visualYaw";
 import { AimIndicator } from "./AimIndicator";
 import { smashHopOffsetY } from "./smashHop";
+import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { findBone } from "./vfx/attach";
 import type { PredictedPose } from "./useBaseCityRoom";
@@ -60,6 +62,9 @@ export function CharacterAvatar({
   const visualYaw = useRef(0);
   const yawLocked = useRef(false);
   const cloakedRef = useRef(false);
+  const appearanceKey = useRef("");
+  const wasDeadRef = useRef(false);
+  const deathSinkRef = useRef<DeathSinkState | null>(null);
 
   const gltf = useGLTF(CHARACTER_URL);
   const scene = useMemo(() => {
@@ -73,8 +78,21 @@ export function CharacterAvatar({
 
   useEffect(() => {
     if (!color) return;
-    tintCharacterSurface(scene, color);
-  }, [color, scene]);
+    const pattern =
+      (localSessionId &&
+        (room?.state?.players?.get(localSessionId) as
+          | { pattern?: string; patternColor?: string }
+          | undefined)?.pattern) ||
+      "plain";
+    const patternColor =
+      (localSessionId &&
+        (room?.state?.players?.get(localSessionId) as
+          | { patternColor?: string }
+          | undefined)?.patternColor) ||
+      "#1f2937";
+    tintCharacterSurface(scene, color, pattern, patternColor);
+    appearanceKey.current = `${color}|${pattern}|${patternColor}`;
+  }, [color, scene, room, localSessionId]);
 
   useEffect(() => {
     const controller = new CharacterAnimationController(
@@ -124,20 +142,67 @@ export function CharacterAvatar({
     const me = localSessionId
       ? (room?.state?.players?.get(localSessionId) as
           | {
+              hp?: number;
               castAbilityId?: string;
               castPhase?: string;
               castPhaseEndsAt?: number;
+              color?: string;
+              pattern?: string;
+              patternColor?: string;
               statuses?: Parameters<typeof hasStatusId>[0];
             }
           | undefined)
       : undefined;
-    g.position.set(p.x, smashHopOffsetY(me), p.z);
+    const liveColor = color ?? me?.color ?? "#4ade80";
+    const livePattern = me?.pattern ?? "plain";
+    const livePatternColor = me?.patternColor ?? "#1f2937";
+    const key = `${liveColor}|${livePattern}|${livePatternColor}`;
+    if (key !== appearanceKey.current) {
+      appearanceKey.current = key;
+      tintCharacterSurface(scene, liveColor, livePattern, livePatternColor);
+    }
+    g.position.set(p.x, smashHopOffsetY(me) + deathSinkOffsetY(deathSinkRef.current), p.z);
     if (aim) aim.rotation.y = p.yaw;
 
     if (!seededMove.current) {
       prevPos.current.set(p.x, 0, p.z);
       visualYaw.current = p.yaw;
       seededMove.current = true;
+    }
+
+    const dead = typeof me?.hp === "number" && me.hp <= 0;
+    if (dead && !wasDeadRef.current) {
+      wasDeadRef.current = true;
+      lastCastId.current = "";
+      comboAnimHoldUntil.current = 0;
+      controller.cancelAbilityAnimation();
+      const played = playRandomDeath(controller, animations);
+      deathSinkRef.current = startDeathSink(played?.duration ?? 2.6);
+      window.dispatchEvent(
+        new CustomEvent("bb-death-anim", {
+          detail: { durationSec: played?.duration ?? 2.6 },
+        }),
+      );
+    } else if (!dead && wasDeadRef.current) {
+      wasDeadRef.current = false;
+      deathSinkRef.current = null;
+      controller.cancelFullBodyAction();
+    }
+
+    // Keep sink applied every frame while dead (position set above uses current sink).
+    if (dead) {
+      g.position.set(p.x, smashHopOffsetY(me) + deathSinkOffsetY(deathSinkRef.current), p.z);
+      velocity.current.set(0, 0, 0);
+      prevPos.current.set(p.x, 0, p.z);
+      yawLocked.current = true;
+      controller.setMovement({
+        worldVelocity: velocity.current,
+        facingYaw: visualYaw.current,
+        maximumSpeed: MOVE_SPEED,
+      });
+      controller.update(safeDt);
+      body.rotation.y = visualYaw.current;
+      return;
     }
 
     velocity.current.set(

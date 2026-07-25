@@ -177,6 +177,35 @@ export class StatusSystem {
     return combineStatusDamageTakenMul(this.entries(targetId));
   }
 
+  /**
+   * Absorb damage with shield statuses (`stacks` = remaining HP).
+   * Returns damage that should still hit HP.
+   */
+  absorbWithShields(targetId: string, damage: number): number {
+    let remaining = Math.max(0, damage);
+    if (!(remaining > 0)) return 0;
+    const host = this.getHost(targetId);
+    if (!host) return remaining;
+
+    const toRemove: string[] = [];
+    host.statuses.forEach((row, key) => {
+      if (!(remaining > 0)) return;
+      const def = STATUSES[row.statusId];
+      if (!def || def.mechanic !== "shield") return;
+      const pool = Math.max(0, Math.floor(row.stacks));
+      if (pool <= 0) {
+        toRemove.push(key);
+        return;
+      }
+      const absorbed = Math.min(remaining, pool);
+      row.stacks = pool - absorbed;
+      remaining -= absorbed;
+      if (row.stacks <= 0) toRemove.push(key);
+    });
+    for (const key of toRemove) host.statuses.delete(key);
+    return remaining;
+  }
+
   canMove(targetId: string): boolean {
     return !statusesBlockMove(this.entries(targetId));
   }

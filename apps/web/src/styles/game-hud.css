@@ -325,6 +325,7 @@
 }
 
 .bb-hp-tray__track {
+  position: relative;
   height: 0.45rem;
   overflow: hidden;
   border-radius: 2px;
@@ -337,3 +338,83 @@
   background: linear-gradient(90deg, #3d6b45, #7cb87a);
   transition: width 150ms ease;
 }
+
+.bb-hp-tray__shield {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #2563eb, #60a5fa);
+  box-shadow: 0 0 6px rgba(96, 165, 250, 0.55);
+  transition: left 150ms ease, width 150ms ease;
+  pointer-events: none;
+}
+
+.bb-hp-tray__shield-amt {
+  color: #93c5fd;
+}
+
+.bb-death-overlay {
+  font-family: var(--bb-font-display);
+}
+
+.bb-death-overlay__veil {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 14, 16, 0.55);
+  backdrop-filter: grayscale(1) contrast(0.92) brightness(0.72);
+  -webkit-backdrop-filter: grayscale(1) contrast(0.92) brightness(0.72);
+  animation: bb-death-veil-in 0.7s ease-out forwards;
+}
+
+.bb-death-overlay__banner {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: clamp(2.4rem, 8vw, 4.5rem);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #e8e4dc;
+  text-shadow: 0 2px 0 #1a1a1a, 0 8px 28px rgba(0, 0, 0, 0.65);
+  opacity: 0;
+  transform: translateY(0.4rem) scale(0.96);
+  transition:
+    opacity 0.85s ease-out,
+    transform 0.85s ease-out;
+}
+
+.bb-death-overlay__banner--in {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.bb-death-overlay__panel {
+  position: relative;
+  z-index: 1;
+  margin-top: 1.75rem;
+  min-width: 14rem;
+  padding: 1rem 1.15rem;
+  text-align: center;
+  animation: bb-death-panel-in 0.35s ease-out;
+}
+
+@keyframes bb-death-veil-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes bb-death-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

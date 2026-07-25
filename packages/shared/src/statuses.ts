@@ -238,6 +238,21 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#6ee7b7",
     tag: "GRV",
   },
+  /**
+   * Groove solo pulse — absorb shield. `stacks` = remaining shield HP.
+   * Lonely heal ticks grant +4 stacks and refresh duration to 8s.
+   */
+  grooveShield: {
+    id: "grooveShield",
+    name: "Groove Shield",
+    polarity: "buff",
+    mechanic: "shield",
+    durationMs: 8000,
+    maxStacks: 48,
+    stackRule: "stack",
+    color: "#a7f3d0",
+    tag: "SHD",
+  },
 };
 
 /** Max frost chill stacks (10% each → 100%). */
@@ -274,6 +289,21 @@ export function nextFrostChillStacks(
 
 export function getStatus(id: string): StatusDef | undefined {
   return STATUSES[id];
+}
+
+/** Remaining absorb HP from shield statuses (`stacks` = absorb points). */
+export function totalShieldAbsorb(
+  rows: { statusId?: string; stacks?: number }[] | null | undefined,
+): number {
+  if (!rows?.length) return 0;
+  let sum = 0;
+  for (const row of rows) {
+    const id = row.statusId;
+    if (!id) continue;
+    const def = STATUSES[id];
+    if (def?.mechanic === "shield") sum += Math.max(0, row.stacks ?? 0);
+  }
+  return sum;
 }
 
 /** Additive slow percent from active statuses (roots/stuns → 100). */

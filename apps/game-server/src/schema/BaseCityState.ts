@@ -20,6 +20,10 @@ export class PlayerState extends Schema {
   @type("number") hp = 100;
   @type("number") maxHp = 100;
   @type("string") color = "#4ade80";
+  /** Creature hide pattern id (`plain` | `scales` | …). */
+  @type("string") pattern = "plain";
+  /** Ink color for pattern markings. */
+  @type("string") patternColor = "#1f2937";
   @type("number") castLockUntil = 0;
   /** "" | anticipation | cast | impact | recovery */
   @type("string") castPhase = "";
@@ -84,6 +88,8 @@ export class DecoyState extends Schema {
   @type("number") vx = 0;
   @type("number") vz = 0;
   @type("string") color = "#4ade80";
+  @type("string") pattern = "plain";
+  @type("string") patternColor = "#1f2937";
   /** Server epoch ms when this decoy despawns. */
   @type("number") expiresAt = 0;
 }

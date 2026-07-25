@@ -19,6 +19,8 @@ export {
 
 export { debugPrintAnimationAssets } from "./debugAnimations";
 
+export { listDeathClipNames, pickRandomDeathClip, playRandomDeath } from "./deathClips";
+
 export {
   createLowerBodyClip,
   createUpperBodyClip,

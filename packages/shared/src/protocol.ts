@@ -23,6 +23,10 @@ export interface PlayerSnapshot {
   hp: number;
   maxHp: number;
   color: string;
+  /** Creature hide pattern id (see COSMETIC_PATTERNS). */
+  pattern?: string;
+  /** Pattern marking / ink color. */
+  patternColor?: string;
   castLockUntil: number;
   cooldowns: Record<string, number>;
   disconnected: boolean;
@@ -53,7 +57,10 @@ export type ClientMessage =
   | { type: "shop_buy"; itemId: string }
   | { type: "set_loadout"; abilityIds: string[] }
   | { type: "set_talents"; talentIds: string[] }
-  | { type: "set_color"; color: string };
+  | { type: "set_color"; color: string }
+  | { type: "set_pattern"; pattern: string; patternColor?: string }
+  | { type: "set_pattern_color"; patternColor: string }
+  | { type: "respawn" };
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: WorldSnapshot }

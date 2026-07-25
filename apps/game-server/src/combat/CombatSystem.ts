@@ -3,6 +3,7 @@ import {
   ABILITIES,
   COLLISION,
   COMBAT,
+  GROOVE_CAST,
   MOVE_SPEED,
   canPlayerCancelCast,
   createProjectile,
@@ -903,6 +904,8 @@ export class CombatSystem {
     d.vx = drifting ? dir.x * DECOY_SPEED : 0;
     d.vz = drifting ? dir.z * DECOY_SPEED : 0;
     d.color = player.color || "#4ade80";
+    d.pattern = player.pattern || "plain";
+    d.patternColor = player.patternColor || "#1f2937";
     d.expiresAt = now + DECOY_LIFE_MS;
     this.room.state.decoys.set(id, d);
   }
@@ -1079,6 +1082,7 @@ export class CombatSystem {
         groove.heal,
         groove.ownerId,
         groove.abilityId,
+        now,
       );
       groove.tickIndex += 1;
       if (groove.tickIndex < groove.ticksTotal) {
@@ -1219,7 +1223,8 @@ export class CombatSystem {
 
   /**
    * Groove pulse: full heal to others in radius; caster gets half of the total
-   * HP actually restored to others that tick.
+   * HP actually restored to others that tick. If nobody is healed, grant a
+   * stacking absorb shield instead.
    */
   private applyGrooveHealPulse(
     center: { x: number; z: number },
@@ -1227,6 +1232,7 @@ export class CombatSystem {
     amount: number,
     casterId: string,
     abilityId: string,
+    now: number,
   ) {
     if (!(amount > 0) || !(radius > 0)) return;
     const soft = COLLISION.playerRadius;
@@ -1268,6 +1274,25 @@ export class CombatSystem {
       const gained = target.hp - before;
       healedOthers += gained;
       emitHeal(id, target.x, target.z, before, target.hp);
+    }
+
+    if (healedOthers <= 0) {
+      const caster = this.room.state.players.get(casterId);
+      if (!caster || caster.disconnected || caster.hp <= 0) return;
+      this.statuses.apply(casterId, "grooveShield", casterId, now, {
+        durationMs: GROOVE_CAST.soloShieldDurationMs,
+        stacks: GROOVE_CAST.soloShieldPerTick,
+      });
+      this.fx({
+        kind: "hit",
+        abilityId,
+        x: caster.x,
+        z: caster.z,
+        damage: GROOVE_CAST.soloShieldPerTick,
+        ownerId: casterId,
+        targetId: casterId,
+      });
+      return;
     }
 
     const selfHeal = Math.floor(healedOthers / 2);
@@ -1436,13 +1461,17 @@ export class CombatSystem {
     abilityId: string,
   ): boolean {
     const resistMul = this.statuses.getDamageTakenMul(targetId);
-    const dealt = Math.max(0, Math.round(damage * resistMul));
+    let dealt = Math.max(0, Math.round(damage * resistMul));
+    dealt = this.statuses.absorbWithShields(targetId, dealt);
 
     const player = this.room.state.players.get(targetId);
     if (player) {
       if (player.invulnerable) return false;
-      player.hp = Math.max(0, player.hp - dealt);
-      this.hooks.onPlayerDamaged?.(targetId, dealt, attackerSessionId);
+      // Fully absorbed by shield — still show a hit so the swing registers.
+      if (dealt > 0) {
+        player.hp = Math.max(0, player.hp - dealt);
+        this.hooks.onPlayerDamaged?.(targetId, dealt, attackerSessionId);
+      }
       this.fx({
         kind: "hit",
         abilityId,
@@ -1472,8 +1501,10 @@ export class CombatSystem {
 
     const target = this.room.state.targets.get(targetId);
     if (target) {
-      target.hp = Math.max(0, target.hp - dealt);
-      this.hooks.onTargetDamaged?.(targetId, dealt, attackerSessionId);
+      if (dealt > 0) {
+        target.hp = Math.max(0, target.hp - dealt);
+        this.hooks.onTargetDamaged?.(targetId, dealt, attackerSessionId);
+      }
       this.fx({
         kind: "hit",
         abilityId,

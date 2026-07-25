@@ -9,6 +9,8 @@ export type Database = {
                     display_name: string;
                     avatar_url: string | null;
                     color: string;
+                    pattern: string;
+                    pattern_color: string;
                     name_confirmed: boolean;
                     created_at: string;
                     updated_at: string;
@@ -18,6 +20,8 @@ export type Database = {
                     display_name?: string;
                     avatar_url?: string | null;
                     color?: string;
+                    pattern?: string;
+                    pattern_color?: string;
                     name_confirmed?: boolean;
                     created_at?: string;
                     updated_at?: string;
@@ -27,6 +31,8 @@ export type Database = {
                     display_name?: string;
                     avatar_url?: string | null;
                     color?: string;
+                    pattern?: string;
+                    pattern_color?: string;
                     name_confirmed?: boolean;
                     updated_at?: string;
                 };

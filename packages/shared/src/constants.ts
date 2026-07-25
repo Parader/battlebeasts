@@ -4,6 +4,9 @@ export const TICK_MS = 1000 / TICK_RATE;
 
 export const MOVE_SPEED = 5;
 
+/** Client respawn button unlock delay after death (ms). */
+export const RESPAWN_LOCK_MS = 5000;
+
 /** Battlerite-style fixed camera: high pitch looking down. */
 export const CAMERA = {
   pitchDeg: 55,
