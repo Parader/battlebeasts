@@ -308,7 +308,7 @@ export class CombatSystem {
     const walls = this.staticColliders.filter(
       (c): c is Extract<StaticCollider, { shape: "walls" }> => c.shape === "walls",
     );
-    const { removedIds, hits } = tickProjectiles(
+    const { removedIds, hits, slows } = tickProjectiles(
       list,
       dt,
       bodies,
@@ -317,7 +317,24 @@ export class CombatSystem {
     );
 
     for (const hit of hits) {
-      this.applyDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId);
+      // Aura ticks: damage only (slows applied separately). Contact: damage + applyOnHit.
+      const def = ABILITIES[hit.abilityId];
+      if (def?.aura) {
+        this.applyRawDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId);
+      } else {
+        this.applyDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId);
+      }
+    }
+    for (const slow of slows) {
+      const def = ABILITIES[slow.abilityId];
+      if (def?.applyAuraSlow?.length) {
+        this.statuses.applyApplications(
+          slow.targetId,
+          def.applyAuraSlow,
+          slow.ownerId,
+          now,
+        );
+      }
     }
     for (const id of removedIds) {
       this.sims.delete(id);
@@ -557,6 +574,7 @@ export class CombatSystem {
           st.vx = sim.vx;
           st.vz = sim.vz;
           st.radius = sim.hitRadius;
+          st.slowRadius = sim.slowRadius;
           this.room.state.projectiles.set(id, st);
         }
       }

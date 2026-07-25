@@ -44,7 +44,13 @@ class VfxRuntime {
     pose: VfxPose,
     opts?: VfxSpawnOpts,
   ): VfxHandle {
-    return this.push("cast", abilityId, pose, CAST_LIFE_MS[abilityId] ?? 150, opts);
+    return this.push(
+      "cast",
+      abilityId,
+      pose,
+      opts?.lifeMs ?? CAST_LIFE_MS[abilityId] ?? 150,
+      opts,
+    );
   }
 
   spawnImpactEffect(abilityId: SpellEffectId | string, pose: VfxPose): VfxHandle {

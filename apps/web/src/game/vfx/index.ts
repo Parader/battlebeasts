@@ -24,6 +24,8 @@ export {
   CrescentCastEffect,
   CrescentImpactEffect,
   SmashCrackEffect,
+  FrostBallProjectileEffect,
+  FrostBallCastEffect,
   renderOneShot,
 } from "./catalog";
 

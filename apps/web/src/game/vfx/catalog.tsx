@@ -7,16 +7,18 @@ import { BoltProjectileEffect } from "./effects/boltProjectile";
 import { CrescentCastEffect } from "./effects/crescentCast";
 import { CrescentImpactEffect } from "./effects/crescentImpact";
 import { SmashCrackEffect } from "./effects/smashCrack";
+import { FrostBallProjectileEffect } from "./effects/frostBallProjectile";
+import { FrostBallCastEffect } from "./effects/frostBallCast";
 
-export type ProjectileVfxId = "bolt";
-export type CastVfxId = "bolt" | "crescent";
+export type ProjectileVfxId = "bolt" | "frostBall";
+export type CastVfxId = "bolt" | "crescent" | "frostBall";
 export type ImpactVfxId = "bolt" | "crescent";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
-export const CATALOG_PROJECTILES = new Set<string>(["bolt"]);
+export const CATALOG_PROJECTILES = new Set<string>(["bolt", "frostBall"]);
 
-/** Abilities with dedicated cast one-shots (muzzle / swoop). */
-export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent"]);
+/** Abilities with dedicated cast one-shots (muzzle / swoop / hand charge). */
+export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent", "frostBall"]);
 
 /** Abilities with dedicated hit impact one-shots (not landing AoE cracks). */
 export const CATALOG_IMPACT_FX = new Set<string>(["bolt", "crescent"]);
@@ -62,6 +64,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
     if (usesMeleeSwoopFx(shot.abilityId)) {
       return <CrescentCastEffect key={shot.key} shot={shot} follow={ctx} />;
     }
+    if (shot.abilityId === "frostBall") {
+      return <FrostBallCastEffect key={shot.key} shot={shot} follow={ctx} />;
+    }
     return <BoltCastEffect key={shot.key} shot={shot} follow={ctx} />;
   }
   if (shot.abilityId === "crescent") {
@@ -80,4 +85,6 @@ export {
   CrescentCastEffect,
   CrescentImpactEffect,
   SmashCrackEffect,
+  FrostBallProjectileEffect,
+  FrostBallCastEffect,
 };

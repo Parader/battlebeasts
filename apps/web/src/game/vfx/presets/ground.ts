@@ -52,6 +52,24 @@ export const groundPresets = {
     innerRatio: 0.42,
     spin: 0.15,
   },
+  /** Slow shell that follows Frost Ball (held full opacity while mounted). */
+  frostBallAura: {
+    element: "ice",
+    shape: "circle",
+    colorCore: "#f0f9ff",
+    colorMid: "#7dd3fc",
+    colorEdge: "#075985",
+    noiseScale: 8.5,
+    breakup: 0.5,
+    opacity: 0.7,
+    radius: 4.5,
+    lifeMs: 2000,
+    ringWidth: 0.14,
+    softness: 0.06,
+    innerRatio: 0.15,
+    /** Slow yaw for the following aura disc (rad/s). */
+    spin: 0.45,
+  },
   waterSplash: {
     element: "water",
     shape: "ring",

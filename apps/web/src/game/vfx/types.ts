@@ -14,6 +14,8 @@ export type VfxSpawnOpts = {
   followSpawnOffset?: number;
   /** Optional style index (e.g. crescent swing 0/1/2). */
   variant?: number;
+  /** Override one-shot lifetime (ms). */
+  lifeMs?: number;
 };
 
 export type VfxHandle = {

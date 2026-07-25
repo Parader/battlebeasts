@@ -1,6 +1,7 @@
 /** Shared ability tint for combat VFX (projectiles, hits, muzzle). */
 export const ABILITY_VFX_COLOR: Record<string, string> = {
   bolt: "#38bdf8",
+  frostBall: "#7dd3fc",
   crescent: "#f8fafc",
   shock: "#facc15",
   smash: "#a16207",

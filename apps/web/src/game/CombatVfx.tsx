@@ -4,7 +4,7 @@ import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { HUB_PRACTICE_DUMMIES, MOVE_SPEED } from "@battlebeasts/shared";
-import { abilityVfxColor, BoltProjectileEffect, hasCatalogProjectile } from "./vfx";
+import { abilityVfxColor, BoltProjectileEffect, FrostBallProjectileEffect, hasCatalogProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
@@ -84,6 +84,9 @@ function LegacyProjectileMesh({ room, id }: { room: Room; id: string }) {
 function ProjectileRouter({ room, id }: { room: Room; id: string }) {
     const abilityId = (room.state?.projectiles?.get(id) as { abilityId?: string } | undefined)
         ?.abilityId;
+    if (abilityId === "frostBall") {
+        return <FrostBallProjectileEffect room={room} id={id} />;
+    }
     if (hasCatalogProjectile(abilityId)) {
         return <BoltProjectileEffect room={room} id={id} />;
     }

@@ -25,6 +25,17 @@ export type GroundDecalProps = {
   life?: number;
   /** Manual 0..1 when not using born/life. */
   progress?: number;
+  /** Multiplies preset opacity (e.g. projectile spawn fade-in). */
+  opacityMul?: number;
+  /** Live opacity multiplier read each frame (avoids React re-renders). */
+  opacityMulRef?: { current: number };
+  /** Live 0..1 progress read each frame (avoids React re-renders). */
+  progressRef?: { current: number };
+  /**
+   * When set, disc radius tracks progress 0→1 instead of snapping open
+   * in the first ~8% (for charge / telegraph grows).
+   */
+  growExpand?: boolean;
 };
 
 /**
@@ -41,6 +52,10 @@ export function GroundDecal({
   born,
   life,
   progress,
+  opacityMul = 1,
+  opacityMulRef,
+  progressRef,
+  growExpand = false,
 }: GroundDecalProps) {
   const mesh = useRef<THREE.Mesh>(null);
   const resolvedShape = shape ?? preset.shape;
@@ -64,27 +79,34 @@ export function GroundDecal({
     const m = mesh.current;
     if (!m) return;
 
-    let age = progress;
+    let age = progressRef?.current ?? progress;
     if (born !== undefined && lifeMs > 0) {
       age = (performance.now() - born) / lifeMs;
     }
+    const spin = preset.spin ?? 0;
+    if (spin !== 0) m.rotation.z += spin * dt;
+
+    const mul = (opacityMulRef?.current ?? opacityMul) * 1;
+
     if (age === undefined) {
       setGroundDecalProgress(mat, 1);
-      setGroundDecalOpacity(mat, preset.opacity);
-      m.visible = true;
-      tickGroundDecal(mat, dt);
+      setGroundDecalOpacity(mat, preset.opacity * mul);
+      m.visible = mul > 0.02;
+      tickGroundDecal(mat, dt, spin);
       return;
     }
 
     const t = THREE.MathUtils.clamp(age, 0, 1);
-    // Expand once outward — never shrink (that read as a second shockwave).
-    const expand = THREE.MathUtils.smoothstep(t, 0, 0.08);
-    const fade = softEnvelope(t, preset.appearEnd ?? 0.12, preset.fadeStart ?? 0.55);
+    const expand = growExpand
+      ? t
+      : // Expand once outward — never shrink (that read as a second shockwave).
+        THREE.MathUtils.smoothstep(t, 0, 0.08);
+    const fade = growExpand
+      ? 1
+      : softEnvelope(t, preset.appearEnd ?? 0.12, preset.fadeStart ?? 0.55);
     setGroundDecalProgress(mat, expand);
-    setGroundDecalOpacity(mat, preset.opacity * fade);
-    m.visible = t < 1 && fade > 0.02;
-    const spin = preset.spin ?? 0;
-    if (spin !== 0) m.rotation.z += spin * dt;
+    setGroundDecalOpacity(mat, preset.opacity * fade * mul);
+    m.visible = (growExpand ? true : t < 1) && fade * mul > 0.02;
     tickGroundDecal(mat, dt, spin);
   });
 

@@ -16,6 +16,8 @@ export type CharacterAnimationConfig = {
   upperBodyIdle?: string;
   /** Default upper-body cast (1H magic). */
   castPrimary: string;
+  /** Frost Ball / Standing 1H Magic Attack 02. */
+  castFrost?: string;
   castAoE?: string;
   castMelee?: string;
   dash?: string;
@@ -46,6 +48,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   stunnedIdle: "Dizzy Idle",
   upperBodyIdle: "idle",
   castPrimary: "magic_1h",
+  castFrost: "Standing 1H Magic Attack 02",
   castAoE: "magic_aoe",
   castMelee: "attack",
   heavyCast: "magic_2h",
@@ -130,6 +133,9 @@ export const abilityAnimationBindings: Record<
 > = {
   bolt: { upper: "castPrimary" },
   shock: { upper: "castPrimary" },
+  frostBall: {
+    upper: "castFrost",
+  },
   nova: { upper: "castAoE" },
   rupture: { upper: "castAoE" },
   smash: {

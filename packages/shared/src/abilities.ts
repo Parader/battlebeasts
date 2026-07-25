@@ -137,6 +137,17 @@ export interface AbilityDef {
   applyOnHit?: StatusApplication[];
   /** Statuses applied to caster when the effect resolves. */
   applyOnSelf?: StatusApplication[];
+  /**
+   * Traveling aura projectile: ticks damage in `radius` and applies
+   * `applyAuraSlow` in `slowRadius` without despawning on contact.
+   */
+  aura?: boolean;
+  /** Outer slow shell radius (aura projectiles). */
+  slowRadius?: number;
+  /** Aura tick interval in ms (damage + slow refresh). */
+  tickMs?: number;
+  /** Statuses refreshed on targets inside `slowRadius` each aura tick. */
+  applyAuraSlow?: StatusApplication[];
   /** Optional hit-chain before cooldown (LMB flurries). */
   combo?: AbilityCombo;
   /**
@@ -200,6 +211,35 @@ export const SMASH_JUMP_ATTACK = {
 function smashSegmentWallMs(fromFrame: number, toFrame: number, rate: number): number {
   const frames = Math.max(0, toFrame - fromFrame);
   return (frames / SMASH_JUMP_ATTACK.fps / Math.max(0.01, rate)) * 1000;
+}
+
+/**
+ * Standing 1H Magic Attack 02 (hero.glb) @ 30fps.
+ * Frame 19 = frost ball release.
+ */
+export const FROST_BALL_CAST = {
+  fps: 30,
+  releaseFrame: 19,
+  clipDurationSec: 2.233333,
+  /** Mildly sped windup→release (1 = natural Mixamo pace). */
+  playbackRate: 1.35,
+  /** Forward from caster — prep orb + projectile spawn share this. */
+  spawnOffset: 0.58,
+  /** World Y for hand charge / projectile orb. */
+  handY: 1.18,
+} as const;
+
+function frostBallReleaseWallMs(): number {
+  return (
+    (FROST_BALL_CAST.releaseFrame / FROST_BALL_CAST.fps / FROST_BALL_CAST.playbackRate) * 1000
+  );
+}
+
+function frostBallRecoveryWallMs(): number {
+  const releaseSec = FROST_BALL_CAST.releaseFrame / FROST_BALL_CAST.fps;
+  const restSec = Math.max(0, FROST_BALL_CAST.clipDurationSec - releaseSec);
+  // Trim the clip tail so we unlock a bit before the Mixamo pose fully settles.
+  return (restSec / FROST_BALL_CAST.playbackRate) * 1000 * 0.78;
 }
 
 /** Authored ms that yield `wallMs` after CAST_EXECUTION_SCALE. */
@@ -327,6 +367,37 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
     interruptible: false,
     applyOnHit: [{ statusId: "stunned", durationMs: 1000, chance: 1 }],
+  },
+  frostBall: {
+    id: "frostBall",
+    name: "Frost Ball",
+    cooldownMs: 4500,
+    range: 10,
+    shape: "projectile",
+    damage: 3,
+    speed: 3.5,
+    /** Damage + slow share the same aura radius. */
+    radius: 4.5,
+    slowRadius: 4.5,
+    tickMs: 250,
+    aura: true,
+    spawnOffset: FROST_BALL_CAST.spawnOffset,
+    allowedSlots: ["m2"],
+    defaultSlot: "m2",
+    timing: {
+      anticipationMs: authoredForWallMs(100),
+      castMs: authoredForWallMs(Math.max(16, frostBallReleaseWallMs() - 100)),
+      impactMs: authoredForWallMs(120),
+      recoveryMs: authoredForWallMs(frostBallRecoveryWallMs()),
+      anticipationMoveMul: 0.55,
+      castMoveMul: 0.35,
+      impactMoveMul: 0.45,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: true,
+      /** Cancel through windup until the ball spawns at impact. */
+      cancelUntilPhase: "cast",
+    },
+    applyAuraSlow: [{ statusId: "slowed", durationMs: 1200, chance: 1 }],
   },
   dash: {
     id: "dash",

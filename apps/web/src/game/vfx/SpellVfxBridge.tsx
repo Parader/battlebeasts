@@ -4,6 +4,8 @@ import { useRef } from "react";
 import { ABILITIES, phaseDurationMs } from "@battlebeasts/shared";
 import { CATALOG_CAST_FX, usesMeleeSwoopFx } from "./catalog";
 import { spawnCastEffect } from "./runtime";
+import type { VfxHandle } from "./types";
+import { FROST_HAND_FORWARD, FROST_HAND_Y } from "./effects/frostBallCast";
 
 type PlayerCast = {
   x?: number;
@@ -27,6 +29,7 @@ type PendingMuzzle = {
 
 /**
  * Fires muzzle VFX slightly before impact (during late cast).
+ * Frost Ball spawns a hand charge at anticipation instead.
  * Cast FX follow the caster via `followOwnerId`.
  * Melee swoops (crescent) spawn from combat_fx instead.
  */
@@ -34,6 +37,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
   const lastPhase = useRef(new Map<string, string>());
   const pending = useRef(new Map<string, PendingMuzzle>());
   const fired = useRef(new Set<string>());
+  const frostHand = useRef(new Map<string, VfxHandle>());
 
   useFrame(() => {
     if (!room?.state?.players) return;
@@ -46,9 +50,34 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
 
       const catalog =
         !!abilityId && CATALOG_CAST_FX.has(abilityId) && !usesMeleeSwoopFx(abilityId);
+      const isFrost = abilityId === "frostBall";
 
-      // Schedule muzzle when cast phase begins
-      if (catalog && phase === "cast" && prev !== "cast") {
+      // Frost: charge in the hand from anticipation until release.
+      if (catalog && isFrost && phase === "anticipation" && prev !== "anticipation") {
+        frostHand.current.get(sessionId)?.cancel();
+        const def = ABILITIES[abilityId];
+        const chargeMs = def
+          ? phaseDurationMs(def, "anticipation") + phaseDurationMs(def, "cast") + 90
+          : 520;
+        const yaw = raw.yaw ?? 0;
+        const x = (raw.x ?? 0) + Math.sin(yaw) * FROST_HAND_FORWARD;
+        const z = (raw.z ?? 0) + Math.cos(yaw) * FROST_HAND_FORWARD;
+        frostHand.current.set(
+          sessionId,
+          spawnCastEffect(
+            abilityId,
+            { x, z, yaw, y: FROST_HAND_Y },
+            {
+              followOwnerId: sessionId,
+              followSpawnOffset: FROST_HAND_FORWARD,
+              lifeMs: chargeMs,
+            },
+          ),
+        );
+      }
+
+      // Bolt-style: schedule muzzle when cast phase begins
+      if (catalog && !isFrost && phase === "cast" && prev !== "cast") {
         const def = ABILITIES[abilityId];
         const castMs = def ? phaseDurationMs(def, "cast") : 200;
         const fireAt = now + Math.max(0, castMs - MUZZLE_LEAD_MS);
@@ -56,7 +85,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         fired.current.delete(sessionId);
       }
 
-      // Cancel / leave cast window — drop pending
+      // Cancel / leave cast window — drop pending + frost hand if aborted
       if (
         phase === "idle" ||
         phase === "cancel" ||
@@ -67,6 +96,15 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       ) {
         pending.current.delete(sessionId);
         if (phase !== "recovery") fired.current.delete(sessionId);
+        if (phase === "cancel" || phase === "interrupt" || phase === "idle" || phase === "") {
+          frostHand.current.get(sessionId)?.cancel();
+          frostHand.current.delete(sessionId);
+        }
+      }
+
+      // Clear frost handle after impact (shot may still finish its soft fade)
+      if (isFrost && phase === "impact" && prev !== "impact") {
+        frostHand.current.delete(sessionId);
       }
 
       // Fire when lead time is reached (still casting or just hitting impact)
@@ -82,6 +120,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       // Fallback: impact arrived before schedule (short cast / hitch)
       if (
         catalog &&
+        !isFrost &&
         phase === "impact" &&
         prev !== "impact" &&
         !fired.current.has(sessionId)
@@ -99,6 +138,8 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         lastPhase.current.delete(id);
         pending.current.delete(id);
         fired.current.delete(id);
+        frostHand.current.get(id)?.cancel();
+        frostHand.current.delete(id);
       }
     }
   });

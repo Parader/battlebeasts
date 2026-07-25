@@ -54,6 +54,8 @@ export class ProjectileState extends Schema {
   @type("number") vx = 0;
   @type("number") vz = 0;
   @type("number") radius = 0.35;
+  /** Outer slow shell for aura projectiles (0 = none). */
+  @type("number") slowRadius = 0;
 }
 
 /** Practice dummy / neutral world target. */

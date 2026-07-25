@@ -33,8 +33,21 @@ export type ProjectileSim = {
   hitRadius: number;
   /** Seconds remaining before despawn. */
   life: number;
-  /** Session/target ids already hit (no multi-hit). */
+  /** Session/target ids already hit (contact projectiles: no multi-hit). */
   hitIds: Set<string>;
+  /** Traveling aura — ticks damage/slow without despawning on contact. */
+  aura: boolean;
+  /** Outer slow shell (world units). */
+  slowRadius: number;
+  /**
+   * Radius for wall occlusion. Aura projectiles keep this small so a large
+   * damage/slow shell does not instantly despawn next to scenery.
+   */
+  wallRadius: number;
+  /** Aura tick interval (seconds). */
+  tickSec: number;
+  /** Accumulator toward next aura tick. */
+  tickAcc: number;
 };
 
 export type CombatFxEvent = {
@@ -91,6 +104,8 @@ export function createProjectile(
   const spawnDist = def.spawnOffset ?? 0.32;
   const spawn = pointInFront(owner, owner.yaw, spawnDist);
   const maxRange = def.range > 0 ? def.range : 12;
+  const aura = def.aura === true;
+  const hitRadius = def.radius ?? COMBAT.projectileHitRadius;
   return {
     id,
     ownerId: owner.id,
@@ -100,9 +115,15 @@ export function createProjectile(
     vx: f.x * speed,
     vz: f.z * speed,
     damage: def.damage,
-    hitRadius: def.radius ?? COMBAT.projectileHitRadius,
+    hitRadius,
     life: maxRange / speed,
     hitIds: new Set(),
+    aura,
+    slowRadius: def.slowRadius ?? (aura ? hitRadius * 2 : 0),
+    wallRadius: aura ? COMBAT.projectileHitRadius : hitRadius,
+    tickSec: Math.max(0.05, (def.tickMs ?? 250) / 1000),
+    // Fire first aura pulse immediately on spawn.
+    tickAcc: aura ? Math.max(0.05, (def.tickMs ?? 250) / 1000) : 0,
   };
 }
 
@@ -156,9 +177,28 @@ export function resolveInstantHits(
   return hits;
 }
 
+export type ProjectileHitEvent = {
+  projectileId: string;
+  ownerId: string;
+  abilityId: string;
+  targetId: string;
+  damage: number;
+  hpAfter: number;
+  x: number;
+  z: number;
+};
+
+export type ProjectileSlowEvent = {
+  projectileId: string;
+  ownerId: string;
+  abilityId: string;
+  targetId: string;
+};
+
 export type ProjectileTickResult = {
   removedIds: string[];
-  hits: { projectileId: string; ownerId: string; abilityId: string; targetId: string; damage: number; hpAfter: number; x: number; z: number }[];
+  hits: ProjectileHitEvent[];
+  slows: ProjectileSlowEvent[];
 };
 
 /** Advance projectiles; mutates projectile positions and hitIds.
@@ -172,7 +212,8 @@ export function tickProjectiles(
   walls: readonly WallCollider[] = [],
 ): ProjectileTickResult {
   const removedIds: string[] = [];
-  const hits: ProjectileTickResult["hits"] = [];
+  const hits: ProjectileHitEvent[] = [];
+  const slows: ProjectileSlowEvent[] = [];
 
   for (const p of projectiles) {
     const fromX = p.x;
@@ -185,8 +226,54 @@ export function tickProjectiles(
       continue;
     }
 
-    if (walls.length > 0 && projectileHitsWalls(fromX, fromZ, p.x, p.z, p.hitRadius, walls)) {
+    if (walls.length > 0 && projectileHitsWalls(fromX, fromZ, p.x, p.z, p.wallRadius, walls)) {
       removedIds.push(p.id);
+      continue;
+    }
+
+    if (p.aura) {
+      p.tickAcc += dt;
+      if (p.tickAcc < p.tickSec) continue;
+      p.tickAcc -= p.tickSec;
+
+      for (const body of bodies) {
+        if (body.id === p.ownerId) continue;
+        if (body.vulnerable === false || body.hp <= 0) continue;
+        if (!canHurt(p.ownerId, body.id)) continue;
+
+        const inSlow = circlesOverlap(
+          p.x,
+          p.z,
+          p.slowRadius,
+          body.x,
+          body.z,
+          COMBAT.playerHitRadius,
+        );
+        if (!inSlow) continue;
+
+        slows.push({
+          projectileId: p.id,
+          ownerId: p.ownerId,
+          abilityId: p.abilityId,
+          targetId: body.id,
+        });
+
+        if (
+          circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, COMBAT.playerHitRadius)
+        ) {
+          const hpAfter = Math.max(0, body.hp - p.damage);
+          hits.push({
+            projectileId: p.id,
+            ownerId: p.ownerId,
+            abilityId: p.abilityId,
+            targetId: body.id,
+            damage: p.damage,
+            hpAfter,
+            x: body.x,
+            z: body.z,
+          });
+        }
+      }
       continue;
     }
 
@@ -215,7 +302,7 @@ export function tickProjectiles(
     }
   }
 
-  return { removedIds: [...new Set(removedIds)], hits };
+  return { removedIds: [...new Set(removedIds)], hits, slows };
 }
 
 export function abilityOrThrow(id: string): AbilityDef {
