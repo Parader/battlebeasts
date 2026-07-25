@@ -120,6 +120,79 @@ export const SPELL_SLOTS = [
 export type SpellSlotId = (typeof SPELL_SLOTS)[number]["id"];
 export type SpellSlot = (typeof SPELL_SLOTS)[number];
 
+/**
+ * Combat fire path — prefer this over `def.id === "…"`.
+ * `standard` uses shape (projectile / melee / aoe / dash / buff) + optional travel/aura.
+ */
+export type AbilityEffectKind =
+  | "standard"
+  | "spikeWave"
+  | "coneChannel"
+  | "pulseHeal"
+  | "decoy";
+
+/** Mechanical tags for talent matching (Tag Dictionary). */
+export type SpellTag =
+  | "Projectile"
+  | "Explosion"
+  | "Area"
+  | "Nova"
+  | "Cone"
+  | "Line"
+  | "Melee"
+  | "Dash"
+  | "Blink"
+  | "Channel"
+  | "Instant"
+  | "Cast"
+  | "Damage"
+  | "Healing"
+  | "HealOverTime"
+  | "Shield"
+  | "Self"
+  | "Ally"
+  | "SingleTarget"
+  | "MultiHit"
+  | "DamageOverTime"
+  | "Debuff"
+  | "Control"
+  | "CrowdControl"
+  | "Stun"
+  | "Root"
+  | "Silence"
+  | "Fear"
+  | "Slow"
+  | "Knockback"
+  | "Pull"
+  | "Knockup"
+  | "Movement"
+  | "Haste"
+  | "Defense"
+  | "Defensive"
+  | "Barrier"
+  | "Summon"
+  | "Obstacle"
+  | "Wall"
+  | "GroundEffect"
+  | "Combo"
+  | "Cooldown"
+  | "Utility"
+  | "Stealth"
+  | "Reveal"
+  | "Counter"
+  | "Reflect"
+  | "Pierce"
+  | "Homing"
+  | "Chain"
+  | "Trap"
+  | "Persistent"
+  | "Buff"
+  | "Cleanse"
+  | "Purge"
+  | "Interrupt"
+  | "Resource"
+  | "SpellSlot";
+
 export interface AbilityDef {
   id: string;
   name: string;
@@ -128,6 +201,10 @@ export interface AbilityDef {
   cooldownMs: number;
   range: number;
   shape: AbilityShape;
+  /** Combat dispatcher key. Defaults to `standard` when omitted. */
+  effectKind?: AbilityEffectKind;
+  /** Tags for talent hooks (design + runtime matching). */
+  tags?: readonly SpellTag[];
   damage: number;
   /** Instant heal amount per tick (self-centered AoE support spells). */
   heal?: number;
@@ -403,6 +480,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 350,
     range: 12,
     shape: "projectile",
+    effectKind: "standard",
+    tags: ["Projectile", "Damage", "SingleTarget", "Instant"],
     damage: 18,
     speed: 22,
     spawnOffset: 0.32,
@@ -431,7 +510,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 550,
     range: 2.2,
     shape: "melee",
-    damage: 11,
+    effectKind: "standard",
+    tags: ["Melee", "Damage", "MultiHit", "Combo", "Instant"],
+    damage: 16,
     /** Tight frontal slash — was 2.0 and felt like a wide AoE. */
     radius: 1.15,
     allowedSlots: ["m1"],
@@ -458,6 +539,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 5500,
     range: 2.8,
     shape: "aoe",
+    effectKind: "standard",
+    tags: ["Area", "Damage", "Movement", "Stun", "Control", "Cast"],
     damage: 12,
     radius: 1.9,
     allowedSlots: ["m2"],
@@ -528,6 +611,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 2800,
     range: 12.5,
     shape: "projectile",
+    effectKind: "standard",
+    tags: ["Projectile", "Area", "Damage", "DamageOverTime", "Debuff", "GroundEffect", "Persistent", "Cast"],
     damage: 3,
     speed: 3.5,
     /** Damage + slow share the same aura radius (matches frost disc visual). */
@@ -564,6 +649,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 7000,
     range: 0,
     shape: "buff",
+    effectKind: "standard",
+    tags: ["Buff", "Self", "Movement", "Instant"],
     damage: 0,
     allowedSlots: ["space"],
     defaultSlot: "space",
@@ -589,6 +676,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 4000,
     range: 5,
     shape: "dash",
+    effectKind: "standard",
+    tags: ["Dash", "Movement", "Defense", "Buff", "Instant"],
     damage: 0,
     speed: 18,
     allowedSlots: ["space"],
@@ -631,6 +720,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 8000,
     range: 0,
     shape: "buff",
+    effectKind: "decoy",
+    tags: ["Summon", "Stealth", "Utility", "Self", "Cast"],
     damage: 0,
     allowedSlots: ["q"],
     defaultSlot: "q",
@@ -660,6 +751,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 6000,
     range: 0,
     shape: "aoe",
+    effectKind: "standard",
+    tags: ["Area", "Nova", "Damage", "Knockback", "Debuff", "Control", "Cast"],
     damage: 12,
     radius: 3.5,
     knockback: 9.5,
@@ -695,6 +788,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 7000,
     range: 12,
     shape: "projectile",
+    effectKind: "standard",
+    tags: ["Projectile", "Damage", "Pull", "Debuff", "Control", "SingleTarget", "Cast"],
     damage: 5,
     speed: 26,
     radius: 0.55,
@@ -731,6 +826,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 5500,
     range: 10,
     shape: "aoe",
+    effectKind: "spikeWave",
+    tags: ["Line", "GroundEffect", "Damage", "DamageOverTime", "Debuff", "MultiHit", "Cast"],
     damage: 4,
     /** Hit width per spike — keep the corridor tight. */
     radius: 0.55,
@@ -765,6 +862,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 12000,
     range: 11,
     shape: "aoe",
+    effectKind: "coneChannel",
+    tags: ["Cone", "Channel", "Area", "Damage", "Debuff", "Control", "Root", "DamageOverTime"],
     damage: 3,
     /** Max half-angle once fully spread (~40°). */
     coneHalfAngle: 0.7,
@@ -803,6 +902,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     cooldownMs: 10000,
     range: 0,
     shape: "aoe",
+    effectKind: "pulseHeal",
+    tags: ["Healing", "Area", "Channel", "Ally", "Self", "Shield", "Defense"],
     damage: 0,
     heal: GROOVE_CAST.healPerTick,
     healTicks: GROOVE_CAST.healTicks,
@@ -835,6 +936,21 @@ export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map((slot) => {
 export function canEquipInSlot(abilityId: string, slotId: SpellSlotId): boolean {
   const def = ABILITIES[abilityId];
   return Boolean(def?.allowedSlots.includes(slotId));
+}
+
+/** Combat fire path for an ability (id-agnostic). */
+export function abilityEffectKind(def: AbilityDef | undefined): AbilityEffectKind {
+  return def?.effectKind ?? "standard";
+}
+
+/** True when the ability carries every listed tag. */
+export function abilityHasTags(
+  def: AbilityDef | undefined,
+  ...need: SpellTag[]
+): boolean {
+  if (!def?.tags?.length) return need.length === 0;
+  const set = new Set(def.tags);
+  return need.every((t) => set.has(t));
 }
 
 /** True when the ability chains multiple swings before cooldown. */

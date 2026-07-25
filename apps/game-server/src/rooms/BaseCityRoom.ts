@@ -5,17 +5,25 @@ import {
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
   DEFAULT_LOADOUT,
+  ESSENCE_PER_TALENT_POINT,
+  ESSENCE_RESET_ALL,
+  ESSENCE_RESET_TREE,
   HUB_SPAWN,
   INTERACT,
   LOADOUT_SIZE,
   MAX_TALENTS,
   RESPAWN_LOCK_MS,
   SHOP_ITEMS,
+  STARTER_TALENT_POINTS,
   TALENTS,
+  TALENT_POINT_BUDGET,
+  TALENT_TREE_IDS,
   TICK_MS,
   addCoins,
   applyMovement,
   applyYaw,
+  clampBuildToOwned,
+  clearTree,
   formatCoins,
   formatShopCost,
   formatWallet,
@@ -26,13 +34,17 @@ import {
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   normalizeLoadout,
+  normalizeTalentBuild,
   phaseDurationMs,
   resolvePveTransfer,
   spendCoins,
   baseCityStaticColliders,
   pointInInteractZone,
+  totalPointsSpent,
   type PlayerInput,
   type PvpSeat,
+  type TalentBuild,
+  type TalentTreeId,
   type Wallet,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
@@ -53,6 +65,7 @@ import {
   saveProfilePattern,
   saveProfilePatternColor,
   saveProfileAppearance,
+  saveTalentBuild,
   saveTalents,
 } from "../persistence.js";
 import { takePendingLoot } from "../pendingLoot.js";
@@ -98,6 +111,9 @@ export class BaseCityRoom extends Room<BaseCityState> {
   /** Hub-scoped party lobbies (invite/seat/mode selection prior to PvP queueing). */
   private parties = new HubPartyRegistry();
   private lastHubRosterBroadcastAt = 0;
+  /** Owned talent points + ranked catalog build (not schema-synced). */
+  private talentPointsBySession = new Map<string, number>();
+  private talentBuildBySession = new Map<string, TalentBuild>();
 
   onCreate(options: AuthJoinOptions) {
     this.setState(new BaseCityState());
@@ -174,6 +190,22 @@ export class BaseCityRoom extends Room<BaseCityState> {
 
     this.onMessage("set_talents", (client, message: { talentIds: string[] }) => {
       void this.handleSetTalents(client, message.talentIds ?? []);
+    });
+
+    this.onMessage("buy_talent_points", (client, message: { count?: number }) => {
+      void this.handleBuyTalentPoints(client, message?.count ?? 1);
+    });
+
+    this.onMessage("set_talent_build", (client, message: { build?: TalentBuild }) => {
+      void this.handleSetTalentBuild(client, message?.build ?? {});
+    });
+
+    this.onMessage("reset_talent_tree", (client, message: { tree?: TalentTreeId }) => {
+      void this.handleResetTalentTree(client, message?.tree);
+    });
+
+    this.onMessage("reset_talent_build", (client) => {
+      void this.handleResetTalentBuild(client);
     });
 
     this.onMessage(
@@ -274,13 +306,15 @@ export class BaseCityRoom extends Room<BaseCityState> {
     player.z = HUB_SPAWN.z + (Math.random() - 0.5) * 1.2;
     player.loadout = DEFAULT_LOADOUT.join(",");
     player.talents = "";
+    this.talentPointsBySession.set(client.sessionId, STARTER_TALENT_POINTS);
+    this.talentBuildBySession.set(client.sessionId, {});
 
     if (verified.isGuest) {
       const starter = normalizeCoins({ copper: 75, silver: 2, gold: 0 });
       player.copper = starter.copper;
       player.silver = starter.silver;
       player.gold = starter.gold;
-      player.essence = 3;
+      player.essence = 12;
       player.color =
         verified.color && (COSMETIC_COLORS as readonly string[]).includes(verified.color)
           ? verified.color
@@ -295,6 +329,8 @@ export class BaseCityRoom extends Room<BaseCityState> {
       player.essence = eco.essence;
       player.loadout = normalizeLoadout(eco.abilityIds).join(",");
       player.talents = eco.talentIds.slice(0, MAX_TALENTS).join(",");
+      this.talentPointsBySession.set(client.sessionId, eco.talentPoints);
+      this.talentBuildBySession.set(client.sessionId, eco.talentBuild);
       player.color =
         (eco.color && (COSMETIC_COLORS as readonly string[]).includes(eco.color)
           ? eco.color
@@ -333,6 +369,8 @@ export class BaseCityRoom extends Room<BaseCityState> {
 
     if (!this.ownerId) this.ownerId = options.hubOwnerId ?? verified.userId;
 
+    this.applyCombatKit(client.sessionId, player);
+
     const visiting = this.ownerId && verified.userId !== this.ownerId;
     client.send("toast", {
       message: verified.isGuest
@@ -343,6 +381,8 @@ export class BaseCityRoom extends Room<BaseCityState> {
     });
     this.sendInventory(client, player);
     this.broadcastHubRoster();
+    // Catch soft-leave ghosts that survived eviction (collision without a model).
+    this.purgeDuplicateUserSeats(client.sessionId);
   }
 
   async onLeave(client: Client, consented: boolean) {
@@ -376,6 +416,8 @@ export class BaseCityRoom extends Room<BaseCityState> {
     this.dummyCooldownUntil.delete(sessionId);
     this.spawnBySession.delete(sessionId);
     this.diedAtBySession.delete(sessionId);
+    this.talentPointsBySession.delete(sessionId);
+    this.talentBuildBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
     this.broadcastHubRoster();
   }
@@ -393,6 +435,29 @@ export class BaseCityRoom extends Room<BaseCityState> {
       // Strip schema first so onLeave is a no-op if the socket close is non-consented.
       this.stripPlayerSession(sessionId);
       stale?.leave(WS_CLOSE_CONSENTED, "Replaced by newer hub session");
+    }
+  }
+
+  /**
+   * If a hunter already has a live (connected) seat, strip every other seat for that
+   * account — including soft-leave ghosts that still occupy collision space.
+   */
+  private purgeDuplicateUserSeats(preferSessionId?: string) {
+    const liveByUser = new Map<string, string>();
+    for (const [sessionId, player] of this.state.players.entries()) {
+      if (!player.id || player.disconnected) continue;
+      const existing = liveByUser.get(player.id);
+      if (!existing || sessionId === preferSessionId) {
+        liveByUser.set(player.id, sessionId);
+      }
+    }
+    for (const [sessionId, player] of [...this.state.players.entries()]) {
+      if (!player.id) continue;
+      const keep = liveByUser.get(player.id);
+      if (!keep || keep === sessionId) continue;
+      const stale = this.clients.find((c) => c.sessionId === sessionId);
+      this.stripPlayerSession(sessionId);
+      stale?.leave(WS_CLOSE_CONSENTED, "Duplicate hub seat");
     }
   }
 
@@ -425,16 +490,123 @@ export class BaseCityRoom extends Room<BaseCityState> {
         silver: wallet.silver,
         gold: wallet.gold,
         essence: wallet.essence,
+        talent_points: this.talentPointsBySession.get(client.sessionId) ?? 0,
       },
       loadout: player.loadout.split(",").filter(Boolean),
       talents: player.talents.split(",").filter(Boolean),
+      talentBuild: this.talentBuildBySession.get(client.sessionId) ?? {},
     });
+  }
+
+  /** Bake combat kit + apply max HP from live talents. */
+  private applyCombatKit(sessionId: string, player: PlayerState) {
+    this.combat.syncSessionKit(sessionId, player.loadout, player.talents);
+    const bonus = this.combat.getSessionKit(sessionId)?.maxHpBonus ?? 0;
+    player.maxHp = 100 + bonus;
+    player.hp = Math.min(player.hp, player.maxHp);
   }
 
   private async persistInventory(sessionId: string, player: PlayerState) {
     const identity = this.identities.get(sessionId);
     if (!identity || identity.isGuest) return;
-    await saveInventory(identity.userId, this.walletOf(player));
+    await saveInventory(
+      identity.userId,
+      this.walletOf(player),
+      this.talentPointsBySession.get(sessionId),
+    );
+  }
+
+  private async handleBuyTalentPoints(client: Client, count: number) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const n = Math.max(1, Math.min(20, Math.floor(count)));
+    const owned = this.talentPointsBySession.get(client.sessionId) ?? 0;
+    const room = Math.max(0, TALENT_POINT_BUDGET - owned);
+    if (room <= 0) {
+      client.send("toast", { message: `Talent point cap reached (${TALENT_POINT_BUDGET})` });
+      return;
+    }
+    const buy = Math.min(n, room);
+    const cost = buy * ESSENCE_PER_TALENT_POINT;
+    if (player.essence < cost) {
+      client.send("toast", {
+        message: `Need ${cost} essence (${ESSENCE_PER_TALENT_POINT} each)`,
+      });
+      return;
+    }
+    player.essence -= cost;
+    this.talentPointsBySession.set(client.sessionId, owned + buy);
+    await this.persistInventory(client.sessionId, player);
+    this.sendInventory(client, player);
+    client.send("toast", {
+      message: `Bought ${buy} talent point${buy === 1 ? "" : "s"} (−${cost} essence)`,
+    });
+  }
+
+  private async handleSetTalentBuild(client: Client, raw: TalentBuild) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const owned = this.talentPointsBySession.get(client.sessionId) ?? 0;
+    let build = normalizeTalentBuild(raw);
+    build = clampBuildToOwned(build, owned);
+    if (totalPointsSpent(build) > Math.min(owned, TALENT_POINT_BUDGET)) {
+      client.send("toast", { message: "Build exceeds owned talent points" });
+      return;
+    }
+    this.talentBuildBySession.set(client.sessionId, build);
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) await saveTalentBuild(identity.userId, build);
+    this.sendInventory(client, player);
+    client.send("toast", {
+      message: `Talent build saved (${totalPointsSpent(build)}/${owned} pts)`,
+    });
+  }
+
+  private async handleResetTalentTree(client: Client, tree: TalentTreeId | undefined) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !tree || !(TALENT_TREE_IDS as readonly string[]).includes(tree)) return;
+    const current = this.talentBuildBySession.get(client.sessionId) ?? {};
+    const next = clearTree(current, tree);
+    if (totalPointsSpent(next) === totalPointsSpent(current)) {
+      client.send("toast", { message: `No points invested in ${tree}` });
+      return;
+    }
+    if (player.essence < ESSENCE_RESET_TREE) {
+      client.send("toast", { message: `Need ${ESSENCE_RESET_TREE} essence to reset ${tree}` });
+      return;
+    }
+    player.essence -= ESSENCE_RESET_TREE;
+    this.talentBuildBySession.set(client.sessionId, next);
+    await this.persistInventory(client.sessionId, player);
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) await saveTalentBuild(identity.userId, next);
+    this.sendInventory(client, player);
+    client.send("toast", {
+      message: `Reset ${tree} (−${ESSENCE_RESET_TREE} essence)`,
+    });
+  }
+
+  private async handleResetTalentBuild(client: Client) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const current = this.talentBuildBySession.get(client.sessionId) ?? {};
+    if (totalPointsSpent(current) <= 0) {
+      client.send("toast", { message: "No talent points invested" });
+      return;
+    }
+    if (player.essence < ESSENCE_RESET_ALL) {
+      client.send("toast", { message: `Need ${ESSENCE_RESET_ALL} essence to reset all talents` });
+      return;
+    }
+    player.essence -= ESSENCE_RESET_ALL;
+    this.talentBuildBySession.set(client.sessionId, {});
+    await this.persistInventory(client.sessionId, player);
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) await saveTalentBuild(identity.userId, {});
+    this.sendInventory(client, player);
+    client.send("toast", {
+      message: `Talent build cleared (−${ESSENCE_RESET_ALL} essence)`,
+    });
   }
 
   private async handleSetColor(client: Client, color: string) {
@@ -564,6 +736,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
     }
 
     player.loadout = cleaned.join(",");
+    this.applyCombatKit(client.sessionId, player);
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) await saveLoadout(identity.userId, cleaned);
     this.sendInventory(client, player);
@@ -581,9 +754,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
     }
 
     player.talents = cleaned.join(",");
-    // Apply shallow effects for v0
-    player.maxHp = 100 + (cleaned.includes("tough") ? 10 : 0);
-    player.hp = Math.min(player.hp, player.maxHp);
+    this.applyCombatKit(client.sessionId, player);
 
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) await saveTalents(identity.userId, cleaned);
@@ -982,6 +1153,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
 
     if (now - this.lastHubRosterBroadcastAt >= HUB_ROSTER_BROADCAST_MS) {
       this.broadcastHubRoster();
+      this.purgeDuplicateUserSeats();
     }
   }
 

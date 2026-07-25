@@ -157,6 +157,8 @@ export function useBaseCityRoom(options: Options) {
         silver: 0,
         gold: 0,
         essence: 0,
+        talentPoints: 0,
+        talentBuild: {} as Record<string, number>,
         loadout: [] as string[],
         talents: [] as string[],
     });
@@ -323,12 +325,19 @@ export function useBaseCityRoom(options: Options) {
 
             joined.onMessage(
                 "inventory",
-                (msg: { resources?: Record<string, number>; loadout?: string[]; talents?: string[] }) => {
+                (msg: {
+                    resources?: Record<string, number>;
+                    loadout?: string[];
+                    talents?: string[];
+                    talentBuild?: Record<string, number>;
+                }) => {
                     setEconomy({
                         copper: msg.resources?.copper ?? 0,
                         silver: msg.resources?.silver ?? 0,
                         gold: msg.resources?.gold ?? 0,
                         essence: msg.resources?.essence ?? 0,
+                        talentPoints: msg.resources?.talent_points ?? 0,
+                        talentBuild: msg.talentBuild ?? {},
                         loadout: msg.loadout ?? [],
                         talents: msg.talents ?? [],
                     });
@@ -1276,16 +1285,21 @@ export function useBaseCityRoom(options: Options) {
                     | undefined;
 
                 const playersMap = r.state?.players as
-                    | Map<string, { x: number; z: number; disconnected?: boolean; hp?: number }>
+                    | Map<
+                          string,
+                          { x: number; z: number; disconnected?: boolean; hp?: number; id?: string }
+                      >
                     | undefined;
                 const targetsMap = r.state?.targets as
                     | Map<string, { x: number; z: number; hp?: number }>
                     | undefined;
                 if (playersMap) {
+                    const localUserId = playersMap.get(r.sessionId)?.id ?? null;
                     const dynamics = unitCollidersExcept(
                         playersMap.entries(),
                         targetsMap?.entries() ?? null,
                         r.sessionId,
+                        localUserId,
                     );
                     const statics = staticsForPhase(phaseRef.current, contentModeRef.current);
                     predictor.setWorldColliders(statics, dynamics);
@@ -1504,6 +1518,7 @@ export function useBaseCityRoom(options: Options) {
                         | undefined;
                     if (me && typeof me.copper === "number") {
                         setEconomy((prev) => ({
+                            ...prev,
                             copper: me.copper ?? prev.copper,
                             silver: me.silver ?? prev.silver,
                             gold: me.gold ?? prev.gold,

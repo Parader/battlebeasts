@@ -1,3 +1,4 @@
+import { ABILITIES, abilityEffectKind } from "@battlebeasts/shared";
 import type { MutableRefObject } from "react";
 import { Room } from "colyseus.js";
 import type { OneShotEffect } from "./types";
@@ -40,15 +41,6 @@ export const CATALOG_AOE_CRACK = new Set<string>(["smash"]);
 /** AoE that skips legacy ring; VFX is owned by SpellVfxBridge (timed to anim). */
 export const CATALOG_AOE_BRIDGED = new Set<string>(["gust"]);
 
-/** Staggered ground spikes — one pop VFX per combat_fx segment. */
-export const CATALOG_SPIKE_FX = new Set<string>(["spikes"]);
-
-/** Expanding frost spray cone — one mist layer per combat_fx tick. */
-export const CATALOG_FROST_MIST_FX = new Set<string>(["frostMist"]);
-
-/** Self-centered heal pulse — radiating swooshes, skips legacy ground ring. */
-export const CATALOG_GROOVE_FX = new Set<string>(["groove"]);
-
 export function hasCatalogProjectile(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_PROJECTILES.has(abilityId);
 }
@@ -74,15 +66,15 @@ export function usesBridgedAoeFx(abilityId: string | undefined): boolean {
 }
 
 export function usesSpikeFx(abilityId: string | undefined): boolean {
-  return !!abilityId && CATALOG_SPIKE_FX.has(abilityId);
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "spikeWave";
 }
 
 export function usesFrostMistFx(abilityId: string | undefined): boolean {
-  return !!abilityId && CATALOG_FROST_MIST_FX.has(abilityId);
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "coneChannel";
 }
 
 export function usesGrooveFx(abilityId: string | undefined): boolean {
-  return !!abilityId && CATALOG_GROOVE_FX.has(abilityId);
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "pulseHeal";
 }
 
 export type VfxFollowContext = {
@@ -111,13 +103,13 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (shot.abilityId === "gust") {
     return <GustWaveEffect key={shot.key} shot={shot} follow={ctx} />;
   }
-  if (shot.abilityId === "spikes") {
+  if (usesSpikeFx(shot.abilityId)) {
     return <SpikesPopEffect key={shot.key} shot={shot} />;
   }
-  if (shot.abilityId === "frostMist") {
+  if (usesFrostMistFx(shot.abilityId)) {
     return <FrostMistConeEffect key={shot.key} shot={shot} follow={ctx} />;
   }
-  if (shot.abilityId === "groove") {
+  if (usesGrooveFx(shot.abilityId)) {
     return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
   }
   return <BoltImpactEffect key={shot.key} shot={shot} />;

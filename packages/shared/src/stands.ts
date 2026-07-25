@@ -1,3 +1,5 @@
+import type { SpellTag } from "./abilities";
+
 export type StandKind = "customization" | "build" | "talent" | "shop";
 
 /**
@@ -127,16 +129,43 @@ export function interactZoneDist(px: number, pz: number, zone: InteractZone): nu
   return Math.hypot(px - zone.x, pz - zone.z);
 }
 
+/** Live talent modifiers — baked by resolveKit, never scanned per tick. */
+export type TalentMod =
+  | { kind: "maxHp"; amount: number }
+  | { kind: "moveSpeedMul"; mul: number }
+  | { kind: "cooldownMul"; mul: number; tags?: readonly SpellTag[] };
+
 export interface TalentDef {
   id: string;
   name: string;
   description: string;
+  /** Live talent mods baked by resolveKit. Catalog entries omit this. */
+  mods?: readonly TalentMod[];
+  status?: "live" | "catalog";
 }
 
 export const TALENTS: Record<string, TalentDef> = {
-  tough: { id: "tough", name: "Tough", description: "+10 max HP" },
-  swift: { id: "swift", name: "Swift", description: "+8% move speed" },
-  focused: { id: "focused", name: "Focused", description: "-10% ability cooldowns" },
+  tough: {
+    id: "tough",
+    name: "Tough",
+    description: "+10 max HP",
+    status: "live",
+    mods: [{ kind: "maxHp", amount: 10 }],
+  },
+  swift: {
+    id: "swift",
+    name: "Swift",
+    description: "+8% move speed",
+    status: "live",
+    mods: [{ kind: "moveSpeedMul", mul: 1.08 }],
+  },
+  focused: {
+    id: "focused",
+    name: "Focused",
+    description: "-10% ability cooldowns",
+    status: "live",
+    mods: [{ kind: "cooldownMul", mul: 0.9 }],
+  },
 };
 
 /** Whole-body hide tints (Appearance stand). */

@@ -5,12 +5,14 @@ import {
   COMBAT,
   GROOVE_CAST,
   MOVE_SPEED,
+  abilityEffectKind,
   canPlayerCancelCast,
   createProjectile,
   dashOffset,
   isChannelAbility,
   isComboAbility,
   isInIFrameWindow,
+  kitCooldownMs,
   length2,
   meleeCenter,
   moveAndCollide,
@@ -22,6 +24,7 @@ import {
   resolveComboContinueMoveMul,
   resolveCollisions,
   resolveInstantHits,
+  resolveKit,
   resolveTravel,
   resolveConeHits,
   sampleTravel,
@@ -37,6 +40,7 @@ import {
   nextFrostChillStacks,
   type AbilityDef,
   type CastPhaseId,
+  type CombatSessionKit,
   type StaticCollider,
   type CombatBody,
   type CombatFxEvent,
@@ -111,6 +115,13 @@ type ActiveKnockback = {
   endAt: number;
 };
 
+type ActiveCombo = {
+  abilityId: string;
+  hitsDone: number;
+  /** 0 while mid-cast; wall time when continue window expires after a hit. */
+  continueUntil: number;
+};
+
 type PendingSpike = {
   fireAt: number;
   x: number;
@@ -172,6 +183,13 @@ export class CombatSystem {
   private nextId = 1;
   private hooks: CombatRoomHooks;
   private staticColliders: StaticCollider[] = [];
+  /** Cached wall colliders — rebuilt in setStaticColliders. */
+  private wallColliders: Extract<StaticCollider, { shape: "walls" }>[] = [];
+  /** Reused each collectBodies / tick — avoid GC spikes. */
+  private bodyBuffer: CombatBody[] = [];
+  private simList: ProjectileSim[] = [];
+  /** Per-session baked loadout + talent mods. */
+  private kits = new Map<string, CombatSessionKit>();
   readonly statuses: StatusSystem;
 
   constructor(
@@ -193,10 +211,24 @@ export class CombatSystem {
 
   setStaticColliders(colliders: StaticCollider[]) {
     this.staticColliders = colliders;
+    this.wallColliders = colliders.filter(
+      (c): c is Extract<StaticCollider, { shape: "walls" }> => c.shape === "walls",
+    );
+  }
+
+  /** Bake loadout + talents for this session (call on join / set_loadout / set_talents). */
+  syncSessionKit(sessionId: string, loadoutCsv: string, talentCsv: string) {
+    const talentIds = talentCsv.split(",").filter(Boolean);
+    this.kits.set(sessionId, resolveKit(loadoutCsv, talentIds));
+  }
+
+  getSessionKit(sessionId: string): CombatSessionKit | undefined {
+    return this.kits.get(sessionId);
   }
 
   /** Authoritative move with player/static collision. */
   movePlayer(sessionId: string, from: Vec2, desired: Vec2): Vec2 {
+    const me = this.room.state.players.get(sessionId);
     return moveAndCollide(
       from,
       desired,
@@ -206,12 +238,14 @@ export class CombatSystem {
         this.room.state.players.entries(),
         this.room.state.targets.entries(),
         sessionId,
+        me?.id,
       ),
     );
   }
 
   /** Clamp a teleport/dash sample into free space (swept so we can't skip walls). */
   clampPlayerPos(sessionId: string, pos: Vec2): Vec2 {
+    const me = this.room.state.players.get(sessionId);
     return resolveCollisions(
       pos,
       COLLISION.playerRadius,
@@ -220,6 +254,7 @@ export class CombatSystem {
         this.room.state.players.entries(),
         this.room.state.targets.entries(),
         sessionId,
+        me?.id,
       ),
     );
   }
@@ -317,6 +352,7 @@ export class CombatSystem {
     this.casts.delete(sessionId);
     this.travels.delete(sessionId);
     this.combos.delete(sessionId);
+    this.kits.delete(sessionId);
     this.statuses.clearTarget(sessionId);
     this.clearOwnedDecoys(sessionId);
     for (const [id, sim] of this.sims) {
@@ -360,7 +396,8 @@ export class CombatSystem {
 
   getEffectiveMoveSpeed(sessionId: string, base = MOVE_SPEED): number {
     if (!this.statuses.canMove(sessionId)) return 0;
-    return base * this.getMoveMultiplier(sessionId);
+    const kitMul = this.kits.get(sessionId)?.moveSpeedMul ?? 1;
+    return base * kitMul * this.getMoveMultiplier(sessionId);
   }
 
   tryBeginCast(
@@ -370,8 +407,9 @@ export class CombatSystem {
     now: number,
     opts?: CastBeginOpts,
   ): boolean {
-    const loadout = player.loadout.split(",").filter(Boolean);
-    if (!loadout.includes(castId)) return false;
+    const kit = this.kits.get(sessionId);
+    const inLoadout = kit ? kit.loadoutIds.has(castId) : player.loadout.split(",").includes(castId);
+    if (!inLoadout) return false;
     const def = ABILITIES[castId];
     if (!def) return false;
     if (player.disconnected || player.hp <= 0) return false;
@@ -452,7 +490,7 @@ export class CombatSystem {
 
     this.enterPhase(sessionId, player, def, first, now, now, { moveX, moveZ });
     // Decoy: clone + cloak commit immediately so the fake appears before the crouch.
-    if (def.id === "decoy") {
+    if (abilityEffectKind(def) === "decoy") {
       this.commitDecoyCast(sessionId, player, def, now);
     }
     this.syncInvulnerable(sessionId, player, now);
@@ -490,16 +528,14 @@ export class CombatSystem {
     if (this.sims.size === 0) return;
 
     const bodies = this.collectBodies();
-    const list = [...this.sims.values()];
-    const walls = this.staticColliders.filter(
-      (c): c is Extract<StaticCollider, { shape: "walls" }> => c.shape === "walls",
-    );
+    this.simList.length = 0;
+    for (const sim of this.sims.values()) this.simList.push(sim);
     const { removedIds, hits, slows } = tickProjectiles(
-      list,
+      this.simList,
       dt,
       bodies,
       (o, t) => this.canHurt(o, t),
-      walls,
+      this.wallColliders,
     );
 
     for (const hit of hits) {
@@ -538,7 +574,7 @@ export class CombatSystem {
   }
 
   private advanceKnockbacks(now: number) {
-    for (const [id, kb] of [...this.knockbacks.entries()]) {
+    for (const [id, kb] of this.knockbacks) {
       const dur = Math.max(1, kb.endAt - kb.startAt);
       const linear = Math.min(1, Math.max(0, (now - kb.startAt) / dur));
       // Ease-out so the shove hits hard then settles.
@@ -576,7 +612,7 @@ export class CombatSystem {
   }
 
   private advanceTravels(now: number) {
-    for (const [sessionId, travel] of [...this.travels.entries()]) {
+    for (const [sessionId, travel] of this.travels) {
       const player = this.room.state.players.get(sessionId);
       if (!player) {
         this.travels.delete(sessionId);
@@ -612,7 +648,7 @@ export class CombatSystem {
   }
 
   private advanceCasts(now: number) {
-    for (const [sessionId, cast] of [...this.casts.entries()]) {
+    for (const [sessionId, cast] of this.casts) {
       const player = this.room.state.players.get(sessionId);
       if (!player || player.disconnected || player.hp <= 0) {
         this.endComboEarly(sessionId, cast.abilityId, cast.effectFired, now);
@@ -666,7 +702,7 @@ export class CombatSystem {
   }
 
   private advanceCombos(now: number) {
-    for (const [sessionId, combo] of [...this.combos.entries()]) {
+    for (const [sessionId, combo] of this.combos) {
       if (combo.continueUntil <= 0 || now < combo.continueUntil) continue;
       const casting = this.casts.get(sessionId);
       if (casting?.abilityId === combo.abilityId) continue;
@@ -756,6 +792,7 @@ export class CombatSystem {
     const ownerBody = this.playerBody(sessionId, player);
     const travel = resolveTravel(def);
     const deferHit = travel.mode === "translate" && travel.effectOnArrive === true;
+    const kind = abilityEffectKind(def);
 
     // Travel can attach to any shape (dash default; leap slam, charges, etc.)
     let travelLanding: Vec2 | null = null;
@@ -795,7 +832,28 @@ export class CombatSystem {
       });
     }
 
-    if (def.shape === "projectile") {
+    if (kind === "decoy") {
+      // Clone + cloak already committed at cast begin (see commitDecoyCast).
+      return;
+    }
+
+    if (kind === "spikeWave" && !deferHit) {
+      this.scheduleSpikeWave(sessionId, ownerBody, def, now);
+    } else if (kind === "coneChannel" && !deferHit) {
+      this.scheduleFrostMist(sessionId, def, now);
+    } else if (kind === "pulseHeal" && !deferHit) {
+      const center = { x: player.x, z: player.z };
+      const radius = def.radius ?? 7;
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: center.x,
+        z: center.z,
+        radius,
+        ownerId: sessionId,
+      });
+      this.scheduleGrooveHeal(sessionId, def, now);
+    } else if (def.shape === "projectile") {
       if (this.sims.size < COMBAT.maxProjectiles) {
         const id = `p_${this.nextId++}`;
         const sim = createProjectile(id, ownerBody, def);
@@ -833,43 +891,21 @@ export class CombatSystem {
       });
       this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
     } else if (def.shape === "aoe" && !deferHit) {
-      if (def.id === "spikes") {
-        this.scheduleSpikeWave(sessionId, ownerBody, def, now);
-      } else if (def.id === "frostMist") {
-        this.scheduleFrostMist(sessionId, def, now);
-      } else if (def.id === "groove") {
-        const center = { x: player.x, z: player.z };
-        const radius = def.radius ?? 7;
-        this.fx({
-          kind: "aoe",
-          abilityId: def.id,
-          x: center.x,
-          z: center.z,
-          radius,
-          ownerId: sessionId,
-        });
-        this.scheduleGrooveHeal(sessionId, def, now);
-      } else {
-        const center = travelLanding ?? { x: player.x, z: player.z };
-        const radius = def.radius ?? 3;
-        this.fx({
-          kind: "aoe",
-          abilityId: def.id,
-          x: center.x,
-          z: center.z,
-          radius,
-          ownerId: sessionId,
-        });
-        this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
-      }
-    } else if (def.id === "decoy") {
-      // Clone + cloak already committed at cast begin (see commitDecoyCast).
+      const center = travelLanding ?? { x: player.x, z: player.z };
+      const radius = def.radius ?? 3;
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: center.x,
+        z: center.z,
+        radius,
+        ownerId: sessionId,
+      });
+      this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
     }
-    // dash / deferred landing: travel-only here (+ optional self statuses)
+    // dash / buff / deferred landing: travel-only here (+ optional self statuses)
 
-    if (def.id !== "decoy") {
-      this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
-    }
+    this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
   }
 
   /**
@@ -1163,9 +1199,6 @@ export class CombatSystem {
         comboHit: mist.tickIndex + 1,
       });
 
-      const walls = this.staticColliders.filter(
-        (c): c is Extract<StaticCollider, { shape: "walls" }> => c.shape === "walls",
-      );
       const hits = resolveConeHits(
         { x: owner.x, z: owner.z },
         owner.yaw,
@@ -1175,7 +1208,7 @@ export class CombatSystem {
         mist.ownerId,
         this.collectBodies(),
         (o, tid) => this.canHurt(o, tid),
-        { walls, softOcclude: true },
+        { walls: this.wallColliders, softOcclude: true },
       );
       for (const hit of hits) {
         this.applyRawDamage(hit.targetId, hit.damage, mist.ownerId, mist.abilityId);
@@ -1592,7 +1625,8 @@ export class CombatSystem {
   }
 
   private collectBodies(): CombatBody[] {
-    const bodies: CombatBody[] = [];
+    const bodies = this.bodyBuffer;
+    bodies.length = 0;
     this.room.state.players.forEach((p, sessionId) => {
       // Spectators and round-dead fighters are out of the fight entirely.
       if (p.role === "spectator" || p.roundDead) return;
@@ -1671,7 +1705,8 @@ export class CombatSystem {
   /** Apply ability cooldown; returns ms for client sync. */
   private startCooldown(sessionId: string, abilityId: string, now: number): number {
     const def = ABILITIES[abilityId];
-    const cooldownMs = def?.cooldownMs ?? 0;
+    const baseMs = def?.cooldownMs ?? 0;
+    const cooldownMs = kitCooldownMs(this.kits.get(sessionId), abilityId, baseMs);
     let bag = this.cds.get(sessionId);
     if (!bag) {
       bag = new Map();

@@ -8,22 +8,20 @@ import {
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
   LOADOUT_SIZE,
-  MAX_TALENTS,
   SHOP_ITEMS,
   SPELL_SLOTS,
-  TALENTS,
   abilitiesForSlot,
-  canAffordCoins,
   canEquipInSlot,
   formatAbilityArmoryStats,
-  formatShopCost,
   formatWallet,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   normalizeLoadout,
+  type TalentBuild,
 } from "@battlebeasts/shared";
 import { SpellSlotGlyph } from "./InputGlyph";
 import { AppearancePreview } from "./AppearancePreview";
+import { TalentTreePanel } from "./TalentTreePanel";
 import { getCreaturePatternTexture } from "../creaturePatterns";
 
 type Kind = "customization" | "build" | "talent" | "shop";
@@ -33,6 +31,8 @@ type Economy = {
   silver: number;
   gold: number;
   essence: number;
+  talentPoints: number;
+  talentBuild: TalentBuild;
   loadout: string[];
   talents: string[];
 };
@@ -83,7 +83,7 @@ function BookShell({
         aria-label={title}
         className={[
           "bb-parchment bb-book-panel relative z-10 w-full",
-          wide ? "max-w-3xl" : "max-w-lg",
+          wide ? "max-w-4xl" : "max-w-lg",
         ].join(" ")}
         onClick={(e) => e.stopPropagation()}
       >
@@ -270,7 +270,6 @@ function AppearanceEditor({
 
 export function StandPanel({ kind, onClose, room, economy, localSessionId }: Props) {
   const [draftLoadout, setDraftLoadout] = useState(() => normalizeLoadout(economy.loadout));
-  const [draftTalents, setDraftTalents] = useState(() => economy.talents);
   const [selectedSlot, setSelectedSlot] = useState(0);
 
   const selectedSlotDef = SPELL_SLOTS[selectedSlot];
@@ -289,14 +288,6 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
     });
   };
 
-  const toggleTalent = (id: string) => {
-    setDraftTalents((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
-      if (prev.length >= MAX_TALENTS) return [...prev.slice(1), id];
-      return [...prev, id];
-    });
-  };
-
   const loadoutReady =
     draftLoadout.length === LOADOUT_SIZE && new Set(draftLoadout).size === LOADOUT_SIZE;
 
@@ -305,7 +296,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
       title={TITLES[kind]}
       subtitle={formatWallet(economy)}
       onClose={onClose}
-      wide={kind === "customization"}
+      wide={kind === "customization" || kind === "talent"}
     >
       {kind === "customization" && (
         <AppearanceEditor room={room} localSessionId={localSessionId} />
@@ -363,6 +354,18 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
                           {a.shape}
                         </span>
                       </div>
+                      {a.tags?.length ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {a.tags.slice(0, 6).map((tag) => (
+                            <span
+                              key={tag}
+                              className="rounded-sm bg-[var(--bb-ink)]/8 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--bb-ink-soft)]"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       <p className="mt-1 text-[11px] font-medium leading-snug text-[var(--bb-ink)]">
                         {formatAbilityArmoryStats(a)}
                       </p>
@@ -392,47 +395,21 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
       )}
 
       {kind === "talent" && (
-        <div className="space-y-3">
-          <p className="text-sm text-[var(--bb-ink-soft)]">
-            Up to {MAX_TALENTS} talents ({draftTalents.length}/{MAX_TALENTS})
-          </p>
-          <ul className="space-y-2">
-            {Object.values(TALENTS).map((t) => {
-              const on = draftTalents.includes(t.id);
-              return (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    className={["bb-choice", on ? "bb-choice--on" : ""].join(" ")}
-                    onClick={() => toggleTalent(t.id)}
-                  >
-                    <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
-                      {t.name}
-                    </span>
-                    <span className="mt-0.5 block text-xs text-[var(--bb-ink-soft)]">{t.description}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <button
-            type="button"
-            className="bb-btn-brass"
-            onClick={() => room?.send("set_talents", { talentIds: draftTalents })}
-          >
-            Save talents
-          </button>
-        </div>
+        <TalentTreePanel
+          room={room}
+          essence={economy.essence}
+          talentPoints={economy.talentPoints}
+          talentBuild={economy.talentBuild}
+        />
       )}
 
       {kind === "shop" && (
-        <ul className="space-y-2">
-          {Object.values(SHOP_ITEMS).map((item) => {
-            const canBuy =
-              item.cost.kind === "coins"
-                ? canAffordCoins(economy, item.cost.copper)
-                : economy.essence >= item.cost.amount;
-            return (
+        <div className="space-y-3">
+          <p className="text-sm text-[var(--bb-ink-soft)]">
+            The merchant is still in development — shopping is locked for now.
+          </p>
+          <ul className="space-y-2 opacity-55">
+            {Object.values(SHOP_ITEMS).map((item) => (
               <li
                 key={item.id}
                 className="flex items-center justify-between gap-3 rounded-sm border border-[var(--bb-brass-dim)]/40 bg-[rgba(26,34,28,0.05)] px-3 py-2"
@@ -440,16 +417,16 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
                 <span className="text-sm font-medium text-[var(--bb-ink)]">{item.name}</span>
                 <button
                   type="button"
-                  className={canBuy ? "bb-btn-brass" : "bb-btn-ink"}
-                  disabled={!canBuy}
-                  onClick={() => room?.send("shop_buy", { itemId: item.id })}
+                  className="bb-btn-ink"
+                  disabled
+                  title="Still in development"
                 >
-                  {formatShopCost(item.cost)}
+                  Coming soon
                 </button>
               </li>
-            );
-          })}
-        </ul>
+            ))}
+          </ul>
+        </div>
       )}
     </BookShell>
   );

@@ -35,6 +35,7 @@ Menus close on outside pointerdown, Escape, or scroll.
 | Remove friend RPC | `supabase/migrations/20260725000003_remove_friend.sql` + `lib/friends.ts` |
 | Nameplates above remotes | `PlayerNameBillboard.tsx` (above HP at ~y 2.48) |
 | Confirm before leaving PvP | `ConfirmDialog.tsx` on Return to city |
+| Talents / tags / essence progression | [`docs/talents-and-progression.md`](./talents-and-progression.md) |
 
 ## Desktop app — what not to commit
 

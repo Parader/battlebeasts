@@ -3,6 +3,9 @@ import {
   ARENA_ROUND_COUNTDOWN_MS,
   ARENA_ROUND_END_MS,
   ARENA_ROUNDS_TO_WIN,
+  DEFAULT_LOADOUT,
+  MATCH_ESSENCE,
+  MAX_TALENTS,
   PVE_RECONNECT_GRACE_MS,
   PVP_RECONNECT_GRACE_MS,
   RECONNECT_RESUME_GRACE_MS,
@@ -57,6 +60,8 @@ export class ContentRoom extends Room<BaseCityState> {
   private spawnSlotBySession = new Map<string, number>();
   private diedAtBySession = new Map<string, number>();
   private nextTeam: "a" | "b" = "a";
+  /** Set when a PvP match reaches a real conclusion (for essence payouts). */
+  private lastMatchWinner: "a" | "b" | "draw" | null = null;
 
   onCreate(options: ContentJoinOptions) {
     this.setState(new BaseCityState());
@@ -200,16 +205,25 @@ export class ContentRoom extends Room<BaseCityState> {
 
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, []);
+    this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents);
 
     if (!verified.isGuest) {
       void loadEconomy(verified.userId).then((eco) => {
         const p = this.state.players.get(client.sessionId);
         if (!p) return;
         p.loadout = normalizeLoadout(eco.abilityIds).join(",");
+        p.talents = eco.talentIds.slice(0, MAX_TALENTS).join(",");
         if (eco.pattern) p.pattern = normalizeCosmeticPattern(eco.pattern);
         if (eco.patternColor) p.patternColor = normalizeCosmeticPatternColor(eco.patternColor);
         if (eco.color) p.color = eco.color;
+        this.combat.syncSessionKit(client.sessionId, p.loadout, p.talents);
+        const bonus = this.combat.getSessionKit(client.sessionId)?.maxHpBonus ?? 0;
+        p.maxHp = 100 + bonus;
+        p.hp = Math.min(p.hp, p.maxHp);
       });
+    } else {
+      player.loadout = DEFAULT_LOADOUT.join(",");
+      this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents);
     }
 
     client.send("toast", {
@@ -460,6 +474,7 @@ export class ContentRoom extends Room<BaseCityState> {
   private finishMatch(winner: "a" | "b" | "draw") {
     this.state.matchPhase = "match_end";
     this.state.phaseEndsAt = 0;
+    this.lastMatchWinner = winner;
     const rows: MatchRecapRow[] = [];
     this.state.players.forEach((p, sessionId) => {
       rows.push({
@@ -483,6 +498,21 @@ export class ContentRoom extends Room<BaseCityState> {
     this.state.players.forEach((p) => {
       p.rematchReady = false;
     });
+  }
+
+  private essenceForPlayer(player: PlayerState, earlyLeave: boolean): number {
+    if (this.kind !== "pvp") return MATCH_ESSENCE.pveClear;
+    if (earlyLeave && !this.lastMatchWinner) return MATCH_ESSENCE.pvpLeaveEarly;
+    const winner = this.lastMatchWinner;
+    if (!winner || winner === "draw") return MATCH_ESSENCE.pvpDraw;
+    if (player.team === winner) return MATCH_ESSENCE.pvpWin;
+    return MATCH_ESSENCE.pvpLoss;
+  }
+
+  private grantMatchLoot(player: PlayerState, earlyLeave: boolean) {
+    if (!player.id) return;
+    const essence = this.essenceForPlayer(player, earlyLeave);
+    grantPendingLoot(player.id, { copper: 25, silver: 1, essence });
   }
 
   private tryStartRematch() {
@@ -557,6 +587,8 @@ export class ContentRoom extends Room<BaseCityState> {
     this.broadcast("toast", { message });
     const hubOwnerId = this.returnHubOwnerId;
     for (const client of this.clients) {
+      const player = this.state.players.get(client.sessionId);
+      if (player) this.grantMatchLoot(player, false);
       client.send("transfer", {
         room: ROOM.BASE_CITY,
         options: { hubOwnerId: hubOwnerId ?? client.sessionId },
@@ -569,9 +601,7 @@ export class ContentRoom extends Room<BaseCityState> {
 
   private sendHome(client: Client) {
     const player = this.state.players.get(client.sessionId);
-    if (player?.id) {
-      grantPendingLoot(player.id, { copper: 25, silver: 1, essence: 1 });
-    }
+    if (player) this.grantMatchLoot(player, true);
     client.send("transfer", {
       room: ROOM.BASE_CITY,
       options: { hubOwnerId: this.returnHubOwnerId ?? client.sessionId },

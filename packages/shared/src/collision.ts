@@ -498,14 +498,19 @@ export function resolveCollisions(
   return p;
 }
 
-/** Other players as solid circles (skip self / disconnected / dead). */
+/** Other players as solid circles (skip self / same account / disconnected / dead). */
 export function playerCollidersExcept(
-  players: Iterable<[string, { x: number; z: number; disconnected?: boolean; hp?: number }]>,
+  players: Iterable<
+    [string, { x: number; z: number; disconnected?: boolean; hp?: number; id?: string }]
+  >,
   exceptId: string,
+  /** Account id (`player.id`) — drops match-return ghost seats for the same hunter. */
+  exceptUserId?: string | null,
 ): CircleCollider[] {
   const out: CircleCollider[] = [];
   for (const [id, p] of players) {
     if (id === exceptId) continue;
+    if (exceptUserId && p.id && p.id === exceptUserId) continue;
     if (p.disconnected) continue;
     if (typeof p.hp === "number" && p.hp <= 0) continue;
     out.push({
@@ -535,13 +540,16 @@ export function targetColliders(
   return out;
 }
 
-/** Players (except self) + optional living targets for walk collision. */
+/** Players (except self / same account) + optional living targets for walk collision. */
 export function unitCollidersExcept(
-  players: Iterable<[string, { x: number; z: number; disconnected?: boolean; hp?: number }]>,
+  players: Iterable<
+    [string, { x: number; z: number; disconnected?: boolean; hp?: number; id?: string }]
+  >,
   targets: Iterable<[string, { x: number; z: number; hp?: number }]> | null | undefined,
   exceptPlayerId: string,
+  exceptUserId?: string | null,
 ): CircleCollider[] {
-  const out = playerCollidersExcept(players, exceptPlayerId);
+  const out = playerCollidersExcept(players, exceptPlayerId, exceptUserId);
   if (targets) out.push(...targetColliders(targets));
   return out;
 }

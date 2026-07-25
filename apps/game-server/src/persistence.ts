@@ -1,5 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
-import { DEFAULT_LOADOUT, normalizeCoins, normalizeLoadout, type Wallet } from "@battlebeasts/shared";
+import {
+  DEFAULT_LOADOUT,
+  STARTER_TALENT_POINTS,
+  normalizeCoins,
+  normalizeLoadout,
+  normalizeTalentBuild,
+  type TalentBuild,
+  type Wallet,
+} from "@battlebeasts/shared";
 
 const url = process.env.SUPABASE_URL;
 const serverKey =
@@ -12,6 +20,8 @@ const supabase = url && serverKey ? createClient(url, serverKey) : null;
 export type EconomySnapshot = Wallet & {
   abilityIds: string[];
   talentIds: string[];
+  talentPoints: number;
+  talentBuild: TalentBuild;
   color?: string;
   pattern?: string;
   patternColor?: string;
@@ -30,17 +40,23 @@ const DEFAULT_ECO: EconomySnapshot = {
   essence: 0,
   abilityIds: [...DEFAULT_LOADOUT],
   talentIds: [],
+  talentPoints: STARTER_TALENT_POINTS,
+  talentBuild: {},
 };
 
 export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   if (!supabase) {
-    return { ...DEFAULT_ECO, copper: 75, silver: 2, essence: 3 };
+    return { ...DEFAULT_ECO, copper: 75, silver: 2, essence: 12, talentPoints: STARTER_TALENT_POINTS };
   }
 
   const [inv, loadout, talents, profile] = await Promise.all([
     supabase.from("inventory").select("resource_id, quantity").eq("user_id", userId),
     supabase.from("loadouts").select("ability_ids").eq("user_id", userId).maybeSingle(),
-    supabase.from("talents").select("talent_ids").eq("user_id", userId).maybeSingle(),
+    supabase
+      .from("talents")
+      .select("talent_ids, talent_build")
+      .eq("user_id", userId)
+      .maybeSingle(),
     supabase.from("profiles").select("color, pattern, pattern_color").eq("id", userId).maybeSingle(),
   ]);
 
@@ -49,8 +65,12 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   }
 
   const qty = (id: string) => inv.data?.find((r) => r.resource_id === id)?.quantity ?? 0;
-  // Legacy scrap row → copper if migration not applied yet
   const copper = qty("copper") + qty("scrap");
+  const talentPointsRow = qty("talent_points");
+  // Missing row → starter allocation (migration seeds existing users).
+  const talentPoints = inv.data?.some((r) => r.resource_id === "talent_points")
+    ? talentPointsRow
+    : STARTER_TALENT_POINTS;
 
   return {
     ...normalizeCoins({ copper, silver: qty("silver"), gold: qty("gold") }),
@@ -59,24 +79,27 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
       Array.isArray(loadout.data?.ability_ids) ? loadout.data.ability_ids : null,
     ),
     talentIds: Array.isArray(talents.data?.talent_ids) ? talents.data.talent_ids : [],
+    talentPoints,
+    talentBuild: normalizeTalentBuild(talents.data?.talent_build),
     color: profile.data?.color ?? undefined,
     pattern: profile.data?.pattern ?? undefined,
     patternColor: profile.data?.pattern_color ?? undefined,
   };
 }
 
-export async function saveInventory(userId: string, wallet: Wallet): Promise<void> {
+export async function saveInventory(userId: string, wallet: Wallet, talentPoints?: number): Promise<void> {
   if (!supabase) return;
   const coins = normalizeCoins(wallet);
-  await supabase.from("inventory").upsert(
-    [
-      { user_id: userId, resource_id: "copper", quantity: coins.copper },
-      { user_id: userId, resource_id: "silver", quantity: coins.silver },
-      { user_id: userId, resource_id: "gold", quantity: coins.gold },
-      { user_id: userId, resource_id: "essence", quantity: wallet.essence },
-    ],
-    { onConflict: "user_id,resource_id" },
-  );
+  const rows: Array<{ user_id: string; resource_id: string; quantity: number }> = [
+    { user_id: userId, resource_id: "copper", quantity: coins.copper },
+    { user_id: userId, resource_id: "silver", quantity: coins.silver },
+    { user_id: userId, resource_id: "gold", quantity: coins.gold },
+    { user_id: userId, resource_id: "essence", quantity: wallet.essence },
+  ];
+  if (typeof talentPoints === "number") {
+    rows.push({ user_id: userId, resource_id: "talent_points", quantity: Math.max(0, talentPoints) });
+  }
+  await supabase.from("inventory").upsert(rows, { onConflict: "user_id,resource_id" });
 }
 
 export async function saveLoadout(userId: string, abilityIds: string[]): Promise<void> {
@@ -91,6 +114,18 @@ export async function saveTalents(userId: string, talentIds: string[]): Promise<
   if (!supabase) return;
   await supabase.from("talents").upsert(
     { user_id: userId, talent_ids: talentIds, updated_at: new Date().toISOString() },
+    { onConflict: "user_id" },
+  );
+}
+
+export async function saveTalentBuild(userId: string, talentBuild: TalentBuild): Promise<void> {
+  if (!supabase) return;
+  await supabase.from("talents").upsert(
+    {
+      user_id: userId,
+      talent_build: talentBuild,
+      updated_at: new Date().toISOString(),
+    },
     { onConflict: "user_id" },
   );
 }
