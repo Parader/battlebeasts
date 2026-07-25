@@ -5,21 +5,18 @@ import * as THREE from "three";
 import {
     CAMERA,
     HUB_PORTALS,
-    HUB_PRACTICE_DUMMIES,
     HUB_SCENE_SCALE,
     HUB_SCENE_URL,
     HUB_SPAWN,
     HUB_STANDS,
     PORTAL_TORUS_MAJOR,
     PORTAL_TORUS_TUBE,
-    interactZoneDist,
-    pointInInteractZone,
     type InteractZone,
 } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, type FxBurst, type DamagePopup } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { FollowSun } from "./FollowSun";
 import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
@@ -27,8 +24,10 @@ import { PlacementHelper } from "./PlacementHelper";
 import { useGLTF } from "@react-three/drei";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
+import { assetUrl } from "./assetUrl";
 
-useGLTF.preload(HUB_SCENE_URL);
+const HUB_GLB = assetUrl(HUB_SCENE_URL.replace(/^\//, ""));
+useGLTF.preload(HUB_GLB);
 
 /** Drop village so meadow under spawn sits on y=0 (player feet). */
 function plantVillageAtSpawn(root: THREE.Object3D) {
@@ -50,7 +49,7 @@ function plantVillageAtSpawn(root: THREE.Object3D) {
 }
 
 function VillageScene() {
-    const gltf = useGLTF(HUB_SCENE_URL);
+    const gltf = useGLTF(HUB_GLB);
     const scene = useMemo(() => {
         const root = cloneSkinned(gltf.scene) as THREE.Object3D;
         root.traverse((obj) => {
@@ -82,9 +81,6 @@ type Props = {
     room: Room | null;
     localSessionId: string | null;
     predictedRef: MutableRefObject<PredictedPose>;
-    onInteract: (id: string) => void;
-    fxBursts: FxBurst[];
-    damagePopups: DamagePopup[];
 };
 
 function PortalMarker({
@@ -308,7 +304,7 @@ function LocalPlayerMesh({
     );
 }
 
-export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, fxBursts, damagePopups }: Props) {
+export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
     const aimNdc = useRef(new THREE.Vector2(0, 0));
     const { camera, gl } = useThree();
@@ -339,26 +335,6 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
         el.addEventListener("pointermove", onMove);
         return () => el.removeEventListener("pointermove", onMove);
     }, [camera, gl, groundPlane, hit, predictedRef, raycaster]);
-
-    useEffect(() => {
-        const handler = () => {
-            const me = predictedRef.current;
-            const targets: Array<{ id: string; zone: InteractZone }> = [
-                ...HUB_STANDS.map((s) => ({ id: s.id, zone: s })),
-                ...HUB_PORTALS.map((p) => ({ id: p.id, zone: p })),
-                ...HUB_PRACTICE_DUMMIES.map((d) => ({ id: d.id, zone: d })),
-            ];
-            let best: { id: string; d: number } | null = null;
-            for (const t of targets) {
-                if (!pointInInteractZone(me.x, me.z, t.zone)) continue;
-                const d = interactZoneDist(me.x, me.z, t.zone);
-                if (!best || d < best.d) best = { id: t.id, d };
-            }
-            if (best) onInteract(best.id);
-        };
-        window.addEventListener("bb-interact", handler);
-        return () => window.removeEventListener("bb-interact", handler);
-    }, [onInteract, predictedRef]);
 
     return (
         <>
@@ -405,8 +381,8 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
             />
             <RemotePlayers room={room} localSessionId={localSessionId} relation="ally" />
             <Projectiles room={room} />
-            <CombatFxMeshes bursts={fxBursts} />
-            <DamagePopups popups={damagePopups} />
+            <CombatFxMeshes />
+            <DamagePopups />
             <VfxWorld
                 room={room}
                 localSessionId={localSessionId}

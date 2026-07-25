@@ -13,12 +13,14 @@ import {
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS, shortestAngleDelta } from "./visualYaw";
-import { AimIndicator } from "./AimIndicator";
+import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { smashHopOffsetY } from "./smashHop";
 import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { findBone } from "./vfx/attach";
 import type { PredictedPose } from "./useBaseCityRoom";
+import { PlayerHpBillboard } from "./PlayerHpBillboard";
+import { InteractPromptBillboard } from "./InteractPromptBillboard";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -313,8 +315,10 @@ export function CharacterAvatar({
         />
       </group>
       <group ref={aimRef}>
-        <AimIndicator color={color ?? "#7dd3fc"} />
+        <AimIndicator color={AIM_RELATION_COLORS.self} />
       </group>
+      <PlayerHpBillboard room={room} sessionId={localSessionId} />
+      <InteractPromptBillboard />
     </group>
   );
 }

@@ -307,6 +307,12 @@ export class CombatSystem {
   }
 
   clearSession(sessionId: string) {
+    const cast = this.casts.get(sessionId);
+    const player = this.room.state.players.get(sessionId);
+    // Notify clients — silent wipe left awaitingCastAck / local castPhase stuck.
+    if (cast && player) {
+      this.phaseFx(sessionId, player, cast.abilityId, "cancel", Date.now());
+    }
     this.cds.delete(sessionId);
     this.casts.delete(sessionId);
     this.travels.delete(sessionId);
@@ -1564,6 +1570,19 @@ export class CombatSystem {
     if (this.room.state.decoys.has(targetId)) {
       return this.room.state.targets.has(ownerId) || this.room.state.players.has(ownerId);
     }
+    const targetPlayer = this.room.state.players.get(targetId);
+    if (targetPlayer) {
+      if (targetPlayer.role === "spectator" || targetPlayer.roundDead) return false;
+      const ownerPlayer = this.room.state.players.get(ownerId);
+      if (
+        ownerPlayer &&
+        ownerPlayer.team &&
+        targetPlayer.team &&
+        ownerPlayer.team === targetPlayer.team
+      ) {
+        return false;
+      }
+    }
     // Practice dummies may bolt players even when hub PvP is off.
     if (this.room.state.targets.has(ownerId) && this.room.state.players.has(targetId)) {
       return true;
@@ -1575,6 +1594,8 @@ export class CombatSystem {
   private collectBodies(): CombatBody[] {
     const bodies: CombatBody[] = [];
     this.room.state.players.forEach((p, sessionId) => {
+      // Spectators and round-dead fighters are out of the fight entirely.
+      if (p.role === "spectator" || p.roundDead) return;
       bodies.push({
         id: sessionId,
         x: p.x,

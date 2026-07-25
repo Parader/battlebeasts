@@ -20,6 +20,8 @@ type AuthState = {
     accessToken: string | null;
     needsNameSetup: boolean;
     signInWithGoogle: () => Promise<void>;
+    signInWithEmail: (email: string, password: string) => Promise<void>;
+    signUpWithEmail: (email: string, password: string) => Promise<{ needsEmailConfirmation: boolean }>;
     signOut: () => Promise<void>;
     refreshProfile: () => Promise<void>;
     claimDisplayName: (name: string) => Promise<Profile>;
@@ -95,6 +97,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error;
     }, []);
 
+    const signInWithEmail = useCallback(async (email: string, password: string) => {
+        if (!supabase) {
+            throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
+        }
+        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (error) throw error;
+    }, []);
+
+    const signUpWithEmail = useCallback(async (email: string, password: string) => {
+        if (!supabase) {
+            throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
+        }
+        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password });
+        if (error) throw error;
+        return { needsEmailConfirmation: Boolean(data.user) && !data.session };
+    }, []);
+
     const signOut = useCallback(async () => {
         if (!supabase) return;
         await supabase.auth.signOut();
@@ -122,11 +141,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             accessToken: session?.access_token ?? null,
             needsNameSetup,
             signInWithGoogle,
+            signInWithEmail,
+            signUpWithEmail,
             signOut,
             refreshProfile,
             claimDisplayName,
         }),
-        [ready, session, profile, needsNameSetup, signInWithGoogle, signOut, refreshProfile, claimDisplayName],
+        [
+            ready,
+            session,
+            profile,
+            needsNameSetup,
+            signInWithGoogle,
+            signInWithEmail,
+            signUpWithEmail,
+            signOut,
+            refreshProfile,
+            claimDisplayName,
+        ],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

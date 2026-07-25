@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import { ABILITIES, SPELL_SLOTS, normalizeLoadout, type AbilityDef, type SpellSlot } from "@battlebeasts/shared";
 import { SpellSlotGlyph } from "./InputGlyph";
+import { abilityHudRuntime } from "../abilityHudRuntime";
 
 type Props = {
   loadout: string[];
-  /** abilityId → ready-at epoch ms (client-predicted until server owns CDs). */
-  cooldownUntil: Record<string, number>;
-  flashId?: string | null;
 };
 
 const SHAPE_TINT: Record<string, string> = {
@@ -82,8 +80,18 @@ function SlotIcon({
   );
 }
 
-export function AbilityBar({ loadout, cooldownUntil, flashId }: Props) {
+export function AbilityBar({ loadout }: Props) {
   const slots = normalizeLoadout(loadout);
+  const [cooldownUntil, setCooldownUntil] = useState(() => abilityHudRuntime.cooldownUntil);
+  const [flashId, setFlashId] = useState(() => abilityHudRuntime.flashId);
+
+  useEffect(() => {
+    return abilityHudRuntime.subscribe(() => {
+      setCooldownUntil(abilityHudRuntime.cooldownUntil);
+      setFlashId(abilityHudRuntime.flashId);
+    });
+  }, []);
+
   const needsTick = Object.values(cooldownUntil).some((t) => t > Date.now() - 50);
   const now = useNow(needsTick);
 
@@ -100,7 +108,7 @@ export function AbilityBar({ loadout, cooldownUntil, flashId }: Props) {
               ability={ability}
               slot={slot}
               remainingMs={Math.max(0, until - now)}
-              flash={Boolean(flashId && flashId === id)}
+              flash={Boolean(id && flashId === id)}
             />
           );
         })}

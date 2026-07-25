@@ -32,10 +32,19 @@ import {
   baseCityStaticColliders,
   pointInInteractZone,
   type PlayerInput,
+  type PvpSeat,
   type Wallet,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
-import { dequeuePvp, enqueuePvp } from "../matchmaking/pvpQueue.js";
+import { dequeuePvpParty, dequeuePvpSession, enqueuePvpParty, type PvpPartyMember } from "../matchmaking/pvpQueue.js";
+import {
+  HubPartyRegistry,
+  defaultSeatFor,
+  filterModesForHubSize,
+  partyFitsMode,
+  toPartySnapshot,
+  type HubParty,
+} from "../matchmaking/hubParty.js";
 import {
   loadEconomy,
   saveInventory,
@@ -58,6 +67,10 @@ const DUMMY_HIT_COPPER = 1;
 const DUMMY_BOLT_GAP_MS = 420;
 /** Drop aggro if the dummy hasn't been damaged for this long. */
 const DUMMY_DEAGGRO_MS = 5000;
+/** How often to re-broadcast the hub roster even without a join/leave event. */
+const HUB_ROSTER_BROADCAST_MS = 5000;
+/** Close code Colyseus treats as a consented (no-reconnect-window) leave. */
+const WS_CLOSE_CONSENTED = 4000;
 
 type DummyAggro = {
   attackerId: string;
@@ -70,7 +83,7 @@ type DummyAggro = {
   lastHitAt: number;
 };
 
-export class BaseCityRoom extends Room<{ state: BaseCityState }> {
+export class BaseCityRoom extends Room<BaseCityState> {
   maxClients = 16;
   private inputs = new Map<string, PlayerInput[]>();
   private ownerId: string | null = null;
@@ -82,6 +95,9 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
   /** Epoch ms when the player hit 0 HP (respawn gate). */
   private diedAtBySession = new Map<string, number>();
   private combat!: CombatSystem;
+  /** Hub-scoped party lobbies (invite/seat/mode selection prior to PvP queueing). */
+  private parties = new HubPartyRegistry();
+  private lastHubRosterBroadcastAt = 0;
 
   onCreate(options: AuthJoinOptions) {
     this.setState(new BaseCityState());
@@ -171,10 +187,54 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     );
 
     this.onMessage("queue_cancel", (client) => {
-      if (dequeuePvp(this.queueKey(client))) {
+      const party = this.parties.getBySession(client.sessionId);
+      if (party) {
+        this.unqueueParty(party, "Left queue");
+        return;
+      }
+      if (dequeuePvpSession(this.queueKey(client))) {
         client.send("queue_status", { queued: false });
         client.send("toast", { message: "Left queue" });
       }
+    });
+
+    this.onMessage("hub_kick", (client, message: { sessionId?: string }) => {
+      this.handleHubKick(client, message?.sessionId);
+    });
+
+    this.onMessage("party_invite", (client, message: { sessionId?: string }) => {
+      this.handlePartyInvite(client, message?.sessionId);
+    });
+
+    this.onMessage("party_respond", (client, message: { accept?: boolean; partyId?: string }) => {
+      this.handlePartyRespond(client, message);
+    });
+
+    this.onMessage("party_kick", (client, message: { sessionId?: string }) => {
+      this.handlePartyKick(client, message?.sessionId);
+    });
+
+    this.onMessage(
+      "party_set_seat",
+      (client, message: { sessionId?: string; seat?: PvpSeat }) => {
+        this.handlePartySetSeat(client, message);
+      },
+    );
+
+    this.onMessage("party_set_modes", (client, message: { modes?: string[] }) => {
+      this.handlePartySetModes(client, message?.modes ?? []);
+    });
+
+    this.onMessage("party_lock", (client) => {
+      this.handlePartyLock(client);
+    });
+
+    this.onMessage("party_leave", (client) => {
+      this.handlePartyLeave(client);
+    });
+
+    this.onMessage("party_cancel", (client) => {
+      this.handlePartyCancel(client);
     });
 
     this.onMessage("respawn", (client) => {
@@ -201,6 +261,9 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         displayName: "Hunter",
         isGuest: true,
       } satisfies VerifiedIdentity);
+
+    // Match return / soft-leave races can leave a prior seat for the same hunter.
+    this.evictSessionsForUser(verified.userId, client.sessionId);
 
     this.identities.set(client.sessionId, verified);
 
@@ -279,10 +342,10 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
           : `Welcome home, ${verified.displayName}`,
     });
     this.sendInventory(client, player);
+    this.broadcastHubRoster();
   }
 
   async onLeave(client: Client, consented: boolean) {
-    dequeuePvp(this.queueKey(client));
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
@@ -290,6 +353,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
 
     try {
       if (!consented) {
+        // Keep seat + party through reload; only strip after grace expires.
         await this.allowReconnection(client, 60);
         player.disconnected = false;
         return;
@@ -298,13 +362,38 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
       // reconnection window expired
     }
 
-    this.state.players.delete(client.sessionId);
-    this.inputs.delete(client.sessionId);
-    this.identities.delete(client.sessionId);
-    this.dummyCooldownUntil.delete(client.sessionId);
-    this.spawnBySession.delete(client.sessionId);
-    this.diedAtBySession.delete(client.sessionId);
-    this.combat.clearSession(client.sessionId);
+    this.stripPlayerSession(client.sessionId);
+  }
+
+  /** Remove a hub seat and related combat/party bookkeeping. */
+  private stripPlayerSession(sessionId: string) {
+    const client = this.clients.find((c) => c.sessionId === sessionId);
+    if (client) dequeuePvpSession(this.queueKey(client));
+    this.removeFromAnyParty(sessionId);
+    this.state.players.delete(sessionId);
+    this.inputs.delete(sessionId);
+    this.identities.delete(sessionId);
+    this.dummyCooldownUntil.delete(sessionId);
+    this.spawnBySession.delete(sessionId);
+    this.diedAtBySession.delete(sessionId);
+    this.combat.clearSession(sessionId);
+    this.broadcastHubRoster();
+  }
+
+  /**
+   * Drop every other seat owned by this account (including soft-leave ghosts).
+   * Prevents a frozen duplicate host body after returning from a match.
+   */
+  private evictSessionsForUser(userId: string, exceptSessionId: string) {
+    if (!userId) return;
+    for (const [sessionId, player] of [...this.state.players.entries()]) {
+      if (sessionId === exceptSessionId) continue;
+      if (player.id !== userId) continue;
+      const stale = this.clients.find((c) => c.sessionId === sessionId);
+      // Strip schema first so onLeave is a no-op if the socket close is non-consented.
+      this.stripPlayerSession(sessionId);
+      stale?.leave(WS_CLOSE_CONSENTED, "Replaced by newer hub session");
+    }
   }
 
   private queueKey(client: Client) {
@@ -509,18 +598,7 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
     if (!message?.portal) return;
 
     if (message.portal === "pvp") {
-      const modes = (message.params?.modes ?? []).filter(Boolean);
-      if (modes.length === 0) {
-        client.send("toast", { message: "Pick at least one PvP mode" });
-        return;
-      }
-
-      enqueuePvp({
-        key: this.queueKey(client),
-        client,
-        modes,
-        hubOwnerId: this.ownerId,
-      });
+      this.handleOpenPvpParty(client, (message.params?.modes ?? []).filter(Boolean));
       return;
     }
 
@@ -536,6 +614,325 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
         matchId: `pve_${transfer.mode}_${client.sessionId}`,
       },
     });
+  }
+
+  // ---------------------------------------------------------------------
+  // Hub roster / hub owner kick
+  // ---------------------------------------------------------------------
+
+  private handleHubKick(client: Client, targetSessionId: string | undefined) {
+    const kicker = this.state.players.get(client.sessionId);
+    if (!kicker || !this.ownerId || kicker.id !== this.ownerId) {
+      client.send("toast", { message: "Only the hub owner can kick" });
+      return;
+    }
+    if (!targetSessionId || targetSessionId === client.sessionId) return;
+
+    const targetClient = this.clients.find((c) => c.sessionId === targetSessionId);
+    const targetPlayer = this.state.players.get(targetSessionId);
+    if (!targetClient || !targetPlayer) return;
+    if (targetPlayer.id === this.ownerId) return; // never kick the owner
+
+    this.removeFromAnyParty(targetSessionId, "Removed from hub — party updated");
+    targetClient.send("toast", { message: "You were kicked from this hub" });
+    targetClient.leave(WS_CLOSE_CONSENTED, "Kicked by hub owner");
+  }
+
+  private broadcastHubRoster() {
+    const players = [...this.state.players.entries()]
+      .filter(([, p]) => !p.disconnected)
+      .map(([sessionId, p]) => ({
+        sessionId,
+        displayName: p.displayName,
+        isOwner: Boolean(this.ownerId && p.id === this.ownerId),
+      }));
+    this.broadcast("hub_roster", { players });
+    this.lastHubRosterBroadcastAt = Date.now();
+  }
+
+  // ---------------------------------------------------------------------
+  // Hub party lobby (invite / seats / modes) — feeds the PvP queue.
+  // ---------------------------------------------------------------------
+
+  private sendToSession(sessionId: string, type: string, payload: unknown) {
+    const target = this.clients.find((c) => c.sessionId === sessionId);
+    target?.send(type, payload);
+  }
+
+  private broadcastPartyUpdate(party: HubParty) {
+    const snapshot = toPartySnapshot(party);
+    for (const sessionId of party.members.keys()) {
+      this.sendToSession(sessionId, "party_update", { party: snapshot });
+    }
+  }
+
+  private broadcastToParty(party: HubParty, type: string, payload: unknown) {
+    for (const sessionId of party.members.keys()) {
+      this.sendToSession(sessionId, type, payload);
+    }
+  }
+
+  /** Removes a queued party from matchmaking without dissolving it (composition changed). */
+  private unqueueParty(party: HubParty, reason: string) {
+    if (!party.queued) return;
+    dequeuePvpParty(party.partyId);
+    party.queued = false;
+    for (const sessionId of party.members.keys()) {
+      this.sendToSession(sessionId, "queue_status", { queued: false });
+      this.sendToSession(sessionId, "toast", { message: reason });
+    }
+  }
+
+  /** Tears the party down for everyone currently in it (leader leave / cancel / last member gone). */
+  private dissolveParty(party: HubParty, reason: string) {
+    const sessionIds = [...party.members.keys()];
+    if (party.queued) dequeuePvpParty(party.partyId);
+    this.parties.dissolve(party);
+    for (const sessionId of sessionIds) {
+      this.sendToSession(sessionId, "party_update", { party: null });
+      this.sendToSession(sessionId, "queue_status", { queued: false });
+      this.sendToSession(sessionId, "toast", { message: reason });
+    }
+  }
+
+  /** Disconnect / hub_kick path: leaves any party the session belongs to. */
+  private removeFromAnyParty(sessionId: string, reason = "A hunter left the party") {
+    const party = this.parties.getBySession(sessionId);
+    if (!party) return;
+
+    if (party.leaderSessionId === sessionId || party.members.size <= 1) {
+      this.dissolveParty(party, reason);
+      return;
+    }
+
+    this.unqueueParty(party, "Party changed — re-lock to queue again");
+    this.parties.removeMember(party, sessionId);
+    this.broadcastPartyUpdate(party);
+    this.broadcastToParty(party, "toast", { message: reason });
+  }
+
+  private handleOpenPvpParty(client: Client, requestedModes: string[]) {
+    if (requestedModes.length === 0) {
+      client.send("toast", { message: "Pick at least one PvP mode" });
+      return;
+    }
+
+    const existing = this.parties.getBySession(client.sessionId);
+    if (existing && existing.leaderSessionId === client.sessionId) {
+      this.dissolveParty(existing, "Party replaced by a new portal request");
+    } else if (existing) {
+      client.send("toast", { message: "Leave your current party before opening a new one" });
+      return;
+    }
+
+    const identity = this.identities.get(client.sessionId);
+    const player = this.state.players.get(client.sessionId);
+    if (!identity || !player) return;
+
+    const { validModes, rejectedModes } = filterModesForHubSize(requestedModes, this.state.players.size);
+    if (validModes.length === 0) {
+      client.send("toast", { message: "No selected mode fits the current hub size" });
+      return;
+    }
+
+    const party = this.parties.create(
+      { sessionId: client.sessionId, userId: identity.userId, displayName: identity.displayName },
+      validModes,
+    );
+    this.broadcastPartyUpdate(party);
+    const suffix = rejectedModes.length > 0 ? ` (${rejectedModes.join(", ")} dropped — hub too small)` : "";
+    client.send("toast", {
+      message: `Party lobby — ${validModes.join(", ")}${suffix}. Invite hunters, set seats, then lock.`,
+    });
+    client.send("ui", { ui: "party_lobby" });
+  }
+
+  private handlePartyInvite(client: Client, targetSessionId: string | undefined) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party || party.leaderSessionId !== client.sessionId) {
+      client.send("toast", { message: "Only the party leader can invite" });
+      return;
+    }
+    if (!targetSessionId || targetSessionId === client.sessionId) return;
+    if (!this.state.players.has(targetSessionId)) {
+      client.send("toast", { message: "Hunter not found in hub" });
+      return;
+    }
+    if (party.members.has(targetSessionId)) {
+      client.send("toast", { message: "Already in your party" });
+      return;
+    }
+    if (this.parties.hasAnyParty(targetSessionId)) {
+      client.send("toast", { message: "That hunter is already in a party" });
+      return;
+    }
+
+    party.pendingInvites.add(targetSessionId);
+    const leaderName = this.identities.get(client.sessionId)?.displayName ?? "A hunter";
+    this.sendToSession(targetSessionId, "party_invite", {
+      partyId: party.partyId,
+      fromName: leaderName,
+      modes: [...party.modes],
+    });
+    this.broadcastPartyUpdate(party);
+    client.send("toast", { message: "Invite sent" });
+  }
+
+  private handlePartyRespond(client: Client, message: { accept?: boolean; partyId?: string }) {
+    const party = message?.partyId ? this.parties.get(message.partyId) : undefined;
+    if (!party || !party.pendingInvites.has(client.sessionId)) {
+      client.send("toast", { message: "Invite expired" });
+      return;
+    }
+    party.pendingInvites.delete(client.sessionId);
+
+    if (!message.accept) {
+      this.broadcastPartyUpdate(party);
+      this.sendToSession(party.leaderSessionId, "toast", {
+        message: `${this.identities.get(client.sessionId)?.displayName ?? "A hunter"} declined the invite`,
+      });
+      return;
+    }
+
+    if (party.queued) {
+      client.send("toast", { message: "That party is already queued" });
+      return;
+    }
+    if (this.parties.hasAnyParty(client.sessionId)) {
+      client.send("toast", { message: "Leave your current party first" });
+      return;
+    }
+
+    const identity = this.identities.get(client.sessionId);
+    if (!identity) return;
+    const seat = defaultSeatFor(party);
+    this.parties.addMember(
+      party,
+      { sessionId: client.sessionId, userId: identity.userId, displayName: identity.displayName },
+      seat,
+    );
+    this.broadcastPartyUpdate(party);
+    this.broadcastToParty(party, "toast", { message: `${identity.displayName} joined the party` });
+  }
+
+  private handlePartyKick(client: Client, targetSessionId: string | undefined) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party || party.leaderSessionId !== client.sessionId) {
+      client.send("toast", { message: "Only the party leader can kick" });
+      return;
+    }
+    if (!targetSessionId || targetSessionId === client.sessionId) return;
+    if (!party.members.has(targetSessionId)) return;
+
+    this.unqueueParty(party, "Party changed — re-lock to queue again");
+    this.parties.removeMember(party, targetSessionId);
+    this.sendToSession(targetSessionId, "party_update", { party: null });
+    this.sendToSession(targetSessionId, "toast", { message: "Removed from party" });
+    this.broadcastPartyUpdate(party);
+  }
+
+  private handlePartySetSeat(client: Client, message: { sessionId?: string; seat?: PvpSeat }) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party) return;
+
+    const targetSessionId = message?.sessionId ?? client.sessionId;
+    const isLeader = party.leaderSessionId === client.sessionId;
+    if (!isLeader && targetSessionId !== client.sessionId) {
+      client.send("toast", { message: "You can only change your own seat" });
+      return;
+    }
+
+    const member = party.members.get(targetSessionId);
+    const seat = message?.seat;
+    if (!member || (seat !== "teamA" && seat !== "teamB" && seat !== "spectator")) return;
+    if (party.queued) {
+      client.send("toast", { message: "Party is queued — cancel to change seats" });
+      return;
+    }
+
+    member.seat = seat;
+    this.broadcastPartyUpdate(party);
+  }
+
+  private handlePartySetModes(client: Client, modes: string[]) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party || party.leaderSessionId !== client.sessionId) {
+      client.send("toast", { message: "Only the party leader can change modes" });
+      return;
+    }
+    if (party.queued) {
+      client.send("toast", { message: "Party is queued — cancel to change modes" });
+      return;
+    }
+
+    const { validModes } = filterModesForHubSize(modes.filter(Boolean), this.state.players.size);
+    if (validModes.length === 0) {
+      client.send("toast", { message: "No selected mode fits the current hub size" });
+      return;
+    }
+
+    party.modes = validModes;
+    this.broadcastPartyUpdate(party);
+    this.broadcastToParty(party, "toast", { message: `Modes updated: ${validModes.join(", ")}` });
+  }
+
+  private handlePartyLock(client: Client) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party || party.leaderSessionId !== client.sessionId) {
+      client.send("toast", { message: "Only the party leader can lock the queue" });
+      return;
+    }
+    if (party.queued) return;
+
+    const feasibleModes = party.modes.filter((mode) => partyFitsMode(party, mode));
+    if (feasibleModes.length === 0) {
+      client.send("toast", { message: "Party composition doesn't fit any selected mode — adjust seats" });
+      return;
+    }
+
+    const members: PvpPartyMember[] = [];
+    for (const member of party.members.values()) {
+      const memberClient = this.clients.find((c) => c.sessionId === member.sessionId);
+      if (!memberClient) continue;
+      members.push({
+        key: this.queueKey(memberClient),
+        client: memberClient,
+        userId: member.userId,
+        seat: member.seat,
+        hubOwnerId: this.ownerId,
+      });
+    }
+    if (members.length === 0) return;
+
+    party.modes = feasibleModes;
+    party.queued = true;
+    enqueuePvpParty({ partyId: party.partyId, modes: feasibleModes, members });
+  }
+
+  private handlePartyLeave(client: Client) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party) return;
+
+    if (party.leaderSessionId === client.sessionId) {
+      this.dissolveParty(party, "Party leader left — party disbanded");
+      return;
+    }
+
+    const name = this.identities.get(client.sessionId)?.displayName ?? "A hunter";
+    this.unqueueParty(party, "Party changed — re-lock to queue again");
+    this.parties.removeMember(party, client.sessionId);
+    this.sendToSession(client.sessionId, "party_update", { party: null });
+    this.broadcastPartyUpdate(party);
+    this.broadcastToParty(party, "toast", { message: `${name} left the party` });
+  }
+
+  private handlePartyCancel(client: Client) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party || party.leaderSessionId !== client.sessionId) {
+      client.send("toast", { message: "Only the party leader can cancel the party" });
+      return;
+    }
+    this.dissolveParty(party, "Party cancelled");
   }
 
   private tick(dtMs: number) {
@@ -582,6 +979,10 @@ export class BaseCityRoom extends Room<{ state: BaseCityState }> {
 
     this.combat.tick(dt, now);
     this.tickDummyAggro(now);
+
+    if (now - this.lastHubRosterBroadcastAt >= HUB_ROSTER_BROADCAST_MS) {
+      this.broadcastHubRoster();
+    }
   }
 
   /** Aggro'd practice dummies cast bolt (with anim) at their attacker until death. */

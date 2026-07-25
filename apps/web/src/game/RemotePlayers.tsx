@@ -16,6 +16,8 @@ import { smashHopOffsetY } from "./smashHop";
 import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndicator";
+import { PlayerHpBillboard } from "./PlayerHpBillboard";
+import { PlayerNameBillboard } from "./PlayerNameBillboard";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -271,6 +273,8 @@ function RemotePlayerAvatar({
       <group ref={aimRef}>
         <AimIndicator color={aimColor} />
       </group>
+      <PlayerHpBillboard room={room} sessionId={sessionId} />
+      <PlayerNameBillboard room={room} sessionId={sessionId} />
     </group>
   );
 }
@@ -278,42 +282,67 @@ function RemotePlayerAvatar({
 export function RemotePlayers({
   room,
   localSessionId,
-  /** Hub = ally (green); content/PvP = enemy (red) until real teams exist. */
+  /** Hub = ally (green); content fallback when no team data. */
   relation = "ally",
+  /** When set, remotes use team vs localTeam for aim color. */
+  localTeam,
 }: {
   room: Room | null;
   localSessionId: string | null;
   relation?: AimRelation;
+  localTeam?: string;
 }) {
   const [remoteIds, setRemoteIds] = useState<string[]>([]);
   const prevKey = useRef("");
 
   useFrame(() => {
-    if (!room?.state?.players) return;
+    if (!room?.state?.players) {
+      if (prevKey.current !== "") {
+        prevKey.current = "";
+        setRemoteIds([]);
+      }
+      return;
+    }
+    const localUserId =
+      (localSessionId &&
+        (room.state.players.get(localSessionId) as { id?: string } | undefined)?.id) ||
+      "";
     const next: string[] = [];
-    room.state.players.forEach((_p: unknown, id: string) => {
-      if (id !== localSessionId) next.push(id);
+    room.state.players.forEach((p: { disconnected?: boolean; id?: string }, id: string) => {
+      if (id === localSessionId) return;
+      if (p?.disconnected) return;
+      // Same hunter, older seat (match-return ghost) — never render as a remote.
+      if (localUserId && p?.id && p.id === localUserId) return;
+      next.push(id);
     });
     next.sort();
-    const key = next.join("|");
+    const key = `${room.roomId}:${next.join("|")}`;
     if (key !== prevKey.current) {
       prevKey.current = key;
       setRemoteIds(next);
     }
   });
 
+  // Drop remotes when room instance changes (transfer / reconnect).
+  useEffect(() => {
+    prevKey.current = "";
+    setRemoteIds([]);
+  }, [room?.roomId]);
+
   if (!room) return null;
 
   return (
     <>
-      {remoteIds.map((id) => (
-        <RemotePlayerAvatar
-          key={id}
-          room={room}
-          sessionId={id}
-          relation={relation}
-        />
-      ))}
+      {remoteIds.map((id) => {
+        const p = room.state?.players?.get(id) as { team?: string } | undefined;
+        let rel: AimRelation = relation;
+        if (localTeam && p?.team) {
+          if (p.team === localTeam) rel = "ally";
+          else if (p.team === "a" || p.team === "b") rel = "enemy";
+          else rel = "neutral";
+        }
+        return <RemotePlayerAvatar key={id} room={room} sessionId={id} relation={rel} />;
+      })}
     </>
   );
 }

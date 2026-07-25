@@ -3,7 +3,9 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import { defineConfig } from "vite";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+    // Electron loads file:// — relative asset URLs required.
+    base: mode === "electron" ? "./" : "/",
     plugins: [react(), tailwindcss()],
     resolve: {
         alias: {
@@ -16,4 +18,4 @@ export default defineConfig({
         // Allow ngrok / tunnel hostnames during friend playtests
         allowedHosts: true,
     },
-});
+}));

@@ -47,7 +47,8 @@ export type UiKind =
   | "talent"
   | "shop"
   | "portal_pvp"
-  | "portal_pve";
+  | "portal_pve"
+  | "party_lobby";
 
 export type ClientMessage =
   | { type: "input"; input: PlayerInput }
@@ -60,7 +61,45 @@ export type ClientMessage =
   | { type: "set_color"; color: string }
   | { type: "set_pattern"; pattern: string; patternColor?: string }
   | { type: "set_pattern_color"; patternColor: string }
-  | { type: "respawn" };
+  | { type: "respawn" }
+  | { type: "hub_kick"; sessionId: string }
+  | { type: "party_invite"; sessionId: string }
+  | { type: "party_respond"; accept: boolean; partyId: string }
+  | { type: "party_kick"; sessionId: string }
+  | { type: "party_set_seat"; sessionId: string; seat: "teamA" | "teamB" | "spectator" }
+  | { type: "party_set_modes"; modes: string[] }
+  | { type: "party_lock" }
+  | { type: "party_leave" }
+  | { type: "party_cancel" }
+  | { type: "rematch_vote" }
+  | { type: "return_hub" };
+
+export type PartyMemberSnapshot = {
+  sessionId: string;
+  displayName: string;
+  seat: "teamA" | "teamB" | "spectator";
+};
+
+export type PartySnapshot = {
+  partyId: string;
+  leaderSessionId: string;
+  modes: string[];
+  members: PartyMemberSnapshot[];
+  pendingInvites: string[];
+  /** True once the party has been locked into matchmaking. */
+  queued?: boolean;
+};
+
+export type MatchRecapRow = {
+  sessionId: string;
+  displayName: string;
+  team: string;
+  kills: number;
+  damageDealt: number;
+  damageTaken: number;
+  healing: number;
+  shield: number;
+};
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: WorldSnapshot }
@@ -78,6 +117,10 @@ export type ServerMessage =
   | { type: "match_resume" }
   | { type: "match_forfeit"; playerName: string }
   | { type: "match_rebalance"; remaining: number; playerName?: string }
+  | { type: "party_update"; party: PartySnapshot | null }
+  | { type: "party_invite"; partyId: string; fromName: string; modes: string[] }
+  | { type: "hub_roster"; players: { sessionId: string; displayName: string; isOwner: boolean }[] }
+  | { type: "match_recap"; winner: "a" | "b" | "draw"; scoreA: number; scoreB: number; rows: MatchRecapRow[] }
   | {
       type: "combat_fx";
       kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase";

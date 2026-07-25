@@ -5,6 +5,7 @@ import {
     listFriends,
     listIncomingFriendRequests,
     listIncomingHubInvites,
+    removeFriend,
     respondFriendRequest,
     respondHubInvite,
     sendFriendRequest,
@@ -132,6 +133,14 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
         [refresh],
     );
 
+    const remove = useCallback(
+        async (friendId: string) => {
+            await removeFriend(friendId);
+            await refresh();
+        },
+        [refresh],
+    );
+
     const answerHubInvite = useCallback(
         async (id: string, accept: boolean) => {
             const hubOwner = await respondHubInvite(id, accept);
@@ -152,5 +161,6 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
         answerRequest,
         sendHubInvite,
         answerHubInvite,
+        removeFriend: remove,
     };
 }

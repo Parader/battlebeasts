@@ -29,6 +29,6 @@ gameServer.define(ROOM.DUNGEON, ContentRoom).filterBy(["matchId"]);
 gameServer.define(ROOM.BOSS, ContentRoom).filterBy(["matchId"]);
 
 
-httpServer.listen(PORT, () => {
-  console.log(`[game-server] listening on ws://localhost:${PORT}`);
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`[game-server] listening on 0.0.0.0:${PORT}`);
 });

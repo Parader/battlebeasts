@@ -6,8 +6,8 @@ export const AIM_RELATION_COLORS = {
   ally: "#4ade80",
   enemy: "#f87171",
   neutral: "#9ca3af",
-  /** Local player (cosmetic accent). */
-  self: "#7dd3fc",
+  /** Local player — always green. */
+  self: "#4ade80",
 } as const;
 
 export type AimRelation = "ally" | "enemy" | "neutral";

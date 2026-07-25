@@ -46,6 +46,20 @@ export class PlayerState extends Schema {
   @type("string") loadout = DEFAULT_LOADOUT.join(",");
   /** Comma-separated talent ids. */
   @type("string") talents = "";
+  /** Arena: "a" | "b" | "" */
+  @type("string") team = "";
+  /** Arena: "fighter" | "spectator" */
+  @type("string") role = "fighter";
+  /** Dead for current round (fighters only). */
+  @type("boolean") roundDead = false;
+  /** Match stats (arena). */
+  @type("number") statKills = 0;
+  @type("number") statDamageDealt = 0;
+  @type("number") statDamageTaken = 0;
+  @type("number") statHealing = 0;
+  @type("number") statShield = 0;
+  /** Rematch vote while phase is rematch_wait. */
+  @type("boolean") rematchReady = false;
   @type({ map: StatusInstanceState }) statuses = new MapSchema<StatusInstanceState>();
 }
 
@@ -101,6 +115,13 @@ export class BaseCityState extends Schema {
   @type("string") pauseReason = "";
   /** Server epoch ms when reconnect grace ends (0 if not paused). */
   @type("number") reconnectUntil = 0;
+  /** Arena match phase (empty in hub). */
+  @type("string") matchPhase = "";
+  @type("number") matchRound = 0;
+  @type("number") scoreA = 0;
+  @type("number") scoreB = 0;
+  @type("number") phaseEndsAt = 0;
+  @type("string") matchMode = "";
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
   @type({ map: ProjectileState }) projectiles = new MapSchema<ProjectileState>();
   @type({ map: WorldTargetState }) targets = new MapSchema<WorldTargetState>();

@@ -18,7 +18,7 @@ export function VfxWorld({ room, localSessionId, predictedRef }: Props) {
 
   useEffect(() => {
     return vfxRuntime.subscribe(() => {
-      setShots([...vfxRuntime.getShots()]);
+      setShots(vfxRuntime.getShots().slice());
     });
   }, []);
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -54,10 +55,15 @@ INTERACT_ALIASES = {
     "practice_dummy": "dummy",
 }
 
+# Arena / numbered team spawns (desert Spawn 1–6).
+SPAWN_INDEX_RE = re.compile(r"^spawn[_\s\-]*([1-6])$", re.IGNORECASE)
+
 
 def parse_args(argv: list[str]) -> dict:
     out_dir = None
     data_dir = None
+    # Asset basename: village → village.glb + main_village.*.json; desert → desert.*
+    name = "village"
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -69,8 +75,12 @@ def parse_args(argv: list[str]) -> dict:
             data_dir = argv[i + 1]
             i += 2
             continue
+        if a == "--name" and i + 1 < len(argv):
+            name = argv[i + 1].strip().lower()
+            i += 2
+            continue
         i += 1
-    return {"out_dir": out_dir, "data_dir": data_dir}
+    return {"out_dir": out_dir, "data_dir": data_dir, "name": name}
 
 
 def to_three(v: Vector) -> Vector:
@@ -81,6 +91,9 @@ def normalize_interact(raw) -> str | None:
     if not raw or not isinstance(raw, str):
         return None
     key = raw.strip().lower().replace(" ", "_")
+    spawn_m = SPAWN_INDEX_RE.match(key) or SPAWN_INDEX_RE.match(raw.strip())
+    if spawn_m:
+        return f"spawn_{spawn_m.group(1)}"
     return INTERACT_ALIASES.get(key)
 
 
@@ -366,13 +379,19 @@ def main():
     # Defaults relative to repo when run from battlebeasts2 cwd via absolute paths in CLI
     out_dir = os.path.abspath(opts["out_dir"] or os.path.join(blend_dir, "export"))
     data_dir = os.path.abspath(opts["data_dir"] or out_dir)
+    name = opts.get("name") or "village"
 
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(data_dir, exist_ok=True)
 
-    glb_path = os.path.join(out_dir, "village.glb")
-    walls_path = os.path.join(data_dir, "main_village.walls.json")
-    markers_path = os.path.join(data_dir, "main_village.markers.json")
+    if name == "village":
+        glb_path = os.path.join(out_dir, "village.glb")
+        walls_path = os.path.join(data_dir, "main_village.walls.json")
+        markers_path = os.path.join(data_dir, "main_village.markers.json")
+    else:
+        glb_path = os.path.join(out_dir, f"{name}.glb")
+        walls_path = os.path.join(data_dir, f"{name}.walls.json")
+        markers_path = os.path.join(data_dir, f"{name}.markers.json")
 
     walls = export_walls()
     markers = export_markers()
@@ -384,15 +403,15 @@ def main():
         json.dump(markers, f, indent=2)
         f.write("\n")
 
-    print(f"[export_village] walls → {walls_path} ({len(walls.get('walls', []))} curves)")
+    print(f"[export] walls → {walls_path} ({len(walls.get('walls', []))} curves)")
     print(
-        f"[export_village] markers → {markers_path} ({len(markers.get('markers', []))} markers)"
+        f"[export] markers → {markers_path} ({len(markers.get('markers', []))} markers)"
     )
     for m in markers.get("markers", []):
         print(f"  - {m['kind']} @ ({m['x']}, {m['z']})")
 
     export_glb(glb_path)
-    print("[export_village] done")
+    print(f"[export] done ({name})")
 
 
 if __name__ == "__main__":

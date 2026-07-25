@@ -1,0 +1,47 @@
+{
+  "name": "@battlebeasts/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "BattleBeasts desktop client (Electron) — assets ship locally",
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "node ./scripts/dev.mjs",
+    "build:renderer": "pnpm --filter @battlebeasts/web run build:electron && node ./scripts/copy-renderer.mjs",
+    "pack": "pnpm run build:renderer && electron-builder --dir",
+    "dist": "pnpm run build:renderer && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.battlebeasts.desktop",
+    "productName": "BattleBeasts",
+    "directories": {
+      "output": "release-v5"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "renderer/**/*"
+    ],
+    "asar": false,
+    "extraFiles": [
+      {
+        "from": "config.example.json",
+        "to": "config.json"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "BattleBeasts-${version}-portable.exe"
+    }
+  }
+}

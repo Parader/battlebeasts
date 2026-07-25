@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "coordinateSystem": "threejs-y-up",
+  "source": "desert.blend",
+  "exportedAt": "2026-07-25T07:02:13.929543+00:00",
+  "markers": [
+    {
+      "id": "Empty_001",
+      "kind": "spawn_1",
+      "x": -69.9285,
+      "z": 0.1783,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Spawn 1",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_002",
+      "kind": "spawn_2",
+      "x": -69.9285,
+      "z": -19.4925,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Spawn 2",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_003",
+      "kind": "spawn_4",
+      "x": 70.304,
+      "z": 20.2811,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Spawn 4",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_004",
+      "kind": "spawn_6",
+      "x": 70.304,
+      "z": -19.4925,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Spawn 6",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_005",
+      "kind": "spawn_5",
+      "x": 70.304,
+      "z": 0.1783,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Spawn 5",
+      "emptyDisplay": "CUBE"
+    },
+    {
+      "id": "Empty_006",
+      "kind": "spawn_3",
+      "x": -69.9285,
+      "z": 20.2811,
+      "halfX": 3.7064,
+      "halfZ": 3.8073,
+      "rotationY": 0.0,
+      "label": "Spawn 3",
+      "emptyDisplay": "CUBE"
+    }
+  ]
+}

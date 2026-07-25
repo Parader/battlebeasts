@@ -114,6 +114,7 @@ export const SPELL_SLOTS = [
   { id: "q", label: "Q", hint: "Q", input: "q" },
   { id: "e", label: "E", hint: "E", input: "e" },
   { id: "r", label: "R", hint: "R", input: "r" },
+  { id: "f", label: "F", hint: "F", input: "f" },
 ] as const;
 
 export type SpellSlotId = (typeof SPELL_SLOTS)[number]["id"];
@@ -648,7 +649,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnSelf: [{ statusId: "cloaked", durationMs: 2000 }],
   },
   /**
-   * Gust (Q) — circular push wave. Alternate Q pick (Decoy is default).
+   * Gust — circular push wave. Default F pick (also equippable on Q).
    * Hits shove targets outward, then slow them briefly.
    */
   gust: {
@@ -663,7 +664,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     radius: 3.5,
     knockback: 9.5,
     knockbackMs: 320,
-    allowedSlots: ["q"],
+    allowedSlots: ["q", "f"],
+    defaultSlot: "f",
     // magic_aoe: suck ends @48, blow @54 — wall times scale with playbackRate
     timing: {
       anticipationMs: authoredForWallMs(gustAnticipationWallMs()),
@@ -824,7 +826,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
 };
 
-/** Ordered by SPELL_SLOTS: LMB, RMB, Space, Q, E, R */
+/** Ordered by SPELL_SLOTS: LMB, RMB, Space, Q, E, R, F */
 export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map((slot) => {
   const found = Object.values(ABILITIES).find((a) => a.defaultSlot === slot.id);
   return found?.id ?? "bolt";
@@ -957,7 +959,7 @@ function defaultAbilityForSlot(slotId: SpellSlotId): string {
 }
 
 /**
- * Produce a length-6 loadout aligned to SPELL_SLOTS.
+ * Produce a loadout aligned to SPELL_SLOTS.
  * Each index must be an ability allowed in that slot; illegal entries are replaced.
  */
 export function normalizeLoadout(abilityIds: string[] | null | undefined): string[] {

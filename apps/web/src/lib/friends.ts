@@ -46,10 +46,10 @@ export async function listFriends(userId: string): Promise<FriendRow[]> {
 
     const presenceMap = new Map((presence ?? []).map((p) => [p.user_id, p]));
 
-    return (profiles ?? []).map((p) => {
+    const rows = (profiles ?? []).map((p) => {
         const pr = presenceMap.get(p.id);
         const ageMs = pr?.last_seen ? Date.now() - new Date(pr.last_seen).getTime() : Infinity;
-        // Heartbeat ~12s; allow a few missed beats + clock skew before Offline.
+        // Heartbeat ~12s; allow a few missed beats + clock skew before offline.
         const fresh = pr?.status === "online" && ageMs < 90_000;
         return {
             id: p.id,
@@ -59,6 +59,12 @@ export async function listFriends(userId: string): Promise<FriendRow[]> {
             hub_owner_id: pr?.hub_owner_id ?? null,
         };
     });
+
+    rows.sort((a, b) => {
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return a.display_name.localeCompare(b.display_name, undefined, { sensitivity: "base" });
+    });
+    return rows;
 }
 
 export async function listIncomingFriendRequests(userId: string): Promise<FriendRequestRow[]> {
@@ -110,6 +116,12 @@ export async function respondFriendRequest(requestId: string, accept: boolean) {
         request_id: requestId,
         accept,
     });
+    if (error) throw error;
+}
+
+export async function removeFriend(friendUserId: string) {
+    if (!supabase) throw new Error("Supabase not configured");
+    const { error } = await supabase.rpc("remove_friend", { friend_user_id: friendUserId });
     if (error) throw error;
 }
 

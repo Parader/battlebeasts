@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, isChannelAbility, normalizeLoadout, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, type PlayerInput } from "@battlebeasts/shared";
-import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
+import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, isChannelAbility, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
+import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
+import { combatOverlayRuntime } from "./combatOverlayRuntime";
+import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime";
+import { abilityHudRuntime } from "./abilityHudRuntime";
 import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 
@@ -14,10 +17,14 @@ const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     hit: "#f87171",
 };
 
-/** Reused empty static collider list for non-hub phases. */
+/** Reused empty static collider list for non-hub / non-arena phases. */
 const EMPTY_STATICS: ReturnType<typeof baseCityStaticColliders> = [];
 /** Hub walls/portals — singleton; never rebuild per frame. */
 const HUB_STATICS = baseCityStaticColliders();
+/** Desert arena walls — must match ContentRoom PvP server colliders. */
+const ARENA_STATICS = arenaStaticColliders();
+
+const PVP_MODE_IDS = new Set<string>(PVP_MODES.map((m) => m.id));
 
 const DAMAGE_POPUP_LIFE_MS = 900;
 
@@ -28,15 +35,68 @@ export type ActiveUi =
     | "shop"
     | "portal_pvp"
     | "portal_pve"
+    | "party_lobby"
     | null;
 
 export type SessionPhase = "hub" | "queued" | "content";
+
+/** Hub pad under the local player (prompt / Space interact / portal auto-open). */
+export type NearInteract = {
+    id: string;
+    label: string;
+    kind: "stand" | "portal" | "dummy";
+} | null;
+
+function staticsForPhase(phase: SessionPhase, mode: string | null) {
+    if (phase === "hub") return HUB_STATICS;
+    if (mode && PVP_MODE_IDS.has(mode)) return ARENA_STATICS;
+    return EMPTY_STATICS;
+}
 
 export type MatchPauseInfo = {
     reason: "pvp_reconnect" | "pve_reconnect" | "resume_grace";
     until: number;
     playerName?: string;
 } | null;
+
+export type HubRosterPlayer = {
+    sessionId: string;
+    displayName: string;
+    isOwner: boolean;
+};
+
+export type ArenaHudState = {
+    matchPhase: string;
+    matchRound: number;
+    scoreA: number;
+    scoreB: number;
+    phaseEndsAt: number;
+    matchMode: string;
+    localTeam: string;
+    rematchReady: boolean;
+};
+
+/** Mirrors ContentRoom.canAct — client must not predict when the server ignores input. */
+function clientCanAct(opts: {
+    hp?: number;
+    roundDead?: boolean;
+    role?: string;
+    matchPhase?: string;
+}): boolean {
+    if (typeof opts.hp === "number" && opts.hp <= 0) return false;
+    if (opts.roundDead) return false;
+    if (opts.role === "spectator") return false;
+    const phase = opts.matchPhase ?? "";
+    if (phase === "countdown" || phase === "round_end" || phase === "match_end") return false;
+    return true;
+}
+
+export type MatchRecapState = {
+    winner: "a" | "b" | "draw";
+    scoreA: number;
+    scoreB: number;
+    rows: MatchRecapRow[];
+};
 
 export type PredictedPose = {
     x: number;
@@ -54,6 +114,8 @@ type Options = {
     enabled?: boolean;
     /** When true, WASD/arrows/casts are ignored so UI typing works. */
     inputLocked?: boolean;
+    /** Sync React visit state when reconnect picks a different host hub (or falls back home). */
+    onActiveHubOwnerId?: (hubOwnerId: string | null) => void;
 };
 
 type TransferMsg = {
@@ -71,14 +133,25 @@ export function useBaseCityRoom(options: Options) {
     const [queueModes, setQueueModes] = useState<string[]>([]);
     const [contentMode, setContentMode] = useState<string | null>(null);
     const [matchPause, setMatchPause] = useState<MatchPauseInfo>(null);
-    const [cooldownUntil, setCooldownUntil] = useState<Record<string, number>>({});
-    const [castFlashId, setCastFlashId] = useState<string | null>(null);
-    const [fxBursts, setFxBursts] = useState<FxBurst[]>([]);
-    const [damagePopups, setDamagePopups] = useState<DamagePopup[]>([]);
     const [localHp, setLocalHp] = useState({ hp: 100, maxHp: 100, shield: 0 });
+    const [combatHudVisible, setCombatHudVisible] = useState(false);
+    const combatHudLingerUntilRef = useRef(0);
+    const prevLocalHpRef = useRef<number | null>(null);
     const [diedAt, setDiedAt] = useState<number | null>(null);
     const [deathAnimMs, setDeathAnimMs] = useState(3000);
     const diedAtRef = useRef<number | null>(null);
+    const [hubRoster, setHubRoster] = useState<HubRosterPlayer[]>([]);
+    const [arenaHud, setArenaHud] = useState<ArenaHudState | null>(null);
+    const [matchRecap, setMatchRecap] = useState<MatchRecapState | null>(null);
+    const [party, setParty] = useState<PartySnapshot | null>(null);
+    const [partyInvite, setPartyInvite] = useState<{
+        partyId: string;
+        fromName: string;
+        modes: string[];
+    } | null>(null);
+    const [nearInteract, setNearInteract] = useState<NearInteract>(null);
+    const nearInteractRef = useRef<NearInteract>(null);
+    const lastPortalAutoIdRef = useRef<string | null>(null);
     const [economy, setEconomy] = useState({
         copper: 0,
         silver: 0,
@@ -114,10 +187,13 @@ export function useBaseCityRoom(options: Options) {
     const lastHudUpdate = useRef(0);
     const lastAckRef = useRef(-1);
     const inputLockedRef = useRef(Boolean(options.inputLocked));
+    /** UI overlays / death — separate from PvP phase lock so we can recompute both. */
+    const uiInputLockedRef = useRef(Boolean(options.inputLocked));
     const matchPauseRef = useRef<MatchPauseInfo>(null);
     const activeUiRef = useRef<ActiveUi>(null);
     const transferringRef = useRef(false);
     const phaseRef = useRef<SessionPhase>("hub");
+    const contentModeRef = useRef<string | null>(null);
     const reconnectingRef = useRef(false);
     const optionsRef = useRef(options);
     optionsRef.current = options;
@@ -128,6 +204,25 @@ export function useBaseCityRoom(options: Options) {
         window.setTimeout(() => setToast(null), 2500);
     }, []);
 
+    /**
+     * Server clears casts/CDs on death without a cast_phase cancel. If we keep
+     * awaitingCastAck / castPhase / client CDs, casting stays locked after respawn.
+     */
+    const clearLocalCombatCastState = useCallback(() => {
+        castPhaseRef.current = "";
+        castingAbilityRef.current = null;
+        awaitingCastAckRef.current = false;
+        localCastCancelledRef.current = false;
+        pendingCastRef.current = undefined;
+        pendingCancelRef.current = false;
+        heldCastSlotsRef.current = { mouse0: false, mouse2: false };
+        cooldownUntilRef.current = {};
+        abilityHudRuntime.clear();
+        window.clearTimeout(castFlashTimerRef.current);
+        predictorRef.current.clearTravel();
+        predictorRef.current.clearMoveMul();
+    }, []);
+
     const applyTransferRef = useRef<(msg: TransferMsg) => Promise<void>>(async () => undefined);
     const tryContentReconnectRef = useRef<(code?: number) => Promise<boolean>>(async () => false);
 
@@ -135,12 +230,26 @@ export function useBaseCityRoom(options: Options) {
         const token = (joined as Room & { reconnectionToken?: string }).reconnectionToken;
         if (!token) return;
         const opts = optionsRef.current;
-        saveContentRejoin({
-            token,
-            roomId: joined.roomId,
-            mode,
-            hubOwnerId: opts.hubOwnerId ?? opts.userId,
-        });
+        const hubOwnerId = opts.hubOwnerId ?? opts.userId;
+        if (mode != null) {
+            clearHubRejoin();
+            saveContentRejoin({
+                token,
+                roomId: joined.roomId,
+                mode,
+                hubOwnerId,
+            });
+        } else {
+            clearContentRejoin();
+            saveHubRejoin({
+                token,
+                roomId: joined.roomId,
+                hubOwnerId,
+            });
+        }
+        if (opts.userId && hubOwnerId && hubOwnerId !== opts.userId) {
+            savePreferredHub(opts.userId, hubOwnerId);
+        }
     }, []);
 
     const wireRoom = useCallback(
@@ -152,17 +261,37 @@ export function useBaseCityRoom(options: Options) {
             setPhase(nextPhase);
             phaseRef.current = nextPhase;
             setContentMode(mode ?? null);
+            contentModeRef.current = mode ?? null;
             setActiveUi(null);
             setMatchPause(null);
-            setFxBursts([]);
+            combatOverlayRuntime.clear();
+            clearInteractPrompt();
+            setNearInteract(null);
+            nearInteractRef.current = null;
+            lastPortalAutoIdRef.current = null;
+            setMatchRecap(null);
+            setPartyInvite(null);
+            if (nextPhase !== "hub") {
+                setHubRoster([]);
+                setParty(null);
+            }
+            if (nextPhase !== "content") setArenaHud(null);
             predictorRef.current = new LocalPredictor();
             lastAckRef.current = -1;
             seqRef.current = 0;
+            // Transfer must clear combat client state or casts stay locked forever.
+            clearLocalCombatCastState();
+            setDiedAt(null);
+            setDeathAnimMs(3000);
+            diedAtRef.current = null;
+            setCombatHudVisible(false);
+            combatHudLingerUntilRef.current = 0;
+            prevLocalHpRef.current = null;
 
             if (nextPhase === "content") {
                 persistRejoinToken(joined, mode ?? null);
             } else {
-                clearContentRejoin();
+                persistRejoinToken(joined, null);
             }
 
             joined.onMessage("toast", (msg: { message: string }) => {
@@ -224,6 +353,49 @@ export function useBaseCityRoom(options: Options) {
             joined.onMessage("match_resume", () => {
                 setMatchPause(null);
             });
+
+            joined.onMessage("hub_roster", (msg: { players?: HubRosterPlayer[] }) => {
+                setHubRoster(Array.isArray(msg.players) ? msg.players : []);
+            });
+
+            joined.onMessage("party_update", (msg: { party?: PartySnapshot | null }) => {
+                const next = msg.party ?? null;
+                setParty((prev) => {
+                    if (!prev && next) setActiveUi("party_lobby");
+                    if (prev && !next) setActiveUi((ui) => (ui === "party_lobby" ? null : ui));
+                    return next;
+                });
+                if (next?.queued) setPartyInvite(null);
+            });
+
+            joined.onMessage(
+                "party_invite",
+                (msg: { partyId: string; fromName: string; modes?: string[] }) => {
+                    if (!msg?.partyId) return;
+                    setPartyInvite({
+                        partyId: msg.partyId,
+                        fromName: msg.fromName ?? "A hunter",
+                        modes: msg.modes ?? [],
+                    });
+                },
+            );
+
+            joined.onMessage(
+                "match_recap",
+                (msg: {
+                    winner: "a" | "b" | "draw";
+                    scoreA: number;
+                    scoreB: number;
+                    rows: MatchRecapRow[];
+                }) => {
+                    setMatchRecap({
+                        winner: msg.winner,
+                        scoreA: msg.scoreA,
+                        scoreB: msg.scoreB,
+                        rows: msg.rows ?? [],
+                    });
+                },
+            );
 
             joined.onMessage(
                 "combat_fx",
@@ -293,7 +465,7 @@ export function useBaseCityRoom(options: Options) {
                                     ...cooldownUntilRef.current,
                                     [msg.abilityId]: until,
                                 };
-                                setCooldownUntil(cooldownUntilRef.current);
+                                abilityHudRuntime.setCooldownUntil(cooldownUntilRef.current);
                             }
                         }
                         return;
@@ -326,10 +498,7 @@ export function useBaseCityRoom(options: Options) {
                             life,
                             color: tint,
                         };
-                        setFxBursts((prev) => [
-                            ...prev.filter((b) => performance.now() - b.born < b.life),
-                            burst,
-                        ]);
+                        combatOverlayRuntime.pushBurst(burst);
                     }
 
                     if (usesMeleeSwoopFx(msg.abilityId) && msg.ownerId) {
@@ -447,10 +616,7 @@ export function useBaseCityRoom(options: Options) {
                             driftX: Math.cos(ang) * (0.35 + Math.random() * 0.45),
                             driftZ: Math.sin(ang) * (0.35 + Math.random() * 0.45),
                         };
-                        setDamagePopups((prev) => [
-                            ...prev.filter((p) => performance.now() - p.born < p.life),
-                            popup,
-                        ]);
+                        combatOverlayRuntime.pushPopup(popup);
                     }
 
                     if (msg.kind === "hit" && CATALOG_IMPACT_FX.has(msg.abilityId)) {
@@ -538,7 +704,7 @@ export function useBaseCityRoom(options: Options) {
                 if (phaseRef.current !== "content") clearContentRejoin();
             });
         },
-        [persistRejoinToken, showToast],
+        [persistRejoinToken, showToast, clearLocalCombatCastState],
     );
 
     const tryContentReconnect = useCallback(
@@ -591,6 +757,8 @@ export function useBaseCityRoom(options: Options) {
 
             transferringRef.current = true;
             try {
+                clearHubRejoin();
+                clearContentRejoin();
                 await roomRef.current?.leave(true);
                 roomRef.current = null;
                 setRoom(null);
@@ -607,6 +775,12 @@ export function useBaseCityRoom(options: Options) {
                     mode: msg.options?.mode,
                     modifiers: msg.options?.modifiers,
                     matchId: msg.options?.matchId,
+                    team: msg.options?.team,
+                    role: msg.options?.role,
+                    spawnSlot: (() => {
+                        const n = Number(msg.options?.spawnSlot);
+                        return Number.isFinite(n) ? Math.floor(n) : undefined;
+                    })(),
                 };
 
                 const joined = msg.roomId
@@ -617,6 +791,8 @@ export function useBaseCityRoom(options: Options) {
                 wireRoom(joined, nextPhase, mode);
                 if (nextPhase === "hub") {
                     setQueueModes([]);
+                    setMatchRecap(null);
+                    setArenaHud(null);
                     clearContentRejoin();
                     showToast("Returned to base city");
                 } else {
@@ -635,21 +811,27 @@ export function useBaseCityRoom(options: Options) {
     applyTransferRef.current = applyTransfer;
 
     useEffect(() => {
-        const locked =
+        const uiLocked =
             Boolean(options.inputLocked) ||
             activeUi !== null ||
             Boolean(matchPause) ||
+            Boolean(partyInvite) ||
             diedAt != null;
-        inputLockedRef.current = locked;
+        uiInputLockedRef.current = uiLocked;
+        inputLockedRef.current = uiLocked;
         activeUiRef.current = activeUi;
         matchPauseRef.current = matchPause;
         diedAtRef.current = diedAt;
-        if (locked) {
+        if (uiLocked) {
             keysRef.current = { up: false, down: false, left: false, right: false };
             heldCastSlotsRef.current = { mouse0: false, mouse2: false };
             pendingCastRef.current = undefined;
         }
-    }, [options.inputLocked, activeUi, matchPause, diedAt]);
+        // Death (and any full input lock from it) must drop optimistic cast lock.
+        if (diedAt != null) {
+            clearLocalCombatCastState();
+        }
+    }, [options.inputLocked, activeUi, matchPause, partyInvite, diedAt, clearLocalCombatCastState]);
 
     useEffect(() => {
         loadoutRef.current = normalizeLoadout(economy.loadout);
@@ -696,9 +878,9 @@ export function useBaseCityRoom(options: Options) {
         castPhaseRef.current = "anticipation";
         castingAbilityRef.current = abilityId;
         predictorRef.current.applyCastMove(abilityId, "anticipation");
-        setCastFlashId(abilityId);
+        abilityHudRuntime.setFlashId(abilityId);
         window.clearTimeout(castFlashTimerRef.current);
-        castFlashTimerRef.current = window.setTimeout(() => setCastFlashId(null), 120);
+        castFlashTimerRef.current = window.setTimeout(() => abilityHudRuntime.setFlashId(null), 120);
     }, []);
 
     const clearHeldMouseCasts = useCallback(() => {
@@ -783,11 +965,20 @@ export function useBaseCityRoom(options: Options) {
                     e.preventDefault();
                     break;
                 case "KeyF":
-                    if (down) window.dispatchEvent(new CustomEvent("bb-interact"));
+                    if (down) {
+                        e.preventDefault();
+                        beginCastFromSlotInput("f");
+                    }
                     break;
                 case "Space":
                     if (down) {
                         e.preventDefault();
+                        const near = nearInteractRef.current;
+                        // Stands / dummy: Space opens UI (or claims) instead of casting.
+                        if (near && near.kind !== "portal") {
+                            pendingInteractRef.current = near.id;
+                            return;
+                        }
                         beginCastFromSlotInput("space");
                     }
                     break;
@@ -913,19 +1104,20 @@ export function useBaseCityRoom(options: Options) {
         phaseRef.current = "hub";
         setQueueModes([]);
         setContentMode(null);
+        contentModeRef.current = null;
         setMatchPause(null);
 
         (async () => {
             try {
-                const saved = loadContentRejoin();
-                if (saved?.token) {
+                const savedContent = loadContentRejoin();
+                if (savedContent?.token) {
                     try {
-                        const rejoined = await client.reconnect(saved.token);
+                        const rejoined = await client.reconnect(savedContent.token);
                         if (cancelled) {
-                            rejoined.leave();
+                            rejoined.leave(true);
                             return;
                         }
-                        wireRoom(rejoined, "content", saved.mode);
+                        wireRoom(rejoined, "content", savedContent.mode);
                         showToast("Rejoined match");
                         return;
                     } catch {
@@ -933,32 +1125,99 @@ export function useBaseCityRoom(options: Options) {
                     }
                 }
 
-                const hubOwnerId = options.hubOwnerId ?? options.userId;
-                const joined = await client.joinOrCreate(ROOM.BASE_CITY, {
-                    userId: options.userId,
-                    displayName: options.displayName,
-                    color: options.color,
-                    accessToken: options.accessToken ?? undefined,
-                    hubOwnerId,
-                });
-                if (cancelled) {
-                    joined.leave();
-                    return;
+                const requestedHub = options.hubOwnerId ?? options.userId;
+                const savedHub = loadHubRejoin();
+                // Refresh often resets React hub state to "home"; prefer last host seat.
+                const hubOwnerId =
+                    (options.hubOwnerId && options.hubOwnerId !== options.userId
+                        ? options.hubOwnerId
+                        : null) ??
+                    (savedHub?.hubOwnerId && savedHub.hubOwnerId !== options.userId
+                        ? savedHub.hubOwnerId
+                        : null) ??
+                    loadPreferredHub(options.userId) ??
+                    requestedHub;
+
+                if (savedHub?.token && savedHub.hubOwnerId === hubOwnerId) {
+                    try {
+                        const rejoined = await client.reconnect(savedHub.token);
+                        if (cancelled) {
+                            rejoined.leave(true);
+                            return;
+                        }
+                        wireRoom(rejoined, "hub", null);
+                        showToast("Rejoined hub");
+                        return;
+                    } catch {
+                        clearHubRejoin();
+                    }
                 }
-                wireRoom(joined, "hub", null);
+
+                try {
+                    const joined = await client.joinOrCreate(ROOM.BASE_CITY, {
+                        userId: options.userId,
+                        displayName: options.displayName,
+                        color: options.color,
+                        accessToken: options.accessToken ?? undefined,
+                        hubOwnerId,
+                    });
+                    if (cancelled) {
+                        joined.leave(true);
+                        return;
+                    }
+                    wireRoom(joined, "hub", null);
+                } catch (joinErr) {
+                    // Host hub may be gone; fall back home rather than hard-fail.
+                    if (hubOwnerId !== options.userId) {
+                        console.warn("[hub] preferred hub join failed, returning home", joinErr);
+                        clearHubRejoin();
+                        clearPreferredHub();
+                        const hadVisitState =
+                            Boolean(options.hubOwnerId) && options.hubOwnerId !== options.userId;
+                        if (hadVisitState) {
+                            // Clear visit state so the connect effect remounts into home hub.
+                            optionsRef.current.onActiveHubOwnerId?.(null);
+                            return;
+                        }
+                        const home = await client.joinOrCreate(ROOM.BASE_CITY, {
+                            userId: options.userId,
+                            displayName: options.displayName,
+                            color: options.color,
+                            accessToken: options.accessToken ?? undefined,
+                            hubOwnerId: options.userId,
+                        });
+                        if (cancelled) {
+                            home.leave(true);
+                            return;
+                        }
+                        wireRoom(home, "hub", null);
+                        showToast("Host hub unavailable — returned home");
+                        return;
+                    }
+                    throw joinErr;
+                }
             } catch (err) {
                 console.error(err);
                 if (!cancelled) setStatus("error");
             }
         })();
 
+        const hubOwnerAtStart = options.hubOwnerId ?? options.userId;
         return () => {
             cancelled = true;
             transferringRef.current = false;
             clearCrescentSpawnState();
-            roomRef.current?.leave();
+            const room = roomRef.current;
             roomRef.current = null;
             clientRef.current = null;
+            const opts = optionsRef.current;
+            const stillSameHub = (opts.hubOwnerId ?? opts.userId) === hubOwnerAtStart;
+            const enabled = opts.enabled !== false;
+            // Reload / same-hub remount: soft-leave so allowReconnection can restore the seat.
+            // Hub switch or disable: consented leave strips the seat immediately.
+            const consented = !(stillSameHub && enabled);
+            if (consented) clearHubRejoin();
+            room?.leave(consented);
         };
     }, [
         options.endpoint,
@@ -971,6 +1230,9 @@ export function useBaseCityRoom(options: Options) {
         wireRoom,
         showToast,
     ]);
+
+    const clearLocalCombatCastStateRef = useRef(clearLocalCombatCastState);
+    clearLocalCombatCastStateRef.current = clearLocalCombatCastState;
 
     useEffect(() => {
         let raf = 0;
@@ -1002,6 +1264,9 @@ export function useBaseCityRoom(options: Options) {
                           z: number;
                           yaw: number;
                           lastInputSeq: number;
+                          hp?: number;
+                          roundDead?: boolean;
+                          role?: string;
                           castPhase?: string;
                           castAbilityId?: string;
                           statuses?: {
@@ -1022,7 +1287,7 @@ export function useBaseCityRoom(options: Options) {
                         targetsMap?.entries() ?? null,
                         r.sessionId,
                     );
-                    const statics = phaseRef.current === "hub" ? HUB_STATICS : EMPTY_STATICS;
+                    const statics = staticsForPhase(phaseRef.current, contentModeRef.current);
                     predictor.setWorldColliders(statics, dynamics);
                 }
 
@@ -1096,23 +1361,106 @@ export function useBaseCityRoom(options: Options) {
                     predictedRef.current = { ...predictor.state };
                 }
 
+                const st = r.state as { matchPhase?: string } | undefined;
+                const canAct = clientCanAct({
+                    hp: serverMe?.hp,
+                    roundDead: serverMe?.roundDead,
+                    role: serverMe?.role,
+                    matchPhase: st?.matchPhase,
+                });
+                const locked = uiInputLockedRef.current || !canAct;
+                inputLockedRef.current = locked;
+                if (!canAct) {
+                    keysRef.current = { up: false, down: false, left: false, right: false };
+                    heldCastSlotsRef.current = { mouse0: false, mouse2: false };
+                    pendingCastRef.current = undefined;
+                    pendingCancelRef.current = false;
+                    // Freeze to server pose — predicting into walls while server ignores input flickers.
+                    if (serverMe && predictor.isSeeded) {
+                        predictor.seed(serverMe.x, serverMe.z, serverMe.yaw);
+                        predictedRef.current = { ...predictor.state };
+                        lastAckRef.current = serverMe.lastInputSeq;
+                    }
+                }
+
+                // Hub interact pads: Space prompt for stands/dummy; portals auto-open on enter.
+                if (phaseRef.current === "hub" && predictor.isSeeded) {
+                    const px = predictedRef.current.x;
+                    const pz = predictedRef.current.z;
+                    let best: NearInteract = null;
+                    let bestDist = Infinity;
+                    for (const s of HUB_STANDS) {
+                        if (!pointInInteractZone(px, pz, s)) continue;
+                        const d = interactZoneDist(px, pz, s);
+                        if (d < bestDist) {
+                            bestDist = d;
+                            best = { id: s.id, label: s.label, kind: "stand" };
+                        }
+                    }
+                    for (const dmy of HUB_PRACTICE_DUMMIES) {
+                        if (!pointInInteractZone(px, pz, dmy)) continue;
+                        const d = interactZoneDist(px, pz, dmy);
+                        if (d < bestDist) {
+                            bestDist = d;
+                            best = { id: dmy.id, label: "Practice dummy", kind: "dummy" };
+                        }
+                    }
+                    let portalNear: NearInteract = null;
+                    let portalDist = Infinity;
+                    for (const p of HUB_PORTALS) {
+                        if (!pointInInteractZone(px, pz, p)) continue;
+                        const d = interactZoneDist(px, pz, p);
+                        if (d < portalDist) {
+                            portalDist = d;
+                            portalNear = { id: p.id, label: p.label, kind: "portal" };
+                        }
+                    }
+                    if (portalNear) {
+                        if (
+                            lastPortalAutoIdRef.current !== portalNear.id &&
+                            activeUiRef.current == null &&
+                            !uiInputLockedRef.current
+                        ) {
+                            lastPortalAutoIdRef.current = portalNear.id;
+                            pendingInteractRef.current = portalNear.id;
+                        }
+                    } else {
+                        lastPortalAutoIdRef.current = null;
+                    }
+                    // Prompt only for press-to-interact pads (not portals).
+                    const prompt =
+                        best && activeUiRef.current == null && !uiInputLockedRef.current ? best : null;
+                    nearInteractRef.current = best;
+                    setInteractPrompt(prompt ? { label: prompt.label } : null);
+                    setNearInteract((prev) => {
+                        if (prev?.id === prompt?.id && prev?.kind === prompt?.kind) return prev;
+                        return prompt;
+                    });
+                } else if (nearInteractRef.current != null) {
+                    nearInteractRef.current = null;
+                    lastPortalAutoIdRef.current = null;
+                    clearInteractPrompt();
+                    setNearInteract(null);
+                }
+
                 const keys = keysRef.current;
                 let moveX = 0;
                 let moveZ = 0;
-                if (keys.right) moveX += 1;
-                if (keys.left) moveX -= 1;
-                if (keys.down) moveZ += 1;
-                if (keys.up) moveZ -= 1;
-
-                // Hold-to-cast: only the active mouse hold re-fires (other was cleared on new press)
-                if (heldCastSlotsRef.current.mouse2) queueCastFromSlotInput("mouse2");
-                else if (heldCastSlotsRef.current.mouse0) queueCastFromSlotInput("mouse0");
+                if (canAct) {
+                    if (keys.right) moveX += 1;
+                    if (keys.left) moveX -= 1;
+                    if (keys.down) moveZ += 1;
+                    if (keys.up) moveZ -= 1;
+                    // Hold-to-cast: only the active mouse hold re-fires (other was cleared on new press)
+                    if (heldCastSlotsRef.current.mouse2) queueCastFromSlotInput("mouse2");
+                    else if (heldCastSlotsRef.current.mouse0) queueCastFromSlotInput("mouse0");
+                }
 
                 if (predictor.isSeeded) {
                     seqRef.current += 1;
-                    const castId = pendingCastRef.current;
+                    const castId = canAct ? pendingCastRef.current : undefined;
                     pendingCastRef.current = undefined;
-                    const cancelCast = pendingCancelRef.current;
+                    const cancelCast = canAct ? pendingCancelRef.current : false;
                     pendingCancelRef.current = false;
                     const input: PlayerInput = {
                         seq: seqRef.current,
@@ -1122,12 +1470,14 @@ export function useBaseCityRoom(options: Options) {
                         yaw: yawRef.current,
                         castId,
                         cancelCast: cancelCast || undefined,
-                        interactId: pendingInteractRef.current,
+                        interactId: canAct ? pendingInteractRef.current : undefined,
                     };
                     pendingInteractRef.current = undefined;
 
-                    const predicted = predictor.predict(input);
-                    predictedRef.current = predicted;
+                    if (canAct) {
+                        const predicted = predictor.predict(input);
+                        predictedRef.current = predicted;
+                    }
                     r.send("input", { input });
                 }
 
@@ -1144,6 +1494,9 @@ export function useBaseCityRoom(options: Options) {
                               talents?: string;
                               hp?: number;
                               maxHp?: number;
+                              castPhase?: string;
+                              team?: string;
+                              rematchReady?: boolean;
                               statuses?: {
                                   forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void;
                               };
@@ -1164,17 +1517,62 @@ export function useBaseCityRoom(options: Options) {
                         me.statuses?.forEach((row) => {
                             shieldRows.push({ statusId: row.statusId, stacks: row.stacks });
                         });
+                        const shield = totalShieldAbsorb(shieldRows);
+                        const maxHp = me.maxHp ?? 100;
                         setLocalHp({
                             hp: me.hp,
-                            maxHp: me.maxHp ?? 100,
-                            shield: totalShieldAbsorb(shieldRows),
+                            maxHp,
+                            shield,
                         });
+                        const casting = Boolean(me.castPhase);
+                        const damaged = me.hp < maxHp - 0.05;
+                        const now = performance.now();
+                        if (prevLocalHpRef.current != null && me.hp < prevLocalHpRef.current - 0.05) {
+                            combatHudLingerUntilRef.current = now + 3500;
+                        }
+                        prevLocalHpRef.current = me.hp;
+                        if (damaged || shield > 0 || casting || me.hp <= 0) {
+                            combatHudLingerUntilRef.current = now + 3500;
+                        }
+                        const showHud =
+                            damaged || shield > 0 || casting || me.hp <= 0 || now < combatHudLingerUntilRef.current;
+                        setCombatHudVisible((prev) => (prev === showHud ? prev : showHud));
                         if (me.hp <= 0) {
                             setDiedAt((prev) => prev ?? Date.now());
                         } else if (diedAtRef.current != null) {
+                            // Round restore / soft-respawn: server CDs were wiped; unlock client.
+                            clearLocalCombatCastStateRef.current();
                             setDiedAt(null);
                             setDeathAnimMs(3000);
                         }
+                    }
+
+                    const st = r.state as
+                        | {
+                              matchPhase?: string;
+                              matchRound?: number;
+                              scoreA?: number;
+                              scoreB?: number;
+                              phaseEndsAt?: number;
+                              matchMode?: string;
+                          }
+                        | undefined;
+                    if (st?.matchPhase) {
+                        setArenaHud({
+                            matchPhase: st.matchPhase,
+                            matchRound: st.matchRound ?? 0,
+                            scoreA: st.scoreA ?? 0,
+                            scoreB: st.scoreB ?? 0,
+                            phaseEndsAt: st.phaseEndsAt ?? 0,
+                            matchMode: st.matchMode ?? "",
+                            localTeam: me?.team ?? "",
+                            rematchReady: Boolean(me?.rematchReady),
+                        });
+                        if (st.matchPhase === "countdown" || st.matchPhase === "fighting") {
+                            setMatchRecap(null);
+                        }
+                    } else if (phaseRef.current !== "content") {
+                        setArenaHud(null);
                     }
                 }
             }
@@ -1218,6 +1616,48 @@ export function useBaseCityRoom(options: Options) {
         roomRef.current?.send("respawn");
     }, []);
 
+    const kickFromHub = useCallback((sessionId: string) => {
+        roomRef.current?.send("hub_kick", { sessionId });
+    }, []);
+
+    const kickFromParty = useCallback((sessionId: string) => {
+        roomRef.current?.send("party_kick", { sessionId });
+    }, []);
+
+    const voteRematch = useCallback(() => {
+        roomRef.current?.send("rematch_vote");
+    }, []);
+
+    const inviteToParty = useCallback((sessionId: string) => {
+        roomRef.current?.send("party_invite", { sessionId });
+    }, []);
+
+    const setPartySeat = useCallback((sessionId: string, seat: PvpSeat) => {
+        roomRef.current?.send("party_set_seat", { sessionId, seat });
+    }, []);
+
+    const lockParty = useCallback(() => {
+        roomRef.current?.send("party_lock");
+    }, []);
+
+    const cancelParty = useCallback(() => {
+        roomRef.current?.send("party_cancel");
+        setActiveUi(null);
+    }, []);
+
+    const leaveParty = useCallback(() => {
+        roomRef.current?.send("party_leave");
+        setActiveUi(null);
+    }, []);
+
+    const respondPartyInvite = useCallback((accept: boolean) => {
+        const invite = partyInvite;
+        if (!invite) return;
+        roomRef.current?.send("party_respond", { accept, partyId: invite.partyId });
+        setPartyInvite(null);
+        if (accept) setActiveUi("party_lobby");
+    }, [partyInvite]);
+
     useEffect(() => {
         (window as unknown as { __bbSetYaw?: (y: number) => void }).__bbSetYaw = setYaw;
         return () => {
@@ -1243,13 +1683,25 @@ export function useBaseCityRoom(options: Options) {
         returnToHub,
         economy,
         matchPause,
-        cooldownUntil,
-        castFlashId,
-        fxBursts,
-        damagePopups,
         localHp,
+        combatHudVisible,
         diedAt,
         deathAnimMs,
         requestRespawn,
+        hubRoster,
+        kickFromHub,
+        kickFromParty,
+        arenaHud,
+        matchRecap,
+        voteRematch,
+        party,
+        partyInvite,
+        nearInteract,
+        inviteToParty,
+        setPartySeat,
+        lockParty,
+        cancelParty,
+        leaveParty,
+        respondPartyInvite,
     };
 }

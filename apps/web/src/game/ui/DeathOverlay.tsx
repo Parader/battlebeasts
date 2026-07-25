@@ -7,13 +7,20 @@ type Props = {
   /** Wait this long after death before showing the grey overlay (death clip length). */
   animDurationMs?: number;
   onRespawn: () => void;
+  /** Arena mid-round: show death banner but no respawn button. */
+  allowRespawn?: boolean;
 };
 
 /**
  * After the death clip finishes: gray desaturate + "YOU DIE", then respawn panel.
  * Respawn unlock is measured from death (`diedAt + RESPAWN_LOCK_MS`).
  */
-export function DeathOverlay({ diedAt, animDurationMs = 3000, onRespawn }: Props) {
+export function DeathOverlay({
+  diedAt,
+  animDurationMs = 3000,
+  onRespawn,
+  allowRespawn = true,
+}: Props) {
   const [now, setNow] = useState(() => Date.now());
   const [showBanner, setShowBanner] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
@@ -68,16 +75,22 @@ export function DeathOverlay({ diedAt, animDurationMs = 3000, onRespawn }: Props
         <div className="bb-death-overlay__panel bb-parchment">
           <p className="bb-title text-sm">Fallen</p>
           <p className="mt-1 text-xs text-[var(--bb-ink-soft)]">
-            {unlocked ? "Ready to return to the fight." : `Respawn in ${leftSec}s`}
+            {allowRespawn
+              ? unlocked
+                ? "Ready to return to the fight."
+                : `Respawn in ${leftSec}s`
+              : "Spectating until the round ends."}
           </p>
-          <button
-            type="button"
-            className="bb-btn-ink mt-3 w-full disabled:cursor-not-allowed disabled:opacity-45"
-            disabled={!unlocked}
-            onClick={onRespawn}
-          >
-            {unlocked ? "Respawn" : `Respawn (${leftSec})`}
-          </button>
+          {allowRespawn ? (
+            <button
+              type="button"
+              className="bb-btn-ink mt-3 w-full disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={!unlocked}
+              onClick={onRespawn}
+            >
+              {unlocked ? "Respawn" : `Respawn (${leftSec})`}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>

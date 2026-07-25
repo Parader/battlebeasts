@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Route, Routes } from "react-router";
+import { BrowserRouter, HashRouter, Route, Routes } from "react-router";
 import { HomeScreen } from "@/pages/home-screen";
 import { PlayScreen } from "@/pages/play-screen";
 import { LoginScreen } from "@/pages/login-screen";
@@ -12,11 +12,17 @@ import { RouteProvider } from "@/providers/router-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import "@/styles/globals.css";
 
+/** file:// / Electron cannot use path-based BrowserRouter (shows app 404). */
+const useHashRouter =
+    typeof window !== "undefined" &&
+    (window.battlebeasts?.isElectron === true || window.location.protocol === "file:");
+const Router = useHashRouter ? HashRouter : BrowserRouter;
+
 createRoot(document.getElementById("root")!).render(
     <StrictMode>
         <ThemeProvider>
             <AuthProvider>
-                <BrowserRouter>
+                <Router>
                     <RouteProvider>
                         <Routes>
                             <Route path="/" element={<HomeScreen />} />
@@ -27,7 +33,7 @@ createRoot(document.getElementById("root")!).render(
                             <Route path="*" element={<NotFound />} />
                         </Routes>
                     </RouteProvider>
-                </BrowserRouter>
+                </Router>
             </AuthProvider>
         </ThemeProvider>
     </StrictMode>,

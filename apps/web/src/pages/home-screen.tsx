@@ -35,21 +35,26 @@ export const HomeScreen = () => {
                         </>
                     ) : (
                         <>
-                            <Button size="xl" color="primary" href="/login" isDisabled={!ready}>
-                                Sign in with Google
-                            </Button>
-                            {!configured && (
-                                <Button size="xl" color="secondary" href="/play">
-                                    Play as guest
+                            {configured && (
+                                <Button size="xl" color="primary" href="/login" isDisabled={!ready}>
+                                    Sign in
                                 </Button>
                             )}
+                            <Button size="xl" color="secondary" href="/play" isDisabled={!ready}>
+                                Play as guest
+                            </Button>
                         </>
                     )}
                 </div>
 
+                {configured && !user && (
+                    <p className="mt-6 max-w-md text-sm text-quaternary">
+                        Sign in with email to add friends and visit each other&apos;s hubs. Guests play alone in a private hub.
+                    </p>
+                )}
                 {!configured && (
                     <p className="mt-6 max-w-md text-sm text-quaternary">
-                        Google auth needs Supabase env vars. Guest play works for local combat testing.
+                        Auth needs Supabase env vars. Guest play works for local combat testing.
                     </p>
                 )}
             </div>

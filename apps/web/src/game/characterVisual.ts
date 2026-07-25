@@ -6,7 +6,10 @@ import { getCreaturePatternTexture } from "./creaturePatterns";
 export const CHARACTER_TARGET_HEIGHT = 1.7;
 
 /** Active player / remote avatar GLB (Blender Mixamo export). */
-export const CHARACTER_URL = "/hero.glb";
+import { assetUrl } from "./assetUrl";
+
+export const CHARACTER_URL = assetUrl("hero.glb");
+
 
 /**
  * Preferred surface mesh when the GLB ships multiple skinned bodies

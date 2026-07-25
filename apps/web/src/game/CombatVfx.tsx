@@ -10,6 +10,7 @@ import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
+import { combatOverlayRuntime } from "./combatOverlayRuntime";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -201,7 +202,19 @@ function FxRing({ burst }: { burst: FxBurst }) {
     );
 }
 
-export function CombatFxMeshes({ bursts }: { bursts: FxBurst[] }) {
+export function CombatFxMeshes() {
+    const [bursts, setBursts] = useState<readonly FxBurst[]>(() => combatOverlayRuntime.getBursts());
+
+    useEffect(() => {
+        return combatOverlayRuntime.subscribe(() => {
+            setBursts(combatOverlayRuntime.getBursts().slice());
+        });
+    }, []);
+
+    useFrame(() => {
+        combatOverlayRuntime.prune();
+    });
+
     return (
         <>
             {bursts.map((b) => (
@@ -282,7 +295,15 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
     );
 }
 
-export function DamagePopups({ popups }: { popups: DamagePopup[] }) {
+export function DamagePopups() {
+    const [popups, setPopups] = useState<readonly DamagePopup[]>(() => combatOverlayRuntime.getPopups());
+
+    useEffect(() => {
+        return combatOverlayRuntime.subscribe(() => {
+            setPopups(combatOverlayRuntime.getPopups().slice());
+        });
+    }, []);
+
     return (
         <>
             {popups.map((p) => (

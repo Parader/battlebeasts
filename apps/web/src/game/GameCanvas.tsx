@@ -1,23 +1,19 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { Room } from "colyseus.js";
-import { useLayoutEffect, useRef, type MutableRefObject } from "react";
+import { memo, useLayoutEffect, useRef, type MutableRefObject } from "react";
 import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import { CAMERA } from "@battlebeasts/shared";
 import { BaseCityScene } from "./BaseCityScene";
 import { ContentScene } from "./ContentScene";
-import type { FxBurst, DamagePopup } from "./CombatVfx";
 import type { PredictedPose, SessionPhase } from "./useBaseCityRoom";
 
 type Props = {
     room: Room | null;
     localSessionId: string | null;
     predictedRef: MutableRefObject<PredictedPose>;
-    onInteract: (id: string) => void;
     phase: SessionPhase;
     contentMode: string | null;
-    fxBursts: FxBurst[];
-    damagePopups: DamagePopup[];
 };
 
 const pitch = (CAMERA.pitchDeg * Math.PI) / 180;
@@ -48,15 +44,12 @@ function PostFX() {
     );
 }
 
-export function GameCanvas({
+export const GameCanvas = memo(function GameCanvas({
     room,
     localSessionId,
     predictedRef,
-    onInteract,
     phase,
     contentMode,
-    fxBursts,
-    damagePopups,
 }: Props) {
     const inContent = phase === "content";
 
@@ -89,20 +82,15 @@ export function GameCanvas({
                     localSessionId={localSessionId}
                     predictedRef={predictedRef}
                     modeLabel={contentMode ?? "content"}
-                    fxBursts={fxBursts}
-                    damagePopups={damagePopups}
                 />
             ) : (
                 <BaseCityScene
                     room={room}
                     localSessionId={localSessionId}
                     predictedRef={predictedRef}
-                    onInteract={onInteract}
-                    fxBursts={fxBursts}
-                    damagePopups={damagePopups}
                 />
             )}
             <PostFX />
         </Canvas>
     );
-}
+});

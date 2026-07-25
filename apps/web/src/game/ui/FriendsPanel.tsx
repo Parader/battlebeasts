@@ -12,6 +12,7 @@ type Props = {
   onAddFriend: (name: string) => Promise<void>;
   onAnswerRequest: (id: string, accept: boolean) => Promise<void>;
   onInviteToHub: (friendId: string) => Promise<void>;
+  onRemoveFriend: (friendId: string) => Promise<void>;
   onAnswerHubInvite: (id: string, accept: boolean) => Promise<string | null>;
   onVisitHub: (hubOwnerId: string) => void;
   onReturnHome: () => void;
@@ -30,6 +31,7 @@ export function FriendsPanel({
   onAddFriend,
   onAnswerRequest,
   onInviteToHub,
+  onRemoveFriend,
   onAnswerHubInvite,
   onVisitHub,
   onReturnHome,
@@ -60,9 +62,6 @@ export function FriendsPanel({
     <div
       className="bb-overlay-dim fixed inset-0 z-40 flex items-center justify-center p-4"
       data-ui-overlay
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
       role="presentation"
     >
       <div
@@ -70,7 +69,6 @@ export function FriendsPanel({
         aria-modal
         aria-label="Friends"
         className="bb-parchment bb-book-panel relative z-10 flex max-h-[min(80dvh,640px)] w-full max-w-md flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="relative mb-3 flex items-start justify-between gap-3">
           <div>
@@ -214,14 +212,29 @@ export function FriendsPanel({
                         {f.online ? "Online" : "Offline"}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      className="bb-btn-ink !py-1.5 text-[10px]"
-                      disabled={busy || !f.online || visiting}
-                      onClick={() => void run(() => onInviteToHub(f.id))}
-                    >
-                      Invite
-                    </button>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        className="bb-btn-ink !py-1.5 text-[10px]"
+                        disabled={busy || !f.online || visiting}
+                        onClick={() => void run(() => onInviteToHub(f.id))}
+                      >
+                        Invite
+                      </button>
+                      <button
+                        type="button"
+                        className="bb-btn-ink !py-1.5 text-[10px]"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async () => {
+                            if (!window.confirm(`Remove ${f.display_name} from friends?`)) return;
+                            await onRemoveFriend(f.id);
+                          })
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>

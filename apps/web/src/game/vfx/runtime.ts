@@ -33,6 +33,7 @@ class VfxRuntime {
   private shots: OneShotEffect[] = [];
   private listeners = new Set<Listener>();
   private nextKey = 1;
+  private emitRaf = 0;
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
@@ -73,27 +74,40 @@ class VfxRuntime {
 
   /** End a follow-owner one-shot early (e.g. cancel Frost Mist channel). */
   cancelFollowOwner(abilityId: string, ownerId: string): void {
-    const n = this.shots.filter(
-      (s) => !(s.abilityId === abilityId && s.followOwnerId === ownerId),
-    );
-    if (n.length !== this.shots.length) {
-      this.shots = n;
-      this.emit();
+    let w = 0;
+    let removed = false;
+    for (let i = 0; i < this.shots.length; i++) {
+      const s = this.shots[i]!;
+      if (s.abilityId === abilityId && s.followOwnerId === ownerId) {
+        removed = true;
+        continue;
+      }
+      this.shots[w++] = s;
+    }
+    if (removed) {
+      this.shots.length = w;
+      this.scheduleEmit();
     }
   }
 
   /** Drop expired shots; call from the render loop. */
   prune(now = performance.now()): void {
     if (this.shots.length === 0) return;
-    const before = this.shots.length;
-    this.shots = this.shots.filter((s) => now - s.born < s.life);
-    if (this.shots.length !== before) this.emit();
+    let w = 0;
+    for (let i = 0; i < this.shots.length; i++) {
+      const s = this.shots[i]!;
+      if (now - s.born < s.life) this.shots[w++] = s;
+    }
+    if (w !== this.shots.length) {
+      this.shots.length = w;
+      this.scheduleEmit();
+    }
   }
 
   clear(): void {
     if (this.shots.length === 0) return;
-    this.shots = [];
-    this.emit();
+    this.shots.length = 0;
+    this.scheduleEmit();
   }
 
   private push(
@@ -122,21 +136,35 @@ class VfxRuntime {
       startRadius: opts?.startRadius,
       growMs: opts?.growMs,
     };
-    this.shots = [...this.shots, shot];
-    this.emit();
+    this.shots.push(shot);
+    this.scheduleEmit();
     return {
       cancel: () => {
-        const n = this.shots.filter((s) => s.key !== key);
-        if (n.length !== this.shots.length) {
-          this.shots = n;
-          this.emit();
+        let w = 0;
+        let removed = false;
+        for (let i = 0; i < this.shots.length; i++) {
+          const s = this.shots[i]!;
+          if (s.key === key) {
+            removed = true;
+            continue;
+          }
+          this.shots[w++] = s;
+        }
+        if (removed) {
+          this.shots.length = w;
+          this.scheduleEmit();
         }
       },
     };
   }
 
-  private emit(): void {
-    for (const fn of this.listeners) fn();
+  /** Coalesce bursts of spawn/prune into one React commit per frame. */
+  private scheduleEmit(): void {
+    if (this.emitRaf) return;
+    this.emitRaf = requestAnimationFrame(() => {
+      this.emitRaf = 0;
+      for (const fn of this.listeners) fn();
+    });
   }
 }
 

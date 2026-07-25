@@ -6,14 +6,24 @@ import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
 import { DeathOverlay } from "@/game/ui/DeathOverlay";
+import { HubRoster } from "@/game/ui/HubRoster";
+import { ArenaMatchHud } from "@/game/ui/ArenaMatchHud";
+import { MatchRecapPanel } from "@/game/ui/MatchRecapPanel";
+import { PartyLobbyPanel } from "@/game/ui/PartyLobbyPanel";
+import { PartyInviteToast } from "@/game/ui/PartyInviteToast";
 import { AbilityBar } from "@/game/ui/AbilityBar";
 import { StatusBar } from "@/game/ui/StatusBar";
+import { ConfirmDialog } from "@/game/ui/ConfirmDialog";
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
 import { formatWallet } from "@battlebeasts/shared";
+import { clearPreferredHub, loadPreferredHub, savePreferredHub } from "@/game/contentRejoin";
 
-const WS_URL = import.meta.env.VITE_GAME_SERVER_URL ?? "ws://localhost:2567";
+const WS_URL =
+    (typeof window !== "undefined" && window.battlebeasts?.gameServerUrl) ||
+    import.meta.env.VITE_GAME_SERVER_URL ||
+    "ws://localhost:2567";
 
 function PauseCountdown({ until }: { until: number }) {
     const [left, setLeft] = useState(() => Math.max(0, Math.ceil((until - Date.now()) / 1000)));
@@ -35,13 +45,32 @@ export const PlayScreen = () => {
     const color = profile?.color;
 
     const [hubOwnerId, setHubOwnerId] = useState<string | null>(null);
+    const [hubPrefReady, setHubPrefReady] = useState(false);
     const effectiveHubOwnerId = hubOwnerId ?? userId;
 
-    const canJoinRoom = ready && (!user || (Boolean(profile) && !needsNameSetup));
+    // Restore last visited host hub before joining so refresh stays in that lobby.
+    useEffect(() => {
+        if (!ready) return;
+        if (user?.id) {
+            const preferred = loadPreferredHub(user.id);
+            if (preferred) setHubOwnerId(preferred);
+        }
+        setHubPrefReady(true);
+    }, [ready, user?.id]);
+
+    useEffect(() => {
+        if (!user?.id || !hubPrefReady) return;
+        if (hubOwnerId && hubOwnerId !== user.id) savePreferredHub(user.id, hubOwnerId);
+        else if (hubOwnerId === null) clearPreferredHub();
+    }, [user?.id, hubOwnerId, hubPrefReady]);
+
+    const canJoinRoom =
+        ready && hubPrefReady && (!user || (Boolean(profile) && !needsNameSetup));
 
     const friendsApi = useFriends(user?.id ?? null, user ? effectiveHubOwnerId : null);
     const [helpOpen, setHelpOpen] = useState(true);
     const [friendsOpen, setFriendsOpen] = useState(false);
+    const [confirmReturnHub, setConfirmReturnHub] = useState(false);
 
     const {
         status,
@@ -50,7 +79,6 @@ export const PlayScreen = () => {
         setActiveUi,
         room,
         localPlayer,
-        sendInteract,
         predictedRef,
         phase,
         queueModes,
@@ -60,14 +88,25 @@ export const PlayScreen = () => {
         returnToHub,
         economy,
         matchPause,
-        cooldownUntil,
-        castFlashId,
-        fxBursts,
-        damagePopups,
         localHp,
+        combatHudVisible,
         diedAt,
         deathAnimMs,
         requestRespawn,
+        hubRoster,
+        kickFromHub,
+        kickFromParty,
+        arenaHud,
+        matchRecap,
+        voteRematch,
+        party,
+        partyInvite,
+        inviteToParty,
+        setPartySeat,
+        lockParty,
+        cancelParty,
+        leaveParty,
+        respondPartyInvite,
     } = useBaseCityRoom({
         endpoint: WS_URL,
         userId,
@@ -77,6 +116,7 @@ export const PlayScreen = () => {
         hubOwnerId: effectiveHubOwnerId,
         enabled: canJoinRoom,
         inputLocked: friendsOpen,
+        onActiveHubOwnerId: (id) => setHubOwnerId(id),
     });
 
     if (!ready) {
@@ -92,11 +132,14 @@ export const PlayScreen = () => {
     }
 
     const inContent = phase === "content";
+    const isArena = Boolean(arenaHud?.matchPhase);
+    const arenaAllowRespawn = !isArena || arenaHud?.matchPhase === "rematch_wait";
     const hpMax = Math.max(1, localHp.maxHp);
     const hpPct = Math.max(0, Math.min(100, (localHp.hp / hpMax) * 100));
     const shieldPct = Math.max(0, Math.min(100, (localHp.shield / hpMax) * 100));
     // Sit on the right of current HP; if that would overflow, overlay the bar's right edge.
     const shieldLeft = Math.min(hpPct, Math.max(0, 100 - shieldPct));
+    const isHubOwner = effectiveHubOwnerId === userId;
 
     return (
         <div className="relative h-dvh w-full overflow-hidden bg-black">
@@ -104,38 +147,53 @@ export const PlayScreen = () => {
                 room={room}
                 localSessionId={room?.sessionId ?? null}
                 predictedRef={predictedRef}
-                onInteract={sendInteract}
                 phase={phase}
                 contentMode={contentMode}
-                fxBursts={fxBursts}
-                damagePopups={damagePopups}
             />
 
-            <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
-                <div className="bb-hp-tray">
-                    <div className="bb-hp-tray__label">
-                        <span>HP</span>
-                        <span className="tabular-nums">
-                            {Math.round(localHp.hp)}/{Math.round(localHp.maxHp)}
-                            {localHp.shield > 0 ? (
-                                <span className="bb-hp-tray__shield-amt"> +{Math.round(localHp.shield)}</span>
+            {combatHudVisible && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
+                    <div className="bb-hp-tray">
+                        <div className="bb-hp-tray__label">
+                            <span>HP</span>
+                            <span className="tabular-nums">
+                                {Math.round(localHp.hp)}/{Math.round(localHp.maxHp)}
+                                {localHp.shield > 0 ? (
+                                    <span className="bb-hp-tray__shield-amt"> +{Math.round(localHp.shield)}</span>
+                                ) : null}
+                            </span>
+                        </div>
+                        <div className="bb-hp-tray__track">
+                            <div className="bb-hp-tray__fill" style={{ width: `${hpPct}%` }} />
+                            {shieldPct > 0 ? (
+                                <div
+                                    className="bb-hp-tray__shield"
+                                    style={{ left: `${shieldLeft}%`, width: `${shieldPct}%` }}
+                                />
                             ) : null}
-                        </span>
-                    </div>
-                    <div className="bb-hp-tray__track">
-                        <div className="bb-hp-tray__fill" style={{ width: `${hpPct}%` }} />
-                        {shieldPct > 0 ? (
-                            <div
-                                className="bb-hp-tray__shield"
-                                style={{ left: `${shieldLeft}%`, width: `${shieldPct}%` }}
-                            />
-                        ) : null}
+                        </div>
                     </div>
                 </div>
-            </div>
+            )}
 
             {diedAt != null && (
-                <DeathOverlay diedAt={diedAt} animDurationMs={deathAnimMs} onRespawn={requestRespawn} />
+                <DeathOverlay
+                    diedAt={diedAt}
+                    animDurationMs={deathAnimMs}
+                    onRespawn={requestRespawn}
+                    allowRespawn={arenaAllowRespawn}
+                />
+            )}
+
+            {arenaHud && inContent && <ArenaMatchHud hud={arenaHud} />}
+
+            {matchRecap && inContent && (
+                <MatchRecapPanel
+                    recap={matchRecap}
+                    rematchReady={Boolean(arenaHud?.rematchReady)}
+                    onRematch={voteRematch}
+                    onReturnHub={returnToHub}
+                />
             )}
 
             <div data-ui-overlay className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4">
@@ -164,10 +222,23 @@ export const PlayScreen = () => {
                         </span>
                     )}
                     {!inContent && <span className="bb-chip">{formatWallet(economy)}</span>}
+                    {!inContent && (
+                        <HubRoster
+                            players={hubRoster}
+                            localSessionId={room?.sessionId ?? null}
+                            isHubOwner={isHubOwner}
+                            onKick={kickFromHub}
+                        />
+                    )}
                 </div>
                 <div className="pointer-events-auto flex flex-wrap justify-end gap-2">
+                    {party && !inContent && activeUi !== "party_lobby" && (
+                        <button type="button" className="bb-btn-brass" onClick={() => setActiveUi("party_lobby")}>
+                            Party lobby
+                        </button>
+                    )}
                     {inContent && (
-                        <button type="button" className="bb-btn-brass" onClick={returnToHub}>
+                        <button type="button" className="bb-btn-brass" onClick={() => setConfirmReturnHub(true)}>
                             Return to city
                         </button>
                     )}
@@ -230,11 +301,7 @@ export const PlayScreen = () => {
 
             <StatusBar room={room} sessionId={room?.sessionId ?? null} />
 
-            <AbilityBar
-                loadout={economy.loadout}
-                cooldownUntil={cooldownUntil}
-                flashId={castFlashId}
-            />
+            <AbilityBar loadout={economy.loadout} />
 
             {helpOpen && (
                 <div
@@ -246,10 +313,11 @@ export const PlayScreen = () => {
                     <ul className="mt-1 list-disc space-y-1 pl-4 text-[var(--bb-ink-soft)]">
                         <li>WASD / arrows — move</li>
                         <li>Mouse aim — character yaw</li>
-                        <li>LMB / RMB / Space / Q / E / R — cast</li>
+                        <li>LMB / RMB / Space / Q / E / R / F — cast</li>
                         <li>Space can interrupt other casts (missile keeps flying if already fired)</li>
+                        <li>In a shop / stand zone, Space opens the menu instead of casting</li>
+                        <li>Walk into a portal to open its menu</li>
                         <li>C / Esc / mouse side buttons — cancel (Bolt: until projectile fires; others: anticipation)</li>
-                        <li>F — interact with stands / portals</li>
                         {!inContent && <li>Practice dummy — damage it with abilities for copper</li>}
                     </ul>
                     {localPlayer && (
@@ -284,6 +352,30 @@ export const PlayScreen = () => {
                     kind={activeUi}
                     onClose={() => setActiveUi(null)}
                     onConfirm={confirmPortal}
+                    hubPlayerCount={Math.max(1, hubRoster.length || 1)}
+                />
+            )}
+
+            {activeUi === "party_lobby" && party && (
+                <PartyLobbyPanel
+                    party={party}
+                    localSessionId={room?.sessionId ?? null}
+                    hubPlayers={hubRoster}
+                    onInvite={inviteToParty}
+                    onSetSeat={setPartySeat}
+                    onKick={kickFromParty}
+                    onLock={lockParty}
+                    onCancel={cancelParty}
+                    onLeave={leaveParty}
+                    onClose={() => setActiveUi(null)}
+                />
+            )}
+
+            {partyInvite && (
+                <PartyInviteToast
+                    invite={partyInvite}
+                    onAccept={() => respondPartyInvite(true)}
+                    onDecline={() => respondPartyInvite(false)}
                 />
             )}
 
@@ -299,16 +391,33 @@ export const PlayScreen = () => {
                     onAddFriend={friendsApi.addFriend}
                     onAnswerRequest={friendsApi.answerRequest}
                     onInviteToHub={friendsApi.sendHubInvite}
+                    onRemoveFriend={friendsApi.removeFriend}
                     onAnswerHubInvite={friendsApi.answerHubInvite}
                     onVisitHub={(id) => {
+                        if (user?.id) savePreferredHub(user.id, id);
                         setHubOwnerId(id);
                         setFriendsOpen(false);
                     }}
-                    onReturnHome={() => setHubOwnerId(null)}
+                    onReturnHome={() => {
+                        clearPreferredHub();
+                        setHubOwnerId(null);
+                    }}
                     currentHubOwnerId={effectiveHubOwnerId}
                     myUserId={userId}
                 />
             )}
+
+            <ConfirmDialog
+                open={confirmReturnHub}
+                title="Return to city?"
+                message="Leave this match and return to your base city?"
+                confirmLabel="Return to city"
+                onConfirm={() => {
+                    setConfirmReturnHub(false);
+                    returnToHub();
+                }}
+                onCancel={() => setConfirmReturnHub(false)}
+            />
         </div>
     );
 };
