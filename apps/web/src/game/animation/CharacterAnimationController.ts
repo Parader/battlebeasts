@@ -40,6 +40,8 @@ export type FullBodyActionOptions = {
   timeScale?: number;
   /** Start the clip at this time (seconds) instead of 0. */
   startAtSec?: number;
+  /** Loop until cancel (e.g. Groove jazz channel). */
+  loop?: boolean;
   fadeIn?: number;
   fadeOut?: number;
   /** Default true. Death should pass false. */
@@ -289,14 +291,14 @@ export class CharacterAnimationController {
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);
 
-    for (const key of ["dash", "jumpAttack", "idleToCrouch", "crouchWalk", "hit", "death", "heavyCast"] as const) {
+    for (const key of ["dash", "jumpAttack", "jazzDance", "idleToCrouch", "crouchWalk", "hit", "death", "heavyCast"] as const) {
       const name = config[key];
       if (!name) continue;
       const src = resolveClip(clips, name);
       if (!src) continue;
       // Dash/death keep Mixamo hips Y. Jump Attack plants hips — Leap Slam hop is
       // applied on the avatar root so travel timing matches the airborne arc.
-      // Crouch clips keep vertical motion so the pose reads.
+      // Crouch / jazz dance keep vertical motion so the pose reads.
       const prepared =
         key === "jumpAttack"
           ? plantHipsRootMotion(stripHorizontalRootMotion(src), this.plantHipsY)
@@ -655,8 +657,9 @@ export class CharacterAnimationController {
     action.reset();
     action.enabled = true;
     action.paused = false;
-    action.setLoop(THREE.LoopOnce, 1);
-    action.clampWhenFinished = true;
+    const looping = Boolean(options.loop);
+    action.setLoop(looping ? THREE.LoopRepeat : THREE.LoopOnce, looping ? Infinity : 1);
+    action.clampWhenFinished = !looping;
     if (typeof options.timeScale === "number" && options.timeScale > 0) {
       action.timeScale = options.timeScale;
     } else if (options.desiredDuration && options.desiredDuration > 0 && clip.duration > 0) {
@@ -675,6 +678,11 @@ export class CharacterAnimationController {
     this.overrideName = animationName;
     this.overrideWeightTarget = 1;
     this.overrideWeight = Math.max(this.overrideWeight, 0.35);
+
+    if (looping) {
+      // Channel loops until cancelFullBodyAction — no finished restore.
+      return true;
+    }
 
     const onFinished = (e: unknown) => {
       const evt = e as { action?: THREE.AnimationAction };

@@ -14,7 +14,8 @@ export type StatusMechanic =
   | "haste" // moveMul > 1
   | "stealth" // invisible to enemies; still takes damage
   | "dot" // periodic damage (fire, poison, bleed…)
-  | "shield"; // absorb (stub for later)
+  | "shield" // absorb (stub for later)
+  | "resist"; // damageTakenMul < 1 while active
 
 export type StatusStackRule = "refresh" | "stack" | "ignore";
 
@@ -34,6 +35,11 @@ export interface StatusDef {
    * Stun/root force 0 regardless.
    */
   moveMul?: number;
+  /**
+   * Incoming damage multiplier while active (multiplicative across statuses).
+   * 0.6 = 40% resistance.
+   */
+  damageTakenMul?: number;
   blocksMove?: boolean;
   blocksCast?: boolean;
   maxStacks?: number;
@@ -219,6 +225,19 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#bae6fd",
     tag: "CHL",
   },
+  /** Groove channel — 40% damage resistance while dancing. */
+  grooveGuard: {
+    id: "grooveGuard",
+    name: "Groove",
+    polarity: "buff",
+    mechanic: "resist",
+    durationMs: 7000,
+    damageTakenMul: 0.6,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#6ee7b7",
+    tag: "GRV",
+  },
 };
 
 /** Max frost chill stacks (10% each → 100%). */
@@ -297,6 +316,19 @@ export function combineStatusMoveMul(
     }
   }
   return Math.max(0, (1 - Math.min(100, slowPct) / 100) * haste);
+}
+
+/** Incoming damage factor from statuses (multiplicative; 1 = full damage). */
+export function combineStatusDamageTakenMul(
+  entries: { def: StatusDef; stacks: number }[],
+): number {
+  let mul = 1;
+  for (const { def } of entries) {
+    if (typeof def.damageTakenMul === "number" && def.damageTakenMul >= 0) {
+      mul *= def.damageTakenMul;
+    }
+  }
+  return Math.max(0, mul);
 }
 
 export function statusesBlockMove(entries: { def: StatusDef }[]): boolean {

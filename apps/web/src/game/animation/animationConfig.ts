@@ -27,6 +27,8 @@ export type CharacterAnimationConfig = {
   dash?: string;
   /** Full-body leap / jump attack (RMB slam). */
   jumpAttack?: string;
+  /** Full-body Jazz Dancing (Groove heal). */
+  jazzDance?: string;
   /** Idle → crouch (Decoy enter). */
   idleToCrouch?: string;
   /** Loop while cloaked and moving. */
@@ -64,6 +66,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   heavyCast: "magic_2h",
   dash: "dive",
   jumpAttack: "Jump Attack",
+  jazzDance: "Jazz Dancing",
   idleToCrouch: "Standing To Crouched",
   crouchWalk: "Crouched Walking",
   locomotionBlendResponsiveness: 12,
@@ -144,6 +147,8 @@ export const abilityAnimationBindings: Record<
     holdPoseAtSec?: number;
     /** Play full-body clip at natural speed (timeScale 1). */
     playNaturalSpeed?: boolean;
+    /** Loop full-body until cast clears (Groove channel). */
+    fullBodyLoop?: boolean;
     /** Clip scrub start (seconds). */
     startAtSec?: number;
     /** Mixer timeScale during anticipation. */
@@ -174,7 +179,11 @@ export const abilityAnimationBindings: Record<
     fullBodyAnimDurationSec: 0.67,
   },
   gust: { upper: "castAoE" },
-  rupture: { upper: "castAoE" },
+  groove: {
+    fullBody: "jazzDance",
+    fullBodyLoop: true,
+    playNaturalSpeed: true,
+  },
   smash: {
     fullBody: "jumpAttack",
     holdEndPoseOnRecovery: true,

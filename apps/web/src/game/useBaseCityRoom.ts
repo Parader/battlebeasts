@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, normalizeLoadout, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, type PlayerInput } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, isChannelAbility, normalizeLoadout, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, type PlayerInput } from "@battlebeasts/shared";
 import { clearContentRejoin, loadContentRejoin, saveContentRejoin } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, clearCrescentSpawnState } from "./vfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
@@ -242,7 +242,7 @@ export function useBaseCityRoom(options: Options) {
                     if (msg.kind === "cast_phase") {
                         if (
                             (msg.phase === "cancel" || msg.phase === "interrupt") &&
-                            usesFrostMistFx(msg.abilityId) &&
+                            (usesFrostMistFx(msg.abilityId) || usesGrooveFx(msg.abilityId)) &&
                             msg.ownerId
                         ) {
                             cancelFollowOwnerVfx(msg.abilityId, msg.ownerId);
@@ -303,7 +303,8 @@ export function useBaseCityRoom(options: Options) {
                         (usesAoeCrackFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesBridgedAoeFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesSpikeFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe");
+                        (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe") ||
+                        (usesGrooveFx(msg.abilityId) && msg.kind === "aoe");
 
                     if (!skipGroundBurst) {
                         const key = ++fxKeyRef.current;
@@ -401,12 +402,40 @@ export function useBaseCityRoom(options: Options) {
                         );
                     }
 
+                    if (msg.kind === "aoe" && usesGrooveFx(msg.abilityId)) {
+                        let yaw = typeof msg.yaw === "number" ? msg.yaw : 0;
+                        if (msg.ownerId) {
+                            const owner = joined.state?.players?.get(msg.ownerId) as
+                                | { yaw?: number }
+                                | undefined;
+                            const localOwner = msg.ownerId === sessionIdRef.current;
+                            yaw = localOwner ? yawRef.current : (owner?.yaw ?? yaw);
+                        }
+                        const grooveDef = ABILITIES.groove;
+                        spawnImpactEffect(
+                            msg.abilityId,
+                            {
+                                x: msg.x,
+                                z: msg.z,
+                                y: 1.0,
+                                yaw,
+                            },
+                            {
+                                lifeMs: GROOVE_CAST.channelMs + 200,
+                                radius: grooveDef?.radius ?? 7,
+                                followOwnerId: msg.ownerId,
+                            },
+                        );
+                    }
+
                     if (msg.kind === "hit" && typeof msg.damage === "number" && msg.damage > 0) {
                         const key = ++dmgKeyRef.current;
                         const ang = Math.random() * Math.PI * 2;
+                        const isHeal = usesGrooveFx(msg.abilityId);
                         const popup: DamagePopup = {
                             key,
                             amount: msg.damage,
+                            kind: isHeal ? "heal" : "damage",
                             x: msg.x,
                             z: msg.z,
                             y: 1.35 + Math.random() * 0.25,
@@ -637,7 +666,10 @@ export function useBaseCityRoom(options: Options) {
         if (busy) {
             // Already casting this spell — wait for recovery (hold-to-cast retries next frame)
             if (currentId === abilityId) return;
-            const canCut = def.interruptsOtherCasts === true && current?.interruptible !== false;
+            const canCut =
+                def.interruptsOtherCasts === true &&
+                current?.interruptible !== false &&
+                !isChannelAbility(current);
             if (!canCut && (current?.timing.blocksOtherCasts !== false || def.timing.blocksOtherCasts !== false)) {
                 return;
             }
@@ -700,7 +732,7 @@ export function useBaseCityRoom(options: Options) {
         castingAbilityRef.current = null;
         predictorRef.current.clearMoveMul();
         const sid = sessionIdRef.current;
-        if (sid && usesFrostMistFx(abilityId)) {
+        if (sid && (usesFrostMistFx(abilityId) || usesGrooveFx(abilityId))) {
             cancelFollowOwnerVfx(abilityId, sid);
         }
         window.dispatchEvent(new CustomEvent("bb-cast-anim-cancel"));

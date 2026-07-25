@@ -200,9 +200,13 @@ export function syncAbilityCast(
         ? activePoseSec
         : durationSec);
     const opts = {
-      desiredDuration: binding.windupTimeScale ? undefined : animSec,
+      desiredDuration:
+        binding.playNaturalSpeed || binding.windupTimeScale || binding.fullBodyLoop
+          ? undefined
+          : animSec,
       timeScale: binding.windupTimeScale,
       startAtSec: binding.startAtSec,
+      loop: binding.fullBodyLoop,
       restoreLayers: true,
     };
     const ok =

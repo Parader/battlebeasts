@@ -34,6 +34,8 @@ export interface AbilityTiming {
    * Latest phase where player cancel is allowed (inclusive).
    * Default `"anticipation"`. Use `"cast"` until the effect fires; `"impact"` for
    * channelled sprays (e.g. Frost Mist) that stay cancelable while ticking.
+   * Channelled abilities (`cancelUntilPhase: "impact"`) cannot be cut by other casts —
+   * only player cancel / hard interrupt (stun) ends them early.
    */
   cancelUntilPhase?: "anticipation" | "cast" | "impact";
   /** Block starting other abilities until recovery ends (default true). */
@@ -126,6 +128,10 @@ export interface AbilityDef {
   range: number;
   shape: AbilityShape;
   damage: number;
+  /** Instant heal amount per tick (self-centered AoE support spells). */
+  heal?: number;
+  /** Number of heal pulses over the channel (Groove). */
+  healTicks?: number;
   radius?: number;
   speed?: number;
   timing: AbilityTiming;
@@ -359,6 +365,25 @@ function frostMistReleaseWallMs(): number {
 function frostMistSprayWallMs(): number {
   return FROST_MIST_CAST.mistTicks * FROST_MIST_CAST.mistTickMs;
 }
+
+/**
+ * Jazz Dancing (hero.glb) — full-body Groove heal channel.
+ * Clip ~2.77s loops while the heal aura stays up.
+ */
+export const GROOVE_CAST = {
+  fps: 30,
+  clipDurationSec: 2.766667,
+  /** Heal pulses while channeling. */
+  healTicks: 12,
+  healPerTick: 8,
+  /** Gap between heal ticks (12 × 550ms = 6.6s channel). */
+  healTickMs: 550,
+  /** Heal aura / dance channel wall time. */
+  channelMs: 12 * 550,
+  anticipationMs: 120,
+  castMs: 180,
+  recoveryMs: 140,
+} as const;
 
 /** Authored ms that yield `wallMs` after CAST_EXECUTION_SCALE. */
 function authoredForWallMs(wallMs: number): number {
@@ -756,34 +781,42 @@ export const ABILITIES: Record<string, AbilityDef> = {
       canCancelAnticipation: true,
       cancelUntilPhase: "impact",
     },
+    /** Channel — Surge/Dash/etc. cannot cut; cancel still works. */
+    interruptible: false,
   },
-  rupture: {
-    id: "rupture",
-    name: "Rupture",
+  /**
+   * Groove (R) — Jazz Dancing heal channel.
+   * Self-centered AoE heals in ticks while aura + dance stay up (~6.6s; cancel anytime).
+   * Others get full ticks; caster gets half of total HP restored to others. 40% DR while channeling.
+   */
+  groove: {
+    id: "groove",
+    name: "Groove",
     description:
-      "Long-windup ground rupture at range. Heavy burst damage; applies bleed and a chance to poison.",
+      "Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. 40% damage resistance while channeling. Cancel anytime.",
     cooldownMs: 10000,
-    range: 10,
+    range: 0,
     shape: "aoe",
-    damage: 40,
-    radius: 2.8,
+    damage: 0,
+    heal: GROOVE_CAST.healPerTick,
+    healTicks: GROOVE_CAST.healTicks,
+    tickMs: GROOVE_CAST.healTickMs,
+    radius: 7,
     allowedSlots: ["r"],
-    // ~1.5s → AoE clip ~2.2×
     timing: {
-      anticipationMs: 450,
-      castMs: 300,
-      impactMs: 350,
-      recoveryMs: 400,
-      anticipationMoveMul: 0.2,
-      castMoveMul: 0.05,
-      impactMoveMul: 0,
-      recoveryMoveMul: 0.5,
+      anticipationMs: authoredForWallMs(GROOVE_CAST.anticipationMs),
+      castMs: authoredForWallMs(GROOVE_CAST.castMs),
+      impactMs: authoredForWallMs(GROOVE_CAST.channelMs),
+      recoveryMs: authoredForWallMs(GROOVE_CAST.recoveryMs),
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.85,
       canCancelAnticipation: true,
+      cancelUntilPhase: "impact",
     },
-    applyOnHit: [
-      { statusId: "bleeding", stacks: 1 },
-      { statusId: "poisoned", stacks: 1, chance: 0.5 },
-    ],
+    /** Channel — Surge/Dash/etc. cannot cut; cancel still works. */
+    interruptible: false,
   },
 };
 
@@ -853,6 +886,9 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
     parts.push(`${def.damage} dmg / ${formatSeconds(def.tickMs)}`);
   } else if (def.combo && def.damage > 0) {
     parts.push(`${def.damage}×${def.combo.hits} dmg`);
+  } else if (def.heal != null && def.heal > 0) {
+    const ticks = def.healTicks ?? 1;
+    parts.push(ticks > 1 ? `${def.heal}×${ticks} heal` : `${def.heal} heal`);
   } else if (def.damage > 0) {
     parts.push(`${def.damage} dmg`);
   }
@@ -991,6 +1027,14 @@ export function canPlayerCancelCast(
   if (until === "anticipation") return phase === "anticipation";
   if (until === "cast") return phase === "anticipation" || phase === "cast";
   return phase === "anticipation" || phase === "cast" || phase === "impact";
+}
+
+/**
+ * Channelled abilities keep resolving during impact (mist ticks, heal pulses, …).
+ * Other casts cannot cut them — only player cancel or hard interrupt.
+ */
+export function isChannelAbility(def: AbilityDef | undefined): boolean {
+  return def?.timing.cancelUntilPhase === "impact";
 }
 
 /** Total lockout from anticipation through end of recovery. */

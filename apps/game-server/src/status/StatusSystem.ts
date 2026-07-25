@@ -1,5 +1,6 @@
 import {
   STATUSES,
+  combineStatusDamageTakenMul,
   combineStatusMoveMul,
   combineStatusSlowPercent,
   getStatus,
@@ -169,6 +170,11 @@ export class StatusSystem {
 
   getMoveMul(targetId: string): number {
     return combineStatusMoveMul(this.entries(targetId));
+  }
+
+  /** Incoming damage factor (1 = full; 0.6 = 40% resist). */
+  getDamageTakenMul(targetId: string): number {
+    return combineStatusDamageTakenMul(this.entries(targetId));
   }
 
   canMove(targetId: string): boolean {

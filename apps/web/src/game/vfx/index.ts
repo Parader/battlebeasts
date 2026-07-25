@@ -26,6 +26,7 @@ export {
   usesBridgedAoeFx,
   usesSpikeFx,
   usesFrostMistFx,
+  usesGrooveFx,
   BoltProjectileEffect,
   CrescentCastEffect,
   CrescentImpactEffect,
@@ -36,6 +37,7 @@ export {
   GraspProjectileEffect,
   SpikesPopEffect,
   FrostMistConeEffect,
+  HealSwooshEffect,
   renderOneShot,
 } from "./catalog";
 

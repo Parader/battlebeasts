@@ -11,7 +11,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   spikes: "#166534",
   frostMist: "#7dd3fc",
   decoy: "#94a3b8",
-  rupture: "#b91c1c",
+  groove: "#6ee7b7",
 };
 
 export function abilityVfxColor(abilityId: string, fallback = "#38bdf8"): string {

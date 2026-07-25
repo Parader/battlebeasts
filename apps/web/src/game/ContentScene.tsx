@@ -94,7 +94,7 @@ export function ContentScene({ room, localSessionId, predictedRef, fxBursts, dam
                 localSessionId={localSessionId}
                 color={localColor}
             />
-            <RemotePlayers room={room} localSessionId={localSessionId} />
+            <RemotePlayers room={room} localSessionId={localSessionId} relation="enemy" />
             <Decoys room={room} />
             <Projectiles room={room} />
             <CombatFxMeshes bursts={fxBursts} />

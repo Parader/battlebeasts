@@ -9,6 +9,7 @@ import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacte
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { syncAbilityCast } from "./syncPlayerCast";
+import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -213,6 +214,8 @@ export function CombatFxMeshes({ bursts }: { bursts: FxBurst[] }) {
 export type DamagePopup = {
     key: number;
     amount: number;
+    /** Heal popups render green `+N`; damage stays red. */
+    kind?: "damage" | "heal";
     x: number;
     z: number;
     /** World Y start (chest / head). */
@@ -227,6 +230,7 @@ export type DamagePopup = {
 function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
     const group = useRef<THREE.Group>(null);
     const el = useRef<HTMLDivElement>(null);
+    const isHeal = popup.kind === "heal";
 
     useFrame(() => {
         const g = group.current;
@@ -258,18 +262,20 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
                 <div
                     ref={el}
                     style={{
-                        color: "#fecaca",
+                        color: isHeal ? "#bbf7d0" : "#fecaca",
                         fontWeight: 600,
                         fontSize: "18px",
                         fontFamily: "ui-sans-serif, system-ui, sans-serif",
                         letterSpacing: "0.02em",
-                        textShadow: "0 1px 0 #450a0a, 0 0 8px rgba(127,29,29,0.85)",
+                        textShadow: isHeal
+                            ? "0 1px 0 #14532d, 0 0 8px rgba(22,101,52,0.85)"
+                            : "0 1px 0 #450a0a, 0 0 8px rgba(127,29,29,0.85)",
                         whiteSpace: "nowrap",
                         userSelect: "none",
                         willChange: "transform, opacity",
                     }}
                 >
-                    {Math.round(popup.amount)}
+                    {isHeal ? `+${Math.round(popup.amount)}` : Math.round(popup.amount)}
                 </div>
             </Html>
         </group>
@@ -483,6 +489,7 @@ function PracticeDummyAvatar({
 }) {
     const root = useRef<THREE.Group>(null);
     const body = useRef<THREE.Group>(null);
+    const aimRef = useRef<THREE.Group>(null);
     const controllerRef = useRef<CharacterAnimationController | null>(null);
     const lastCastId = useRef("");
     const groundY = useRef<number | null>(null);
@@ -557,7 +564,10 @@ function PracticeDummyAvatar({
             return;
         }
         g.visible = true;
-        if (b) b.rotation.y = t.yaw ?? 0;
+        const yaw = t.yaw ?? 0;
+        if (b) b.rotation.y = yaw;
+        const aim = aimRef.current;
+        if (aim) aim.rotation.y = yaw;
 
         const movedFar =
             lastXZSeeded.current &&
@@ -594,6 +604,9 @@ function PracticeDummyAvatar({
                         return collectStatusRows(t?.statuses);
                     }}
                 />
+            </group>
+            <group ref={aimRef}>
+                <AimIndicator color={AIM_RELATION_COLORS.neutral} />
             </group>
             <HpBillboard room={room} targetId={targetId} y={2.05} />
         </group>

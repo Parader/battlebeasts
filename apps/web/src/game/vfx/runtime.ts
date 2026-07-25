@@ -22,6 +22,7 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   gust: 1200,
   spikes: 560,
   frostMist: 3800,
+  groove: 4200,
 };
 
 /**

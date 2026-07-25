@@ -403,7 +403,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef, onInteract, 
                 localSessionId={localSessionId}
                 color={localColor}
             />
-            <RemotePlayers room={room} localSessionId={localSessionId} />
+            <RemotePlayers room={room} localSessionId={localSessionId} relation="ally" />
             <Projectiles room={room} />
             <CombatFxMeshes bursts={fxBursts} />
             <DamagePopups popups={damagePopups} />

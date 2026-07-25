@@ -13,10 +13,11 @@ import { FrostBallCastEffect } from "./effects/frostBallCast";
 import { GraspProjectileEffect } from "./effects/graspProjectile";
 import { SpikesPopEffect } from "./effects/spikesPop";
 import { FrostMistConeEffect } from "./effects/frostMistCone";
+import { HealSwooshEffect } from "./effects/healSwoosh";
 
 export type ProjectileVfxId = "bolt" | "frostBall" | "grasp";
 export type CastVfxId = "bolt" | "crescent" | "frostBall";
-export type ImpactVfxId = "bolt" | "crescent" | "smash" | "gust" | "spikes" | "frostMist";
+export type ImpactVfxId = "bolt" | "crescent" | "smash" | "gust" | "spikes" | "frostMist" | "groove";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
 export const CATALOG_PROJECTILES = new Set<string>(["bolt", "frostBall", "grasp"]);
@@ -44,6 +45,9 @@ export const CATALOG_SPIKE_FX = new Set<string>(["spikes"]);
 
 /** Expanding frost spray cone — one mist layer per combat_fx tick. */
 export const CATALOG_FROST_MIST_FX = new Set<string>(["frostMist"]);
+
+/** Self-centered heal pulse — radiating swooshes, skips legacy ground ring. */
+export const CATALOG_GROOVE_FX = new Set<string>(["groove"]);
 
 export function hasCatalogProjectile(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_PROJECTILES.has(abilityId);
@@ -75,6 +79,10 @@ export function usesSpikeFx(abilityId: string | undefined): boolean {
 
 export function usesFrostMistFx(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_FROST_MIST_FX.has(abilityId);
+}
+
+export function usesGrooveFx(abilityId: string | undefined): boolean {
+  return !!abilityId && CATALOG_GROOVE_FX.has(abilityId);
 }
 
 export type VfxFollowContext = {
@@ -109,6 +117,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (shot.abilityId === "frostMist") {
     return <FrostMistConeEffect key={shot.key} shot={shot} follow={ctx} />;
   }
+  if (shot.abilityId === "groove") {
+    return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
+  }
   return <BoltImpactEffect key={shot.key} shot={shot} />;
 }
 
@@ -125,4 +136,5 @@ export {
   GraspProjectileEffect,
   SpikesPopEffect,
   FrostMistConeEffect,
+  HealSwooshEffect,
 };

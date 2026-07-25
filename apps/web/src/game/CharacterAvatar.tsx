@@ -161,16 +161,26 @@ export function CharacterAvatar({
       fullBodyName === "Jump Attack" ||
       me?.castAbilityId === "smash";
     const crouchWalkActive = cloaked && !castingDecoy;
+    const grooveActive =
+      me?.castAbilityId === "groove" ||
+      fullBodyName === "jazzDance" ||
+      fullBodyName === "Jazz Dancing";
+    /** Body faces travel; head tracks cursor (cloak + Groove channel). */
+    const moveBodyAim = crouchWalkActive || grooveActive;
+    const movingForBody = moveBodyAim && speed > CLOAK_MOVE_SPEED_EPS;
 
     yawLocked.current =
-      (controller.getState().fullBody === "override" && !jumpAim && !crouchWalkActive) ||
+      (controller.getState().fullBody === "override" &&
+        !jumpAim &&
+        !crouchWalkActive &&
+        !grooveActive) ||
       false;
 
     if (jumpAim) {
       visualYaw.current = p.yaw;
-    } else if (crouchWalkActive) {
+    } else if (moveBodyAim) {
       // Body faces travel direction; idle keeps last move facing.
-      if (movingCloak) {
+      if (movingForBody) {
         const moveYaw = Math.atan2(velocity.current.x, velocity.current.z);
         visualYaw.current = dampYawClamped(
           visualYaw.current,
@@ -209,14 +219,14 @@ export function CharacterAvatar({
     const speedMul = hasStatusId(me?.statuses, "surged") ? 1.6 : 1;
     controller.setMovement({
       worldVelocity: velocity.current,
-      facingYaw: crouchWalkActive ? visualYaw.current : visualYaw.current,
+      facingYaw: visualYaw.current,
       maximumSpeed: MOVE_SPEED * speedMul,
     });
     controller.update(safeDt);
 
-    // Head only toward cursor while cloaked (after mixer writes bones).
+    // Head toward cursor while cloaked or Grooving (after mixer writes bones).
     const head = headBoneRef.current;
-    if (head && crouchWalkActive) {
+    if (head && moveBodyAim) {
       const deltaYaw = shortestAngleDelta(visualYaw.current, p.yaw);
       const look = Math.max(-CLOAK_HEAD_LOOK_MAX, Math.min(CLOAK_HEAD_LOOK_MAX, deltaYaw));
       head.rotation.y += look;

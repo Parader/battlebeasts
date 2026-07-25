@@ -7,6 +7,7 @@ import {
   canPlayerCancelCast,
   createProjectile,
   dashOffset,
+  isChannelAbility,
   isComboAbility,
   isInIFrameWindow,
   length2,
@@ -22,7 +23,6 @@ import {
   resolveInstantHits,
   resolveTravel,
   resolveConeHits,
-  ruptureCenter,
   sampleTravel,
   spikeLinePoints,
   sweepTravel,
@@ -138,6 +138,17 @@ type PendingFrostMist = {
   halfAngleEnd: number;
 };
 
+type PendingGrooveHeal = {
+  ownerId: string;
+  abilityId: string;
+  nextTickAt: number;
+  tickIndex: number;
+  ticksTotal: number;
+  tickMs: number;
+  heal: number;
+  radius: number;
+};
+
 /**
  * Server-side combat: Anticipation → Cast → Impact → Recovery.
  * Cancel is only valid during anticipation (before commitment / effect).
@@ -154,6 +165,7 @@ export class CombatSystem {
   private combos = new Map<string, ActiveCombo>();
   private pendingSpikes: PendingSpike[] = [];
   private pendingFrostMist: PendingFrostMist[] = [];
+  private pendingGrooveHeal: PendingGrooveHeal[] = [];
   /** Original spawn pose for practice dummies (respawn here on death). */
   private targetSpawns = new Map<string, { x: number; z: number }>();
   private nextId = 1;
@@ -227,6 +239,7 @@ export class CombatSystem {
     this.travels.delete(sessionId);
     const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
     this.clearPendingFrostMist(sessionId);
+    this.clearPendingGrooveHeal(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "cancel", now, { cooldownMs });
   }
@@ -241,6 +254,7 @@ export class CombatSystem {
     const abilityId = cast.abilityId;
     const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
     this.clearPendingFrostMist(sessionId);
+    this.clearPendingGrooveHeal(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "interrupt", now, { cooldownMs });
   }
@@ -360,7 +374,10 @@ export class CombatSystem {
     if (existing) {
       const cur = ABILITIES[existing.abilityId];
       const canCut =
-        def.interruptsOtherCasts === true && cur?.interruptible !== false && existing.abilityId !== castId;
+        def.interruptsOtherCasts === true &&
+        cur?.interruptible !== false &&
+        !isChannelAbility(cur) &&
+        existing.abilityId !== castId;
       if (canCut) {
         // Fired missiles keep living; only caster phases/anim are cleared
         this.softInterruptCast(sessionId, player, now);
@@ -445,6 +462,7 @@ export class CombatSystem {
     this.revealCloak(sessionId);
     const cooldownMs = this.endComboEarly(sessionId, def.id, cast.effectFired, now);
     this.clearPendingFrostMist(sessionId);
+    this.clearPendingGrooveHeal(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, def.id, "cancel", now, { cooldownMs });
     return true;
@@ -457,6 +475,7 @@ export class CombatSystem {
     this.advanceCombos(now);
     this.advancePendingSpikes(now);
     this.advancePendingFrostMist(now);
+    this.advancePendingGrooveHeal(now);
     this.advanceDecoys(dt, now);
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
@@ -591,6 +610,7 @@ export class CombatSystem {
       if (!player || player.disconnected || player.hp <= 0) {
         this.endComboEarly(sessionId, cast.abilityId, cast.effectFired, now);
         this.clearPendingFrostMist(sessionId);
+        this.clearPendingGrooveHeal(sessionId);
         if (player) this.clearCastState(sessionId, player);
         else {
           this.casts.delete(sessionId);
@@ -810,11 +830,20 @@ export class CombatSystem {
         this.scheduleSpikeWave(sessionId, ownerBody, def, now);
       } else if (def.id === "frostMist") {
         this.scheduleFrostMist(sessionId, def, now);
+      } else if (def.id === "groove") {
+        const center = { x: player.x, z: player.z };
+        const radius = def.radius ?? 7;
+        this.fx({
+          kind: "aoe",
+          abilityId: def.id,
+          x: center.x,
+          z: center.z,
+          radius,
+          ownerId: sessionId,
+        });
+        this.scheduleGrooveHeal(sessionId, def, now);
       } else {
-        const center =
-          def.id === "rupture"
-            ? ruptureCenter(ownerBody, def)
-            : (travelLanding ?? { x: player.x, z: player.z });
+        const center = travelLanding ?? { x: player.x, z: player.z };
         const radius = def.radius ?? 3;
         this.fx({
           kind: "aoe",
@@ -1005,6 +1034,63 @@ export class CombatSystem {
     this.pendingFrostMist = this.pendingFrostMist.filter((m) => m.ownerId !== ownerId);
   }
 
+  private scheduleGrooveHeal(sessionId: string, def: AbilityDef, now: number) {
+    this.clearPendingGrooveHeal(sessionId);
+    const ticks = Math.max(1, Math.floor(def.healTicks ?? 1));
+    const tickMs = Math.max(80, def.tickMs ?? 333);
+    const channelMs = ticks * tickMs;
+    this.statuses.apply(sessionId, "grooveGuard", sessionId, now, {
+      durationMs: channelMs + 200,
+    });
+    this.pendingGrooveHeal.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      nextTickAt: now,
+      tickIndex: 0,
+      ticksTotal: ticks,
+      tickMs,
+      heal: def.heal ?? 0,
+      radius: def.radius ?? 7,
+    });
+  }
+
+  private clearPendingGrooveHeal(ownerId: string) {
+    this.statuses.remove(ownerId, "grooveGuard");
+    if (this.pendingGrooveHeal.length === 0) return;
+    this.pendingGrooveHeal = this.pendingGrooveHeal.filter((g) => g.ownerId !== ownerId);
+  }
+
+  private advancePendingGrooveHeal(now: number) {
+    if (this.pendingGrooveHeal.length === 0) return;
+    const remain: PendingGrooveHeal[] = [];
+    for (const groove of this.pendingGrooveHeal) {
+      if (now < groove.nextTickAt) {
+        remain.push(groove);
+        continue;
+      }
+      const owner = this.room.state.players.get(groove.ownerId);
+      if (!owner || owner.disconnected || owner.hp <= 0) {
+        this.statuses.remove(groove.ownerId, "grooveGuard");
+        continue;
+      }
+      this.applyGrooveHealPulse(
+        { x: owner.x, z: owner.z },
+        groove.radius,
+        groove.heal,
+        groove.ownerId,
+        groove.abilityId,
+      );
+      groove.tickIndex += 1;
+      if (groove.tickIndex < groove.ticksTotal) {
+        groove.nextTickAt = now + groove.tickMs;
+        remain.push(groove);
+      } else {
+        this.statuses.remove(groove.ownerId, "grooveGuard");
+      }
+    }
+    this.pendingGrooveHeal = remain;
+  }
+
   private advancePendingSpikes(now: number) {
     if (this.pendingSpikes.length === 0) return;
     const remain: PendingSpike[] = [];
@@ -1129,6 +1215,68 @@ export class CombatSystem {
       this.applyDamage(hit.targetId, hit.damage, ownerId, abilityId, now);
       if (knock > 0) this.applyKnockback(center, hit.targetId, knock, knockMs, now);
     }
+  }
+
+  /**
+   * Groove pulse: full heal to others in radius; caster gets half of the total
+   * HP actually restored to others that tick.
+   */
+  private applyGrooveHealPulse(
+    center: { x: number; z: number },
+    radius: number,
+    amount: number,
+    casterId: string,
+    abilityId: string,
+  ) {
+    if (!(amount > 0) || !(radius > 0)) return;
+    const soft = COLLISION.playerRadius;
+
+    const emitHeal = (id: string, x: number, z: number, before: number, after: number) => {
+      const healed = after - before;
+      if (healed <= 0) return;
+      this.fx({
+        kind: "hit",
+        abilityId,
+        x,
+        z,
+        damage: healed,
+        ownerId: casterId,
+        targetId: id,
+      });
+    };
+
+    let healedOthers = 0;
+
+    for (const [id, player] of this.room.state.players) {
+      if (id === casterId) continue;
+      if (player.disconnected || player.hp <= 0) continue;
+      const dist = Math.hypot(player.x - center.x, player.z - center.z);
+      if (dist > radius + soft) continue;
+      const before = player.hp;
+      player.hp = Math.min(player.maxHp, player.hp + amount);
+      const gained = player.hp - before;
+      healedOthers += gained;
+      emitHeal(id, player.x, player.z, before, player.hp);
+    }
+
+    for (const [id, target] of this.room.state.targets) {
+      if (target.hp <= 0) continue;
+      const dist = Math.hypot(target.x - center.x, target.z - center.z);
+      if (dist > radius + soft) continue;
+      const before = target.hp;
+      target.hp = Math.min(target.maxHp, target.hp + amount);
+      const gained = target.hp - before;
+      healedOthers += gained;
+      emitHeal(id, target.x, target.z, before, target.hp);
+    }
+
+    const selfHeal = Math.floor(healedOthers / 2);
+    if (selfHeal <= 0) return;
+    const caster = this.room.state.players.get(casterId);
+    if (!caster || caster.disconnected || caster.hp <= 0) return;
+    const before = caster.hp;
+    caster.hp = Math.min(caster.maxHp, caster.hp + selfHeal);
+    emitHeal(casterId, caster.x, caster.z, before, caster.hp);
   }
 
   /** Schedule a radial shove (translated over knockbackMs, not teleported). */
@@ -1287,11 +1435,14 @@ export class CombatSystem {
     attackerSessionId: string,
     abilityId: string,
   ): boolean {
+    const resistMul = this.statuses.getDamageTakenMul(targetId);
+    const dealt = Math.max(0, Math.round(damage * resistMul));
+
     const player = this.room.state.players.get(targetId);
     if (player) {
       if (player.invulnerable) return false;
-      player.hp = Math.max(0, player.hp - damage);
-      this.hooks.onPlayerDamaged?.(targetId, damage, attackerSessionId);
+      player.hp = Math.max(0, player.hp - dealt);
+      this.hooks.onPlayerDamaged?.(targetId, dealt, attackerSessionId);
       this.fx({
         kind: "hit",
         abilityId,
@@ -1299,7 +1450,7 @@ export class CombatSystem {
         z: player.z,
         ownerId: attackerSessionId,
         targetId,
-        damage,
+        damage: dealt,
       });
       return true;
     }
@@ -1313,7 +1464,7 @@ export class CombatSystem {
         z: decoy.z,
         ownerId: attackerSessionId,
         targetId,
-        damage,
+        damage: dealt,
       });
       this.room.state.decoys.delete(targetId);
       return true;
@@ -1321,8 +1472,8 @@ export class CombatSystem {
 
     const target = this.room.state.targets.get(targetId);
     if (target) {
-      target.hp = Math.max(0, target.hp - damage);
-      this.hooks.onTargetDamaged?.(targetId, damage, attackerSessionId);
+      target.hp = Math.max(0, target.hp - dealt);
+      this.hooks.onTargetDamaged?.(targetId, dealt, attackerSessionId);
       this.fx({
         kind: "hit",
         abilityId,
@@ -1330,7 +1481,7 @@ export class CombatSystem {
         z: target.z,
         ownerId: attackerSessionId,
         targetId,
-        damage,
+        damage: dealt,
       });
       if (target.hp <= 0) {
         this.hooks.onTargetKilled?.(targetId, attackerSessionId);

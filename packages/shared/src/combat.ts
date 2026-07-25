@@ -160,10 +160,6 @@ export function meleeCenter(owner: CombatBody, def: AbilityDef): Vec2 {
   return pointInFront(owner, owner.yaw, reach);
 }
 
-export function ruptureCenter(owner: CombatBody, def: AbilityDef): Vec2 {
-  return pointInFront(owner, owner.yaw, Math.max(2, def.range * 0.65));
-}
-
 /** Aim-line sample points for staggered ground spikes (near → far). */
 export function spikeLinePoints(
   owner: CombatBody,

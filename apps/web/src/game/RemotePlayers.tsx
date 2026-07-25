@@ -13,6 +13,7 @@ import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
 import { smashHopOffsetY } from "./smashHop";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
+import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndicator";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -28,11 +29,21 @@ type RemotePlayerState = {
   statuses?: Parameters<typeof hasStatusId>[0];
 };
 
-function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string }) {
+function RemotePlayerAvatar({
+  room,
+  sessionId,
+  relation,
+}: {
+  room: Room;
+  sessionId: string;
+  relation: AimRelation;
+}) {
   const group = useRef<THREE.Group>(null);
+  const aimRef = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
   const lastCastId = useRef("");
   const comboAnimHoldUntil = useRef(0);
+  const aimColor = AIM_RELATION_COLORS[relation];
 
   const renderPos = useRef(new THREE.Vector3());
   const renderYaw = useRef(0);
@@ -143,9 +154,11 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
     }
 
     g.position.set(renderPos.current.x, smashHopOffsetY(p), renderPos.current.z);
+    const aim = aimRef.current;
     if (cloaked) {
       renderYaw.current = p.yaw;
       g.rotation.y = renderYaw.current;
+      if (aim) aim.rotation.y = 0;
       return;
     }
 
@@ -171,6 +184,8 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
 
     g.position.set(renderPos.current.x, smashHopOffsetY(p), renderPos.current.z);
     g.rotation.y = renderYaw.current;
+    // Parent uses smoothed body yaw; offset so the tip tracks true look yaw.
+    if (aim) aim.rotation.y = p.yaw - renderYaw.current;
 
     const speed = Math.hypot(vel.current.x, vel.current.z);
     controller.setStunned(hasStatusId(p.statuses, "stunned"));
@@ -194,6 +209,9 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
           return collectStatusRows(p?.statuses);
         }}
       />
+      <group ref={aimRef}>
+        <AimIndicator color={aimColor} />
+      </group>
     </group>
   );
 }
@@ -201,9 +219,12 @@ function RemotePlayerAvatar({ room, sessionId }: { room: Room; sessionId: string
 export function RemotePlayers({
   room,
   localSessionId,
+  /** Hub = ally (green); content/PvP = enemy (red) until real teams exist. */
+  relation = "ally",
 }: {
   room: Room | null;
   localSessionId: string | null;
+  relation?: AimRelation;
 }) {
   const [remoteIds, setRemoteIds] = useState<string[]>([]);
   const prevKey = useRef("");
@@ -227,7 +248,12 @@ export function RemotePlayers({
   return (
     <>
       {remoteIds.map((id) => (
-        <RemotePlayerAvatar key={id} room={room} sessionId={id} />
+        <RemotePlayerAvatar
+          key={id}
+          room={room}
+          sessionId={id}
+          relation={relation}
+        />
       ))}
     </>
   );

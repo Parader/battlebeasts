@@ -1,6 +1,17 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 
+/** Facing-ring colors by unit relation to the local player. */
+export const AIM_RELATION_COLORS = {
+  ally: "#4ade80",
+  enemy: "#f87171",
+  neutral: "#9ca3af",
+  /** Local player (cosmetic accent). */
+  self: "#7dd3fc",
+} as const;
+
+export type AimRelation = "ally" | "enemy" | "neutral";
+
 type Props = {
   /** Accent color; readable on dark ground. */
   color?: string;
@@ -13,7 +24,7 @@ type Props = {
  * Parent should set `rotation.y` to gameplay aim yaw each frame.
  * Tip points along local +Z (yaw 0 = world +Z).
  */
-export function AimIndicator({ color = "#7dd3fc", radius = 0.55 }: Props) {
+export function AimIndicator({ color = AIM_RELATION_COLORS.self, radius = 0.55 }: Props) {
   const tipGeom = useMemo(() => {
     const shape = new THREE.Shape();
     const w = 0.14;
