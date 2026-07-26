@@ -36,6 +36,7 @@ export {
   FrostBallCastEffect,
   BarrierCastEffect,
   GraspProjectileEffect,
+  ChainJumpProjectileEffect,
   SpikesPopEffect,
   FrostMistConeEffect,
   HealSwooshEffect,

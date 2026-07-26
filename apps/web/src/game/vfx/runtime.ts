@@ -27,6 +27,7 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   healBeam: 2200,
   poisonDart: 420,
   firewall: 5200,
+  portal: 320,
 };
 
 /**

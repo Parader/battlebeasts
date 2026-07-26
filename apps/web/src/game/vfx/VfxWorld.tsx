@@ -5,6 +5,7 @@ import { renderOneShot } from "./catalog";
 import { vfxRuntime } from "./runtime";
 import { VfxWarmup } from "./VfxWarmup";
 import type { OneShotEffect } from "./types";
+import { PortalLandingTelegraph } from "./effects/portalChannel";
 
 type Props = {
   room: Room | null;
@@ -32,6 +33,14 @@ export function VfxWorld({ room, localSessionId, predictedRef }: Props) {
     <>
       <VfxWarmup />
       {shots.map((shot) => renderOneShot(shot, ctx))}
+      {room && localSessionId && predictedRef ? (
+        <PortalLandingTelegraph
+          room={room}
+          sessionId={localSessionId}
+          getPos={() => ({ x: predictedRef.current.x, z: predictedRef.current.z })}
+          getYaw={() => predictedRef.current.yaw}
+        />
+      ) : null}
     </>
   );
 }

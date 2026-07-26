@@ -307,7 +307,7 @@ export class CharacterAnimationController {
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);
 
-    for (const key of ["dash", "jumpAttack", "jazzDance", "idleToCrouch", "crouchWalk", "castCounter", "hit", "death", "heavyCast"] as const) {
+    for (const key of ["dash", "jumpAttack", "jazzDance", "idleToCrouch", "crouchWalk", "castCounter", "castPraying", "hit", "death", "heavyCast"] as const) {
       const name = config[key];
       if (!name) continue;
       const src = resolveClip(clips, name);

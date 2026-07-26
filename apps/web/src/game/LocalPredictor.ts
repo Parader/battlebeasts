@@ -167,6 +167,8 @@ export class LocalPredictor {
     const def = ABILITIES[abilityId];
     if (!def) return;
     const travel = resolveTravel(def);
+    // Hold-to-confirm blinks wait for confirmCast — don't snap on impact enter.
+    if (def.confirmOnRelease) return;
     if (travel.mode === "instant") {
       const dist = travelDistance(def);
       const ideal = sampleTravel(this.state, yaw, dist, 1);
@@ -197,6 +199,19 @@ export class LocalPredictor {
       startMs: performance.now() + travelTakeoffDelayMs(def),
       durationMs: Math.max(16, dur * Math.max(0.05, scale)),
     };
+  }
+
+  /** Optimistic Portal blink at a charged distance. */
+  beginInstantBlink(abilityId: string, yaw: number, distance: number) {
+    const ideal = sampleTravel(this.state, yaw, Math.max(0, distance), 1);
+    const clamped = sweepTravel(
+      this.state,
+      ideal,
+      COLLISION.playerRadius,
+      this.staticColliders,
+    );
+    this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw };
+    this.travel = null;
   }
 
   clearTravel() {

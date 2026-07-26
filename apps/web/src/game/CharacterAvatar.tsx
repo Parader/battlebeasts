@@ -24,6 +24,7 @@ import type { PredictedPose } from "./useBaseCityRoom";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { InteractPromptBillboard } from "./InteractPromptBillboard";
 import { resetFootsteps, tickFootsteps } from "./gameSfx";
+import { PortalChannelAura } from "./vfx/effects/portalChannel";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -252,12 +253,16 @@ export function CharacterAvatar({
 
     syncPlayerCast(controller, room, localSessionId, lastCastId, comboAnimHoldUntil);
 
-    // Jump Attack keeps mouse aim; dash still locks facing for the dive.
+    // Jump Attack / Portal keep mouse aim; dash still locks facing for the dive.
     const fullBodyName = controller.getState().activeFullBodyName;
     const jumpAim =
       fullBodyName === "jumpAttack" ||
       fullBodyName === "Jump Attack" ||
       me?.castAbilityId === "smash";
+    const portalAim =
+      me?.castAbilityId === "portal" ||
+      fullBodyName === "castPraying" ||
+      fullBodyName === "praying";
     const crouchWalkActive = cloaked && !castingDecoy;
     const grooveActive =
       me?.castAbilityId === "groove" ||
@@ -270,11 +275,12 @@ export function CharacterAvatar({
     yawLocked.current =
       (controller.getState().fullBody === "override" &&
         !jumpAim &&
+        !portalAim &&
         !crouchWalkActive &&
         !grooveActive) ||
       false;
 
-    if (jumpAim) {
+    if (jumpAim || portalAim) {
       visualYaw.current = p.yaw;
     } else if (moveBodyAim) {
       // Body faces travel direction; idle keeps last move facing.
@@ -348,6 +354,9 @@ export function CharacterAvatar({
             return collectStatusRows(me?.statuses);
           }}
         />
+        {room && localSessionId ? (
+          <PortalChannelAura room={room} sessionId={localSessionId} />
+        ) : null}
       </group>
       <group ref={aimRef}>
         <AimIndicator color={AIM_RELATION_COLORS.self} />

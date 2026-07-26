@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, HEAL_BEAM_CAST, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, HEAL_BEAM_CAST, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
+import { setWorldStaticColliders } from "./worldCollidersRuntime";
 import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime";
 import { abilityHudRuntime } from "./abilityHudRuntime";
 import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, usesFirewallFx, clearCrescentSpawnState } from "./vfx";
+import { takePortalChannelBubbleScale } from "./vfx/portalChannelRuntime";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 import { playBoltHitSfx, playSlamHitSfx } from "./gameSfx";
 
@@ -178,6 +180,12 @@ export function useBaseCityRoom(options: Options) {
     const pendingInteractRef = useRef<string | undefined>(undefined);
     const pendingCastRef = useRef<string | undefined>(undefined);
     const pendingCancelRef = useRef(false);
+    /** Portal Space release — one-tick confirmCast. */
+    const pendingConfirmRef = useRef(false);
+    /** Space released during portal cast; confirm as soon as impact channel starts. */
+    const portalConfirmArmedRef = useRef(false);
+    /** performance.now when local portal impact channel began. */
+    const portalChannelAnchorRef = useRef(0);
     /** Optimistic cancel — ignore stale schema cast slow until server clears. */
     const localCastCancelledRef = useRef(false);
     const awaitingCastAckRef = useRef(false);
@@ -218,6 +226,9 @@ export function useBaseCityRoom(options: Options) {
         localCastCancelledRef.current = false;
         pendingCastRef.current = undefined;
         pendingCancelRef.current = false;
+        pendingConfirmRef.current = false;
+        portalConfirmArmedRef.current = false;
+        portalChannelAnchorRef.current = 0;
         heldCastSlotsRef.current = { mouse0: false, mouse2: false };
         cooldownUntilRef.current = {};
         abilityHudRuntime.clear();
@@ -411,10 +422,12 @@ export function useBaseCityRoom(options: Options) {
             joined.onMessage(
                 "combat_fx",
                 (msg: {
-                    kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase";
+                    kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase" | "portal";
                     abilityId: string;
                     x: number;
                     z: number;
+                    x2?: number;
+                    z2?: number;
                     radius?: number;
                     yaw?: number;
                     ownerId?: string;
@@ -426,6 +439,33 @@ export function useBaseCityRoom(options: Options) {
                     comboHit?: number;
                 }) => {
                     const isLocal = msg.ownerId === sessionIdRef.current;
+
+                    if (msg.kind === "portal") {
+                        // Depart: collapse the channel bubble (size from live channel scale)
+                        const departScale = msg.ownerId
+                            ? takePortalChannelBubbleScale(msg.ownerId)
+                            : 1;
+                        spawnImpactEffect(
+                            "portal",
+                            { x: msg.x, z: msg.z, y: 0.95, yaw: msg.yaw },
+                            { lifeMs: 340, variant: 0, radius: departScale },
+                        );
+                        // Arrive: ground rings grow + fade
+                        spawnImpactEffect(
+                            "portal",
+                            { x: msg.x2 ?? msg.x, z: msg.z2 ?? msg.z, y: 0.05, yaw: msg.yaw },
+                            { lifeMs: 300, variant: 1 },
+                        );
+                        if (isLocal && typeof msg.cooldownMs === "number") {
+                            const until = Date.now() + msg.cooldownMs;
+                            cooldownUntilRef.current = {
+                                ...cooldownUntilRef.current,
+                                [msg.abilityId]: until,
+                            };
+                            abilityHudRuntime.setCooldownUntil(cooldownUntilRef.current);
+                        }
+                        return;
+                    }
 
                     if (msg.kind === "cast_phase") {
                         if (
@@ -451,6 +491,8 @@ export function useBaseCityRoom(options: Options) {
 
                             if (ended) {
                                 predictorRef.current.clearTravel();
+                                portalChannelAnchorRef.current = 0;
+                                portalConfirmArmedRef.current = false;
                                 // Mirror server: CD → full speed; idle mid-chain → continue slow; else clear
                                 if (typeof msg.cooldownMs === "number") {
                                     predictorRef.current.clearMoveMul();
@@ -465,14 +507,33 @@ export function useBaseCityRoom(options: Options) {
 
                             // Effect + travel at impact; CD only when server says so
                             // (combo mid-chain impacts omit cooldownMs).
+                            // Confirm-on-release (Portal) waits for Space release — no snap here.
                             if (msg.phase === "impact") {
                                 const def = ABILITIES[msg.abilityId];
-                                if (def) {
+                                if (def?.confirmOnRelease) {
+                                    portalChannelAnchorRef.current = performance.now();
+                                    // Released during windup — blink immediately at min/early charge.
+                                    if (portalConfirmArmedRef.current) {
+                                        const dist = channelChargeDistance(def, 0);
+                                        predictorRef.current.beginInstantBlink(
+                                            msg.abilityId,
+                                            yawRef.current,
+                                            dist,
+                                        );
+                                        portalChannelAnchorRef.current = 0;
+                                        pendingConfirmRef.current = true;
+                                        portalConfirmArmedRef.current = false;
+                                    }
+                                } else if (def) {
                                     predictorRef.current.beginTravelFromCast(
                                         msg.abilityId,
                                         yawRef.current,
                                     );
                                 }
+                            }
+                            if (msg.phase === "recovery" && ABILITIES[msg.abilityId]?.confirmOnRelease) {
+                                portalChannelAnchorRef.current = 0;
+                                portalConfirmArmedRef.current = false;
                             }
                             if (typeof msg.cooldownMs === "number") {
                                 const until = Date.now() + msg.cooldownMs;
@@ -995,6 +1056,26 @@ export function useBaseCityRoom(options: Options) {
         [clearHeldMouseCasts, queueCastFromSlotInput],
     );
 
+    const queueConfirmCast = useCallback(() => {
+        if (inputLockedRef.current) return;
+        const abilityId = castingAbilityRef.current;
+        if (!abilityId) return;
+        const def = ABILITIES[abilityId];
+        if (!def?.confirmOnRelease) return;
+        const phase = castPhaseRef.current;
+        if (phase !== "impact" && phase !== "anticipation" && phase !== "cast") return;
+
+        portalConfirmArmedRef.current = true;
+        if (phase === "impact" && portalChannelAnchorRef.current > 0) {
+            const elapsed = performance.now() - portalChannelAnchorRef.current;
+            const dist = channelChargeDistance(def, elapsed);
+            predictorRef.current.beginInstantBlink(abilityId, yawRef.current, dist);
+            portalChannelAnchorRef.current = 0;
+            pendingConfirmRef.current = true;
+            portalConfirmArmedRef.current = false;
+        }
+    }, []);
+
     const queueCancelCast = useCallback(() => {
         if (inputLockedRef.current) return;
         const abilityId = castingAbilityRef.current;
@@ -1008,6 +1089,8 @@ export function useBaseCityRoom(options: Options) {
         // Optimistic local clear; server confirms via cast_phase cancel
         castPhaseRef.current = "";
         castingAbilityRef.current = null;
+        portalChannelAnchorRef.current = 0;
+        portalConfirmArmedRef.current = false;
         predictorRef.current.clearMoveMul();
         const sid = sessionIdRef.current;
         if (sid && (usesFrostMistFx(abilityId) || usesGrooveFx(abilityId) || usesHealBeamFx(abilityId))) {
@@ -1068,6 +1151,13 @@ export function useBaseCityRoom(options: Options) {
                             return;
                         }
                         beginCastFromSlotInput("space");
+                    } else {
+                        // Hold-to-release confirm (Portal).
+                        const abilityId = castingAbilityRef.current;
+                        if (abilityId && ABILITIES[abilityId]?.confirmOnRelease) {
+                            e.preventDefault();
+                            queueConfirmCast();
+                        }
                     }
                     break;
                 case "KeyQ":
@@ -1105,7 +1195,7 @@ export function useBaseCityRoom(options: Options) {
             window.removeEventListener("keydown", down);
             window.removeEventListener("keyup", up);
         };
-    }, [beginCastFromSlotInput, queueCancelCast]);
+    }, [beginCastFromSlotInput, queueCancelCast, queueConfirmCast]);
 
     useEffect(() => {
         const onMouseDown = (e: MouseEvent) => {
@@ -1382,6 +1472,7 @@ export function useBaseCityRoom(options: Options) {
                     );
                     const statics = staticsForPhase(phaseRef.current, contentModeRef.current);
                     predictor.setWorldColliders(statics, dynamics);
+                    setWorldStaticColliders(statics);
                 }
 
                 if (serverMe) {
@@ -1555,6 +1646,9 @@ export function useBaseCityRoom(options: Options) {
                     pendingCastRef.current = undefined;
                     const cancelCast = canAct ? pendingCancelRef.current : false;
                     pendingCancelRef.current = false;
+                    const confirmCast = canAct ? pendingConfirmRef.current : false;
+                    pendingConfirmRef.current = false;
+
                     const input: PlayerInput = {
                         seq: seqRef.current,
                         dt,
@@ -1563,6 +1657,7 @@ export function useBaseCityRoom(options: Options) {
                         yaw: yawRef.current,
                         castId,
                         cancelCast: cancelCast || undefined,
+                        confirmCast: confirmCast || undefined,
                         interactId: canAct ? pendingInteractRef.current : undefined,
                     };
                     pendingInteractRef.current = undefined;

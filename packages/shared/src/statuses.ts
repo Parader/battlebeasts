@@ -94,7 +94,7 @@ export const STATUSES: Record<string, StatusDef> = {
     moveMul: 0,
     maxStacks: 1,
     stackRule: "refresh",
-    color: "#7dd3fc",
+    color: "#a1a1aa",
     tag: "ROT",
   },
   silenced: {

@@ -5,8 +5,10 @@ export interface PlayerInput {
   moveZ: number;
   yaw: number;
   castId?: string;
-  /** Cancel current cast — only honored during anticipation. */
+  /** Cancel current cast — only honored while cancelUntilPhase allows. */
   cancelCast?: boolean;
+  /** Confirm hold-to-release channel (e.g. Portal Space release). */
+  confirmCast?: boolean;
   interactId?: string;
 }
 
@@ -132,10 +134,13 @@ export type ServerMessage =
   | { type: "match_recap"; winner: "a" | "b" | "draw"; scoreA: number; scoreB: number; rows: MatchRecapRow[] }
   | {
       type: "combat_fx";
-      kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase";
+      kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase" | "portal";
       abilityId: string;
       x: number;
       z: number;
+      /** Portal blink end (kind === "portal"). */
+      x2?: number;
+      z2?: number;
       radius?: number;
       yaw?: number;
       ownerId?: string;

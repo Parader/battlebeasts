@@ -266,12 +266,18 @@ export interface AbilityDef {
   /**
    * Pull hit targets toward the effect origin / caster (world units).
    * Stops short of overlapping the caster (`pullStopDistance`).
+   * When `leapToTarget` is true, the caster leaps toward the hit instead.
    */
   pull?: number;
-  /** Pull translate duration in ms (default 280). */
+  /** Pull / leap translate duration in ms (default 280). */
   pullMs?: number;
   /** Minimum distance from pull origin after the yank (default 1.2). */
   pullStopDistance?: number;
+  /**
+   * If true with `pull`, yank the caster to the hit target (Chain Jump)
+   * instead of yanking the target to the caster (Grasp).
+   */
+  leapToTarget?: boolean;
   /** Ground-spike line: number of pops along aim (Spikes). */
   spikeCount?: number;
   /** Delay between consecutive spike pops (ms). */
@@ -291,6 +297,17 @@ export interface AbilityDef {
   mistTicks?: number;
   /** Frost Mist: ms to ease cone from mistStartRange → range. */
   mistGrowMs?: number;
+  /**
+   * Hold-to-confirm: impact is a channel; effect fires on `confirmCast` (key release),
+   * not automatically when impact begins.
+   */
+  confirmOnRelease?: boolean;
+  /** Wall ms from channel start to reach max blink range (Portal). */
+  channelChargeMs?: number;
+  /** Wall ms after max charge to confirm before auto-cancel (Portal). */
+  channelCapGraceMs?: number;
+  /** Minimum blink distance on an instant confirm (Portal). */
+  channelMinRange?: number;
 }
 
 export const LOADOUT_SIZE = SPELL_SLOTS.length;
@@ -842,7 +859,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "standard",
     tags: ["Buff", "Self", "Defense", "Shield", "Cast"],
     damage: 0,
-    allowedSlots: ["q", "e"],
+    allowedSlots: ["r"],
+    defaultSlot: "r",
     timing: {
       anticipationMs: authoredForWallMs(90),
       castMs: authoredForWallMs(Math.max(16, barrierReleaseWallMs() - 90)),
@@ -941,6 +959,50 @@ export const ABILITIES: Record<string, AbilityDef> = {
       durationMs: 520,
     },
     applyOnSelf: [{ statusId: "hasted", durationMs: 900 }],
+    interruptsOtherCasts: true,
+  },
+  /**
+   * Portal (Space) — hold to channel a blink. Landing circle pushes out with charge;
+   * release confirms. At max range, 1s grace then cancel. CD only on teleport.
+   */
+  portal: {
+    id: "portal",
+    name: "Portal",
+    description:
+      "Hold Space to plant and channel. A landing marker slides farther with charge — release to blink there. At max range you have a second to confirm or the cast cancels. Cooldown starts on any successful blink.",
+    cooldownMs: 8000,
+    range: 10,
+    shape: "dash",
+    effectKind: "standard",
+    tags: ["Blink", "Channel", "Movement", "Self"],
+    damage: 0,
+    allowedSlots: ["space"],
+    confirmOnRelease: true,
+    channelChargeMs: 1000,
+    channelCapGraceMs: 1000,
+    channelMinRange: 1,
+    timing: {
+      anticipationMs: 40,
+      castMs: 60,
+      // Wall: charge + grace (scaled via authoredForWallMs).
+      impactMs: authoredForWallMs(1000 + 1000),
+      recoveryMs: 120,
+      anticipationMoveMul: 0,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "impact",
+    },
+    travel: {
+      mode: "instant",
+      distance: 10,
+    },
+    iFrames: {
+      startMs: 0,
+      durationMs: 100,
+    },
+    interruptible: false,
     interruptsOtherCasts: true,
   },
   /**
@@ -1047,6 +1109,45 @@ export const ABILITIES: Record<string, AbilityDef> = {
       cancelUntilPhase: "cast",
     },
     applyOnHit: [{ statusId: "slowed", durationMs: 2000, chance: 1 }],
+  },
+  /**
+   * Chain Jump (E) — grasp mirror: hook flies out, then you leap to the foe.
+   * Same range/timing/speed as Grasp; roots the target briefly on hit.
+   */
+  chainJump: {
+    id: "chainJump",
+    name: "Chain Jump",
+    description:
+      "Fling a chain hook forward. On hit, leap to the enemy and root them for half a second.",
+    cooldownMs: 7000,
+    range: 12,
+    shape: "projectile",
+    effectKind: "standard",
+    tags: ["Projectile", "Damage", "Pull", "Dash", "Debuff", "Control", "SingleTarget", "Cast"],
+    damage: 5,
+    /** Faster hook than Grasp so the leap feels snappier. */
+    speed: 40,
+    radius: 0.55,
+    spawnOffset: 0.42,
+    pull: 8,
+    pullMs: 320,
+    pullStopDistance: 1.35,
+    leapToTarget: true,
+    allowedSlots: ["e"],
+    // Same cast pacing as Grasp (magic_1h).
+    timing: {
+      anticipationMs: 260,
+      castMs: 180,
+      impactMs: 200,
+      recoveryMs: 280,
+      anticipationMoveMul: 0.55,
+      castMoveMul: 0.35,
+      impactMoveMul: 0.4,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "rooted", durationMs: 500, chance: 1 }],
   },
   /**
    * Spikes (E) — staggered poison needles along the aim line.
@@ -1362,11 +1463,14 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
   } else if (def.shape === "aoe" && def.range > 0) {
     parts.push(`range ${def.range}`);
   }
+  if (def.confirmOnRelease && def.channelChargeMs) {
+    parts.push(`charge ${formatSeconds(def.channelChargeMs)}`);
+  }
   if (def.knockback) {
     parts.push(`knockback ${def.knockback}`);
   }
   if (def.pull) {
-    parts.push(`pull ${def.pull}`);
+    parts.push(def.leapToTarget ? `leap ${def.pull}` : `pull ${def.pull}`);
   }
   if (def.travel?.mode === "translate" || def.shape === "dash") {
     const dist = def.travel?.distance ?? def.range;

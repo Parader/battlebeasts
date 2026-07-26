@@ -11,6 +11,7 @@ import {
   abilityTriggersCounter,
   canInterruptOtherCast,
   canPlayerCancelCast,
+  channelChargeDistance,
   createProjectile,
   dashOffset,
   isComboAbility,
@@ -82,6 +83,11 @@ type ActiveCast = {
   phaseEndsAt: number;
   /** Wall-clock when prep (or cast, if no prep) began — i-frame clock. */
   castStartedAt: number;
+  /**
+   * Confirm-on-release channel anchor (impact enter). Charge distance
+   * and grace are measured from this, not castStartedAt.
+   */
+  channelAnchorAt?: number;
   yaw: number;
   effectFired: boolean;
   /** Stick direction frozen at cast start (Decoy drift). */
@@ -218,6 +224,8 @@ export class CombatSystem {
   private cds = new Map<string, Map<string, number>>();
   private casts = new Map<string, ActiveCast>();
   private travels = new Map<string, ActiveTravel>();
+  /** Brief invuln after Portal blink (not tied to castStartedAt). */
+  private blinkIframeUntil = new Map<string, number>();
   private knockbacks = new Map<string, ActiveKnockback>();
   private combos = new Map<string, ActiveCombo>();
   private pendingSpikes: PendingSpike[] = [];
@@ -571,6 +579,74 @@ export class CombatSystem {
     return true;
   }
 
+  /**
+   * Confirm hold-to-release channel (Portal). Teleports + stamps CD.
+   * Returns false if not channeling a confirm-on-release ability.
+   */
+  tryConfirmCast(sessionId: string, player: PlayerState, now: number): boolean {
+    const cast = this.casts.get(sessionId);
+    if (!cast || cast.effectFired) return false;
+    if (cast.phase !== "impact") return false;
+    const def = ABILITIES[cast.abilityId];
+    if (!def?.confirmOnRelease) return false;
+
+    const anchor = cast.channelAnchorAt ?? cast.castStartedAt;
+    const elapsed = Math.max(0, now - anchor);
+    const chargeMs = def.channelChargeMs ?? 1000;
+    const graceMs = def.channelCapGraceMs ?? 1000;
+    if (elapsed > chargeMs + graceMs) {
+      this.tryCancelCast(sessionId, player, now);
+      return false;
+    }
+
+    const dist = channelChargeDistance(def, elapsed);
+    cast.yaw = player.yaw;
+    const cooldownMs = this.onEffectResolved(sessionId, def, now);
+    this.applyInstantBlink(sessionId, player, def, now, dist, cooldownMs);
+    cast.effectFired = true;
+
+    this.enterPhase(sessionId, player, def, "recovery", now, cast.castStartedAt, {
+      cooldownMs,
+      comboHit: this.comboHitFor(sessionId, def.id),
+    });
+    this.syncInvulnerable(sessionId, player, now);
+    return true;
+  }
+
+  /** Instant travel + portal FX at from/to. */
+  private applyInstantBlink(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+    distance: number,
+    cooldownMs?: number,
+  ) {
+    const from = { x: player.x, z: player.z };
+    const off = dashOffset(player.yaw, Math.max(0, distance));
+    const clamped = this.sweepPlayerPos(sessionId, from, {
+      x: player.x + off.x,
+      z: player.z + off.z,
+    });
+    player.x = clamped.x;
+    player.z = clamped.z;
+
+    const iframeMs = def.iFrames?.durationMs ?? 100;
+    this.blinkIframeUntil.set(sessionId, now + Math.max(40, iframeMs));
+
+    this.fx({
+      kind: "portal",
+      abilityId: def.id,
+      x: from.x,
+      z: from.z,
+      x2: clamped.x,
+      z2: clamped.z,
+      yaw: player.yaw,
+      ownerId: sessionId,
+      cooldownMs,
+    });
+  }
+
   tick(dt: number, now: number) {
     this.advanceTravels(now);
     this.advanceKnockbacks(now);
@@ -608,7 +684,25 @@ export class CombatSystem {
         this.applyDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId, now);
       }
       if (def?.pull && def.pull > 0) {
-        this.applyPull(hit.ownerId, hit.targetId, def.pull, def.pullMs ?? 280, now, def.pullStopDistance);
+        if (def.leapToTarget) {
+          this.applySelfLeap(
+            hit.ownerId,
+            hit.targetId,
+            def.pull,
+            def.pullMs ?? 280,
+            now,
+            def.pullStopDistance,
+          );
+        } else {
+          this.applyPull(
+            hit.ownerId,
+            hit.targetId,
+            def.pull,
+            def.pullMs ?? 280,
+            now,
+            def.pullStopDistance,
+          );
+        }
       }
     }
     for (const slow of slows) {
@@ -729,6 +823,20 @@ export class CombatSystem {
         cast.yaw = player.yaw;
       }
 
+      // Portal: grace timeout while channeling (before phase ends).
+      if (cast.phase === "impact" && !cast.effectFired) {
+        const defEarly = ABILITIES[cast.abilityId];
+        if (defEarly?.confirmOnRelease) {
+          const anchor = cast.channelAnchorAt ?? cast.castStartedAt;
+          const chargeMs = defEarly.channelChargeMs ?? 1000;
+          const graceMs = defEarly.channelCapGraceMs ?? 1000;
+          if (now - anchor >= chargeMs + graceMs) {
+            this.tryCancelCast(sessionId, player, now);
+            continue;
+          }
+        }
+      }
+
       if (now < cast.phaseEndsAt) continue;
 
       const def = ABILITIES[cast.abilityId];
@@ -745,18 +853,33 @@ export class CombatSystem {
         continue;
       }
 
+      // Confirm-on-release: impact ended without confirm → cancel (no CD).
+      if (def.confirmOnRelease && cast.phase === "impact" && !cast.effectFired) {
+        this.tryCancelCast(sessionId, player, now);
+        continue;
+      }
+
       if (next === "impact" && !cast.effectFired) {
-        const yawBefore = player.yaw;
-        player.yaw = cast.yaw;
-        this.fireEffect(sessionId, player, def, now);
-        player.yaw = yawBefore;
-        const cooldownMs = this.onEffectResolved(sessionId, def, now);
-        this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
-          cooldownMs,
-          comboHit: this.comboHitFor(sessionId, def.id),
-        });
-        const live = this.casts.get(sessionId);
-        if (live) live.effectFired = true;
+        if (def.confirmOnRelease) {
+          // Enter channel — wait for confirmCast / grace cancel.
+          this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
+            comboHit: this.comboHitFor(sessionId, def.id),
+          });
+          const live = this.casts.get(sessionId);
+          if (live) live.channelAnchorAt = now;
+        } else {
+          const yawBefore = player.yaw;
+          player.yaw = cast.yaw;
+          this.fireEffect(sessionId, player, def, now);
+          player.yaw = yawBefore;
+          const cooldownMs = this.onEffectResolved(sessionId, def, now);
+          this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
+            cooldownMs,
+            comboHit: this.comboHitFor(sessionId, def.id),
+          });
+          const live = this.casts.get(sessionId);
+          if (live) live.effectFired = true;
+        }
       } else {
         this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt);
       }
@@ -808,12 +931,17 @@ export class CombatSystem {
       phase,
       phaseEndsAt: now + duration,
       castStartedAt,
+      channelAnchorAt: prev?.channelAnchorAt,
       yaw: prev?.yaw ?? player.yaw,
       effectFired: prev?.effectFired ?? false,
       moveX: fxExtra?.moveX ?? prev?.moveX ?? 0,
       moveZ: fxExtra?.moveZ ?? prev?.moveZ ?? 0,
     };
     this.casts.set(sessionId, cast);
+
+    if (phase === "impact" && def.confirmOnRelease && cast.channelAnchorAt == null) {
+      cast.channelAnchorAt = now;
+    }
 
     player.castAbilityId = def.id;
     player.castPhase = phase;
@@ -1780,6 +1908,65 @@ export class CombatSystem {
     }
   }
 
+  /**
+   * Leap the caster toward a hit target (Chain Jump). Stops at `stopDistance`
+   * short of the target so they don't stack.
+   */
+  private applySelfLeap(
+    ownerId: string,
+    targetId: string,
+    distance: number,
+    durationMs: number,
+    now: number,
+    stopDistance = 1.2,
+  ) {
+    if (distance <= 0) return;
+    const owner = this.room.state.players.get(ownerId);
+    if (!owner || owner.invulnerable) return;
+
+    let toX = 0;
+    let toZ = 0;
+    const player = this.room.state.players.get(targetId);
+    if (player) {
+      toX = player.x;
+      toZ = player.z;
+    } else {
+      const target = this.room.state.targets.get(targetId);
+      if (!target) return;
+      toX = target.x;
+      toZ = target.z;
+    }
+
+    const minDist = Math.max(0.6, stopDistance ?? 1.2);
+    const dur = Math.max(80, durationMs);
+    this.travels.delete(ownerId);
+
+    let dx = toX - owner.x;
+    let dz = toZ - owner.z;
+    let len = Math.hypot(dx, dz);
+    if (len < 1e-4) return;
+    if (len <= minDist + 0.05) return;
+
+    const nx = dx / len;
+    const nz = dz / len;
+    const travel = Math.min(distance, Math.max(0, len - minDist));
+    if (travel < 0.05) return;
+
+    const from = { x: owner.x, z: owner.z };
+    const ideal = { x: owner.x + nx * travel, z: owner.z + nz * travel };
+    const clamped = this.sweepPlayerPos(ownerId, from, ideal);
+    this.knockbacks.set(ownerId, {
+      targetId: ownerId,
+      kind: "player",
+      fromX: from.x,
+      fromZ: from.z,
+      toX: clamped.x,
+      toZ: clamped.z,
+      startAt: now,
+      endAt: now + dur,
+    });
+  }
+
   private applyDamage(
     targetId: string,
     damage: number,
@@ -1989,7 +2176,10 @@ export class CombatSystem {
       const def = ABILITIES[cast.abilityId];
       if (def) fromCast = isInIFrameWindow(def, now - cast.castStartedAt);
     }
-    player.invulnerable = fromCast || this.statuses.grantsInvulnerable(sessionId);
+    const blinkUntil = this.blinkIframeUntil.get(sessionId) ?? 0;
+    if (blinkUntil > 0 && now >= blinkUntil) this.blinkIframeUntil.delete(sessionId);
+    const fromBlink = (this.blinkIframeUntil.get(sessionId) ?? 0) > now;
+    player.invulnerable = fromCast || fromBlink || this.statuses.grantsInvulnerable(sessionId);
   }
 
   private canHurt(ownerId: string, targetId: string): boolean {

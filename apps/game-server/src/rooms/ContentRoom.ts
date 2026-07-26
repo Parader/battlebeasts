@@ -693,6 +693,7 @@ export class ContentRoom extends Room<BaseCityState> {
         player.z = next.z;
         player.yaw = applyYaw(player.yaw, input.yaw);
         if (input.cancelCast) this.combat.tryCancelCast(sessionId, player, now);
+        if (input.confirmCast) this.combat.tryConfirmCast(sessionId, player, now);
         if (input.castId) {
           this.combat.tryBeginCast(sessionId, player, input.castId, now, {
             moveX: input.moveX,

@@ -1195,6 +1195,9 @@ export class BaseCityRoom extends Room<BaseCityState> {
         if (input.cancelCast) {
           this.combat.tryCancelCast(sessionId, player, now);
         }
+        if (input.confirmCast) {
+          this.combat.tryConfirmCast(sessionId, player, now);
+        }
         if (input.castId) {
           this.combat.tryBeginCast(sessionId, player, input.castId, now, {
             moveX: input.moveX,

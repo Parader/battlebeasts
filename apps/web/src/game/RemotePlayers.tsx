@@ -20,6 +20,7 @@ import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnamen
 import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndicator";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { PlayerNameBillboard } from "./PlayerNameBillboard";
+import { PortalChannelAura } from "./vfx/effects/portalChannel";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -249,9 +250,13 @@ function RemotePlayerAvatar({
       fullBodyName === "jumpAttack" ||
       fullBodyName === "Jump Attack" ||
       p.castAbilityId === "smash";
+    const portalAim =
+      p.castAbilityId === "portal" ||
+      fullBodyName === "castPraying" ||
+      fullBodyName === "praying";
     yawLocked.current =
-      controller.getState().fullBody === "override" && !jumpAim;
-    if (jumpAim) {
+      controller.getState().fullBody === "override" && !jumpAim && !portalAim;
+    if (jumpAim || portalAim) {
       renderYaw.current = p.yaw;
     } else if (!yawLocked.current) {
       renderYaw.current = dampYawClamped(
@@ -291,6 +296,7 @@ function RemotePlayerAvatar({
           return collectStatusRows(p?.statuses);
         }}
       />
+      <PortalChannelAura room={room} sessionId={sessionId} />
       <group ref={aimRef}>
         <AimIndicator color={aimColor} />
       </group>

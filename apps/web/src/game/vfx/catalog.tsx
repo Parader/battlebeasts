@@ -12,6 +12,7 @@ import { GustWaveEffect } from "./effects/gustWave";
 import { FrostBallCastEffect } from "./effects/frostBallCast";
 import { BarrierCastEffect } from "./effects/barrierCast";
 import { GraspProjectileEffect } from "./effects/graspProjectile";
+import { ChainJumpProjectileEffect } from "./effects/chainJumpProjectile";
 import { SpikesPopEffect } from "./effects/spikesPop";
 import { FrostMistConeEffect } from "./effects/frostMistCone";
 import { HealSwooshEffect } from "./effects/healSwoosh";
@@ -19,8 +20,9 @@ import { HealBeamEffect } from "./effects/healBeam";
 import { PoisonDartCastEffect } from "./effects/poisonDartCast";
 import { PoisonDartProjectileEffect } from "./effects/poisonDartProjectile";
 import { FirewallGroundEffect } from "./effects/firewallGround";
+import { PortalBlinkEffect } from "./effects/portalBlink";
 
-export type ProjectileVfxId = "bolt" | "grasp" | "poisonDart";
+export type ProjectileVfxId = "bolt" | "grasp" | "chainJump" | "poisonDart";
 export type CastVfxId = "bolt" | "crescent" | "frostBall" | "barrier" | "poisonDart";
 export type ImpactVfxId =
   | "bolt"
@@ -32,10 +34,11 @@ export type ImpactVfxId =
   | "groove"
   | "healBeam"
   | "poisonDart"
-  | "firewall";
+  | "firewall"
+  | "portal";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
-export const CATALOG_PROJECTILES = new Set<string>(["bolt", "grasp", "poisonDart"]);
+export const CATALOG_PROJECTILES = new Set<string>(["bolt", "grasp", "chainJump", "poisonDart"]);
 
 /** Abilities with dedicated cast one-shots (muzzle / swoop / hand charge). */
 export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent", "frostBall", "barrier", "poisonDart"]);
@@ -143,6 +146,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (usesFirewallFx(shot.abilityId)) {
     return <FirewallGroundEffect key={shot.key} shot={shot} />;
   }
+  if (shot.abilityId === "portal") {
+    return <PortalBlinkEffect key={shot.key} shot={shot} />;
+  }
   if (usesGrooveFx(shot.abilityId)) {
     return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
   }
@@ -160,6 +166,7 @@ export {
   FrostBallCastEffect,
   BarrierCastEffect,
   GraspProjectileEffect,
+  ChainJumpProjectileEffect,
   SpikesPopEffect,
   FrostMistConeEffect,
   HealSwooshEffect,
@@ -167,4 +174,5 @@ export {
   PoisonDartCastEffect,
   PoisonDartProjectileEffect,
   FirewallGroundEffect,
+  PortalBlinkEffect,
 };

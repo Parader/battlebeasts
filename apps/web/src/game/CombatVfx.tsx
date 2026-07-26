@@ -4,7 +4,7 @@ import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, totalShieldAbsorb, type CosmeticsEquipped } from "@battlebeasts/shared";
-import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, PoisonDartProjectileEffect, hasCatalogProjectile } from "./vfx";
+import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, ChainJumpProjectileEffect, PoisonDartProjectileEffect, hasCatalogProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
@@ -112,6 +112,9 @@ function ProjectileRouter({
     }
     if (abilityId === "grasp") {
         return <GraspProjectileEffect room={room} id={id} />;
+    }
+    if (abilityId === "chainJump") {
+        return <ChainJumpProjectileEffect room={room} id={id} />;
     }
     if (abilityId === "poisonDart") {
         return <PoisonDartProjectileEffect room={room} id={id} />;

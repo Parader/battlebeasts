@@ -32,6 +32,8 @@ export type CharacterAnimationConfig = {
   castPoisonDart?: string;
   /** Counter / Female Dance Pose. */
   castCounter?: string;
+  /** Portal / praying channel. */
+  castPraying?: string;
   castAoE?: string;
   castMelee?: string;
   dash?: string;
@@ -77,6 +79,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castFirewall: "Standing 2H Magic Area Attack 01",
   castPoisonDart: "Right Hook",
   castCounter: "Female Dance Pose",
+  castPraying: "praying",
   castAoE: "magic_aoe",
   castMelee: "attack",
   heavyCast: "Standing 2H Magic Attack 04",
@@ -175,6 +178,7 @@ export const abilityAnimationBindings: Record<
 > = {
   bolt: { upper: "castPrimary" },
   grasp: { upper: "castPrimary" },
+  chainJump: { upper: "castPrimary" },
   spikes: {
     upper: "castSpikes",
     upperAnimDurationSec: SPIKES_CAST.clipDurationSec / SPIKES_CAST.playbackRate,
@@ -211,6 +215,12 @@ export const abilityAnimationBindings: Record<
     holdPoseAtSec: 0.05,
     /** Snap into pose; freeze for the rooted channel. */
     fullBodyAnimDurationSec: 0.15,
+  },
+  portal: {
+    fullBody: "castPraying",
+    holdEndPoseOnRecovery: true,
+    holdPoseAtSec: 0.2,
+    fullBodyAnimDurationSec: 0.35,
   },
   surge: { upper: "castPrimary" },
   decoy: {

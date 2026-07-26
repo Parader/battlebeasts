@@ -1,4 +1,4 @@
-import { ABILITIES, type AbilityDef } from "./abilities";
+import { ABILITIES, travelDistance, type AbilityDef } from "./abilities";
 import { length2, normalize2 } from "./sim";
 import type { Vec2 } from "./protocol";
 import type { WallCollider } from "./collision";
@@ -78,10 +78,13 @@ export type ProjectileSim = {
 };
 
 export type CombatFxEvent = {
-  kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase";
+  kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase" | "portal";
   abilityId: string;
   x: number;
   z: number;
+  /** Portal blink destination (kind === "portal"). */
+  x2?: number;
+  z2?: number;
   radius?: number;
   /** Facing for oriented FX (frost mist cone, etc.). */
   yaw?: number;
@@ -161,6 +164,17 @@ export function createProjectile(
 export function dashOffset(yaw: number, distance: number): Vec2 {
   const f = facingVector(yaw);
   return { x: f.x * distance, z: f.z * distance };
+}
+
+/**
+ * Portal channel: distance from elapsed wall ms (0 at channel start → max at channelChargeMs).
+ */
+export function channelChargeDistance(def: AbilityDef, elapsedMs: number): number {
+  const max = travelDistance(def);
+  const min = Math.max(0, Math.min(max, def.channelMinRange ?? 0));
+  const chargeMs = Math.max(1, def.channelChargeMs ?? 1000);
+  const t = Math.max(0, Math.min(1, elapsedMs / chargeMs));
+  return min + (max - min) * t;
 }
 
 /** Sample a translate path at progress 0..1 (caller may ease progress first). */
