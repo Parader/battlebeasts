@@ -172,8 +172,11 @@ export class CharacterAnimationController {
       strafeRight: config.strafeRight,
       castPrimary: config.castPrimary,
       castFrost: config.castFrost,
+      castBarrier: config.castBarrier,
       castSpikes: config.castSpikes,
       castFrostMist: config.castFrostMist,
+      castHealBeam: config.castHealBeam,
+      castPoisonDart: config.castPoisonDart,
       castAoE: config.castAoE,
       castMelee: config.castMelee,
       dash: config.dash,
@@ -294,13 +297,16 @@ export class CharacterAnimationController {
 
     this.registerUpperCast("castPrimary", config.castPrimary);
     if (config.castFrost) this.registerUpperCast("castFrost", config.castFrost);
+    if (config.castBarrier) this.registerUpperCast("castBarrier", config.castBarrier);
     if (config.castSpikes) this.registerUpperCast("castSpikes", config.castSpikes);
     if (config.castFrostMist) this.registerUpperCast("castFrostMist", config.castFrostMist);
+    if (config.castHealBeam) this.registerUpperCast("castHealBeam", config.castHealBeam);
+    if (config.castPoisonDart) this.registerUpperCast("castPoisonDart", config.castPoisonDart);
     if (config.castAoE) this.registerUpperCast("castAoE", config.castAoE);
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);
 
-    for (const key of ["dash", "jumpAttack", "jazzDance", "idleToCrouch", "crouchWalk", "hit", "death", "heavyCast"] as const) {
+    for (const key of ["dash", "jumpAttack", "jazzDance", "idleToCrouch", "crouchWalk", "castCounter", "hit", "death", "heavyCast"] as const) {
       const name = config[key];
       if (!name) continue;
       const src = resolveClip(clips, name);

@@ -16,7 +16,26 @@ export const COMBAT = {
    */
   auraFootRadius: 0.12,
   maxProjectiles: 64,
+  /** Base chance an outgoing hit/heal rolls critical (0–1). */
+  critChance: 0.05,
+  /** Critical hits deal / heal this × the pre-mitigation amount. */
+  critMultiplier: 1.5,
 } as const;
+
+/** One RNG check — hot-path safe (no allocations). */
+export function rollCrit(chance: number = COMBAT.critChance): boolean {
+  return chance > 0 && Math.random() < chance;
+}
+
+/** Apply crit multiplier before rounding/mitigation. */
+export function scaleForCrit(
+  amount: number,
+  crit: boolean,
+  mult: number = COMBAT.critMultiplier,
+): number {
+  if (!crit || !(amount > 0)) return amount;
+  return amount * mult;
+}
 
 export type CombatBody = {
   id: string;
@@ -68,8 +87,10 @@ export type CombatFxEvent = {
   yaw?: number;
   ownerId?: string;
   targetId?: string;
-  /** Damage dealt for hit popups (kind === "hit"). */
+  /** Damage / heal amount for hit popups (kind === "hit"). */
   damage?: number;
+  /** True when this hit/heal rolled a critical. */
+  crit?: boolean;
   /** For cast_phase events. */
   phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
   phaseEndsAt?: number;

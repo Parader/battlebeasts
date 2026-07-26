@@ -1,4 +1,5 @@
 import { ABILITIES, type SpellTag } from "./abilities";
+import { COMBAT } from "./combat";
 import { TALENTS, type TalentDef } from "./stands";
 
 /** Baked once on loadout/talent change — never scanned in the tick loop. */
@@ -7,6 +8,8 @@ export type CombatSessionKit = {
   talentIds: readonly string[];
   moveSpeedMul: number;
   maxHpBonus: number;
+  /** Outgoing crit chance (0–1). Defaults to COMBAT.critChance. */
+  critChance: number;
   /** Per-ability cooldown multiplier (1 = unchanged). */
   cooldownMulByAbility: Map<string, number>;
 };
@@ -17,6 +20,7 @@ export function emptyCombatSessionKit(): CombatSessionKit {
     talentIds: [],
     moveSpeedMul: 1,
     maxHpBonus: 0,
+    critChance: COMBAT.critChance,
     cooldownMulByAbility: new Map(),
   };
 }
@@ -67,6 +71,7 @@ export function resolveKit(
     talentIds: cleaned,
     moveSpeedMul,
     maxHpBonus,
+    critChance: COMBAT.critChance,
     cooldownMulByAbility,
   };
 }

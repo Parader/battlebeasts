@@ -10,23 +10,36 @@ import { CrescentImpactEffect } from "./effects/crescentImpact";
 import { SmashCrackEffect } from "./effects/smashCrack";
 import { GustWaveEffect } from "./effects/gustWave";
 import { FrostBallCastEffect } from "./effects/frostBallCast";
+import { BarrierCastEffect } from "./effects/barrierCast";
 import { GraspProjectileEffect } from "./effects/graspProjectile";
 import { SpikesPopEffect } from "./effects/spikesPop";
 import { FrostMistConeEffect } from "./effects/frostMistCone";
 import { HealSwooshEffect } from "./effects/healSwoosh";
+import { HealBeamEffect } from "./effects/healBeam";
+import { PoisonDartCastEffect } from "./effects/poisonDartCast";
+import { PoisonDartProjectileEffect } from "./effects/poisonDartProjectile";
 
-export type ProjectileVfxId = "bolt" | "grasp";
-export type CastVfxId = "bolt" | "crescent" | "frostBall";
-export type ImpactVfxId = "bolt" | "crescent" | "smash" | "gust" | "spikes" | "frostMist" | "groove";
+export type ProjectileVfxId = "bolt" | "grasp" | "poisonDart";
+export type CastVfxId = "bolt" | "crescent" | "frostBall" | "barrier" | "poisonDart";
+export type ImpactVfxId =
+  | "bolt"
+  | "crescent"
+  | "smash"
+  | "gust"
+  | "spikes"
+  | "frostMist"
+  | "groove"
+  | "healBeam"
+  | "poisonDart";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
-export const CATALOG_PROJECTILES = new Set<string>(["bolt", "grasp"]);
+export const CATALOG_PROJECTILES = new Set<string>(["bolt", "grasp", "poisonDart"]);
 
 /** Abilities with dedicated cast one-shots (muzzle / swoop / hand charge). */
-export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent", "frostBall"]);
+export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent", "frostBall", "barrier", "poisonDart"]);
 
 /** Abilities with dedicated hit impact one-shots (not landing AoE cracks). */
-export const CATALOG_IMPACT_FX = new Set<string>(["bolt", "crescent"]);
+export const CATALOG_IMPACT_FX = new Set<string>(["bolt", "crescent", "poisonDart"]);
 
 /**
  * Melee abilities that spawn follow-caster swoops from combat_fx
@@ -76,6 +89,10 @@ export function usesGrooveFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "pulseHeal";
 }
 
+export function usesHealBeamFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "healBeam";
+}
+
 export type VfxFollowContext = {
   room: Room | null;
   localSessionId: string | null;
@@ -90,6 +107,12 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
     }
     if (shot.abilityId === "frostBall") {
       return <FrostBallCastEffect key={shot.key} shot={shot} follow={ctx} />;
+    }
+    if (shot.abilityId === "barrier") {
+      return <BarrierCastEffect key={shot.key} shot={shot} follow={ctx} />;
+    }
+    if (shot.abilityId === "poisonDart") {
+      return <PoisonDartCastEffect key={shot.key} shot={shot} follow={ctx} />;
     }
     return <BoltCastEffect key={shot.key} shot={shot} follow={ctx} />;
   }
@@ -108,6 +131,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (usesFrostMistFx(shot.abilityId)) {
     return <FrostMistConeEffect key={shot.key} shot={shot} follow={ctx} />;
   }
+  if (usesHealBeamFx(shot.abilityId)) {
+    return <HealBeamEffect key={shot.key} shot={shot} follow={ctx} />;
+  }
   if (usesGrooveFx(shot.abilityId)) {
     return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
   }
@@ -123,8 +149,12 @@ export {
   SmashCrackEffect,
   GustWaveEffect,
   FrostBallCastEffect,
+  BarrierCastEffect,
   GraspProjectileEffect,
   SpikesPopEffect,
   FrostMistConeEffect,
   HealSwooshEffect,
+  HealBeamEffect,
+  PoisonDartCastEffect,
+  PoisonDartProjectileEffect,
 };

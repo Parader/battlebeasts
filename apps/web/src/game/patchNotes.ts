@@ -14,6 +14,19 @@ export type PatchNote = {
  */
 export const PATCH_NOTES: readonly PatchNote[] = [
   {
+    id: "2026-07-26-spells-counter-dart",
+    title: "Counter, Poison Dart & combat polish",
+    date: "2026-07-26",
+    highlights: [
+      "Counter (Q): rooted gold-glow stance — deny the next melee/projectile hit, then +20% damage, +20% move, and 40% resistance for 3s (cuts other casts; cancel anytime)",
+      "Poison Dart (RMB): right-hook throw with stacking poison (up to 3) and a poison icon on health bars",
+      "Barrier: self absorb bubble that charges through the cast",
+      "Heal Beam: channelled ally heal line",
+      "Critical hits: 5% chance for 1.5× damage or healing",
+      "Ability bar cooldown sweep uses a lighter overlay so it stays readable",
+    ],
+  },
+  {
     id: "2026-07-25-audio-loading",
     title: "Hub music, settings & loading",
     date: "2026-07-25",

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canPlayerCancelCast, combineStatusMoveMul, getStatus, isChannelAbility, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, HEAL_BEAM_CAST, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime";
 import { abilityHudRuntime } from "./abilityHudRuntime";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, clearCrescentSpawnState } from "./vfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 import { playBoltHitSfx, playSlamHitSfx } from "./gameSfx";
 
@@ -416,8 +416,10 @@ export function useBaseCityRoom(options: Options) {
                     x: number;
                     z: number;
                     radius?: number;
+                    yaw?: number;
                     ownerId?: string;
                     damage?: number;
+                    crit?: boolean;
                     phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
                     phaseEndsAt?: number;
                     cooldownMs?: number;
@@ -428,7 +430,9 @@ export function useBaseCityRoom(options: Options) {
                     if (msg.kind === "cast_phase") {
                         if (
                             (msg.phase === "cancel" || msg.phase === "interrupt") &&
-                            (usesFrostMistFx(msg.abilityId) || usesGrooveFx(msg.abilityId)) &&
+                            (usesFrostMistFx(msg.abilityId) ||
+                                usesGrooveFx(msg.abilityId) ||
+                                usesHealBeamFx(msg.abilityId)) &&
                             msg.ownerId
                         ) {
                             cancelFollowOwnerVfx(msg.abilityId, msg.ownerId);
@@ -490,7 +494,8 @@ export function useBaseCityRoom(options: Options) {
                         (usesBridgedAoeFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesSpikeFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesGrooveFx(msg.abilityId) && msg.kind === "aoe");
+                        (usesGrooveFx(msg.abilityId) && msg.kind === "aoe") ||
+                        (usesHealBeamFx(msg.abilityId) && msg.kind === "aoe");
 
                     if (!skipGroundBurst) {
                         const key = ++fxKeyRef.current;
@@ -612,6 +617,39 @@ export function useBaseCityRoom(options: Options) {
                         );
                     }
 
+                    if (
+                        msg.kind === "aoe" &&
+                        usesHealBeamFx(msg.abilityId) &&
+                        (msg.comboHit ?? 1) === 1
+                    ) {
+                        let yaw = typeof msg.yaw === "number" ? msg.yaw : 0;
+                        if (msg.ownerId) {
+                            const owner = joined.state?.players?.get(msg.ownerId) as
+                                | { yaw?: number }
+                                | undefined;
+                            const localOwner = msg.ownerId === sessionIdRef.current;
+                            yaw = localOwner ? yawRef.current : (owner?.yaw ?? yaw);
+                        }
+                        const beamDef = ABILITIES.healBeam;
+                        const channelMs =
+                            HEAL_BEAM_CAST.healTicks * HEAL_BEAM_CAST.healTickMs + 280;
+                        spawnImpactEffect(
+                            msg.abilityId,
+                            {
+                                x: msg.x,
+                                z: msg.z,
+                                y: 1.1,
+                                yaw,
+                            },
+                            {
+                                lifeMs: channelMs,
+                                radius: beamDef?.range ?? HEAL_BEAM_CAST.range,
+                                growMs: 140,
+                                followOwnerId: msg.ownerId,
+                            },
+                        );
+                    }
+
                     if (msg.kind === "hit" && msg.abilityId === "bolt") {
                         playBoltHitSfx();
                     }
@@ -619,11 +657,13 @@ export function useBaseCityRoom(options: Options) {
                     if (msg.kind === "hit" && typeof msg.damage === "number" && msg.damage > 0) {
                         const key = ++dmgKeyRef.current;
                         const ang = Math.random() * Math.PI * 2;
-                        const isHeal = usesGrooveFx(msg.abilityId);
+                        const isHeal =
+                            usesGrooveFx(msg.abilityId) || usesHealBeamFx(msg.abilityId);
                         const popup: DamagePopup = {
                             key,
                             amount: msg.damage,
                             kind: isHeal ? "heal" : "damage",
+                            crit: msg.crit === true,
                             x: msg.x,
                             z: msg.z,
                             y: 1.35 + Math.random() * 0.25,
@@ -897,10 +937,7 @@ export function useBaseCityRoom(options: Options) {
         if (busy) {
             // Already casting this spell — wait for recovery (hold-to-cast retries next frame)
             if (currentId === abilityId) return;
-            const canCut =
-                def.interruptsOtherCasts === true &&
-                current?.interruptible !== false &&
-                !isChannelAbility(current);
+            const canCut = canInterruptOtherCast(def, current ?? undefined);
             if (!canCut && (current?.timing.blocksOtherCasts !== false || def.timing.blocksOtherCasts !== false)) {
                 return;
             }
@@ -963,7 +1000,7 @@ export function useBaseCityRoom(options: Options) {
         castingAbilityRef.current = null;
         predictorRef.current.clearMoveMul();
         const sid = sessionIdRef.current;
-        if (sid && (usesFrostMistFx(abilityId) || usesGrooveFx(abilityId))) {
+        if (sid && (usesFrostMistFx(abilityId) || usesGrooveFx(abilityId) || usesHealBeamFx(abilityId))) {
             cancelFollowOwnerVfx(abilityId, sid);
         }
         window.dispatchEvent(new CustomEvent("bb-cast-anim-cancel"));

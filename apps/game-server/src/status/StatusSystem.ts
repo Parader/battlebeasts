@@ -1,5 +1,6 @@
 import {
   STATUSES,
+  combineStatusDamageDealtMul,
   combineStatusDamageTakenMul,
   combineStatusMoveMul,
   combineStatusSlowPercent,
@@ -7,6 +8,7 @@ import {
   rollStatusChance,
   statusesBlockCast,
   statusesBlockMove,
+  statusesGrantInvulnerable,
   type StatusApplication,
   type StatusDef,
 } from "@battlebeasts/shared";
@@ -136,6 +138,8 @@ export class StatusSystem {
       if (rule === "refresh") {
         existing.expiresAt = now + duration;
         existing.sourceId = sourceId;
+        // Re-apply replaces stack count (e.g. Barrier refills absorb HP).
+        existing.stacks = Math.min(maxStacks, addStacks);
         if (def.tickMs) existing.nextTickAt = Math.min(existing.nextTickAt || now + def.tickMs, now + def.tickMs);
       } else if (rule === "stack") {
         existing.stacks = Math.min(maxStacks, existing.stacks + addStacks);
@@ -175,6 +179,16 @@ export class StatusSystem {
   /** Incoming damage factor (1 = full; 0.6 = 40% resist). */
   getDamageTakenMul(targetId: string): number {
     return combineStatusDamageTakenMul(this.entries(targetId));
+  }
+
+  /** Outgoing damage factor (1 = full; 1.2 = +20% dealt). */
+  getDamageDealtMul(attackerId: string): number {
+    return combineStatusDamageDealtMul(this.entries(attackerId));
+  }
+
+  /** Full invulnerability from statuses (e.g. Counter riposte). */
+  grantsInvulnerable(targetId: string): boolean {
+    return statusesGrantInvulnerable(this.entries(targetId));
   }
 
   /**

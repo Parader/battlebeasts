@@ -1,15 +1,18 @@
 import type { Room } from "@colyseus/core";
 import {
   ABILITIES,
+  BARRIER_CAST,
   COLLISION,
   COMBAT,
   GROOVE_CAST,
+  HEAL_BEAM_CAST,
   MOVE_SPEED,
   abilityEffectKind,
+  abilityTriggersCounter,
+  canInterruptOtherCast,
   canPlayerCancelCast,
   createProjectile,
   dashOffset,
-  isChannelAbility,
   isComboAbility,
   isInIFrameWindow,
   kitCooldownMs,
@@ -27,6 +30,9 @@ import {
   resolveKit,
   resolveTravel,
   resolveConeHits,
+  inFacingCone,
+  rollCrit,
+  scaleForCrit,
   sampleTravel,
   spikeLinePoints,
   sweepTravel,
@@ -161,6 +167,32 @@ type PendingGrooveHeal = {
   radius: number;
 };
 
+/** Narrow forward heal channel (Heal Beam). */
+type PendingHealBeam = {
+  ownerId: string;
+  abilityId: string;
+  nextTickAt: number;
+  tickIndex: number;
+  ticksTotal: number;
+  tickMs: number;
+  heal: number;
+  range: number;
+  halfAngle: number;
+};
+
+/** Barrier absorb ramps 0→target during windup; mid-cast hits only eat built stacks. */
+type PendingBarrier = {
+  ownerId: string;
+  castStartedAt: number;
+  /** When anticipation+cast end (impact begins). */
+  impactAt: number;
+  /** Total shield HP granted so far this cast (not current remaining). */
+  granted: number;
+  target: number;
+  durationMs: number;
+  finalized: boolean;
+};
+
 /**
  * Server-side combat: Anticipation → Cast → Impact → Recovery.
  * Cancel is only valid during anticipation (before commitment / effect).
@@ -178,6 +210,8 @@ export class CombatSystem {
   private pendingSpikes: PendingSpike[] = [];
   private pendingFrostMist: PendingFrostMist[] = [];
   private pendingGrooveHeal: PendingGrooveHeal[] = [];
+  private pendingHealBeam: PendingHealBeam[] = [];
+  private pendingBarrier = new Map<string, PendingBarrier>();
   /** Original spawn pose for practice dummies (respawn here on death). */
   private targetSpawns = new Map<string, { x: number; z: number }>();
   private nextId = 1;
@@ -276,6 +310,7 @@ export class CombatSystem {
     const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
+    this.clearPendingHealBeam(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "cancel", now, { cooldownMs });
   }
@@ -291,6 +326,7 @@ export class CombatSystem {
     const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
+    this.clearPendingHealBeam(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "interrupt", now, { cooldownMs });
   }
@@ -418,11 +454,9 @@ export class CombatSystem {
     const existing = this.casts.get(sessionId);
     if (existing) {
       const cur = ABILITIES[existing.abilityId];
-      const canCut =
-        def.interruptsOtherCasts === true &&
-        cur?.interruptible !== false &&
-        !isChannelAbility(cur) &&
-        existing.abilityId !== castId;
+      const canCut = canInterruptOtherCast(def, cur, {
+        sameAbility: existing.abilityId === castId,
+      });
       if (canCut) {
         // Fired missiles keep living; only caster phases/anim are cleared
         this.softInterruptCast(sessionId, player, now);
@@ -493,6 +527,12 @@ export class CombatSystem {
     if (abilityEffectKind(def) === "decoy") {
       this.commitDecoyCast(sessionId, player, def, now);
     }
+    if (def.id === "barrier") {
+      this.commitBarrierCast(sessionId, def, now);
+    }
+    if (def.id === "counter") {
+      this.commitCounterCast(sessionId, now);
+    }
     this.syncInvulnerable(sessionId, player, now);
     return true;
   }
@@ -508,6 +548,10 @@ export class CombatSystem {
     const cooldownMs = this.endComboEarly(sessionId, def.id, cast.effectFired, now);
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
+    this.clearPendingHealBeam(sessionId);
+    if (def.id === "counter") {
+      this.statuses.remove(sessionId, "counterArmed");
+    }
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, def.id, "cancel", now, { cooldownMs });
     return true;
@@ -521,6 +565,8 @@ export class CombatSystem {
     this.advancePendingSpikes(now);
     this.advancePendingFrostMist(now);
     this.advancePendingGrooveHeal(now);
+    this.advancePendingHealBeam(now);
+    this.advancePendingBarrier(now);
     this.advanceDecoys(dt, now);
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
@@ -654,6 +700,7 @@ export class CombatSystem {
         this.endComboEarly(sessionId, cast.abilityId, cast.effectFired, now);
         this.clearPendingFrostMist(sessionId);
         this.clearPendingGrooveHeal(sessionId);
+        this.clearPendingHealBeam(sessionId);
         if (player) this.clearCastState(sessionId, player);
         else {
           this.casts.delete(sessionId);
@@ -767,6 +814,10 @@ export class CombatSystem {
   }
 
   private clearCastState(sessionId: string, player: PlayerState) {
+    const cast = this.casts.get(sessionId);
+    if (cast?.abilityId === "counter") {
+      this.statuses.remove(sessionId, "counterArmed");
+    }
     this.casts.delete(sessionId);
     this.travels.delete(sessionId);
     player.castAbilityId = "";
@@ -841,6 +892,8 @@ export class CombatSystem {
       this.scheduleSpikeWave(sessionId, ownerBody, def, now);
     } else if (kind === "coneChannel" && !deferHit) {
       this.scheduleFrostMist(sessionId, def, now);
+    } else if (kind === "healBeam" && !deferHit) {
+      this.scheduleHealBeam(sessionId, def, now);
     } else if (kind === "pulseHeal" && !deferHit) {
       const center = { x: player.x, z: player.z };
       const radius = def.radius ?? 7;
@@ -905,7 +958,91 @@ export class CombatSystem {
     }
     // dash / buff / deferred landing: travel-only here (+ optional self statuses)
 
-    this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
+    if (def.id === "barrier") {
+      this.finalizeBarrierCast(sessionId, now);
+    } else {
+      this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
+    }
+  }
+
+  /**
+   * Start Barrier absorb at cast begin and ramp stacks through windup.
+   * Mid-cast damage only consumes what has been granted so far.
+   */
+  private commitBarrierCast(sessionId: string, def: AbilityDef, now: number) {
+    const windup =
+      phaseDurationMs(def, "anticipation") + phaseDurationMs(def, "cast");
+    const impactAt = now + Math.max(16, windup);
+    const target = BARRIER_CAST.shieldStacks;
+    const durationMs = BARRIER_CAST.shieldDurationMs;
+    this.pendingBarrier.set(sessionId, {
+      ownerId: sessionId,
+      castStartedAt: now,
+      impactAt,
+      granted: 0,
+      target,
+      durationMs,
+      finalized: false,
+    });
+    this.advancePendingBarrier(now);
+  }
+
+  private finalizeBarrierCast(sessionId: string, now: number) {
+    const pending = this.pendingBarrier.get(sessionId);
+    if (!pending || pending.finalized) return;
+    this.grantBarrierProgress(pending, 1, now);
+    this.statuses.apply(sessionId, "barrier", sessionId, now, {
+      durationMs: pending.durationMs,
+      stacks: this.statuses.getStacks(sessionId, "barrier"),
+      setStacks: true,
+    });
+    pending.finalized = true;
+    this.pendingBarrier.delete(sessionId);
+  }
+
+  /** Root + glow for the full counter window (1.2s from cast start). */
+  private commitCounterCast(sessionId: string, now: number) {
+    this.statuses.apply(sessionId, "counterArmed", sessionId, now, {
+      durationMs: 1200,
+    });
+  }
+
+  private grantBarrierProgress(pending: PendingBarrier, progress01: number, now: number) {
+    const p = Math.max(0, Math.min(1, progress01));
+    const want = Math.floor(pending.target * p + 1e-6);
+    const add = want - pending.granted;
+    if (add <= 0) return;
+    const current = this.statuses.getStacks(pending.ownerId, "barrier");
+    this.statuses.apply(pending.ownerId, "barrier", pending.ownerId, now, {
+      durationMs: Math.max(pending.durationMs, pending.impactAt - now + pending.durationMs),
+      stacks: current + add,
+      setStacks: true,
+    });
+    pending.granted = want;
+  }
+
+  private advancePendingBarrier(now: number) {
+    if (this.pendingBarrier.size === 0) return;
+    for (const [sessionId, pending] of [...this.pendingBarrier.entries()]) {
+      if (pending.finalized) {
+        this.pendingBarrier.delete(sessionId);
+        continue;
+      }
+      const cast = this.casts.get(sessionId);
+      if (!cast || cast.abilityId !== "barrier") {
+        // Cast cleared unexpectedly — keep whatever shield was built.
+        this.statuses.apply(sessionId, "barrier", sessionId, now, {
+          durationMs: pending.durationMs,
+          stacks: this.statuses.getStacks(sessionId, "barrier"),
+          setStacks: true,
+        });
+        this.pendingBarrier.delete(sessionId);
+        continue;
+      }
+      const span = Math.max(1, pending.impactAt - pending.castStartedAt);
+      const progress = Math.max(0, Math.min(1, (now - pending.castStartedAt) / span));
+      this.grantBarrierProgress(pending, progress, now);
+    }
   }
 
   /**
@@ -1105,6 +1242,105 @@ export class CombatSystem {
     this.pendingGrooveHeal = this.pendingGrooveHeal.filter((g) => g.ownerId !== ownerId);
   }
 
+  private scheduleHealBeam(sessionId: string, def: AbilityDef, now: number) {
+    this.clearPendingHealBeam(sessionId);
+    const ticks = Math.max(1, Math.floor(def.healTicks ?? HEAL_BEAM_CAST.healTicks));
+    const tickMs = Math.max(80, def.tickMs ?? HEAL_BEAM_CAST.healTickMs);
+    this.pendingHealBeam.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      nextTickAt: now,
+      tickIndex: 0,
+      ticksTotal: ticks,
+      tickMs,
+      heal: def.heal ?? HEAL_BEAM_CAST.healPerTick,
+      range: Math.max(2, def.range),
+      halfAngle: def.coneHalfAngle ?? HEAL_BEAM_CAST.beamHalfAngle,
+    });
+  }
+
+  private clearPendingHealBeam(ownerId: string) {
+    if (this.pendingHealBeam.length === 0) return;
+    this.pendingHealBeam = this.pendingHealBeam.filter((b) => b.ownerId !== ownerId);
+  }
+
+  private advancePendingHealBeam(now: number) {
+    if (this.pendingHealBeam.length === 0) return;
+    const remain: PendingHealBeam[] = [];
+    for (const beam of this.pendingHealBeam) {
+      if (now < beam.nextTickAt) {
+        remain.push(beam);
+        continue;
+      }
+      const owner = this.room.state.players.get(beam.ownerId);
+      if (!owner || owner.disconnected || owner.hp <= 0) continue;
+
+      this.fx({
+        kind: "aoe",
+        abilityId: beam.abilityId,
+        x: owner.x,
+        z: owner.z,
+        radius: beam.range,
+        yaw: owner.yaw,
+        ownerId: beam.ownerId,
+        /** 1 = channel start (client spawns the continuous beam once). */
+        comboHit: beam.tickIndex + 1,
+      });
+
+      this.applyHealBeamTick(
+        { x: owner.x, z: owner.z },
+        owner.yaw,
+        beam.range,
+        beam.halfAngle,
+        beam.heal,
+        beam.ownerId,
+        beam.abilityId,
+      );
+
+      beam.tickIndex += 1;
+      if (beam.tickIndex < beam.ticksTotal) {
+        beam.nextTickAt = now + beam.tickMs;
+        remain.push(beam);
+      }
+    }
+    this.pendingHealBeam = remain;
+  }
+
+  /**
+   * Heal allies + practice dummies in a narrow facing cone (not enemies).
+   */
+  private applyHealBeamTick(
+    origin: { x: number; z: number },
+    yaw: number,
+    range: number,
+    halfAngle: number,
+    amount: number,
+    casterId: string,
+    abilityId: string,
+  ) {
+    if (!(amount > 0) || !(range > 0)) return;
+    const soft = COLLISION.playerRadius;
+    const inBeam = (x: number, z: number) =>
+      inFacingCone(origin, yaw, range, halfAngle, { x, z }, soft);
+
+    for (const [id, player] of this.room.state.players) {
+      if (id === casterId) continue;
+      if (player.disconnected || player.hp <= 0) continue;
+      if (player.role === "spectator" || player.roundDead) continue;
+      const caster = this.room.state.players.get(casterId);
+      // Prefer same-team when teams exist; otherwise heal any other player (hub).
+      if (caster?.team && player.team && caster.team !== player.team) continue;
+      if (!inBeam(player.x, player.z)) continue;
+      this.applyHealAmount(id, amount, casterId, abilityId);
+    }
+
+    for (const [id, target] of this.room.state.targets) {
+      if (target.hp <= 0) continue;
+      if (!inBeam(target.x, target.z)) continue;
+      this.applyHealAmount(id, amount, casterId, abilityId);
+    }
+  }
+
   private advancePendingGrooveHeal(now: number) {
     if (this.pendingGrooveHeal.length === 0) return;
     const remain: PendingGrooveHeal[] = [];
@@ -1276,20 +1512,6 @@ export class CombatSystem {
     if (!(amount > 0) || !(radius > 0)) return;
     const soft = COLLISION.playerRadius;
 
-    const emitHeal = (id: string, x: number, z: number, before: number, after: number) => {
-      const healed = after - before;
-      if (healed <= 0) return;
-      this.fx({
-        kind: "hit",
-        abilityId,
-        x,
-        z,
-        damage: healed,
-        ownerId: casterId,
-        targetId: id,
-      });
-    };
-
     let healedOthers = 0;
 
     for (const [id, player] of this.room.state.players) {
@@ -1297,22 +1519,14 @@ export class CombatSystem {
       if (player.disconnected || player.hp <= 0) continue;
       const dist = Math.hypot(player.x - center.x, player.z - center.z);
       if (dist > radius + soft) continue;
-      const before = player.hp;
-      player.hp = Math.min(player.maxHp, player.hp + amount);
-      const gained = player.hp - before;
-      healedOthers += gained;
-      emitHeal(id, player.x, player.z, before, player.hp);
+      healedOthers += this.applyHealAmount(id, amount, casterId, abilityId);
     }
 
     for (const [id, target] of this.room.state.targets) {
       if (target.hp <= 0) continue;
       const dist = Math.hypot(target.x - center.x, target.z - center.z);
       if (dist > radius + soft) continue;
-      const before = target.hp;
-      target.hp = Math.min(target.maxHp, target.hp + amount);
-      const gained = target.hp - before;
-      healedOthers += gained;
-      emitHeal(id, target.x, target.z, before, target.hp);
+      healedOthers += this.applyHealAmount(id, amount, casterId, abilityId);
     }
 
     if (healedOthers <= 0) {
@@ -1336,11 +1550,23 @@ export class CombatSystem {
 
     const selfHeal = Math.floor(healedOthers / 2);
     if (selfHeal <= 0) return;
+    // Self refund is derived from HP already restored — no second crit roll.
     const caster = this.room.state.players.get(casterId);
     if (!caster || caster.disconnected || caster.hp <= 0) return;
     const before = caster.hp;
     caster.hp = Math.min(caster.maxHp, caster.hp + selfHeal);
-    emitHeal(casterId, caster.x, caster.z, before, caster.hp);
+    const healed = caster.hp - before;
+    if (healed > 0) {
+      this.fx({
+        kind: "hit",
+        abilityId,
+        x: caster.x,
+        z: caster.z,
+        damage: healed,
+        ownerId: casterId,
+        targetId: casterId,
+      });
+    }
   }
 
   /** Schedule a radial shove (translated over knockbackMs, not teleported). */
@@ -1492,15 +1718,47 @@ export class CombatSystem {
     }
   }
 
-  /** HP change + hit FX. Returns false if blocked (missing / invuln). */
+  /** HP change + hit FX. Returns false if blocked (missing / invuln / countered). */
   private applyRawDamage(
     targetId: string,
     damage: number,
     attackerSessionId: string,
     abilityId: string,
   ): boolean {
+    const now = Date.now();
+    const atkDef = ABILITIES[abilityId];
+    const dealtMul = this.statuses.getDamageDealtMul(attackerSessionId);
+    const scaledIn = damage > 0 ? damage * dealtMul : damage;
+
+    // Armed Counter: deny the next melee / direct projectile, then riposte buffs.
+    if (
+      scaledIn > 0 &&
+      this.room.state.players.has(targetId) &&
+      this.statuses.has(targetId, "counterArmed") &&
+      abilityTriggersCounter(atkDef)
+    ) {
+      this.procCounter(targetId, now);
+      const player = this.room.state.players.get(targetId);
+      if (player) {
+        this.fx({
+          kind: "hit",
+          abilityId: "counter",
+          x: player.x,
+          z: player.z,
+          ownerId: targetId,
+          targetId,
+          damage: 0,
+        });
+      }
+      return false;
+    }
+
+    // Crit once at the gate — before resist/shields — so every damage path shares one RNG.
+    const crit =
+      scaledIn > 0 &&
+      rollCrit(this.kits.get(attackerSessionId)?.critChance ?? COMBAT.critChance);
     const resistMul = this.statuses.getDamageTakenMul(targetId);
-    let dealt = Math.max(0, Math.round(damage * resistMul));
+    let dealt = Math.max(0, Math.round(scaleForCrit(scaledIn, crit) * resistMul));
     dealt = this.statuses.absorbWithShields(targetId, dealt);
 
     const player = this.room.state.players.get(targetId);
@@ -1519,6 +1777,7 @@ export class CombatSystem {
         ownerId: attackerSessionId,
         targetId,
         damage: dealt,
+        crit: crit && dealt > 0 ? true : undefined,
       });
       return true;
     }
@@ -1533,6 +1792,7 @@ export class CombatSystem {
         ownerId: attackerSessionId,
         targetId,
         damage: dealt,
+        crit: crit && dealt > 0 ? true : undefined,
       });
       this.room.state.decoys.delete(targetId);
       return true;
@@ -1552,6 +1812,7 @@ export class CombatSystem {
         ownerId: attackerSessionId,
         targetId,
         damage: dealt,
+        crit: crit && dealt > 0 ? true : undefined,
       });
       if (target.hp <= 0) {
         this.hooks.onTargetKilled?.(targetId, attackerSessionId);
@@ -1572,24 +1833,86 @@ export class CombatSystem {
     return false;
   }
 
+  /**
+   * Restore HP on a player or practice dummy. Crit rolls once here for all heals.
+   * Returns HP actually restored (0 if none).
+   */
+  private applyHealAmount(
+    targetId: string,
+    amount: number,
+    healerId: string,
+    abilityId: string,
+  ): number {
+    if (!(amount > 0)) return 0;
+    const crit = rollCrit(this.kits.get(healerId)?.critChance ?? COMBAT.critChance);
+    const healFor = Math.max(0, Math.round(scaleForCrit(amount, crit)));
+
+    const emit = (x: number, z: number, healed: number) => {
+      if (!(healed > 0)) return;
+      this.fx({
+        kind: "hit",
+        abilityId,
+        x,
+        z,
+        damage: healed,
+        ownerId: healerId,
+        targetId,
+        crit: crit || undefined,
+      });
+    };
+
+    const player = this.room.state.players.get(targetId);
+    if (player) {
+      if (player.disconnected || player.hp <= 0) return 0;
+      const before = player.hp;
+      player.hp = Math.min(player.maxHp, player.hp + healFor);
+      const healed = player.hp - before;
+      emit(player.x, player.z, healed);
+      return healed;
+    }
+
+    const target = this.room.state.targets.get(targetId);
+    if (target) {
+      if (target.hp <= 0) return 0;
+      const before = target.hp;
+      target.hp = Math.min(target.maxHp, target.hp + healFor);
+      const healed = target.hp - before;
+      emit(target.x, target.z, healed);
+      return healed;
+    }
+    return 0;
+  }
+
   private syncAllInvulnerable(now: number) {
     this.room.state.players.forEach((player, sessionId) => {
       this.syncInvulnerable(sessionId, player, now);
     });
   }
 
+  /** Consume Counter window → invuln + haste + damage amp. */
+  private procCounter(targetId: string, now: number) {
+    this.statuses.remove(targetId, "counterArmed");
+    this.statuses.apply(targetId, "counterHaste", targetId, now);
+    this.statuses.apply(targetId, "counterEmpowered", targetId, now);
+    const player = this.room.state.players.get(targetId);
+    if (player) {
+      const cast = this.casts.get(targetId);
+      if (cast?.abilityId === "counter") {
+        this.clearCastState(targetId, player);
+        this.phaseFx(targetId, player, "counter", "idle", now);
+      }
+      this.syncInvulnerable(targetId, player, now);
+    }
+  }
+
   private syncInvulnerable(sessionId: string, player: PlayerState, now: number) {
+    let fromCast = false;
     const cast = this.casts.get(sessionId);
-    if (!cast) {
-      player.invulnerable = false;
-      return;
+    if (cast) {
+      const def = ABILITIES[cast.abilityId];
+      if (def) fromCast = isInIFrameWindow(def, now - cast.castStartedAt);
     }
-    const def = ABILITIES[cast.abilityId];
-    if (!def) {
-      player.invulnerable = false;
-      return;
-    }
-    player.invulnerable = isInIFrameWindow(def, now - cast.castStartedAt);
+    player.invulnerable = fromCast || this.statuses.grantsInvulnerable(sessionId);
   }
 
   private canHurt(ownerId: string, targetId: string): boolean {

@@ -129,6 +129,7 @@ export type AbilityEffectKind =
   | "spikeWave"
   | "coneChannel"
   | "pulseHeal"
+  | "healBeam"
   | "decoy";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
@@ -241,6 +242,11 @@ export interface AbilityDef {
    * Already-fired projectiles/DoTs keep living; only caster cast phases are cleared.
    */
   interruptsOtherCasts?: boolean;
+  /**
+   * If true with `interruptsOtherCasts`, also cuts channels and `interruptible: false`
+   * casts (Counter acts like a cancel).
+   */
+  cutsAnyCast?: boolean;
   /**
    * If false, interruptors cannot cut this cast (default true = interruptible).
    */
@@ -367,6 +373,31 @@ function gustImpactHoldWallMs(): number {
 }
 
 /**
+ * Standing 1H Cast Spell 01 (hero.glb) @ 30fps — ~2.3s / 69 frames.
+ * Frame 24 ≈ barrier bubble lands.
+ */
+export const BARRIER_CAST = {
+  fps: 30,
+  releaseFrame: 24,
+  clipDurationSec: 2.3,
+  /** Natural Mixamo pace. */
+  playbackRate: 1,
+  /** Absorb HP charged over anticipation+cast, then held this long. */
+  shieldStacks: 40,
+  shieldDurationMs: 3000,
+} as const;
+
+function barrierReleaseWallMs(): number {
+  return (
+    (BARRIER_CAST.releaseFrame / BARRIER_CAST.fps / BARRIER_CAST.playbackRate) * 1000
+  );
+}
+
+function barrierRecoveryWallMs(): number {
+  return 160;
+}
+
+/**
  * Standing 1H Magic Attack 02 (hero.glb) @ 30fps.
  * Frame 19 = frost ball release.
  */
@@ -391,6 +422,34 @@ function frostBallReleaseWallMs(): number {
 function frostBallRecoveryWallMs(): number {
   // Keep a brief settle after release — long Mixamo tail blocked follow-up casts.
   return 100;
+}
+
+/**
+ * Right Hook (hero.glb) @ 30fps — clip 1.1s (33 frames).
+ * Projectile leaves at frame 11 of the original Mixamo clip (natural pace).
+ */
+export const POISON_DART_CAST = {
+  fps: 30,
+  releaseFrame: 11,
+  clipDurationSec: 1.1,
+  /** 1 = original Mixamo timing so frame 11 lines up with release. */
+  playbackRate: 1,
+  /** Closer to the body so short-range throws stay visible. */
+  spawnOffset: 0.12,
+  handY: 1.05,
+} as const;
+
+function poisonDartReleaseWallMs(): number {
+  return (
+    (POISON_DART_CAST.releaseFrame /
+      POISON_DART_CAST.fps /
+      POISON_DART_CAST.playbackRate) *
+    1000
+  );
+}
+
+function poisonDartRecoveryWallMs(): number {
+  return 90;
 }
 
 /**
@@ -442,6 +501,38 @@ function frostMistReleaseWallMs(): number {
 
 function frostMistSprayWallMs(): number {
   return FROST_MIST_CAST.mistTicks * FROST_MIST_CAST.mistTickMs;
+}
+
+/**
+ * Standing 2H Magic Attack 04 (hero.glb) @ 30fps — clip 101 frames (~3.367s).
+ * Frame 32 = heal beam begins.
+ */
+export const HEAL_BEAM_CAST = {
+  fps: 30,
+  releaseFrame: 32,
+  /** Freeze upper cast here while the beam channel ticks. */
+  holdFrame: 48,
+  clipDurationSec: 3.366667,
+  /** Slight compress so frame 32 arrives a bit sooner. */
+  playbackRate: 1.15,
+  healPerTick: 7,
+  healTicks: 8,
+  /** 8 × 200ms ≈ 1.6s beam. */
+  healTickMs: 200,
+  /** Narrow line (≈8° half-angle). */
+  beamHalfAngle: 0.14,
+  range: 14,
+} as const;
+
+function healBeamReleaseWallMs(): number {
+  return (
+    (HEAL_BEAM_CAST.releaseFrame / HEAL_BEAM_CAST.fps / HEAL_BEAM_CAST.playbackRate) *
+    1000
+  );
+}
+
+function healBeamChannelWallMs(): number {
+  return HEAL_BEAM_CAST.healTicks * HEAL_BEAM_CAST.healTickMs;
 }
 
 /**
@@ -622,7 +713,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     aura: true,
     spawnOffset: FROST_BALL_CAST.spawnOffset,
     allowedSlots: ["m2"],
-    defaultSlot: "m2",
     timing: {
       anticipationMs: authoredForWallMs(100),
       castMs: authoredForWallMs(Math.max(16, frostBallReleaseWallMs() - 100)),
@@ -637,6 +727,40 @@ export const ABILITIES: Record<string, AbilityDef> = {
       cancelUntilPhase: "cast",
     },
     applyAuraSlow: [{ statusId: "slowed", durationMs: 1200, chance: 1 }],
+  },
+  /**
+   * Poison Dart (RMB) — fast Right Hook throw.
+   * 4 hit + poison 2×7 over 5s ≈ 18 per stack; stacks up to 3×.
+   */
+  poisonDart: {
+    id: "poisonDart",
+    name: "Poison Dart",
+    description:
+      "Snap a venomous dart with a right hook. Light impact, then a slow poison that eats at them for 5 seconds. Stacks up to three times.",
+    cooldownMs: 2200,
+    range: 11,
+    shape: "projectile",
+    effectKind: "standard",
+    tags: ["Projectile", "Damage", "DamageOverTime", "Debuff", "SingleTarget", "Cast"],
+    damage: 4,
+    speed: 28,
+    spawnOffset: POISON_DART_CAST.spawnOffset,
+    allowedSlots: ["m2"],
+    defaultSlot: "m2",
+    timing: {
+      /** Windup to original frame 11 (~367ms wall). */
+      anticipationMs: authoredForWallMs(50),
+      castMs: authoredForWallMs(Math.max(16, poisonDartReleaseWallMs() - 50)),
+      impactMs: authoredForWallMs(80),
+      recoveryMs: authoredForWallMs(poisonDartRecoveryWallMs()),
+      anticipationMoveMul: 0.85,
+      castMoveMul: 0.7,
+      impactMoveMul: 0.8,
+      recoveryMoveMul: 1,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "poisonDart", chance: 1 }],
   },
   /**
    * Electrical augment (Space) — short cast, then +60% move for 3s.
@@ -668,6 +792,84 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
     applyOnSelf: [{ statusId: "surged", durationMs: 3000 }],
     interruptsOtherCasts: true,
+  },
+  /**
+   * Barrier — short cast, blue absorb bubble (40 HP / 3s).
+   * Anim: Standing 1H Cast Spell 01.
+   */
+  barrier: {
+    id: "barrier",
+    name: "Barrier",
+    description:
+      "Locked cast — absorb bubble charges to 40 shield over the windup (3s once complete). Damage during cast only eats what you've built so far.",
+    cooldownMs: 6000,
+    range: 0,
+    shape: "buff",
+    effectKind: "standard",
+    tags: ["Buff", "Self", "Defense", "Shield", "Cast"],
+    damage: 0,
+    allowedSlots: ["q", "e", "f"],
+    timing: {
+      anticipationMs: authoredForWallMs(90),
+      castMs: authoredForWallMs(Math.max(16, barrierReleaseWallMs() - 90)),
+      impactMs: authoredForWallMs(100),
+      recoveryMs: authoredForWallMs(barrierRecoveryWallMs()),
+      anticipationMoveMul: 0.75,
+      castMoveMul: 0.45,
+      impactMoveMul: 0.7,
+      recoveryMoveMul: 0.95,
+      /** Locked cast — no cancel through windup/release. */
+      canCancelAnticipation: false,
+    },
+    /** Surge/Dash/etc. cannot cut this cast. */
+    interruptible: false,
+    /**
+     * Absorb ramps 0→40 during anticipation+cast (server PendingBarrier).
+     * applyOnSelf is unused — CombatSystem owns the charge so mid-cast damage
+     * only eats what has been built so far.
+     */
+  },
+  /**
+   * Counter (Q) — Female Dance Pose, rooted 1.2s. Cancel anytime.
+   * Next melee / direct projectile hit is denied → +20% move, +20% dmg, 40% resist for 3s.
+   * Ground AoE (smash, gust, spikes, mist…) does not trigger; crescent does.
+   */
+  counter: {
+    id: "counter",
+    name: "Counter",
+    description:
+      "Plant into a dance stance and glow for 1.2s (no movement). Cancel anytime. The next direct hit (melee or projectile — not ground AoE) is denied, then you gain +20% move speed, +20% damage, and 40% damage resistance for 3s.",
+    cooldownMs: 9000,
+    range: 0,
+    shape: "buff",
+    effectKind: "standard",
+    tags: ["Buff", "Self", "Defense", "Counter", "Channel"],
+    damage: 0,
+    allowedSlots: ["q"],
+    defaultSlot: "q",
+    timing: {
+      /** Windup + hold = 1.2s rooted counter window. */
+      anticipationMs: 40,
+      castMs: 60,
+      impactMs: 1100,
+      recoveryMs: 80,
+      anticipationMoveMul: 0,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 1,
+      canCancelAnticipation: true,
+      /** Cancel allowed through the whole hold. */
+      cancelUntilPhase: "impact",
+    },
+    /** Only player cancel (or a successful counter) ends the stance — Surge/Dash cannot cut it. */
+    interruptible: false,
+    /** Q cuts whatever you're casting (including channels), then opens Counter. */
+    interruptsOtherCasts: true,
+    cutsAnyCast: true,
+    /**
+     * Armed at cast begin (CombatSystem) so root + glow start immediately.
+     * applyOnSelf unused for the window itself.
+     */
   },
   dash: {
     id: "dash",
@@ -724,7 +926,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     tags: ["Summon", "Stealth", "Utility", "Self", "Cast"],
     damage: 0,
     allowedSlots: ["q"],
-    defaultSlot: "q",
     // Timed to Standing To Crouched (~0.67s @ natural speed).
     timing: {
       anticipationMs: 40,
@@ -889,6 +1090,41 @@ export const ABILITIES: Record<string, AbilityDef> = {
     interruptible: false,
   },
   /**
+   * Heal Beam (Q/E/F) — narrow forward heal channel.
+   * Anim: Standing 2H Magic Attack 04 — beam starts @ frame 32.
+   */
+  healBeam: {
+    id: "healBeam",
+    name: "Heal Beam",
+    description:
+      "Channel a narrow beam of light. Allies and practice dummies in the line are healed each tick. Cancel anytime after the beam starts.",
+    cooldownMs: 7000,
+    range: HEAL_BEAM_CAST.range,
+    shape: "aoe",
+    effectKind: "healBeam",
+    tags: ["Line", "Channel", "Healing", "Ally", "Cast"],
+    damage: 0,
+    heal: HEAL_BEAM_CAST.healPerTick,
+    healTicks: HEAL_BEAM_CAST.healTicks,
+    tickMs: HEAL_BEAM_CAST.healTickMs,
+    coneHalfAngle: HEAL_BEAM_CAST.beamHalfAngle,
+    allowedSlots: ["q", "e", "f"],
+    timing: {
+      anticipationMs: authoredForWallMs(90),
+      castMs: authoredForWallMs(Math.max(16, healBeamReleaseWallMs() - 90)),
+      impactMs: authoredForWallMs(healBeamChannelWallMs()),
+      recoveryMs: authoredForWallMs(160),
+      anticipationMoveMul: 0.55,
+      castMoveMul: 0.4,
+      impactMoveMul: 0.35,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "impact",
+    },
+    /** Channel — Surge/Dash/etc. cannot cut; cancel still works. */
+    interruptible: false,
+  },
+  /**
    * Groove (R) — Jazz Dancing heal channel.
    * Self-centered AoE heals in ticks while aura + dance stay up (~6.6s; cancel anytime).
    * Others get full ticks; caster gets half of total HP restored to others. 40% DR while channeling.
@@ -943,6 +1179,17 @@ export function abilityEffectKind(def: AbilityDef | undefined): AbilityEffectKin
   return def?.effectKind ?? "standard";
 }
 
+/**
+ * Hits that can trigger an armed Counter.
+ * Melee (crescent) and contact projectiles yes; ground AoE / aura ticks no.
+ */
+export function abilityTriggersCounter(def: AbilityDef | undefined): boolean {
+  if (!def || !(def.damage > 0)) return false;
+  if (def.shape === "melee") return true;
+  if (def.shape === "projectile" && !def.aura) return true;
+  return false;
+}
+
 /** True when the ability carries every listed tag. */
 export function abilityHasTags(
   def: AbilityDef | undefined,
@@ -989,7 +1236,11 @@ function formatStatusApp(app: StatusApplication): string | null {
   if (st.mechanic === "dot" && st.damagePerTick && st.tickMs) {
     bits.push(`${st.damagePerTick} dmg / ${formatSeconds(st.tickMs)}`);
   }
-  if (app.stacks && app.stacks > 1) bits.push(`×${app.stacks}`);
+  if (st.mechanic === "shield" && app.stacks && app.stacks > 0) {
+    bits.push(`${app.stacks} shield`);
+  } else if (app.stacks && app.stacks > 1) {
+    bits.push(`×${app.stacks}`);
+  }
   if (typeof app.chance === "number" && app.chance < 1) {
     bits.push(`${Math.round(app.chance * 100)}%`);
   }
@@ -1149,6 +1400,23 @@ export function canPlayerCancelCast(
   if (until === "anticipation") return phase === "anticipation";
   if (until === "cast") return phase === "anticipation" || phase === "cast";
   return phase === "anticipation" || phase === "cast" || phase === "impact";
+}
+
+/**
+ * Whether `interrupter` may soft-cut an in-progress `current` cast.
+ * Counter (`cutsAnyCast`) acts like cancel — channels and locked casts included.
+ */
+export function canInterruptOtherCast(
+  interrupter: AbilityDef | undefined,
+  current: AbilityDef | undefined,
+  opts?: { sameAbility?: boolean },
+): boolean {
+  if (!interrupter?.interruptsOtherCasts) return false;
+  if (opts?.sameAbility) return false;
+  if (interrupter.cutsAnyCast) return true;
+  if (current?.interruptible === false) return false;
+  if (isChannelAbility(current)) return false;
+  return true;
 }
 
 /**

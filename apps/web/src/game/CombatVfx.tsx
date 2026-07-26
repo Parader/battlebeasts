@@ -4,10 +4,11 @@ import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, totalShieldAbsorb, type CosmeticsEquipped } from "@battlebeasts/shared";
-import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, hasCatalogProjectile } from "./vfx";
+import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, PoisonDartProjectileEffect, hasCatalogProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
+import { PoisonHpBadge, readPoisonStacks, syncPoisonBadge } from "./PoisonHpBadge";
 import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
@@ -105,6 +106,9 @@ function ProjectileRouter({
     }
     if (abilityId === "grasp") {
         return <GraspProjectileEffect room={room} id={id} />;
+    }
+    if (abilityId === "poisonDart") {
+        return <PoisonDartProjectileEffect room={room} id={id} />;
     }
     if (hasCatalogProjectile(abilityId)) {
         return <BoltProjectileEffect room={room} id={id} />;
@@ -226,6 +230,8 @@ export type DamagePopup = {
     amount: number;
     /** Heal popups render green `+N`; damage stays red. */
     kind?: "damage" | "heal";
+    /** Critical hit/heal — larger, accented popup. */
+    crit?: boolean;
     x: number;
     z: number;
     /** World Y start (chest / head). */
@@ -241,6 +247,7 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
     const group = useRef<THREE.Group>(null);
     const el = useRef<HTMLDivElement>(null);
     const isHeal = popup.kind === "heal";
+    const isCrit = popup.crit === true;
 
     useFrame(() => {
         const g = group.current;
@@ -253,7 +260,7 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
             return;
         }
         g.visible = true;
-        const rise = age * 1.6;
+        const rise = age * (isCrit ? 1.85 : 1.6);
         const pop = 1 - Math.pow(1 - Math.min(1, age / 0.12), 3);
         const fade = age < 0.5 ? 1 : Math.max(0, 1 - (age - 0.5) / 0.5);
         g.position.set(
@@ -261,10 +268,25 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
             popup.y + rise,
             popup.z + popup.driftZ * age,
         );
-        const scale = 0.9 + pop * 0.35;
+        const scale = (isCrit ? 1.15 : 0.9) + pop * (isCrit ? 0.55 : 0.35);
         node.style.opacity = String(fade);
         node.style.transform = `scale(${scale})`;
     });
+
+    const color = isHeal
+        ? isCrit
+            ? "#86efac"
+            : "#bbf7d0"
+        : isCrit
+          ? "#f87171"
+          : "#fecaca";
+    const shadow = isHeal
+        ? isCrit
+            ? "0 1px 0 #14532d, 0 0 12px rgba(74,222,128,0.95)"
+            : "0 1px 0 #14532d, 0 0 8px rgba(22,101,52,0.85)"
+        : isCrit
+          ? "0 1px 0 #7f1d1d, 0 0 14px rgba(239,68,68,0.95)"
+          : "0 1px 0 #450a0a, 0 0 8px rgba(127,29,29,0.85)";
 
     return (
         <group ref={group} position={[popup.x, popup.y, popup.z]}>
@@ -272,20 +294,19 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
                 <div
                     ref={el}
                     style={{
-                        color: isHeal ? "#bbf7d0" : "#fecaca",
+                        color,
                         fontWeight: 600,
-                        fontSize: "18px",
+                        fontSize: isCrit ? "26px" : "18px",
                         fontFamily: "ui-sans-serif, system-ui, sans-serif",
                         letterSpacing: "0.02em",
-                        textShadow: isHeal
-                            ? "0 1px 0 #14532d, 0 0 8px rgba(22,101,52,0.85)"
-                            : "0 1px 0 #450a0a, 0 0 8px rgba(127,29,29,0.85)",
+                        textShadow: shadow,
                         whiteSpace: "nowrap",
                         userSelect: "none",
                         willChange: "transform, opacity",
                     }}
                 >
                     {isHeal ? `+${Math.round(popup.amount)}` : Math.round(popup.amount)}
+                    {isCrit ? "!" : ""}
                 </div>
             </Html>
         </group>
@@ -662,6 +683,7 @@ function PracticeDummyAvatar({
             <group ref={body}>
                 <primitive object={scene} />
                 <StatusOrnaments
+                    characterRoot={scene}
                     headY={2.2}
                     getStatuses={() => {
                         const t = room?.state?.targets?.get(targetId) as
@@ -690,6 +712,9 @@ function HpBillboard({
 }) {
     const fill = useRef<THREE.Mesh>(null);
     const shield = useRef<THREE.Mesh>(null);
+    const poisonBadge = useRef<HTMLDivElement>(null);
+    const poisonStacksEl = useRef<HTMLSpanElement>(null);
+    const lastPoisonStacks = useRef(0);
     useFrame(() => {
         const t = room?.state?.targets?.get(targetId) as
             | {
@@ -700,17 +725,20 @@ function HpBillboard({
             | undefined;
         const m = fill.current;
         const s = shield.current;
-        if (!m || !t) return;
+        if (!m || !t) {
+            syncPoisonBadge(poisonBadge.current, poisonStacksEl.current, 0, lastPoisonStacks);
+            return;
+        }
         const maxHp = Math.max(1, t.maxHp);
         const ratio = Math.max(0, Math.min(1, t.hp / maxHp));
         m.scale.x = Math.max(0.001, ratio);
         m.position.x = -0.5 * (1 - ratio);
 
+        const rows: { statusId?: string; stacks?: number }[] = [];
+        t.statuses?.forEach((row) => {
+            if (row?.statusId) rows.push(row);
+        });
         if (s) {
-            const rows: { statusId?: string; stacks?: number }[] = [];
-            t.statuses?.forEach((row) => {
-                if (row?.statusId) rows.push(row);
-            });
             const shieldRatio = Math.max(0, Math.min(1, totalShieldAbsorb(rows) / maxHp));
             if (shieldRatio <= 0) {
                 s.visible = false;
@@ -721,6 +749,12 @@ function HpBillboard({
                 s.position.x = -0.5 + left + shieldRatio * 0.5;
             }
         }
+        syncPoisonBadge(
+            poisonBadge.current,
+            poisonStacksEl.current,
+            readPoisonStacks(rows),
+            lastPoisonStacks,
+        );
     });
     return (
         <group position={[0, y, 0]}>
@@ -736,6 +770,7 @@ function HpBillboard({
                 <planeGeometry args={[1, 0.1]} />
                 <meshBasicMaterial color="#60a5fa" />
             </mesh>
+            <PoisonHpBadge badgeRef={poisonBadge} stacksRef={poisonStacksEl} />
         </group>
     );
 }

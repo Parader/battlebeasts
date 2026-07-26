@@ -15,7 +15,8 @@ export type StatusMechanic =
   | "stealth" // invisible to enemies; still takes damage
   | "dot" // periodic damage (fire, poison, bleed…)
   | "shield" // absorb (stub for later)
-  | "resist"; // damageTakenMul < 1 while active
+  | "resist" // damageTakenMul < 1 while active
+  | "empower"; // damageDealtMul > 1 while active
 
 export type StatusStackRule = "refresh" | "stack" | "ignore";
 
@@ -40,6 +41,13 @@ export interface StatusDef {
    * 0.6 = 40% resistance.
    */
   damageTakenMul?: number;
+  /**
+   * Outgoing damage multiplier while active (multiplicative across statuses).
+   * 1.2 = +20% damage dealt.
+   */
+  damageDealtMul?: number;
+  /** While active, player.invulnerable syncs true (full block + debuff immunity). */
+  grantsInvulnerable?: boolean;
   blocksMove?: boolean;
   blocksCast?: boolean;
   maxStacks?: number;
@@ -194,6 +202,23 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#166534",
     tag: "VEN",
   },
+  /**
+   * Poison Dart — 2 dmg × 7 ticks over 5s (700ms cadence) per stack.
+   * Stacks up to 3× (tick damage × stacks). With the 4 dmg dart hit ≈ 18 / stack.
+   */
+  poisonDart: {
+    id: "poisonDart",
+    name: "Poison",
+    polarity: "debuff",
+    mechanic: "dot",
+    durationMs: 5000,
+    tickMs: 700,
+    damagePerTick: 2,
+    maxStacks: 3,
+    stackRule: "stack",
+    color: "#3f6212",
+    tag: "PSN",
+  },
   bleeding: {
     id: "bleeding",
     name: "Bleeding",
@@ -252,6 +277,64 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "stack",
     color: "#a7f3d0",
     tag: "SHD",
+  },
+  /**
+   * Barrier — self absorb bubble. `stacks` = remaining shield HP.
+   */
+  barrier: {
+    id: "barrier",
+    name: "Barrier",
+    polarity: "buff",
+    mechanic: "shield",
+    durationMs: 3000,
+    maxStacks: 40,
+    stackRule: "refresh",
+    color: "#60a5fa",
+    tag: "BAR",
+  },
+  /**
+   * Counter — rooted stance window. Next counterable hit is denied and converts into riposte buffs.
+   * Cleared on successful counter or player cancel.
+   */
+  counterArmed: {
+    id: "counterArmed",
+    name: "Counter",
+    polarity: "buff",
+    mechanic: "root",
+    durationMs: 1200,
+    blocksMove: true,
+    moveMul: 0,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#f5c542",
+    tag: "CTR",
+  },
+  /** After a successful Counter — move speed burst (matches empower duration). */
+  counterHaste: {
+    id: "counterHaste",
+    name: "Counter Rush",
+    polarity: "buff",
+    mechanic: "haste",
+    durationMs: 3000,
+    moveMul: 1.2,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#fbbf24",
+    tag: "SPD",
+  },
+  /** After a successful Counter — +20% damage dealt and 40% damage resistance for 3s. */
+  counterEmpowered: {
+    id: "counterEmpowered",
+    name: "Empowered",
+    polarity: "buff",
+    mechanic: "empower",
+    durationMs: 3000,
+    damageDealtMul: 1.2,
+    damageTakenMul: 0.6,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#f59e0b",
+    tag: "DMG",
   },
 };
 
@@ -359,6 +442,24 @@ export function combineStatusDamageTakenMul(
     }
   }
   return Math.max(0, mul);
+}
+
+/** Outgoing damage factor from statuses (multiplicative; 1 = full damage). */
+export function combineStatusDamageDealtMul(
+  entries: { def: StatusDef; stacks: number }[],
+): number {
+  let mul = 1;
+  for (const { def } of entries) {
+    if (typeof def.damageDealtMul === "number" && def.damageDealtMul > 0) {
+      mul *= def.damageDealtMul;
+    }
+  }
+  return Math.max(0, mul);
+}
+
+/** True when any active status grants full invulnerability. */
+export function statusesGrantInvulnerable(entries: { def: StatusDef }[]): boolean {
+  return entries.some((e) => e.def.grantsInvulnerable);
 }
 
 export function statusesBlockMove(entries: { def: StatusDef }[]): boolean {

@@ -283,6 +283,7 @@ function RemotePlayerAvatar({
       <primitive object={scene} />
       <EquippedCosmetics characterRoot={scene} equipped={equipped} />
       <StatusOrnaments
+        characterRoot={scene}
         getStatuses={() => {
           const p = room.state?.players?.get(sessionId) as
             | { statuses?: Parameters<typeof collectStatusRows>[0] }

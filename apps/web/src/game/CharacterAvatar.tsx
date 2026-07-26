@@ -339,6 +339,7 @@ export function CharacterAvatar({
         <primitive object={scene} />
         <EquippedCosmetics characterRoot={scene} equipped={equipped} opacity={cloakOpacity} />
         <StatusOrnaments
+          characterRoot={scene}
           getStatuses={() => {
             if (!room || !localSessionId) return [];
             const me = room.state?.players?.get(localSessionId) as

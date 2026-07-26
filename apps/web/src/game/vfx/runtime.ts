@@ -13,6 +13,7 @@ type Listener = () => void;
 const CAST_LIFE_MS: Record<string, number> = {
   bolt: 320,
   crescent: 260,
+  poisonDart: 380,
 };
 
 const IMPACT_LIFE_MS: Record<string, number> = {
@@ -23,6 +24,8 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   spikes: 560,
   frostMist: 3800,
   groove: 4200,
+  healBeam: 2200,
+  poisonDart: 420,
 };
 
 /**

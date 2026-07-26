@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -18,10 +18,18 @@ export type CharacterAnimationConfig = {
   castPrimary: string;
   /** Frost Ball / Standing 1H Magic Attack 02. */
   castFrost?: string;
+  /** Barrier / Standing 1H Cast Spell 01. */
+  castBarrier?: string;
   /** Spikes / Standing 1H Magic Attack 03. */
   castSpikes?: string;
   /** Frost Mist / Standing 2H Magic Attack 03. */
   castFrostMist?: string;
+  /** Heal Beam / Standing 2H Magic Attack 04. */
+  castHealBeam?: string;
+  /** Poison Dart / Right Hook. */
+  castPoisonDart?: string;
+  /** Counter / Female Dance Pose. */
+  castCounter?: string;
   castAoE?: string;
   castMelee?: string;
   dash?: string;
@@ -59,11 +67,16 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   upperBodyIdle: "idle",
   castPrimary: "magic_1h",
   castFrost: "Standing 1H Magic Attack 02",
+  castBarrier: "Standing 1H Cast Spell 01",
   castSpikes: "Standing 1H Magic Attack 03",
   castFrostMist: "Standing 2H Magic Attack 03",
+  /** Standing 2H Magic Attack 04 (was historically exported as magic_2h). */
+  castHealBeam: "Standing 2H Magic Attack 04",
+  castPoisonDart: "Right Hook",
+  castCounter: "Female Dance Pose",
   castAoE: "magic_aoe",
   castMelee: "attack",
-  heavyCast: "magic_2h",
+  heavyCast: "Standing 2H Magic Attack 04",
   dash: "dive",
   jumpAttack: "Jump Attack",
   jazzDance: "Jazz Dancing",
@@ -168,9 +181,29 @@ export const abilityAnimationBindings: Record<
     upperTimeScale: FROST_MIST_CAST.playbackRate,
     upperHoldAtSec: FROST_MIST_CAST.holdFrame / FROST_MIST_CAST.fps,
   },
+  healBeam: {
+    upper: "castHealBeam",
+    upperTimeScale: HEAL_BEAM_CAST.playbackRate,
+    upperHoldAtSec: HEAL_BEAM_CAST.holdFrame / HEAL_BEAM_CAST.fps,
+  },
   frostBall: {
     upper: "castFrost",
     upperTimeScale: FROST_BALL_CAST.playbackRate,
+  },
+  poisonDart: {
+    upper: "castPoisonDart",
+    upperTimeScale: POISON_DART_CAST.playbackRate,
+  },
+  barrier: {
+    upper: "castBarrier",
+    upperTimeScale: BARRIER_CAST.playbackRate,
+  },
+  counter: {
+    fullBody: "castCounter",
+    holdEndPoseOnRecovery: true,
+    holdPoseAtSec: 0.05,
+    /** Snap into pose; freeze for the rooted channel. */
+    fullBodyAnimDurationSec: 0.15,
   },
   surge: { upper: "castPrimary" },
   decoy: {

@@ -3,6 +3,7 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { STATUSES } from "@battlebeasts/shared";
 import { createLightningBoltMaterial, tickLightningBolt } from "./vfx/materials/lightningBolt";
+import { CounterStatusFx } from "./CounterStatusFx";
 
 export type StatusRowLite = {
   statusId: string;
@@ -42,6 +43,8 @@ type Props = {
   getStatuses: () => StatusRowLite[];
   /** Height of ornaments above character origin (feet). */
   headY?: number;
+  /** Character scene root — used for Counter second-skin glow. */
+  characterRoot?: THREE.Object3D | null;
 };
 
 function basicMat(color: string, opacity: number) {
@@ -60,13 +63,13 @@ const SURGE_COLOR = "#67e8f9";
 const SURGE_HOT = "#fef08a";
 const POISON_WISP_COUNT = 10;
 /** Any DoT that should show the emanating poison cloud. */
-const POISON_STATUS_IDS = new Set(["poisoned", "spikeVenom"]);
+const POISON_STATUS_IDS = new Set(["poisoned", "spikeVenom", "poisonDart"]);
 
 /**
  * World-space malus ornaments over a unit (stun tornado, poison, bleed, slow)
- * plus Surge lightning bolts while hasted.
+ * plus Surge lightning / Counter glow while buffed.
  */
-export function StatusOrnaments({ getStatuses, headY = 2.15 }: Props) {
+export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = null }: Props) {
   const stun = useRef<THREE.Group>(null);
   const stunRings = useRef<(THREE.Group | null)[]>([null, null, null]);
   const poison = useRef<THREE.Group>(null);
@@ -467,6 +470,8 @@ export function StatusOrnaments({ getStatuses, headY = 2.15 }: Props) {
           </mesh>
         ))}
       </group>
+
+      <CounterStatusFx characterRoot={characterRoot} getStatuses={getStatuses} />
     </group>
   );
 }

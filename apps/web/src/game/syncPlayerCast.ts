@@ -104,6 +104,13 @@ export function syncAbilityCast(
       }
       return;
     }
+    // Channel holds (Counter) keep the end pose through impact.
+    if (player.castPhase === "impact" && binding.holdEndPoseOnRecovery) {
+      if (typeof binding.holdPoseAtSec === "number") {
+        controller.freezeFullBodyAt(binding.holdPoseAtSec);
+      }
+      return;
+    }
     if (player.castPhase === "impact" && typeof binding.airTimeScale === "number") {
       controller.setFullBodyTimeScale(binding.airTimeScale);
     }
