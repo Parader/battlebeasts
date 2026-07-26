@@ -131,6 +131,7 @@ class VfxRuntime {
       life,
       followOwnerId: opts?.followOwnerId,
       followSpawnOffset: opts?.followSpawnOffset,
+      chargeMs: opts?.chargeMs,
       variant: opts?.variant,
       radius: opts?.radius,
       startRadius: opts?.startRadius,

@@ -3,13 +3,15 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
-import { MOVE_SPEED } from "@battlebeasts/shared";
+import { MOVE_SPEED, type CosmeticsEquipped } from "@battlebeasts/shared";
 import {
   CharacterAnimationController,
   heroAnimationConfig,
   playRandomDeath,
 } from "./animation";
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
+import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
+import { EquippedCosmetics } from "./EquippedCosmetics";
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
 import { smashHopOffsetY } from "./smashHop";
@@ -29,6 +31,13 @@ type RemotePlayerState = {
   color: string;
   pattern?: string;
   patternColor?: string;
+  cosmeticHat?: string;
+  cosmeticShoulders?: string;
+  cosmeticChest?: string;
+  cosmeticGloves?: string;
+  cosmeticBelt?: string;
+  cosmeticLegs?: string;
+  cosmeticShoes?: string;
   disconnected?: boolean;
   castPhase?: string;
   castAbilityId?: string;
@@ -60,6 +69,8 @@ function RemotePlayerAvatar({
   const colorRef = useRef("#60a5fa");
   const patternRef = useRef("plain");
   const patternColorRef = useRef("#1f2937");
+  const cosmeticsKeyRef = useRef("");
+  const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
   const seeded = useRef(false);
   const yawLocked = useRef(false);
   const wasDeadRef = useRef(false);
@@ -126,6 +137,8 @@ function RemotePlayerAvatar({
         patternRef.current = p.pattern ?? "plain";
         patternColorRef.current = p.patternColor ?? "#1f2937";
         tintCharacterSurface(scene, p.color, patternRef.current, patternColorRef.current);
+        cosmeticsKeyRef.current = cosmeticsKey(p);
+        setEquipped(equippedFromPlayer(p));
       }
     }
 
@@ -143,6 +156,12 @@ function RemotePlayerAvatar({
         patternRef.current,
         patternColorRef.current,
       );
+    }
+
+    const nextCosmetics = cosmeticsKey(p);
+    if (nextCosmetics !== cosmeticsKeyRef.current) {
+      cosmeticsKeyRef.current = nextCosmetics;
+      setEquipped(equippedFromPlayer(p));
     }
 
     const serverMoved = p.x !== lastServer.current.x || p.z !== lastServer.current.z;
@@ -262,6 +281,7 @@ function RemotePlayerAvatar({
   return (
     <group ref={group}>
       <primitive object={scene} />
+      <EquippedCosmetics characterRoot={scene} equipped={equipped} />
       <StatusOrnaments
         getStatuses={() => {
           const p = room.state?.players?.get(sessionId) as

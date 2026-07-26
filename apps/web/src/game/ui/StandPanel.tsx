@@ -5,21 +5,31 @@ import {
   COSMETIC_COLORS,
   COSMETIC_PATTERN_COLORS,
   COSMETIC_PATTERNS,
+  COSMETIC_SLOTS,
+  COSMETIC_SLOT_LABELS,
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
   LOADOUT_SIZE,
   SPELL_SLOTS,
   abilitiesForSlot,
   canEquipInSlot,
+  cosmeticsEquippedFromFields,
+  cosmeticsForSlot,
+  cosmeticMeshName,
   formatAbilityArmoryStats,
   formatWallet,
+  getCosmeticItem,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
+  normalizeCosmeticsEquipped,
   normalizeLoadout,
+  type CosmeticSlot,
+  type CosmeticsEquipped,
   type TalentBuild,
 } from "@battlebeasts/shared";
 import { SpellSlotGlyph } from "./InputGlyph";
 import { AppearancePreview } from "./AppearancePreview";
+import { GamePanelShell } from "./GamePanelShell";
 import { TalentTreePanel } from "./TalentTreePanel";
 import { getCreaturePatternTexture } from "../creaturePatterns";
 
@@ -50,57 +60,6 @@ const TITLES: Record<Kind, string> = {
   talent: "Talents",
   shop: "Merchant",
 };
-
-function BookShell({
-  title,
-  subtitle,
-  onClose,
-  wide,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-  wide?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      className="bb-overlay-dim fixed inset-0 z-40 flex items-center justify-center p-4"
-      data-ui-overlay
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
-      }}
-      role="presentation"
-    >
-      <div
-        role="dialog"
-        aria-modal
-        aria-label={title}
-        className={[
-          "bb-parchment bb-book-panel relative z-10 w-full",
-          wide ? "max-w-4xl" : "max-w-lg",
-        ].join(" ")}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="relative mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="bb-title text-lg">{title}</h2>
-            {subtitle ? <p className="mt-0.5 text-xs text-[var(--bb-ink-soft)]">{subtitle}</p> : null}
-          </div>
-          <button type="button" className="bb-btn-ink !px-2 !py-1 text-[10px]" onClick={onClose}>
-            Close
-          </button>
-        </div>
-        <div className="bb-brass-rule mb-4" />
-        {children}
-      </div>
-    </div>
-  );
-}
 
 function PatternSwatch({
   patternId,
@@ -139,17 +98,35 @@ function AppearanceEditor({
   room: Room | null;
   localSessionId?: string | null;
 }) {
+  type PlayerAppearance = {
+    color?: string;
+    pattern?: string;
+    patternColor?: string;
+    cosmeticHat?: string;
+    cosmeticShoulders?: string;
+    cosmeticChest?: string;
+    cosmeticGloves?: string;
+    cosmeticBelt?: string;
+    cosmeticLegs?: string;
+    cosmeticShoes?: string;
+  };
+
+  type AppearanceTab = "hide" | "gear";
+
   const me = localSessionId
-    ? (room?.state?.players?.get(localSessionId) as
-        | { color?: string; pattern?: string; patternColor?: string }
-        | undefined)
+    ? (room?.state?.players?.get(localSessionId) as PlayerAppearance | undefined)
     : undefined;
+  const [tab, setTab] = useState<AppearanceTab>("hide");
   const [color, setColor] = useState(me?.color ?? COSMETIC_COLORS[0]);
   const [pattern, setPattern] = useState(
     normalizeCosmeticPattern(me?.pattern ?? DEFAULT_COSMETIC_PATTERN),
   );
   const [patternColor, setPatternColor] = useState(
     normalizeCosmeticPatternColor(me?.patternColor ?? DEFAULT_COSMETIC_PATTERN_COLOR),
+  );
+  const [gearSlot, setGearSlot] = useState<CosmeticSlot>("hat");
+  const [equipped, setEquipped] = useState<CosmeticsEquipped>(() =>
+    cosmeticsEquippedFromFields(me ?? {}),
   );
 
   useEffect(() => {
@@ -158,111 +135,246 @@ function AppearanceEditor({
     }
     if (me?.pattern) setPattern(normalizeCosmeticPattern(me.pattern));
     if (me?.patternColor) setPatternColor(normalizeCosmeticPatternColor(me.patternColor));
-  }, [me?.color, me?.pattern, me?.patternColor]);
+    setEquipped(cosmeticsEquippedFromFields(me ?? {}));
+  }, [
+    me?.color,
+    me?.pattern,
+    me?.patternColor,
+    me?.cosmeticHat,
+    me?.cosmeticShoulders,
+    me?.cosmeticChest,
+    me?.cosmeticGloves,
+    me?.cosmeticBelt,
+    me?.cosmeticLegs,
+    me?.cosmeticShoes,
+  ]);
+
+  const slotPool = useMemo(() => cosmeticsForSlot(gearSlot), [gearSlot]);
+
+  const setCosmetic = (slot: CosmeticSlot, itemId: string | null) => {
+    setEquipped((prev) => normalizeCosmeticsEquipped({ ...prev, [slot]: itemId }));
+    room?.send("set_cosmetic", { slot, itemId });
+  };
 
   return (
-    <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)] sm:items-start">
-      <div className="space-y-4">
-        <p className="text-xs text-[var(--bb-ink-soft)]">
-          Changes save to your account when signed in, and load next time you join.
-        </p>
-        <div>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--bb-ink-soft)]">
-            Hide tint
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {COSMETIC_COLORS.map((c) => {
-              const on = c === color;
-              return (
-                <button
-                  key={c}
-                  type="button"
-                  className={[
-                    "size-10 rounded-sm ring-2 transition",
-                    on ? "ring-[var(--bb-brass)] scale-105" : "ring-[var(--bb-brass-dim)]",
-                  ].join(" ")}
-                  style={{ backgroundColor: c }}
-                  onClick={() => {
-                    setColor(c);
-                    room?.send("set_color", { color: c });
-                  }}
-                  aria-label={`Hide tint ${c}`}
-                  aria-pressed={on}
-                />
-              );
-            })}
-          </div>
+    <div className="bb-appearance">
+      <div className="bb-appearance__controls">
+        <div className="bb-appearance-tabs" role="tablist" aria-label="Appearance sections">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "hide"}
+            className={["bb-appearance-tab", tab === "hide" ? "bb-appearance-tab--on" : ""].join(
+              " ",
+            )}
+            onClick={() => setTab("hide")}
+          >
+            Hide
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "gear"}
+            className={["bb-appearance-tab", tab === "gear" ? "bb-appearance-tab--on" : ""].join(
+              " ",
+            )}
+            onClick={() => setTab("gear")}
+          >
+            Gear
+          </button>
         </div>
-        <div>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--bb-ink-soft)]">
-            Pattern color
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {COSMETIC_PATTERN_COLORS.map((c) => {
-              const on = c === patternColor;
-              return (
-                <button
-                  key={c}
-                  type="button"
-                  className={[
-                    "size-8 rounded-sm ring-2 transition",
-                    on ? "ring-[var(--bb-brass)] scale-105" : "ring-[var(--bb-brass-dim)]",
-                  ].join(" ")}
-                  style={{ backgroundColor: c }}
-                  onClick={() => {
-                    setPatternColor(c);
-                    room?.send("set_pattern_color", { patternColor: c });
-                  }}
-                  aria-label={`Pattern color ${c}`}
-                  aria-pressed={on}
-                  disabled={pattern === "plain"}
-                />
-              );
-            })}
-          </div>
-          {pattern === "plain" ? (
-            <p className="mt-1 text-[10px] text-[var(--bb-ink-soft)]">
-              Pick a pattern first — plain hide has no markings.
+
+        {tab === "hide" ? (
+          <div className="bb-appearance__pane" role="tabpanel">
+            <p className="bb-muted">
+              Changes save to your account when signed in.
             </p>
-          ) : null}
-        </div>
-        <div>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--bb-ink-soft)]">
-            Creature pattern
-          </p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {COSMETIC_PATTERNS.map((p) => {
-              const on = p.id === pattern;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={["bb-choice !p-2 text-left", on ? "bb-choice--on" : ""].join(" ")}
-                  onClick={() => {
-                    setPattern(p.id);
-                    room?.send("set_pattern", { pattern: p.id, patternColor });
-                  }}
-                  aria-pressed={on}
-                >
-                  <span className="mb-1.5 block h-9 w-full overflow-hidden rounded-[2px] ring-1 ring-black/10">
-                    <PatternSwatch patternId={p.id} patternColor={patternColor} />
-                  </span>
-                  <span
-                    className="block text-xs font-semibold"
-                    style={{ fontFamily: "var(--bb-font-display)" }}
-                  >
-                    {p.name}
-                  </span>
-                  <span className="mt-0.5 block text-[10px] leading-snug text-[var(--bb-ink-soft)]">
-                    {p.description}
-                  </span>
-                </button>
-              );
-            })}
+
+            <div>
+              <p className="bb-section-label">Hide tint</p>
+              <div className="flex flex-wrap gap-2">
+                {COSMETIC_COLORS.map((c) => {
+                  const on = c === color;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      className={[
+                        "size-9 rounded-sm ring-2 transition",
+                        on ? "ring-[var(--bb-brass)] scale-105" : "ring-[var(--bb-panel-line)]",
+                      ].join(" ")}
+                      style={{ backgroundColor: c }}
+                      onClick={() => {
+                        setColor(c);
+                        room?.send("set_color", { color: c });
+                      }}
+                      aria-label={`Hide tint ${c}`}
+                      aria-pressed={on}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <p className="bb-section-label">Pattern color</p>
+              <div className="flex flex-wrap gap-2">
+                {COSMETIC_PATTERN_COLORS.map((c) => {
+                  const on = c === patternColor;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      className={[
+                        "size-7 rounded-sm ring-2 transition",
+                        on ? "ring-[var(--bb-brass)] scale-105" : "ring-[var(--bb-panel-line)]",
+                      ].join(" ")}
+                      style={{ backgroundColor: c }}
+                      onClick={() => {
+                        setPatternColor(c);
+                        room?.send("set_pattern_color", { patternColor: c });
+                      }}
+                      aria-label={`Pattern color ${c}`}
+                      aria-pressed={on}
+                      disabled={pattern === "plain"}
+                    />
+                  );
+                })}
+              </div>
+              {pattern === "plain" ? (
+                <p className="bb-meta mt-2">Pick a pattern first — plain hide has no markings.</p>
+              ) : null}
+            </div>
+
+            <div>
+              <p className="bb-section-label">Creature pattern</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {COSMETIC_PATTERNS.map((p) => {
+                  const on = p.id === pattern;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={["bb-choice !p-2 text-left", on ? "bb-choice--on" : ""].join(" ")}
+                      onClick={() => {
+                        setPattern(p.id);
+                        room?.send("set_pattern", { pattern: p.id, patternColor });
+                      }}
+                      aria-pressed={on}
+                    >
+                      <span className="mb-1.5 block h-7 w-full overflow-hidden rounded-[2px] ring-1 ring-black/20">
+                        <PatternSwatch patternId={p.id} patternColor={patternColor} />
+                      </span>
+                      <span
+                        className="block text-sm font-semibold"
+                        style={{ fontFamily: "var(--bb-font-display)" }}
+                      >
+                        {p.name}
+                      </span>
+                      <span className="bb-meta mt-0.5 block leading-snug">{p.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="bb-appearance__pane bb-appearance__pane--gear" role="tabpanel">
+            <div className="bb-appearance-gear">
+              <aside className="bb-loadout__rail">
+                <div className="bb-loadout__rail-head">
+                  <p className="bb-section-label mb-0">Slots</p>
+                </div>
+                <div className="bb-loadout__slots" role="listbox" aria-label="Cosmetic slots">
+                  {COSMETIC_SLOTS.map((slot) => {
+                    const id = equipped[slot];
+                    const item = id ? getCosmeticItem(id) : undefined;
+                    const active = gearSlot === slot;
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        onClick={() => setGearSlot(slot)}
+                        className={[
+                          "bb-loadout-slot !min-h-[3.1rem]",
+                          active ? "bb-loadout-slot--on" : "",
+                          !item ? "bb-loadout-slot--empty" : "",
+                        ].join(" ")}
+                      >
+                        <span className="bb-loadout-slot__meta" style={{ gridColumn: "1 / -1" }}>
+                          <p className="bb-loadout-slot__key">{COSMETIC_SLOT_LABELS[slot]}</p>
+                          <p className="bb-loadout-slot__name">{item?.name ?? "Empty"}</p>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+
+              <section className="bb-loadout__pool" aria-label="Gear for slot">
+                <header className="bb-loadout__pool-head">
+                  <div>
+                    <h3 className="bb-loadout__pool-title">{COSMETIC_SLOT_LABELS[gearSlot]}</h3>
+                    <p className="bb-meta mt-1">
+                      {slotPool.length
+                        ? "Click to equip · click equipped to clear"
+                        : "No items in this slot yet"}
+                    </p>
+                  </div>
+                </header>
+                {slotPool.length === 0 ? (
+                  <p className="bb-muted px-1 py-6 text-center">
+                    Parent gear under the Mixamo skeleton in <code className="bb-meta">hero.glb</code>
+                    , then register the object name in the catalog (hidden until equipped).
+                  </p>
+                ) : (
+                  <ul className="bb-loadout__pool-list">
+                    {slotPool.map((item) => {
+                      const on = equipped[gearSlot] === item.id;
+                      return (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            className={[
+                              "bb-loadout-card",
+                              on ? "bb-loadout-card--on" : "",
+                            ].join(" ")}
+                            onClick={() => setCosmetic(gearSlot, on ? null : item.id)}
+                          >
+                            <div className="bb-loadout-card__main">
+                              <div className="bb-loadout-card__top">
+                                <span className="bb-loadout-card__name">{item.name}</span>
+                                <span className="bb-loadout-card__shape">{item.slot}</span>
+                              </div>
+                              <p className="bb-loadout-card__desc">
+                                Object <code>{cosmeticMeshName(item)}</code> in hero.glb
+                              </p>
+                            </div>
+                            <span className="bb-loadout-card__action">
+                              {on ? "Equipped" : "Equip"}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+            </div>
+          </div>
+        )}
       </div>
-      <AppearancePreview color={color} pattern={pattern} patternColor={patternColor} />
+
+      <div className="bb-appearance__preview-col">
+        <AppearancePreview
+          color={color}
+          pattern={pattern}
+          patternColor={patternColor}
+          cosmeticsEquipped={equipped}
+        />
+      </div>
     </div>
   );
 }
@@ -290,51 +402,74 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
   const loadoutReady =
     draftLoadout.length === LOADOUT_SIZE && new Set(draftLoadout).size === LOADOUT_SIZE;
 
-  return (
-    <BookShell
-      title={TITLES[kind]}
-      subtitle={formatWallet(economy)}
-      onClose={onClose}
-      wide={kind === "customization" || kind === "talent"}
-    >
-      {kind === "customization" && (
-        <AppearanceEditor room={room} localSessionId={localSessionId} />
-      )}
+  let body: ReactNode = null;
+  let footer: ReactNode = null;
 
-      {kind === "build" && (
-        <div className="space-y-4">
-          <p className="text-sm text-[var(--bb-ink-soft)]">
-            Each hotbar slot has its own spell pool. Equip one spell per binding.
-          </p>
-          <div className="flex flex-wrap gap-1.5">
+  if (kind === "customization") {
+    body = <AppearanceEditor room={room} localSessionId={localSessionId} />;
+  } else if (kind === "build") {
+    body = (
+      <div className="bb-loadout">
+        <aside className="bb-loadout__rail">
+          <div className="bb-loadout__rail-head">
+            <p className="bb-section-label mb-0">Loadout</p>
+            <span className="bb-meta">
+              {draftLoadout.filter(Boolean).length}/{LOADOUT_SIZE}
+            </span>
+          </div>
+          <div className="bb-loadout__slots" role="listbox" aria-label="Spell slots">
             {SPELL_SLOTS.map((slot, i) => {
               const id = draftLoadout[i];
               const ability = id ? ABILITIES[id] : undefined;
               const active = selectedSlot === i;
+              const empty = !ability;
               return (
                 <button
                   key={slot.id}
                   type="button"
+                  role="option"
+                  aria-selected={active}
                   onClick={() => setSelectedSlot(i)}
-                  className={["bb-slot-chip", active ? "bb-slot-chip--on" : ""].join(" ")}
+                  className={[
+                    "bb-loadout-slot",
+                    active ? "bb-loadout-slot--on" : "",
+                    empty ? "bb-loadout-slot--empty" : "",
+                  ].join(" ")}
                 >
-                  <SpellSlotGlyph slot={slot} size={slot.input === "space" ? 16 : 18} />
-                  <span className="text-[10px] font-semibold text-[var(--bb-ink)]">
-                    {ability?.name ?? "Empty"}
+                  <span className="bb-loadout-slot__bind">
+                    <SpellSlotGlyph slot={slot} size={slot.input === "space" ? 22 : 28} />
+                  </span>
+                  <span className="bb-loadout-slot__meta">
+                    <p className="bb-loadout-slot__key">{slot.label}</p>
+                    <p className="bb-loadout-slot__name">{ability?.name ?? "Empty"}</p>
                   </span>
                 </button>
               );
             })}
           </div>
-          <div className="flex items-center gap-2 text-xs text-[var(--bb-ink-soft)]">
-            {selectedSlotDef ? <SpellSlotGlyph slot={selectedSlotDef} size={18} /> : null}
-            <span>
-              {selectedSlotDef?.hint} pool — {slotPool.length} available
-            </span>
-          </div>
-          <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+        </aside>
+
+        <section className="bb-loadout__pool" aria-label="Spell pool">
+          <header className="bb-loadout__pool-head">
+            {selectedSlotDef ? (
+              <SpellSlotGlyph
+                slot={selectedSlotDef}
+                size={selectedSlotDef.input === "space" ? 22 : 26}
+              />
+            ) : null}
+            <div>
+              <h3 className="bb-loadout__pool-title">
+                {selectedSlotDef?.label ?? "Slot"} spells
+              </h3>
+              <p className="bb-meta mt-1">
+                {selectedSlotDef?.hint} · {slotPool.length} available — click to equip
+              </p>
+            </div>
+          </header>
+
+          <ul className="bb-loadout__pool-list">
             {slotPool.length === 0 ? (
-              <li className="text-sm text-[var(--bb-ink-soft)]">No spells in this pool yet.</li>
+              <li className="bb-muted py-8 text-center">No spells in this pool yet.</li>
             ) : (
               slotPool.map((a) => {
                 const equipped = draftLoadout[selectedSlot] === a.id;
@@ -343,73 +478,90 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
                     <button
                       type="button"
                       onClick={() => assignAbility(a.id)}
-                      className={["bb-choice", equipped ? "bb-choice--on" : ""].join(" ")}
+                      className={[
+                        "bb-loadout-card",
+                        equipped ? "bb-loadout-card--on" : "",
+                      ].join(" ")}
                     >
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="font-semibold" style={{ fontFamily: "var(--bb-font-display)" }}>
-                          {a.name}
-                        </span>
-                        <span className="text-[10px] uppercase tracking-wide text-[var(--bb-ink-soft)]">
-                          {a.shape}
-                        </span>
-                      </div>
-                      {a.tags?.length ? (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {a.tags.slice(0, 6).map((tag) => (
-                            <span
-                              key={tag}
-                              className="rounded-sm bg-[var(--bb-ink)]/8 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--bb-ink-soft)]"
-                            >
-                              {tag}
-                            </span>
-                          ))}
+                      <div className="bb-loadout-card__main">
+                        <div className="bb-loadout-card__top">
+                          <span className="bb-loadout-card__name">{a.name}</span>
+                          <span className="bb-loadout-card__shape">{a.shape}</span>
                         </div>
-                      ) : null}
-                      <p className="mt-1 text-[11px] font-medium leading-snug text-[var(--bb-ink)]">
-                        {formatAbilityArmoryStats(a)}
-                      </p>
-                      {a.description ? (
-                        <p className="mt-1 text-xs leading-snug text-[var(--bb-ink-soft)]">
-                          {a.description}
-                        </p>
-                      ) : null}
+                        <p className="bb-loadout-card__stats">{formatAbilityArmoryStats(a)}</p>
+                        {a.description ? (
+                          <p className="bb-loadout-card__desc">{a.description}</p>
+                        ) : null}
+                        {a.tags?.length ? (
+                          <div className="bb-loadout-card__tags">
+                            {a.tags.slice(0, 6).map((tag) => (
+                              <span key={tag} className="bb-tag">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <span className="bb-loadout-card__action">
+                        {equipped ? "Equipped" : "Equip"}
+                      </span>
                     </button>
                   </li>
                 );
               })
             )}
           </ul>
-          <button
-            type="button"
-            className="bb-btn-brass w-full disabled:opacity-40"
-            disabled={!loadoutReady}
-            onClick={() => {
-              if (!loadoutReady) return;
-              room?.send("set_loadout", { abilityIds: draftLoadout });
-            }}
-          >
-            Save loadout
-          </button>
-        </div>
-      )}
+        </section>
+      </div>
+    );
+    footer = (
+      <button
+        type="button"
+        className="bb-btn-brass min-w-[12rem] disabled:opacity-40"
+        disabled={!loadoutReady}
+        onClick={() => {
+          if (!loadoutReady) return;
+          room?.send("set_loadout", { abilityIds: draftLoadout });
+          onClose();
+        }}
+      >
+        Save loadout
+      </button>
+    );
+  } else if (kind === "talent") {
+    body = (
+      <TalentTreePanel
+        room={room}
+        essence={economy.essence}
+        talentPoints={economy.talentPoints}
+        talentBuild={economy.talentBuild}
+      />
+    );
+  } else if (kind === "shop") {
+    body = (
+      <p className="bb-section-label py-10 text-center tracking-[0.2em]">In development</p>
+    );
+  }
 
-      {kind === "talent" && (
-        <TalentTreePanel
-          room={room}
-          essence={economy.essence}
-          talentPoints={economy.talentPoints}
-          talentBuild={economy.talentBuild}
-        />
-      )}
-
-      {kind === "shop" && (
-        <p
-          className="py-10 text-center text-sm font-semibold uppercase tracking-[0.2em] text-[var(--bb-ink-soft)]"
-          style={{ fontFamily: "var(--bb-font-display)" }}
-        >
-          In development
-        </p>
-      )}
-    </BookShell>
+  return (
+    <GamePanelShell
+      title={TITLES[kind]}
+      subtitle={formatWallet(economy)}
+      onClose={onClose}
+      wide={kind === "customization" || kind === "talent" || kind === "build"}
+      maxWidthClass={
+        kind === "build" || kind === "talent" || kind === "customization"
+          ? "max-w-5xl"
+          : undefined
+      }
+      maxHeightClass={
+        kind === "talent" || kind === "customization"
+          ? "h-[min(94dvh,58rem)] max-h-[min(94dvh,58rem)]"
+          : "max-h-[min(92dvh,54rem)]"
+      }
+      footer={footer}
+    >
+      {body}
+    </GamePanelShell>
   );
 }

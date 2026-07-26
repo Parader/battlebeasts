@@ -31,7 +31,6 @@ export {
   CrescentImpactEffect,
   SmashCrackEffect,
   GustWaveEffect,
-  FrostBallProjectileEffect,
   FrostBallCastEffect,
   GraspProjectileEffect,
   SpikesPopEffect,

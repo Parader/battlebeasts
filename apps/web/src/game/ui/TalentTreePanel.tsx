@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import { Room } from "colyseus.js";
 import {
   ESSENCE_PER_TALENT_POINT,
@@ -39,10 +47,11 @@ const TREE_ACCENT: Record<TalentTreeId, string> = {
   Harmony: "#a16207",
 };
 
-const CELL = 52;
-const GAP_X = 28;
-const GAP_Y = 36;
-const PAD = 20;
+/** Natural board size — scaled up to fill the stage, never down below readable. */
+const CELL = 64;
+const GAP_X = 36;
+const GAP_Y = 44;
+const PAD = 28;
 
 function TalentTooltip({
   talent,
@@ -139,7 +148,13 @@ function TreeBoard({
   return (
     <div
       className="bb-talent-board"
-      style={{ "--bb-talent-accent": accent } as CSSProperties}
+      style={
+        {
+          "--bb-talent-accent": accent,
+          width,
+          height,
+        } as CSSProperties
+      }
     >
       <svg className="bb-talent-board__links" width={width} height={height} aria-hidden>
         {links.map((link) => {
@@ -197,7 +212,7 @@ function TreeBoard({
               }}
             >
               <span className="bb-talent-node__glyph" aria-hidden>
-                <TalentNatureIcon tags={talent.affectedTags} size={22} />
+                <TalentNatureIcon tags={talent.affectedTags} size={28} />
               </span>
               {!implemented ? <span className="bb-talent-node__wip">WIP</span> : null}
               {maxRank > 1 ? (
@@ -216,6 +231,50 @@ function TreeBoard({
   );
 }
 
+function boardMetrics(tree: TalentTreeId) {
+  const { rowCount } = layoutTalentTree(tree);
+  return {
+    width: PAD * 2 + TALENT_TREE_COLUMNS * CELL + (TALENT_TREE_COLUMNS - 1) * GAP_X,
+    height: PAD * 2 + Math.max(1, rowCount) * CELL + Math.max(0, rowCount - 1) * GAP_Y,
+  };
+}
+
+/** Scale board to fill the stage; prefer growing up, never crush below ~85% of natural size when stage is small. */
+function useFitScale(
+  stageRef: RefObject<HTMLElement | null>,
+  boardSize: { width: number; height: number },
+) {
+  const [scale, setScale] = useState(1);
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const measure = () => {
+      const rect = stage.getBoundingClientRect();
+      const availW = rect.width - 24;
+      const availH = rect.height - 24;
+      // Wait until the stage actually has layout height — avoid 0→tiny scale trap.
+      if (availW < 80 || availH < 120 || boardSize.width <= 0 || boardSize.height <= 0) {
+        return;
+      }
+      const fit = Math.min(availW / boardSize.width, availH / boardSize.height);
+      // Fill the stage (upscale when there is room). Exact fit — never crush via bad measure.
+      const next = Math.min(fit, 1.85);
+      setScale(Number.isFinite(next) && next > 0 ? next : 1);
+    };
+
+    measure();
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(measure);
+    });
+    ro.observe(stage);
+    return () => ro.disconnect();
+  }, [stageRef, boardSize.width, boardSize.height]);
+
+  return scale;
+}
+
 type Props = {
   room: Room | null;
   essence: number;
@@ -227,6 +286,7 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
   const [tree, setTree] = useState<TalentTreeId>("Destruction");
   const [build, setBuild] = useState<TalentBuild>(() => normalizeTalentBuild(talentBuild));
   const [dirty, setDirty] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!dirty) setBuild(normalizeTalentBuild(talentBuild));
@@ -243,51 +303,19 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
   );
   const catalogCount = Object.keys(TALENT_CATALOG).length;
 
+  const size = useMemo(() => boardMetrics(tree), [tree]);
+  const scale = useFitScale(stageRef, size);
+
   const updateBuild = (next: TalentBuild) => {
     setBuild(next);
     setDirty(true);
   };
 
   return (
-    <div className="bb-talent-panel space-y-3">
-      <p className="text-sm text-[var(--bb-ink-soft)]">
-        Earn essence in matches (more for wins). Spend essence to buy talent points, then invest
-        them in trees. Tier-1 foundations take up to 3 ranks. Cap {TALENT_POINT_BUDGET} points (
-        {TALENT_TREE_CAP}/tree). Nodes marked WIP are design-only until implemented in combat (
-        {implementedCount}/{catalogCount} live).
-      </p>
-
-      <div className="flex flex-wrap items-center gap-2 rounded-sm border border-[var(--bb-brass-dim)]/50 bg-[rgba(26,34,28,0.06)] px-2.5 py-2">
-        <span className="text-xs font-semibold text-[var(--bb-ink)]">
-          Owned points{" "}
-          <span className="text-[var(--bb-brass-dim)]">
-            {owned}/{TALENT_POINT_BUDGET}
-          </span>
-        </span>
-        <span className="text-[var(--bb-ink-soft)]">·</span>
-        <span className="text-xs text-[var(--bb-ink-soft)]">
-          Essence {essence} · {ESSENCE_PER_TALENT_POINT} / point
-        </span>
-        <button
-          type="button"
-          className="bb-btn-brass !px-2 !py-1 text-[10px] disabled:opacity-40"
-          disabled={!canBuy}
-          onClick={() => room?.send("buy_talent_points", { count: 1 })}
-        >
-          Buy 1 point
-        </button>
-        <button
-          type="button"
-          className="bb-btn-ink !px-2 !py-1 text-[10px] disabled:opacity-40"
-          disabled={owned >= TALENT_POINT_BUDGET || essence < ESSENCE_PER_TALENT_POINT * 5}
-          onClick={() => room?.send("buy_talent_points", { count: 5 })}
-        >
-          Buy 5
-        </button>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1">
+    <div className="bb-talent-panel">
+      <aside className="bb-talent-rail">
+        <p className="bb-section-label">Trees</p>
+        <div className="bb-talent-rail__tabs" role="tablist" aria-label="Talent trees">
           {TALENT_TREE_IDS.map((id) => {
             const pts = treePointsSpent(build, id);
             const on = tree === id;
@@ -295,39 +323,98 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
               <button
                 key={id}
                 type="button"
-                className={["bb-talent-tab", on ? "bb-talent-tab--on" : ""].join(" ")}
+                role="tab"
+                aria-selected={on}
+                className={["bb-talent-rail__tab", on ? "bb-talent-rail__tab--on" : ""].join(" ")}
                 style={{ "--bb-talent-accent": TREE_ACCENT[id] } as CSSProperties}
                 onClick={() => setTree(id)}
               >
-                <span>{id}</span>
-                <span className="bb-talent-tab__pts">{pts}</span>
+                <span className="bb-talent-rail__tab-name">{id}</span>
+                <span className="bb-talent-rail__tab-pts">
+                  {pts}/{TALENT_TREE_CAP}
+                </span>
               </button>
             );
           })}
         </div>
-        <div className="text-xs font-semibold text-[var(--bb-ink)]">
-          Spent{" "}
-          <span className="text-[var(--bb-brass-dim)]">
-            {spent}/{owned}
-          </span>
-          <span className="mx-1.5 text-[var(--bb-ink-soft)]">·</span>
-          {tree} {treeSpent}/{TALENT_TREE_CAP}
-          <span className="mx-1.5 text-[var(--bb-ink-soft)]">·</span>
-          {remainingOwned} free
-        </div>
-      </div>
+      </aside>
 
-      <div className="bb-talent-frame">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3
-            className="text-sm font-semibold tracking-wide"
-            style={{ fontFamily: "var(--bb-font-display)", color: TREE_ACCENT[tree] }}
-          >
-            {tree}
-          </h3>
+      <div className="bb-talent-main">
+        <header className="bb-talent-bar">
+          <div className="bb-talent-bar__info">
+            <span className="bb-talent-bar__stat">
+              <span className="bb-talent-bar__k">Points</span>
+              <span className="bb-talent-bar__v">
+                {owned}/{TALENT_POINT_BUDGET}
+              </span>
+              <span className="bb-meta">
+                · {remainingOwned} free · {spent} spent
+              </span>
+            </span>
+            <span className="bb-talent-bar__stat">
+              <span className="bb-talent-bar__k">Essence</span>
+              <span className="bb-talent-bar__v">{essence}</span>
+              <span className="bb-meta">· {ESSENCE_PER_TALENT_POINT}/pt</span>
+            </span>
+          </div>
+          <div className="bb-talent-bar__buy">
+            <button
+              type="button"
+              className="bb-btn-brass disabled:opacity-40"
+              disabled={!canBuy}
+              onClick={() => room?.send("buy_talent_points", { count: 1 })}
+            >
+              Buy 1
+            </button>
+            <button
+              type="button"
+              className="bb-btn-ink disabled:opacity-40"
+              disabled={owned >= TALENT_POINT_BUDGET || essence < ESSENCE_PER_TALENT_POINT * 5}
+              onClick={() => room?.send("buy_talent_points", { count: 5 })}
+            >
+              Buy 5
+            </button>
+          </div>
+        </header>
+
+        <section
+          className="bb-talent-stage"
+          style={{ "--bb-talent-accent": TREE_ACCENT[tree] } as CSSProperties}
+          aria-label={`${tree} talent tree`}
+        >
+          <div className="bb-talent-stage__label">
+            <h3 className="bb-talent-stage__title">{tree}</h3>
+            <span className="bb-meta">
+              {treeSpent}/{TALENT_TREE_CAP} in tree · click invest · right-click refund
+              {implementedCount < catalogCount
+                ? ` · ${implementedCount}/${catalogCount} live`
+                : ""}
+            </span>
+          </div>
+
+          <div className="bb-talent-stage__fit" ref={stageRef}>
+            <div
+              className="bb-talent-stage__board"
+              style={{
+                width: size.width,
+                height: size.height,
+                transform: `translate(-50%, -50%) scale(${scale})`,
+              }}
+            >
+              <TreeBoard
+                tree={tree}
+                build={build}
+                ownedPoints={owned}
+                onChange={updateBuild}
+              />
+            </div>
+          </div>
+        </section>
+
+        <footer className="bb-talent-bar bb-talent-bar--foot">
           <button
             type="button"
-            className="bb-btn-ink !px-2 !py-1 text-[10px] disabled:opacity-40"
+            className="bb-btn-ink disabled:opacity-40"
             disabled={treeSpent <= 0 || essence < ESSENCE_RESET_TREE}
             title={`Costs ${ESSENCE_RESET_TREE} essence`}
             onClick={() => {
@@ -335,43 +422,32 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
               setDirty(false);
             }}
           >
-            Reset tree ({ESSENCE_RESET_TREE} essence)
+            Reset tree
           </button>
-        </div>
-        <div className="bb-talent-scroll">
-          <TreeBoard
-            tree={tree}
-            build={build}
-            ownedPoints={owned}
-            onChange={updateBuild}
-          />
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="bb-btn-brass text-xs disabled:opacity-40"
-          disabled={!dirty}
-          onClick={() => {
-            room?.send("set_talent_build", { build });
-            setDirty(false);
-          }}
-        >
-          Save build
-        </button>
-        <button
-          type="button"
-          className="bb-btn-ink text-xs disabled:opacity-40"
-          disabled={spent <= 0 || essence < ESSENCE_RESET_ALL}
-          title={`Costs ${ESSENCE_RESET_ALL} essence`}
-          onClick={() => {
-            room?.send("reset_talent_build");
-            setDirty(false);
-          }}
-        >
-          Clear all ({ESSENCE_RESET_ALL} essence)
-        </button>
+          <button
+            type="button"
+            className="bb-btn-ink disabled:opacity-40"
+            disabled={spent <= 0 || essence < ESSENCE_RESET_ALL}
+            title={`Costs ${ESSENCE_RESET_ALL} essence`}
+            onClick={() => {
+              room?.send("reset_talent_build");
+              setDirty(false);
+            }}
+          >
+            Clear all
+          </button>
+          <button
+            type="button"
+            className="bb-btn-brass disabled:opacity-40"
+            disabled={!dirty}
+            onClick={() => {
+              room?.send("set_talent_build", { build });
+              setDirty(false);
+            }}
+          >
+            Save build
+          </button>
+        </footer>
       </div>
     </div>
   );

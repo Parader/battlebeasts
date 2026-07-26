@@ -16,6 +16,11 @@ export type VfxSpawnOpts = {
   variant?: number;
   /** Override one-shot lifetime (ms). */
   lifeMs?: number;
+  /**
+   * Frost Ball: windup duration for the grow curve.
+   * Full `lifeMs` covers charge + flight so the same shot can become the projectile.
+   */
+  chargeMs?: number;
   /** Effect radius / cone length (world units). */
   radius?: number;
   /** Frost mist: starting cone length before smooth grow. */
@@ -43,6 +48,8 @@ export type OneShotEffect = {
   life: number;
   followOwnerId?: string;
   followSpawnOffset?: number;
+  /** Frost Ball: ms used for charge grow (not full life). */
+  chargeMs?: number;
   variant?: number;
   radius?: number;
   startRadius?: number;

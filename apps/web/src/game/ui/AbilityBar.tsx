@@ -62,11 +62,11 @@ function SlotIcon({
       {cooling && (
         <>
           <div
-            className="absolute inset-0 bg-[#dfe6d4]/80"
+            className="absolute inset-0 bg-[rgba(4,12,22,0.72)]"
             style={{ clipPath: `inset(${(1 - frac) * 100}% 0 0 0)` }}
           />
           <span
-            className="absolute inset-0 z-[1] flex items-center justify-center text-sm font-bold tabular-nums text-[#1a221c]"
+            className="absolute inset-0 z-[1] flex items-center justify-center text-sm font-bold tabular-nums text-[var(--bb-ink)]"
             style={{ fontFamily: "var(--bb-font-display)" }}
           >
             {Math.ceil(remainingMs / 1000)}

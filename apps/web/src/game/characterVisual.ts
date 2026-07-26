@@ -1,15 +1,22 @@
 import * as THREE from "three";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
+import {
+  COSMETIC_SLOTS,
+  cosmeticMeshNames,
+  cosmeticNameKey,
+  getCosmeticItem,
+  isCosmeticMeshName,
+  normalizeCosmeticsEquipped,
+  type CosmeticsEquipped,
+} from "@battlebeasts/shared";
 import { getCreaturePatternTexture } from "./creaturePatterns";
+import { assetUrl } from "./assetUrl";
 
 /** Desired standing height in world meters. */
 export const CHARACTER_TARGET_HEIGHT = 1.7;
 
 /** Active player / remote avatar GLB (Blender Mixamo export). */
-import { assetUrl } from "./assetUrl";
-
 export const CHARACTER_URL = assetUrl("hero.glb");
-
 
 /**
  * Preferred surface mesh when the GLB ships multiple skinned bodies
@@ -20,17 +27,8 @@ export const CHARACTER_DEFAULT_MESH = "Beta_Surface";
 
 export type PrepareCharacterOptions = {
   targetHeight?: number;
-  /**
-   * Idle (or rest) clip used to place feet on the gameplay origin.
-   * Required when bind-pose centering is wrong (common after retarget).
-   */
   restClip?: THREE.AnimationClip | null;
-  /**
-   * Source orientation. Mixamo Z-up packs need a -90° X stand-up;
-   * Blender Y-up exports (hero.glb) leave identity.
-   */
   upAxis?: "y" | "mixamo-z";
-  /** Visible skinned mesh name (exact). Others are hidden. */
   visibleMeshName?: string;
 };
 
@@ -50,18 +48,17 @@ export function prepareCharacterScene(
 
   const root = cloneSkinned(sourceScene) as THREE.Object3D;
   if (upAxis === "mixamo-z") {
-    // Stand Mixamo Z-up body into Y-up — only X, never combine with Y here
     root.rotation.x = -Math.PI / 2;
   }
 
   selectCharacterMesh(root, visibleMeshName);
+  hideAllCosmeticMeshes(root);
 
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    // Clone mats so tint/opacity on one avatar (e.g. local cloak) never leaks to decoys/remotes.
     if (mesh.material) {
       mesh.material = Array.isArray(mesh.material)
         ? mesh.material.map((m) => m.clone())
@@ -84,7 +81,6 @@ export function prepareCharacterScene(
     }
   });
 
-  // Scale from idle height, not bind pose — bind bbox can overshoot.
   const stance = measureIdleStance(sourceScene, restClip, targetHeight, upAxis, visibleMeshName);
   if (stance) {
     root.scale.setScalar(stance.scale);
@@ -104,6 +100,24 @@ export function prepareCharacterScene(
   return root;
 }
 
+/** True if this object (or its mesh name) is catalog / cosmetic gear. */
+function isCosmeticObject(obj: THREE.Object3D): boolean {
+  if (obj.name && isCosmeticMeshName(obj.name)) return true;
+  const mesh = obj as THREE.Mesh;
+  if (mesh.isMesh && mesh.name && isCosmeticMeshName(mesh.name)) return true;
+  return false;
+}
+
+/** Gear mesh or a descendant of a named gear node (e.g. WizardHat → Node-Mesh). */
+function isCosmeticMeshOrDescendant(obj: THREE.Object3D): boolean {
+  let cur: THREE.Object3D | null = obj;
+  while (cur) {
+    if (isCosmeticObject(cur)) return true;
+    cur = cur.parent;
+  }
+  return false;
+}
+
 /** Keep one outfit mesh visible; hide the rest (multi-pack SM_Chr_* / Beta). */
 export function selectCharacterMesh(root: THREE.Object3D, meshName: string): void {
   const wanted = meshName.toLowerCase();
@@ -113,10 +127,11 @@ export function selectCharacterMesh(root: THREE.Object3D, meshName: string): voi
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if (isCosmeticObject(obj) || isCosmeticObject(mesh.parent ?? obj)) return;
+
     const name = mesh.name;
     const lower = name.toLowerCase();
 
-    // Mixamo Beta: show surface, hide joints helper
     if (lower.includes("beta_joints")) {
       mesh.visible = false;
       return;
@@ -147,6 +162,38 @@ export function selectCharacterMesh(root: THREE.Object3D, meshName: string): voi
   }
 }
 
+/** Hide every catalog / cosmetic_* gear mesh (default unequipped — players, remotes, dummies). */
+export function hideAllCosmeticMeshes(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    if (!isCosmeticObject(obj)) return;
+    obj.visible = false;
+  });
+}
+
+/**
+ * Show only equipped catalog gear meshes; keep all other gear hidden.
+ */
+export function syncEmbeddedCosmetics(
+  root: THREE.Object3D,
+  equipped: CosmeticsEquipped | null | undefined,
+): void {
+  const eq = normalizeCosmeticsEquipped(equipped);
+  const showNames = new Set<string>();
+  for (const slot of COSMETIC_SLOTS) {
+    const id = eq[slot];
+    if (!id) continue;
+    const def = getCosmeticItem(id);
+    if (!def) continue;
+    for (const n of cosmeticMeshNames(def)) showNames.add(cosmeticNameKey(n));
+  }
+
+  root.traverse((obj) => {
+    if (!isCosmeticObject(obj)) return;
+    const key = cosmeticNameKey(obj.name || (obj as THREE.Mesh).name || "");
+    obj.visible = showNames.has(key);
+  });
+}
+
 type IdleStance = {
   scale: number;
   feetX: number;
@@ -171,6 +218,7 @@ function measureIdleStance(
   const probe = cloneSkinned(sourceScene) as THREE.Object3D;
   if (upAxis === "mixamo-z") probe.rotation.x = -Math.PI / 2;
   selectCharacterMesh(probe, visibleMeshName);
+  hideAllCosmeticMeshes(probe);
   probe.updateMatrixWorld(true);
 
   const clip = lockRootHorizontal(restClip);
@@ -313,16 +361,18 @@ export function tintCharacterSurface(
   });
 }
 
-/** Ghost opacity for self-cloaked; 1 = solid. Affects visible character surface mats. */
+/** Ghost opacity for self-cloaked; 1 = solid. Body surface + equipped gear. */
 export function setCharacterOpacity(scene: THREE.Object3D, opacity: number): void {
   const o = Math.max(0, Math.min(1, opacity));
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.material || !mesh.visible) return;
+    if (!mesh.isMesh || !mesh.material) return;
+    // Include hidden gear so equipping mid-cloak still ghosts correctly when shown.
     const name = mesh.name.toLowerCase();
     const isHeroOutfit = mesh.name.startsWith("SM_Chr_");
     const isMixamoSurface = name.includes("surface");
-    if (!isHeroOutfit && !isMixamoSurface) return;
+    const isGear = isCosmeticMeshOrDescendant(mesh);
+    if (!isHeroOutfit && !isMixamoSurface && !isGear) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
       const std = m as THREE.MeshStandardMaterial;

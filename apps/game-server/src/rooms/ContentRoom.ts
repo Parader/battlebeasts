@@ -19,6 +19,9 @@ import {
   arenaStaticColliders,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
+  cosmeticsEquippedFromFields,
+  cosmeticsEquippedToFields,
+  normalizeCosmeticsEquipped,
   normalizeLoadout,
   type MatchRecapRow,
   type PlayerInput,
@@ -163,6 +166,35 @@ export class ContentRoom extends Room<BaseCityState> {
     player.patternColor = normalizeCosmeticPatternColor(
       (options as { patternColor?: string }).patternColor,
     );
+    {
+      const o = options as {
+        cosmeticHat?: string;
+        cosmeticShoulders?: string;
+        cosmeticChest?: string;
+        cosmeticGloves?: string;
+        cosmeticBelt?: string;
+        cosmeticLegs?: string;
+        cosmeticShoes?: string;
+      };
+      const fields = cosmeticsEquippedToFields(
+        cosmeticsEquippedFromFields({
+          cosmeticHat: o.cosmeticHat,
+          cosmeticShoulders: o.cosmeticShoulders,
+          cosmeticChest: o.cosmeticChest,
+          cosmeticGloves: o.cosmeticGloves,
+          cosmeticBelt: o.cosmeticBelt,
+          cosmeticLegs: o.cosmeticLegs,
+          cosmeticShoes: o.cosmeticShoes,
+        }),
+      );
+      player.cosmeticHat = fields.cosmeticHat;
+      player.cosmeticShoulders = fields.cosmeticShoulders;
+      player.cosmeticChest = fields.cosmeticChest;
+      player.cosmeticGloves = fields.cosmeticGloves;
+      player.cosmeticBelt = fields.cosmeticBelt;
+      player.cosmeticLegs = fields.cosmeticLegs;
+      player.cosmeticShoes = fields.cosmeticShoes;
+    }
 
     if (this.kind === "pvp") {
       const role = options.role === "spectator" ? "spectator" : "fighter";
@@ -216,6 +248,18 @@ export class ContentRoom extends Room<BaseCityState> {
         if (eco.pattern) p.pattern = normalizeCosmeticPattern(eco.pattern);
         if (eco.patternColor) p.patternColor = normalizeCosmeticPatternColor(eco.patternColor);
         if (eco.color) p.color = eco.color;
+        if (eco.cosmeticsEquipped) {
+          const fields = cosmeticsEquippedToFields(
+            normalizeCosmeticsEquipped(eco.cosmeticsEquipped),
+          );
+          p.cosmeticHat = fields.cosmeticHat;
+          p.cosmeticShoulders = fields.cosmeticShoulders;
+          p.cosmeticChest = fields.cosmeticChest;
+          p.cosmeticGloves = fields.cosmeticGloves;
+          p.cosmeticBelt = fields.cosmeticBelt;
+          p.cosmeticLegs = fields.cosmeticLegs;
+          p.cosmeticShoes = fields.cosmeticShoes;
+        }
         this.combat.syncSessionKit(client.sessionId, p.loadout, p.talents);
         const bonus = this.combat.getSessionKit(client.sessionId)?.maxHpBonus ?? 0;
         p.maxHp = 100 + bonus;

@@ -27,6 +27,14 @@ export interface PlayerSnapshot {
   pattern?: string;
   /** Pattern marking / ink color. */
   patternColor?: string;
+  /** Equipped wearable cosmetic ids (empty string = none). */
+  cosmeticHat?: string;
+  cosmeticShoulders?: string;
+  cosmeticChest?: string;
+  cosmeticGloves?: string;
+  cosmeticBelt?: string;
+  cosmeticLegs?: string;
+  cosmeticShoes?: string;
   castLockUntil: number;
   cooldowns: Record<string, number>;
   disconnected: boolean;
@@ -61,6 +69,7 @@ export type ClientMessage =
   | { type: "set_color"; color: string }
   | { type: "set_pattern"; pattern: string; patternColor?: string }
   | { type: "set_pattern_color"; patternColor: string }
+  | { type: "set_cosmetic"; slot: string; itemId: string | null }
   | { type: "respawn" }
   | { type: "hub_kick"; sessionId: string }
   | { type: "party_invite"; sessionId: string }

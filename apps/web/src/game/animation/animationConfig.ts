@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -170,6 +170,7 @@ export const abilityAnimationBindings: Record<
   },
   frostBall: {
     upper: "castFrost",
+    upperTimeScale: FROST_BALL_CAST.playbackRate,
   },
   surge: { upper: "castPrimary" },
   decoy: {

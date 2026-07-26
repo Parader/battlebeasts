@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
-import { MOVE_SPEED } from "@battlebeasts/shared";
+import { MOVE_SPEED, type CosmeticsEquipped } from "@battlebeasts/shared";
 import {
   CharacterAnimationController,
   heroAnimationConfig,
@@ -11,6 +11,8 @@ import {
   playRandomDeath,
 } from "./animation";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
+import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
+import { EquippedCosmetics } from "./EquippedCosmetics";
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS, shortestAngleDelta } from "./visualYaw";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
@@ -65,7 +67,10 @@ export function CharacterAvatar({
   const visualYaw = useRef(0);
   const yawLocked = useRef(false);
   const cloakedRef = useRef(false);
+  const [cloakOpacity, setCloakOpacity] = useState(1);
   const appearanceKey = useRef("");
+  const cosmeticsKeyRef = useRef("");
+  const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
   const wasDeadRef = useRef(false);
   const deathSinkRef = useRef<DeathSinkState | null>(null);
 
@@ -81,20 +86,30 @@ export function CharacterAvatar({
 
   useEffect(() => {
     if (!color) return;
-    const pattern =
-      (localSessionId &&
-        (room?.state?.players?.get(localSessionId) as
-          | { pattern?: string; patternColor?: string }
-          | undefined)?.pattern) ||
-      "plain";
-    const patternColor =
-      (localSessionId &&
-        (room?.state?.players?.get(localSessionId) as
-          | { patternColor?: string }
-          | undefined)?.patternColor) ||
-      "#1f2937";
+    const me = localSessionId
+      ? (room?.state?.players?.get(localSessionId) as
+          | {
+              pattern?: string;
+              patternColor?: string;
+              cosmeticHat?: string;
+              cosmeticShoulders?: string;
+              cosmeticChest?: string;
+              cosmeticGloves?: string;
+              cosmeticBelt?: string;
+              cosmeticLegs?: string;
+              cosmeticShoes?: string;
+            }
+          | undefined)
+      : undefined;
+    const pattern = me?.pattern || "plain";
+    const patternColor = me?.patternColor || "#1f2937";
     tintCharacterSurface(scene, color, pattern, patternColor);
     appearanceKey.current = `${color}|${pattern}|${patternColor}`;
+    const nextKey = cosmeticsKey(me);
+    if (nextKey !== cosmeticsKeyRef.current) {
+      cosmeticsKeyRef.current = nextKey;
+      setEquipped(equippedFromPlayer(me));
+    }
   }, [color, scene, room, localSessionId]);
 
   useEffect(() => {
@@ -152,6 +167,13 @@ export function CharacterAvatar({
               color?: string;
               pattern?: string;
               patternColor?: string;
+              cosmeticHat?: string;
+              cosmeticShoulders?: string;
+              cosmeticChest?: string;
+              cosmeticGloves?: string;
+              cosmeticBelt?: string;
+              cosmeticLegs?: string;
+              cosmeticShoes?: string;
               statuses?: Parameters<typeof hasStatusId>[0];
             }
           | undefined)
@@ -163,6 +185,11 @@ export function CharacterAvatar({
     if (key !== appearanceKey.current) {
       appearanceKey.current = key;
       tintCharacterSurface(scene, liveColor, livePattern, livePatternColor);
+    }
+    const nextCosmetics = cosmeticsKey(me);
+    if (nextCosmetics !== cosmeticsKeyRef.current) {
+      cosmeticsKeyRef.current = nextCosmetics;
+      setEquipped(equippedFromPlayer(me));
     }
     g.position.set(p.x, smashHopOffsetY(me) + deathSinkOffsetY(deathSinkRef.current), p.z);
     if (aim) aim.rotation.y = p.yaw;
@@ -273,7 +300,9 @@ export function CharacterAvatar({
 
     if (cloaked !== cloakedRef.current) {
       cloakedRef.current = cloaked;
-      setCharacterOpacity(scene, cloaked ? 0.32 : 1);
+      const nextOpacity = cloaked ? 0.32 : 1;
+      setCharacterOpacity(scene, nextOpacity);
+      setCloakOpacity(nextOpacity);
       if (!cloaked) {
         controller.setCrouchLoco(false);
       }
@@ -308,6 +337,7 @@ export function CharacterAvatar({
     <group ref={group}>
       <group ref={bodyRef}>
         <primitive object={scene} />
+        <EquippedCosmetics characterRoot={scene} equipped={equipped} opacity={cloakOpacity} />
         <StatusOrnaments
           getStatuses={() => {
             if (!room || !localSessionId) return [];

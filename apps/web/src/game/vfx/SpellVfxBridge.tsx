@@ -30,7 +30,7 @@ type PendingMuzzle = {
 
 /**
  * Fires muzzle VFX slightly before impact (during late cast).
- * Frost Ball spawns a hand charge at anticipation instead.
+ * Frost Ball grows one orb from anticipation; that same shot becomes the projectile.
  * Gust spawns suck→blow ground VFX at anticipation (timed to anim frames).
  * Cast FX follow the caster via `followOwnerId`.
  * Melee swoops (crescent) spawn from combat_fx instead.
@@ -71,7 +71,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         );
       }
 
-      // Frost: charge in the hand from anticipation until release.
+      // Frost: one orb from anticipation → flight. Same mesh becomes the projectile.
       // Anticipation is short (~100ms) and often skipped in schema patches —
       // also start on cast if we never saw anticipation.
       if (catalog && isFrost) {
@@ -89,6 +89,11 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
                 ? phaseDurationMs(def, "anticipation") + phaseDurationMs(def, "cast")
                 : phaseDurationMs(def, "cast")) + 120
             : 520;
+          const flightMs = def
+            ? ((def.range > 0 ? def.range : 12.5) / (def.speed ?? 3.5)) * 1000
+            : 3600;
+          // Charge grow + full drift + coast fade — one shot, no second spawn.
+          const lifeMs = chargeMs + flightMs + 700;
           const yaw = raw.yaw ?? 0;
           const x = (raw.x ?? 0) + Math.sin(yaw) * FROST_HAND_FORWARD;
           const z = (raw.z ?? 0) + Math.cos(yaw) * FROST_HAND_FORWARD;
@@ -100,7 +105,8 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
               {
                 followOwnerId: sessionId,
                 followSpawnOffset: FROST_HAND_FORWARD,
-                lifeMs: chargeMs,
+                lifeMs,
+                chargeMs,
               },
             ),
           );
@@ -135,8 +141,31 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         }
       }
 
-      // Clear frost handle after impact (shot may still finish its soft fade)
+      // Clear frost handle after impact (shot continues as the projectile visual)
       if (isFrost && phase === "impact" && prev !== "impact") {
+        if (!frostHand.current.has(sessionId)) {
+          // Missed cast patches — spawn full-size orb that latches to the projectile.
+          const def = ABILITIES[abilityId];
+          const flightMs = def
+            ? ((def.range > 0 ? def.range : 12.5) / (def.speed ?? 3.5)) * 1000
+            : 3600;
+          const yaw = raw.yaw ?? 0;
+          const x = (raw.x ?? 0) + Math.sin(yaw) * FROST_HAND_FORWARD;
+          const z = (raw.z ?? 0) + Math.cos(yaw) * FROST_HAND_FORWARD;
+          frostHand.current.set(
+            sessionId,
+            spawnCastEffect(
+              abilityId,
+              { x, z, yaw, y: FROST_HAND_Y },
+              {
+                followOwnerId: sessionId,
+                followSpawnOffset: FROST_HAND_FORWARD,
+                lifeMs: flightMs + 700,
+                chargeMs: 1,
+              },
+            ),
+          );
+        }
         frostHand.current.delete(sessionId);
       }
       if (isGust && phase === "recovery" && prev !== "recovery") {

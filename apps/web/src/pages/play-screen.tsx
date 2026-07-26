@@ -3,7 +3,7 @@ import { Navigate } from "react-router";
 import { GameCanvas } from "@/game/GameCanvas";
 import { useBaseCityRoom } from "@/game/useBaseCityRoom";
 import { useAssetPreload } from "@/game/useAssetPreload";
-import { useVillageMusic } from "@/game/useVillageMusic";
+import { useGameMusic } from "@/game/useGameMusic";
 import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
@@ -144,7 +144,7 @@ export const PlayScreen = () => {
         setLoadingGate(!playReady);
     }, [playReady]);
 
-    useVillageMusic(playReady && !inContent);
+    useGameMusic(playReady ? (inContent ? "arena" : "village") : null);
 
     const loadingStatusLabel = !assetsReady
         ? inContent
@@ -351,12 +351,10 @@ export const PlayScreen = () => {
             {playReady && phase === "queued" && (
                 <div
                     data-ui-overlay
-                    className="bb-parchment bb-toast pointer-events-auto absolute inset-x-0 top-20 z-30 mx-auto flex max-w-md flex-col items-center gap-2 px-4 py-3 text-center"
+                    className="bb-parchment bb-toast pointer-events-auto absolute inset-x-0 top-20 z-30 mx-auto flex max-w-md flex-col items-center gap-3 px-5 py-4 text-center"
                 >
-                    <p className="bb-title text-sm">Searching for match…</p>
-                    <p className="text-xs text-[var(--bb-ink-soft)]">
-                        {queueModes.join(" · ") || "PvP"}
-                    </p>
+                    <p className="bb-panel-title !text-xl">Searching for match…</p>
+                    <p className="bb-panel-sub !mt-0">{queueModes.join(" · ") || "PvP"}</p>
                     <button type="button" className="bb-btn-ink" onClick={cancelQueue}>
                         Cancel queue
                     </button>
@@ -366,16 +364,16 @@ export const PlayScreen = () => {
             {playReady && matchPause && (
                 <div
                     data-ui-overlay
-                    className="bb-parchment bb-toast pointer-events-none absolute inset-x-0 top-20 z-30 mx-auto max-w-md px-4 py-3 text-center"
+                    className="bb-parchment bb-toast pointer-events-none absolute inset-x-0 top-20 z-30 mx-auto max-w-md px-5 py-4 text-center"
                 >
-                    <p className="bb-title text-sm">
+                    <p className="bb-panel-title !text-xl">
                         {matchPause.reason === "resume_grace"
                             ? "Get ready"
                             : matchPause.reason === "pvp_reconnect"
                               ? "PvP paused"
                               : "Encounter paused"}
                     </p>
-                    <p className="mt-1 text-xs text-[var(--bb-ink-soft)]">
+                    <p className="bb-panel-sub">
                         {matchPause.reason === "resume_grace"
                             ? "Match resumes shortly"
                             : `Waiting for ${matchPause.playerName ?? "hunter"}${
@@ -395,11 +393,10 @@ export const PlayScreen = () => {
             {playReady && helpOpen && (
                 <div
                     data-ui-overlay
-                    className="bb-parchment bb-toast pointer-events-none absolute bottom-24 left-4 z-20 max-w-sm p-4 text-sm"
+                    className="bb-parchment bb-toast pointer-events-none absolute bottom-24 left-4 z-20 max-w-sm px-4 py-3.5"
                 >
-                    <p className="bb-title text-sm">Controls</p>
-                    <div className="bb-brass-rule my-2" />
-                    <ul className="mt-1 list-disc space-y-1 pl-4 text-[var(--bb-ink-soft)]">
+                    <p className="bb-panel-title !text-lg">Controls</p>
+                    <ul className="bb-muted mt-3 list-disc space-y-1.5 pl-4">
                         <li>WASD / arrows — move</li>
                         <li>Mouse aim — character yaw</li>
                         <li>LMB / RMB / Space / Q / E / R / F — cast</li>
@@ -413,7 +410,7 @@ export const PlayScreen = () => {
                         {!inContent && <li>Practice dummy — damage it with abilities for copper</li>}
                     </ul>
                     {localPlayer && (
-                        <p className="mt-3 text-xs text-[var(--bb-ink-soft)]">
+                        <p className="bb-meta mt-3">
                             Pos {localPlayer.x.toFixed(1)}, {localPlayer.z.toFixed(1)}
                         </p>
                     )}

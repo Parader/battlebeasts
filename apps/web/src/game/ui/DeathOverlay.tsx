@@ -72,9 +72,9 @@ export function DeathOverlay({
         YOU DIE
       </p>
       {showPanel ? (
-        <div className="bb-death-overlay__panel bb-parchment">
-          <p className="bb-title text-sm">Fallen</p>
-          <p className="mt-1 text-xs text-[var(--bb-ink-soft)]">
+        <div className="bb-death-overlay__panel bb-parchment px-5 py-4">
+          <p className="bb-panel-title !text-lg">Fallen</p>
+          <p className="bb-panel-sub">
             {allowRespawn
               ? unlocked
                 ? "Ready to return to the fight."
@@ -84,7 +84,7 @@ export function DeathOverlay({
           {allowRespawn ? (
             <button
               type="button"
-              className="bb-btn-ink mt-3 w-full disabled:cursor-not-allowed disabled:opacity-45"
+              className="bb-btn-ink mt-4 w-full disabled:cursor-not-allowed disabled:opacity-45"
               disabled={!unlocked}
               onClick={onRespawn}
             >

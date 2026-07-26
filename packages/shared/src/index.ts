@@ -6,6 +6,7 @@ export * from "./talentKit";
 export * from "./talentCatalog";
 export * from "./talentTrees";
 export * from "./stands";
+export * from "./cosmetics";
 export * from "./hubVillage";
 export * from "./arenaDesert";
 export * from "./content";

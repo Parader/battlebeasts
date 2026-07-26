@@ -3,8 +3,8 @@ import { Html, useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, totalShieldAbsorb } from "@battlebeasts/shared";
-import { abilityVfxColor, BoltProjectileEffect, FrostBallProjectileEffect, GraspProjectileEffect, hasCatalogProjectile } from "./vfx";
+import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, totalShieldAbsorb, type CosmeticsEquipped } from "@battlebeasts/shared";
+import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, hasCatalogProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
@@ -12,6 +12,8 @@ import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { playBoltCastSfx } from "./gameSfx";
+import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
+import { EquippedCosmetics } from "./EquippedCosmetics";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -98,7 +100,8 @@ function ProjectileRouter({
         (room.state?.projectiles?.get(id) as { abilityId?: string } | undefined)?.abilityId ??
         knownAbilityId;
     if (abilityId === "frostBall") {
-        return <FrostBallProjectileEffect room={room} id={id} />;
+        // Orb + aura are owned by FrostBallCastEffect (charge → same mesh flight).
+        return null;
     }
     if (abilityId === "grasp") {
         return <GraspProjectileEffect room={room} id={id} />;
@@ -113,14 +116,11 @@ function ProjectileRouter({
 export function Projectiles({ room }: { room: Room | null }) {
     const [ids, setIds] = useState<string[]>([]);
     const keyRef = useRef("");
-    /** Frost balls held after server despawn so the client can coast + fade. */
-    const fading = useRef(new Map<string, number>());
     const abilityById = useRef(new Map<string, string>());
     const prevLive = useRef(new Set<string>());
 
     useFrame(() => {
         if (!room?.state?.projectiles) return;
-        const now = performance.now();
         const live: string[] = [];
         room.state.projectiles.forEach(
             (p: { abilityId?: string; ownerSessionId?: string }, id: string) => {
@@ -133,26 +133,16 @@ export function Projectiles({ room }: { room: Room | null }) {
         },
         );
         live.sort();
-
-        for (const id of prevLive.current) {
-            if (!live.includes(id) && abilityById.current.get(id) === "frostBall") {
-                fading.current.set(id, now + 480);
-            }
-        }
         prevLive.current = new Set(live);
 
-        for (const [id, until] of [...fading.current.entries()]) {
-            if (now >= until || live.includes(id)) {
-                fading.current.delete(id);
-                if (!live.includes(id)) abilityById.current.delete(id);
-            }
+        for (const id of [...abilityById.current.keys()]) {
+            if (!live.includes(id)) abilityById.current.delete(id);
         }
 
-        const next = [...live, ...fading.current.keys()].sort();
-        const key = next.join("|");
+        const key = live.join("|");
         if (key !== keyRef.current) {
             keyRef.current = key;
-            setIds(next);
+            setIds(live);
         }
     });
 
@@ -339,6 +329,7 @@ type DecoyNet = {
     color: string;
     pattern?: string;
     patternColor?: string;
+    ownerSessionId?: string;
     expiresAt: number;
 };
 
@@ -351,6 +342,8 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
     const colorRef = useRef("#4ade80");
     const patternRef = useRef("plain");
     const patternColorRef = useRef("#1f2937");
+    const cosmeticsKeyRef = useRef("");
+    const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
     const seeded = useRef(false);
     const gltf = useGLTF(CHARACTER_URL);
     const scene = useMemo(() => {
@@ -386,6 +379,20 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
         g.visible = true;
         const safeDt = Math.max(1e-4, Math.min(0.05, dt));
 
+        const owner = d.ownerSessionId
+            ? (room.state?.players?.get(d.ownerSessionId) as
+                  | {
+                        cosmeticHat?: string;
+                        cosmeticShoulders?: string;
+                        cosmeticChest?: string;
+                        cosmeticGloves?: string;
+                        cosmeticBelt?: string;
+                        cosmeticLegs?: string;
+                        cosmeticShoes?: string;
+                    }
+                  | undefined)
+            : undefined;
+
         if (!seeded.current) {
             renderPos.current.set(d.x, 0, d.z);
             renderYaw.current = d.yaw;
@@ -400,6 +407,8 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
                 patternColorRef.current,
             );
             setCharacterOpacity(scene, 1);
+            cosmeticsKeyRef.current = cosmeticsKey(owner);
+            setEquipped(equippedFromPlayer(owner));
         }
         if (
             d.color !== colorRef.current ||
@@ -415,6 +424,12 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
                 patternRef.current,
                 patternColorRef.current,
             );
+        }
+
+        const nextCosmetics = cosmeticsKey(owner);
+        if (nextCosmetics !== cosmeticsKeyRef.current) {
+            cosmeticsKeyRef.current = nextCosmetics;
+            setEquipped(equippedFromPlayer(owner));
         }
 
         // Coast with server velocity between patches, soft-correct to authority.
@@ -441,6 +456,7 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
     return (
         <group ref={group}>
             <primitive object={scene} />
+            <EquippedCosmetics characterRoot={scene} equipped={equipped} />
         </group>
     );
 }

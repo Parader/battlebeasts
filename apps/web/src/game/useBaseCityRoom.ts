@@ -310,6 +310,7 @@ export function useBaseCityRoom(options: Options) {
                     setPhase("queued");
                     phaseRef.current = "queued";
                     setQueueModes(msg.modes ?? []);
+                    setActiveUi(null);
                 } else {
                     setQueueModes([]);
                     setPhase((p) => {
@@ -781,10 +782,35 @@ export function useBaseCityRoom(options: Options) {
                 const hubOwnerId =
                     (msg.options?.hubOwnerId as string | undefined) ?? opts.hubOwnerId ?? opts.userId;
 
+                const localPlayer = roomRef.current?.state?.players?.get(
+                    roomRef.current.sessionId,
+                ) as
+                    | {
+                        pattern?: string;
+                        patternColor?: string;
+                        cosmeticHat?: string;
+                        cosmeticShoulders?: string;
+                        cosmeticChest?: string;
+                        cosmeticGloves?: string;
+                        cosmeticBelt?: string;
+                        cosmeticLegs?: string;
+                        cosmeticShoes?: string;
+                    }
+                    | undefined;
+
                 const joinOpts: Record<string, unknown> = {
                     userId: opts.userId,
                     displayName: opts.displayName,
                     color: opts.color,
+                    pattern: localPlayer?.pattern,
+                    patternColor: localPlayer?.patternColor,
+                    cosmeticHat: localPlayer?.cosmeticHat,
+                    cosmeticShoulders: localPlayer?.cosmeticShoulders,
+                    cosmeticChest: localPlayer?.cosmeticChest,
+                    cosmeticGloves: localPlayer?.cosmeticGloves,
+                    cosmeticBelt: localPlayer?.cosmeticBelt,
+                    cosmeticLegs: localPlayer?.cosmeticLegs,
+                    cosmeticShoes: localPlayer?.cosmeticShoes,
                     accessToken: opts.accessToken ?? undefined,
                     hubOwnerId,
                     mode: msg.options?.mode,

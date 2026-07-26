@@ -374,10 +374,10 @@ export const FROST_BALL_CAST = {
   fps: 30,
   releaseFrame: 19,
   clipDurationSec: 2.233333,
-  /** Mildly sped windup→release (1 = natural Mixamo pace). */
-  playbackRate: 1.35,
+  /** 1 = natural Mixamo pace for windup→release. */
+  playbackRate: 1,
   /** Forward from caster — prep orb + projectile spawn share this. */
-  spawnOffset: 0.58,
+  spawnOffset: 0.92,
   /** World Y for hand charge / projectile orb. */
   handY: 1.18,
 } as const;

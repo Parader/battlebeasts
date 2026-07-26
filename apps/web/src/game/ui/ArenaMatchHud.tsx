@@ -46,11 +46,12 @@ export function ArenaMatchHud({ hud }: Props) {
   return (
     <div data-ui-overlay className="pointer-events-none absolute inset-0 z-25">
       <div className="absolute inset-x-0 top-16 flex justify-center">
-        <div className="bb-parchment px-5 py-2.5 text-center">
-          <p className="bb-title text-[0.7rem] tracking-wider text-[var(--bb-brass)]">
-            {hud.matchMode || "Arena"}
-          </p>
-          <p className="mt-1 text-2xl tabular-nums text-[var(--bb-ink)]">
+        <div className="bb-parchment px-5 py-3 text-center">
+          <p className="bb-section-label mb-1">{hud.matchMode || "Arena"}</p>
+          <p
+            className="text-2xl tabular-nums text-[var(--bb-ink)]"
+            style={{ fontFamily: "var(--bb-font-display)" }}
+          >
             <span className={hud.localTeam === "a" ? "text-[var(--bb-brass)]" : ""}>
               {hud.scoreA}
             </span>

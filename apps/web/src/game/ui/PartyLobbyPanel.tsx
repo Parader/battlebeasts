@@ -1,5 +1,10 @@
-import { useEffect, useState } from "react";
-import type { PartySnapshot, PvpSeat } from "@battlebeasts/shared";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import {
+  PVP_MODES,
+  type PartyMemberSnapshot,
+  type PartySnapshot,
+  type PvpSeat,
+} from "@battlebeasts/shared";
 
 type HubPlayer = {
   sessionId: string;
@@ -19,12 +24,6 @@ type Props = {
   onClose: () => void;
 };
 
-const SEATS: { id: PvpSeat; label: string }[] = [
-  { id: "teamA", label: "Team A" },
-  { id: "teamB", label: "Team B" },
-  { id: "spectator", label: "Spectators" },
-];
-
 type ContextMenu = {
   sessionId: string;
   displayName: string;
@@ -32,7 +31,90 @@ type ContextMenu = {
   y: number;
 };
 
-/** Party lobby: seats, invites, lock to queue. */
+function modeMeta(modes: string[]) {
+  let teamSize = 1;
+  let maxSpectators = 2;
+  for (const id of modes) {
+    const m = PVP_MODES.find((x) => x.id === id);
+    if (!m) continue;
+    teamSize = Math.max(teamSize, m.teamSize);
+    maxSpectators = Math.max(maxSpectators, m.maxSpectators);
+  }
+  return { teamSize, maxSpectators };
+}
+
+function padSlots(
+  seated: PartyMemberSnapshot[],
+  capacity: number,
+): Array<PartyMemberSnapshot | null> {
+  const slots: Array<PartyMemberSnapshot | null> = [...seated];
+  while (slots.length < capacity) slots.push(null);
+  return slots.slice(0, capacity);
+}
+
+function PlayerSlot({
+  member,
+  isLeader,
+  isYou,
+  canTake,
+  canKick,
+  onTake,
+  onOpenKickMenu,
+}: {
+  member: PartyMemberSnapshot | null;
+  isLeader: boolean;
+  isYou: boolean;
+  canTake: boolean;
+  canKick: boolean;
+  onTake: () => void;
+  onOpenKickMenu: (e: MouseEvent, m: PartyMemberSnapshot) => void;
+}) {
+  if (!member) {
+    return (
+      <button
+        type="button"
+        className="bb-lobby-slot bb-lobby-slot--empty"
+        disabled={!canTake}
+        onClick={onTake}
+      >
+        {canTake ? "Take Slot" : "Empty"}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className={[
+        "bb-lobby-slot bb-lobby-slot--filled",
+        isYou ? "bb-lobby-slot--you" : "",
+        canKick ? "bb-lobby-slot--kickable" : "",
+      ].join(" ")}
+      title={canKick ? "Right-click to kick" : undefined}
+      onContextMenu={
+        canKick
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onOpenKickMenu(e, member);
+            }
+          : undefined
+      }
+    >
+      <span className="bb-lobby-slot__avatar" aria-hidden>
+        {member.displayName.slice(0, 1).toUpperCase()}
+      </span>
+      <div className="bb-lobby-slot__meta">
+        <div className="bb-lobby-slot__name-row">
+          {isLeader ? <span className="bb-lobby-slot__crown" title="Party leader">♛</span> : null}
+          <span className="bb-lobby-slot__name">{member.displayName}</span>
+          {isYou ? <span className="bb-lobby-slot__you">You</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** PvP arena lobby — team columns, observer bench, game-style controls. */
 export function PartyLobbyPanel({
   party,
   localSessionId,
@@ -51,6 +133,34 @@ export function PartyLobbyPanel({
     (p) => p.sessionId !== localSessionId && !memberIds.has(p.sessionId),
   );
   const [menu, setMenu] = useState<ContextMenu | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+
+  const { teamSize, maxSpectators } = useMemo(() => modeMeta(party.modes), [party.modes]);
+  const teamA = useMemo(
+    () => padSlots(
+      party.members.filter((m) => m.seat === "teamA"),
+      teamSize,
+    ),
+    [party.members, teamSize],
+  );
+  const teamB = useMemo(
+    () => padSlots(
+      party.members.filter((m) => m.seat === "teamB"),
+      teamSize,
+    ),
+    [party.members, teamSize],
+  );
+  const spectators = useMemo(
+    () => padSlots(
+      party.members.filter((m) => m.seat === "spectator"),
+      maxSpectators,
+    ),
+    [party.members, maxSpectators],
+  );
+
+  const localMember = party.members.find((m) => m.sessionId === localSessionId);
+  const canSelfMove = Boolean(localSessionId) && !party.queued;
+  const canStart = isLeader && !party.queued;
 
   useEffect(() => {
     if (!menu) return;
@@ -68,9 +178,53 @@ export function PartyLobbyPanel({
     };
   }, [menu]);
 
+  const openKickMenu = (e: MouseEvent, m: PartyMemberSnapshot) => {
+    setMenu({
+      sessionId: m.sessionId,
+      displayName: m.displayName,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  };
+
+  const renderTeam = (label: string, seat: PvpSeat, slots: Array<PartyMemberSnapshot | null>) => (
+    <section className="bb-lobby-team">
+      <header className="bb-lobby-team__head">{label}</header>
+      <div className="bb-lobby-team__slots">
+        {slots.map((member, i) => {
+          const canTake =
+            canSelfMove &&
+            !member &&
+            Boolean(localSessionId) &&
+            localMember?.seat !== seat;
+          const canKick =
+            Boolean(member) &&
+            isLeader &&
+            !party.queued &&
+            member!.sessionId !== localSessionId &&
+            member!.sessionId !== party.leaderSessionId;
+          return (
+            <PlayerSlot
+              key={member?.sessionId ?? `${seat}-empty-${i}`}
+              member={member}
+              isLeader={Boolean(member && member.sessionId === party.leaderSessionId)}
+              isYou={Boolean(member && member.sessionId === localSessionId)}
+              canTake={canTake}
+              canKick={canKick}
+              onTake={() => {
+                if (localSessionId) onSetSeat(localSessionId, seat);
+              }}
+              onOpenKickMenu={openKickMenu}
+            />
+          );
+        })}
+      </div>
+    </section>
+  );
+
   return (
     <div
-      className="bb-overlay-dim fixed inset-0 z-40 flex items-center justify-center p-4"
+      className="bb-lobby-overlay fixed inset-0 z-40 flex items-center justify-center p-4"
       data-ui-overlay
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -80,114 +234,86 @@ export function PartyLobbyPanel({
       <div
         role="dialog"
         aria-modal
-        aria-label="Party lobby"
-        className="bb-parchment bb-book-panel relative z-10 w-full max-w-2xl"
+        aria-label="Arena lobby"
+        className="bb-lobby-panel"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="relative mb-3 flex items-start justify-between gap-3">
+        <header className="bb-lobby-panel__header">
           <div>
-            <h2 className="bb-title text-lg">Arena lobby</h2>
-            <p className="mt-1 text-xs text-[var(--bb-ink-soft)]">
-              {party.modes.join(" · ") || "PvP"}
-              {party.queued ? " · queued" : ""}
+            <h2 className="bb-lobby-panel__title">Arena Lobby</h2>
+            <p className="bb-lobby-panel__sub">
+              {party.modes
+                .map((id) => PVP_MODES.find((m) => m.id === id)?.label ?? id)
+                .join(" · ") || "PvP"}
+              {party.queued ? " · Searching…" : ""}
             </p>
           </div>
-          <button type="button" className="bb-btn-ink !px-2 !py-1 text-[10px]" onClick={onClose}>
-            Close
+          <button
+            type="button"
+            className="bb-btn-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
           </button>
-        </div>
-        <div className="bb-brass-rule mb-4" />
+        </header>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          {SEATS.map((seat) => {
-            const seated = party.members.filter((m) => m.seat === seat.id);
-            return (
-              <div key={seat.id} className="rounded border border-[var(--bb-brass)]/25 p-2">
-                <p className="bb-title mb-2 text-[0.65rem] tracking-wider text-[var(--bb-brass)]">
-                  {seat.label}
-                </p>
-                <ul className="min-h-[4.5rem] space-y-1">
-                  {seated.length === 0 ? (
-                    <li className="text-[0.7rem] text-[var(--bb-ink-soft)]">Empty</li>
-                  ) : (
-                    seated.map((m) => {
-                      const canMove =
-                        !party.queued &&
-                        (isLeader || m.sessionId === localSessionId);
-                      const canKick =
-                        isLeader &&
-                        !party.queued &&
-                        m.sessionId !== localSessionId &&
-                        m.sessionId !== party.leaderSessionId;
-                      return (
-                        <li key={m.sessionId} className="text-[0.75rem] text-[var(--bb-ink)]">
-                          <div className="flex items-center justify-between gap-1">
-                            <span
-                              className={[
-                                "truncate",
-                                canKick ? "cursor-context-menu" : "",
-                              ].join(" ")}
-                              title={canKick ? "Right-click for options" : undefined}
-                              onContextMenu={
-                                canKick
-                                  ? (e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      setMenu({
-                                        sessionId: m.sessionId,
-                                        displayName: m.displayName,
-                                        x: e.clientX,
-                                        y: e.clientY,
-                                      });
-                                    }
-                                  : undefined
-                              }
-                            >
-                              {m.displayName}
-                              {m.sessionId === party.leaderSessionId ? " ★" : ""}
-                              {m.sessionId === localSessionId ? " (you)" : ""}
-                            </span>
-                          </div>
-                          {canMove ? (
-                            <div className="mt-0.5 flex flex-wrap gap-1">
-                              {SEATS.filter((s) => s.id !== seat.id).map((s) => (
-                                <button
-                                  key={s.id}
-                                  type="button"
-                                  className="bb-btn-ink !px-1.5 !py-0.5 text-[0.55rem]"
-                                  onClick={() => onSetSeat(m.sessionId, s.id)}
-                                >
-                                  → {s.label.replace("Spectators", "Spec")}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </li>
-                      );
-                    })
-                  )}
-                </ul>
-              </div>
-            );
-          })}
+        <div className="bb-lobby-teams">
+          {renderTeam("Team 1", "teamA", teamA)}
+          {renderTeam("Team 2", "teamB", teamB)}
         </div>
 
-        {isLeader && !party.queued ? (
-          <div className="mt-4">
-            <p className="bb-title mb-1 text-[0.6rem] tracking-wider text-[var(--bb-brass)]">
-              Invite from hub
-            </p>
+        <section className="bb-lobby-observers">
+          <header className="bb-lobby-team__head">Observers</header>
+          <div className="bb-lobby-observers__row">
+            <button
+              type="button"
+              className="bb-lobby-btn bb-lobby-btn--slot"
+              disabled={!canSelfMove || localMember?.seat === "spectator"}
+              onClick={() => {
+                if (localSessionId) onSetSeat(localSessionId, "spectator");
+              }}
+            >
+              Become Observer
+            </button>
+            <div className="bb-lobby-observers__grid">
+              {spectators.map((member, i) => {
+                const canKick =
+                  Boolean(member) &&
+                  isLeader &&
+                  !party.queued &&
+                  member!.sessionId !== localSessionId &&
+                  member!.sessionId !== party.leaderSessionId;
+                return (
+                  <PlayerSlot
+                    key={member?.sessionId ?? `spec-empty-${i}`}
+                    member={member}
+                    isLeader={Boolean(member && member.sessionId === party.leaderSessionId)}
+                    isYou={Boolean(member && member.sessionId === localSessionId)}
+                    canTake={false}
+                    canKick={canKick}
+                    onTake={() => undefined}
+                    onOpenKickMenu={openKickMenu}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {isLeader && !party.queued && inviteOpen ? (
+          <div className="bb-lobby-invites">
             {inviteable.length === 0 ? (
-              <p className="text-xs text-[var(--bb-ink-soft)]">No other hunters in this hub.</p>
+              <p className="bb-lobby-invites__empty">No other hunters in this hub.</p>
             ) : (
-              <ul className="flex flex-wrap gap-2">
+              <ul className="bb-lobby-invites__list">
                 {inviteable.map((p) => {
                   const pending = party.pendingInvites.includes(p.sessionId);
                   return (
                     <li key={p.sessionId}>
                       <button
                         type="button"
-                        className="bb-btn-ink text-[0.7rem] disabled:opacity-50"
+                        className="bb-lobby-btn bb-lobby-btn--slot"
                         disabled={pending}
                         onClick={() => onInvite(p.sessionId)}
                       >
@@ -201,24 +327,44 @@ export function PartyLobbyPanel({
           </div>
         ) : null}
 
-        <div className="mt-5 flex flex-wrap justify-end gap-2">
-          {isLeader ? (
-            <>
-              {!party.queued ? (
-                <button type="button" className="bb-btn-brass" onClick={onLock}>
-                  Lock &amp; queue
-                </button>
-              ) : null}
-              <button type="button" className="bb-btn-ink" onClick={onCancel}>
-                Cancel party
+        <footer className="bb-lobby-footer">
+          <div className="bb-lobby-footer__left">
+            {isLeader ? (
+              <button type="button" className="bb-lobby-btn bb-lobby-btn--danger" onClick={onCancel}>
+                Leave Lobby
               </button>
-            </>
-          ) : (
-            <button type="button" className="bb-btn-ink" onClick={onLeave}>
-              Leave party
-            </button>
-          )}
-        </div>
+            ) : (
+              <button type="button" className="bb-lobby-btn bb-lobby-btn--danger" onClick={onLeave}>
+                Leave Lobby
+              </button>
+            )}
+          </div>
+          <div className="bb-lobby-footer__right">
+            {isLeader && !party.queued ? (
+              <button
+                type="button"
+                className="bb-lobby-btn bb-lobby-btn--slot"
+                onClick={() => setInviteOpen((v) => !v)}
+              >
+                {inviteOpen ? "Hide Invites" : "Invite Friend"}
+              </button>
+            ) : null}
+            {canStart ? (
+              <button
+                type="button"
+                className="bb-lobby-btn bb-lobby-btn--start"
+                onClick={() => {
+                  onLock();
+                  onClose();
+                }}
+              >
+                Start Match
+              </button>
+            ) : party.queued ? (
+              <span className="bb-lobby-queued">Queued</span>
+            ) : null}
+          </div>
+        </footer>
       </div>
 
       {menu ? (

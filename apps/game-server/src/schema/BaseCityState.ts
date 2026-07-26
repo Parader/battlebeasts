@@ -24,6 +24,14 @@ export class PlayerState extends Schema {
   @type("string") pattern = "plain";
   /** Ink color for pattern markings. */
   @type("string") patternColor = "#1f2937";
+  /** Equipped wearable cosmetics (catalog id, or "" = none). */
+  @type("string") cosmeticHat = "";
+  @type("string") cosmeticShoulders = "";
+  @type("string") cosmeticChest = "";
+  @type("string") cosmeticGloves = "";
+  @type("string") cosmeticBelt = "";
+  @type("string") cosmeticLegs = "";
+  @type("string") cosmeticShoes = "";
   @type("number") castLockUntil = 0;
   /** "" | anticipation | cast | impact | recovery */
   @type("string") castPhase = "";

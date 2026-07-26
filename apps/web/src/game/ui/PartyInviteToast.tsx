@@ -9,13 +9,13 @@ export function PartyInviteToast({ invite, onAccept, onDecline }: Props) {
   return (
     <div
       data-ui-overlay
-      className="bb-parchment pointer-events-auto absolute inset-x-0 top-24 z-35 mx-auto max-w-sm px-4 py-3"
+      className="bb-parchment pointer-events-auto absolute inset-x-0 top-24 z-35 mx-auto max-w-sm px-4 py-3.5"
     >
-      <p className="bb-title text-sm">Party invite</p>
-      <p className="mt-1 text-xs text-[var(--bb-ink-soft)]">
+      <p className="bb-panel-title !text-lg">Party invite</p>
+      <p className="bb-panel-sub">
         {invite.fromName} invited you ({invite.modes.join(", ") || "PvP"})
       </p>
-      <div className="mt-3 flex gap-2">
+      <div className="mt-4 flex gap-2">
         <button type="button" className="bb-btn-brass" onClick={onAccept}>
           Accept
         </button>

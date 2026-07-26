@@ -44,9 +44,9 @@ export function HubRoster({ players, localSessionId, isHubOwner, onKick }: Props
   if (players.length === 0) return null;
 
   return (
-    <div className="bb-parchment pointer-events-auto relative mt-1 max-w-[11rem] px-2 py-1.5">
-      <p className="bb-title mb-1 text-[0.55rem] tracking-wider text-[var(--bb-brass)]">In hub</p>
-      <ul className="space-y-0.5">
+    <div className="bb-parchment pointer-events-auto relative mt-1 max-w-[12rem] px-3 py-2">
+      <p className="bb-section-label mb-1.5">In hub</p>
+      <ul className="space-y-1">
         {players.map((p) => {
           const isSelf = p.sessionId === localSessionId;
           const canKick = isHubOwner && !isSelf && !p.isOwner;
@@ -54,7 +54,7 @@ export function HubRoster({ players, localSessionId, isHubOwner, onKick }: Props
             <li key={p.sessionId}>
               <span
                 className={[
-                  "block truncate text-[0.7rem]",
+                  "block truncate text-sm",
                   canKick
                     ? "cursor-context-menu text-[var(--bb-ink)]"
                     : "text-[var(--bb-ink-soft)]",

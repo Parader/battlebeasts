@@ -11,99 +11,132 @@ function publicAssetUrl(path: string): string {
   return assetUrl(encoded);
 }
 
-export const VILLAGE_MUSIC_URL = publicAssetUrl("sounds/mage village.mp3");
+export type MusicTrackId = "village" | "arena";
+
+export const MUSIC_URLS: Record<MusicTrackId, string> = {
+  village: publicAssetUrl("sounds/mage village.mp3"),
+  arena: publicAssetUrl("sounds/sand arena.mp3"),
+};
 
 /** Authored bed level so 100% user music isn't harsh. */
 const MUSIC_BED = 0.45;
 const FADE_MS = 900;
 
-let audio: HTMLAudioElement | null = null;
-let fadeRaf = 0;
-let unlockBound = false;
-let wantPlaying = false;
-/** 0 while fading out to pause; 1 while audible / fading in. */
-let fadeGain = 0;
+type TrackRuntime = {
+  el: HTMLAudioElement;
+  /** 0 while faded out; 1 while audible. */
+  fadeGain: number;
+  fadeRaf: number;
+  wantPlaying: boolean;
+};
 
-function musicTargetVolume(): number {
+const tracks: Partial<Record<MusicTrackId, TrackRuntime>> = {};
+let unlockBound = false;
+let activeTrack: MusicTrackId | null = null;
+
+function musicTargetVolume(fadeGain: number): number {
   return Math.min(1, getMusicOutputVolume() * MUSIC_BED * fadeGain);
 }
 
-function getAudio(): HTMLAudioElement {
-  if (!audio) {
-    audio = new Audio();
-    audio.loop = true;
-    audio.preload = "auto";
-    audio.volume = 0;
-    audio.src = VILLAGE_MUSIC_URL;
+function getTrack(id: MusicTrackId): TrackRuntime {
+  let t = tracks[id];
+  if (!t) {
+    const el = new Audio();
+    el.loop = true;
+    el.preload = "auto";
+    el.volume = 0;
+    el.src = MUSIC_URLS[id];
+    t = { el, fadeGain: 0, fadeRaf: 0, wantPlaying: false };
+    tracks[id] = t;
   }
-  return audio;
+  return t;
 }
 
-function cancelFade() {
-  if (fadeRaf) {
-    cancelAnimationFrame(fadeRaf);
-    fadeRaf = 0;
+function cancelFade(t: TrackRuntime) {
+  if (t.fadeRaf) {
+    cancelAnimationFrame(t.fadeRaf);
+    t.fadeRaf = 0;
   }
 }
 
-function applyVolumeNow() {
-  getAudio().volume = musicTargetVolume();
+function applyVolume(t: TrackRuntime) {
+  t.el.volume = musicTargetVolume(t.fadeGain);
 }
 
-function fadeFadeGain(targetGain: number, onDone?: () => void) {
-  cancelFade();
-  const startGain = fadeGain;
+function fadeFadeGain(t: TrackRuntime, targetGain: number, onDone?: () => void) {
+  cancelFade(t);
+  const startGain = t.fadeGain;
   const t0 = performance.now();
 
   const tick = (now: number) => {
-    const t = Math.min(1, (now - t0) / FADE_MS);
-    const eased = t * t * (3 - 2 * t);
-    fadeGain = startGain + (targetGain - startGain) * eased;
-    applyVolumeNow();
-    if (t < 1) {
-      fadeRaf = requestAnimationFrame(tick);
+    const u = Math.min(1, (now - t0) / FADE_MS);
+    const eased = u * u * (3 - 2 * u);
+    t.fadeGain = startGain + (targetGain - startGain) * eased;
+    applyVolume(t);
+    if (u < 1) {
+      t.fadeRaf = requestAnimationFrame(tick);
       return;
     }
-    fadeGain = targetGain;
-    applyVolumeNow();
-    fadeRaf = 0;
+    t.fadeGain = targetGain;
+    applyVolume(t);
+    t.fadeRaf = 0;
     onDone?.();
   };
-  fadeRaf = requestAnimationFrame(tick);
+  t.fadeRaf = requestAnimationFrame(tick);
 }
 
 function bindUnlockOnce() {
   if (unlockBound) return;
   unlockBound = true;
   const unlock = () => {
-    if (!wantPlaying) return;
-    void tryPlay();
+    if (!activeTrack) return;
+    const t = tracks[activeTrack];
+    if (!t?.wantPlaying) return;
+    void tryPlay(activeTrack);
   };
   window.addEventListener("pointerdown", unlock, { passive: true });
   window.addEventListener("keydown", unlock);
 }
 
-async function tryPlay(): Promise<void> {
-  const el = getAudio();
+async function tryPlay(id: MusicTrackId): Promise<void> {
+  const t = getTrack(id);
   try {
-    if (el.paused) await el.play();
-    fadeFadeGain(1);
+    if (t.el.paused) await t.el.play();
+    fadeFadeGain(t, 1);
   } catch {
-    // Autoplay blocked until a user gesture — unlock listeners will retry.
     bindUnlockOnce();
   }
 }
 
+function stopTrack(id: MusicTrackId, opts?: { immediate?: boolean }) {
+  const t = tracks[id];
+  if (!t) return;
+  t.wantPlaying = false;
+  if (opts?.immediate) {
+    cancelFade(t);
+    t.fadeGain = 0;
+    applyVolume(t);
+    t.el.pause();
+    return;
+  }
+  if (t.el.paused && t.fadeGain <= 0.001) return;
+  fadeFadeGain(t, 0, () => {
+    t.el.pause();
+  });
+}
+
 // Live volume changes from settings while music is up.
 subscribeAudioSettings(() => {
-  if (!wantPlaying && fadeGain <= 0.001) return;
-  applyVolumeNow();
+  for (const t of Object.values(tracks)) {
+    if (!t) continue;
+    if (!t.wantPlaying && t.fadeGain <= 0.001) continue;
+    applyVolume(t);
+  }
 });
 
-/** Fetch + decode into the shared Audio element (hub preload step). */
-export async function preloadVillageMusic(): Promise<void> {
-  const el = getAudio();
-  if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return;
+async function preloadTrack(id: MusicTrackId): Promise<void> {
+  const t = getTrack(id);
+  if (t.el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return;
 
   await new Promise<void>((resolve, reject) => {
     const onReady = () => {
@@ -112,31 +145,63 @@ export async function preloadVillageMusic(): Promise<void> {
     };
     const onError = () => {
       cleanup();
-      reject(new Error(`Failed to load ${VILLAGE_MUSIC_URL}`));
+      reject(new Error(`Failed to load ${MUSIC_URLS[id]}`));
     };
     const cleanup = () => {
-      el.removeEventListener("canplaythrough", onReady);
-      el.removeEventListener("error", onError);
+      t.el.removeEventListener("canplaythrough", onReady);
+      t.el.removeEventListener("error", onError);
     };
-    el.addEventListener("canplaythrough", onReady, { once: true });
-    el.addEventListener("error", onError, { once: true });
-    el.load();
+    t.el.addEventListener("canplaythrough", onReady, { once: true });
+    t.el.addEventListener("error", onError, { once: true });
+    // Reload so replaced files (same URL) pick up after cache-busting hard refresh.
+    t.el.load();
   });
 }
 
-/** Loop village music (hub). No-ops safely if still loading / autoplay-blocked. */
-export function playVillageMusic(): void {
-  wantPlaying = true;
+/** Hub preload. */
+export async function preloadVillageMusic(): Promise<void> {
+  await preloadTrack("village");
+}
+
+/** Arena / PvP preload. */
+export async function preloadArenaMusic(): Promise<void> {
+  await preloadTrack("arena");
+}
+
+/**
+ * Switch looping soundtrack. Pass `null` to fade everything out.
+ * Crossfades when changing tracks.
+ */
+export function setMusicTrack(track: MusicTrackId | null): void {
+  if (track === activeTrack) {
+    if (track) {
+      const t = getTrack(track);
+      t.wantPlaying = true;
+      bindUnlockOnce();
+      void tryPlay(track);
+    }
+    return;
+  }
+
+  const prev = activeTrack;
+  activeTrack = track;
+
+  if (prev) stopTrack(prev);
+
+  if (!track) return;
+
+  const next = getTrack(track);
+  next.wantPlaying = true;
   bindUnlockOnce();
-  void tryPlay();
+  void tryPlay(track);
 }
 
-/** Fade out and pause (arena / leave play). */
+/** @deprecated Prefer setMusicTrack("village") */
+export function playVillageMusic(): void {
+  setMusicTrack("village");
+}
+
+/** @deprecated Prefer setMusicTrack(null) */
 export function stopVillageMusic(): void {
-  wantPlaying = false;
-  const el = getAudio();
-  if (el.paused && fadeGain <= 0.001) return;
-  fadeFadeGain(0, () => {
-    el.pause();
-  });
+  setMusicTrack(null);
 }

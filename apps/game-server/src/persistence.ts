@@ -3,8 +3,10 @@ import {
   DEFAULT_LOADOUT,
   STARTER_TALENT_POINTS,
   normalizeCoins,
+  normalizeCosmeticsEquipped,
   normalizeLoadout,
   normalizeTalentBuild,
+  type CosmeticsEquipped,
   type TalentBuild,
   type Wallet,
 } from "@battlebeasts/shared";
@@ -25,12 +27,14 @@ export type EconomySnapshot = Wallet & {
   color?: string;
   pattern?: string;
   patternColor?: string;
+  cosmeticsEquipped?: CosmeticsEquipped;
 };
 
 export type ProfileAppearance = {
   color?: string;
   pattern?: string;
   patternColor?: string;
+  cosmeticsEquipped?: CosmeticsEquipped;
 };
 
 const DEFAULT_ECO: EconomySnapshot = {
@@ -42,6 +46,7 @@ const DEFAULT_ECO: EconomySnapshot = {
   talentIds: [],
   talentPoints: STARTER_TALENT_POINTS,
   talentBuild: {},
+  cosmeticsEquipped: normalizeCosmeticsEquipped({}),
 };
 
 export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
@@ -57,11 +62,34 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
       .select("talent_ids, talent_build")
       .eq("user_id", userId)
       .maybeSingle(),
-    supabase.from("profiles").select("color, pattern, pattern_color").eq("id", userId).maybeSingle(),
+    supabase
+      .from("profiles")
+      .select("color, pattern, pattern_color, cosmetics_equipped")
+      .eq("id", userId)
+      .maybeSingle(),
   ]);
 
   if (profile.error) {
     console.warn("[persistence] load profile appearance failed:", profile.error.message);
+  }
+
+  let profileRow: {
+    color?: string;
+    pattern?: string;
+    pattern_color?: string;
+    cosmetics_equipped?: unknown;
+  } | null = profile.data ?? null;
+
+  if (profile.error && /cosmetics_equipped/i.test(profile.error.message)) {
+    console.warn(
+      "[persistence] cosmetics_equipped missing — run migration 20260726000000_profile_cosmetics_equipped.sql",
+    );
+    const fallback = await supabase
+      .from("profiles")
+      .select("color, pattern, pattern_color")
+      .eq("id", userId)
+      .maybeSingle();
+    profileRow = fallback.data;
   }
 
   const qty = (id: string) => inv.data?.find((r) => r.resource_id === id)?.quantity ?? 0;
@@ -81,9 +109,10 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     talentIds: Array.isArray(talents.data?.talent_ids) ? talents.data.talent_ids : [],
     talentPoints,
     talentBuild: normalizeTalentBuild(talents.data?.talent_build),
-    color: profile.data?.color ?? undefined,
-    pattern: profile.data?.pattern ?? undefined,
-    patternColor: profile.data?.pattern_color ?? undefined,
+    color: profileRow?.color ?? undefined,
+    pattern: profileRow?.pattern ?? undefined,
+    patternColor: profileRow?.pattern_color ?? undefined,
+    cosmeticsEquipped: normalizeCosmeticsEquipped(profileRow?.cosmetics_equipped),
   };
 }
 
@@ -130,22 +159,36 @@ export async function saveTalentBuild(userId: string, talentBuild: TalentBuild):
   );
 }
 
-/** Persist hide tint / pattern / ink on the account profile. */
+/** Persist hide tint / pattern / ink / equipped wearables on the account profile. */
 export async function saveProfileAppearance(
   userId: string,
   appearance: ProfileAppearance,
 ): Promise<boolean> {
   if (!supabase) return false;
-  const patch: Record<string, string> = {
+  const patch: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
   };
   if (appearance.color != null) patch.color = appearance.color;
   if (appearance.pattern != null) patch.pattern = appearance.pattern;
   if (appearance.patternColor != null) patch.pattern_color = appearance.patternColor;
+  if (appearance.cosmeticsEquipped != null) {
+    patch.cosmetics_equipped = normalizeCosmeticsEquipped(appearance.cosmeticsEquipped);
+  }
 
   const { error } = await supabase.from("profiles").update(patch).eq("id", userId);
   if (error) {
     console.warn("[persistence] saveProfileAppearance failed:", error.message, patch);
+    // If cosmetics column is missing, still try to save the rest.
+    if (appearance.cosmeticsEquipped != null && /cosmetics_equipped/i.test(error.message)) {
+      console.warn(
+        "[persistence] cosmetics_equipped missing — run migration 20260726000000_profile_cosmetics_equipped.sql",
+      );
+      const { cosmetics_equipped: _drop, ...rest } = patch;
+      if (Object.keys(rest).length > 1) {
+        const retry = await supabase.from("profiles").update(rest).eq("id", userId);
+        if (!retry.error) return true;
+      }
+    }
     return false;
   }
   return true;
@@ -164,4 +207,11 @@ export async function saveProfilePatternColor(
   patternColor: string,
 ): Promise<boolean> {
   return saveProfileAppearance(userId, { patternColor });
+}
+
+export async function saveProfileCosmeticsEquipped(
+  userId: string,
+  cosmeticsEquipped: CosmeticsEquipped,
+): Promise<boolean> {
+  return saveProfileAppearance(userId, { cosmeticsEquipped });
 }

@@ -33,6 +33,11 @@ import {
   normalizeCoins,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
+  normalizeCosmeticsEquipped,
+  cosmeticsEquippedFromFields,
+  cosmeticsEquippedToFields,
+  applyCosmeticEquip,
+  isCosmeticSlot,
   normalizeLoadout,
   normalizeTalentBuild,
   phaseDurationMs,
@@ -62,6 +67,7 @@ import {
   saveInventory,
   saveLoadout,
   saveProfileColor,
+  saveProfileCosmeticsEquipped,
   saveProfilePattern,
   saveProfilePatternColor,
   saveProfileAppearance,
@@ -178,6 +184,9 @@ export class BaseCityRoom extends Room<BaseCityState> {
     });
     this.onMessage("set_pattern_color", (client, message: { patternColor: string }) => {
       void this.handleSetPatternColor(client, message.patternColor);
+    });
+    this.onMessage("set_cosmetic", (client, message: { slot?: string; itemId?: string | null }) => {
+      void this.handleSetCosmetic(client, message.slot, message.itemId ?? null);
     });
 
     this.onMessage("shop_buy", (client, message: { itemId: string }) => {
@@ -339,6 +348,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
             : COSMETIC_COLORS[0]);
       player.pattern = normalizeCosmeticPattern(eco.pattern);
       player.patternColor = normalizeCosmeticPatternColor(eco.patternColor);
+      this.applyCosmeticsEquipped(player, eco.cosmeticsEquipped ?? {});
       if (player.copper === 0 && player.silver === 0 && player.gold === 0 && player.essence === 0) {
         const soft = normalizeCoins({ copper: 50, silver: 1, gold: 0 });
         player.copper = soft.copper;
@@ -677,6 +687,56 @@ export class BaseCityRoom extends Room<BaseCityState> {
       return;
     }
     client.send("toast", { message: "Pattern color updated (sign in to save)" });
+  }
+
+  private applyCosmeticsEquipped(
+    player: PlayerState,
+    equipped: Parameters<typeof normalizeCosmeticsEquipped>[0],
+  ) {
+    const fields = cosmeticsEquippedToFields(normalizeCosmeticsEquipped(equipped));
+    player.cosmeticHat = fields.cosmeticHat;
+    player.cosmeticShoulders = fields.cosmeticShoulders;
+    player.cosmeticChest = fields.cosmeticChest;
+    player.cosmeticGloves = fields.cosmeticGloves;
+    player.cosmeticBelt = fields.cosmeticBelt;
+    player.cosmeticLegs = fields.cosmeticLegs;
+    player.cosmeticShoes = fields.cosmeticShoes;
+  }
+
+  private cosmeticsEquippedOf(player: PlayerState) {
+    return cosmeticsEquippedFromFields({
+      cosmeticHat: player.cosmeticHat,
+      cosmeticShoulders: player.cosmeticShoulders,
+      cosmeticChest: player.cosmeticChest,
+      cosmeticGloves: player.cosmeticGloves,
+      cosmeticBelt: player.cosmeticBelt,
+      cosmeticLegs: player.cosmeticLegs,
+      cosmeticShoes: player.cosmeticShoes,
+    });
+  }
+
+  private async handleSetCosmetic(
+    client: Client,
+    slotRaw: string | undefined,
+    itemId: string | null,
+  ) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !slotRaw || !isCosmeticSlot(slotRaw)) return;
+    const next = applyCosmeticEquip(this.cosmeticsEquippedOf(player), slotRaw, itemId);
+    if (!next) {
+      client.send("toast", { message: "Cannot equip that item" });
+      return;
+    }
+    this.applyCosmeticsEquipped(player, next);
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      const ok = await saveProfileCosmeticsEquipped(identity.userId, next);
+      client.send("toast", {
+        message: ok ? "Outfit saved to your account" : "Outfit applied (account save failed)",
+      });
+      return;
+    }
+    client.send("toast", { message: "Outfit updated (sign in to save)" });
   }
 
   private async handleShopBuy(client: Client, itemId: string) {

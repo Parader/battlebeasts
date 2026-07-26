@@ -2,7 +2,7 @@ import { useGLTF, useTexture } from "@react-three/drei";
 import { ARENA_SCENE_URL, HUB_SCENE_URL } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
 import { CHARACTER_URL } from "./characterVisual";
-import { preloadVillageMusic } from "./gameMusic";
+import { preloadArenaMusic, preloadVillageMusic } from "./gameMusic";
 import { preloadCombatSfx } from "./gameSfx";
 import { GROUND_TEXTURE_URLS } from "./TexturedGround";
 
@@ -94,7 +94,11 @@ export async function preloadArenaAssets(
   onProgress?: (p: AssetProgress) => void,
 ): Promise<void> {
   await runTracked(
-    [() => preloadGltf(CHARACTER_URL), () => preloadGltf(arenaSceneUrl())],
+    [
+      () => preloadGltf(CHARACTER_URL),
+      () => preloadGltf(arenaSceneUrl()),
+      () => preloadArenaMusic(),
+    ],
     onProgress,
   );
 }
