@@ -4,10 +4,11 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { abilityVfxColor } from "../colors";
 import { createEnergyBallMaterial, tintEnergyMaterial } from "../materials/energyBall";
+import { createCirclePointMaterial } from "../materials/circlePoint";
 
 const TRAIL = 10;
 const SAMPLE_DIST = 0.22;
-const MOTE_COUNT = 36;
+const MOTE_COUNT = 18;
 
 const POISON = "#4d7c0f";
 const POISON_HOT = "#84cc16";
@@ -80,39 +81,7 @@ export function PoisonDartProjectileEffect({ room, id }: { room: Room; id: strin
     return geo;
   }, [positions, sizes, alphas]);
 
-  const particleMat = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        uniforms: { uColor: { value: new THREE.Color(POISON_HOT) } },
-        vertexShader: /* glsl */ `
-          attribute float aSize;
-          attribute float aAlpha;
-          varying float vAlpha;
-          void main() {
-            vAlpha = aAlpha;
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = aSize * (170.0 / max(-mv.z, 0.5));
-            gl_Position = projectionMatrix * mv;
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          uniform vec3 uColor;
-          varying float vAlpha;
-          void main() {
-            vec2 c = gl_PointCoord - 0.5;
-            float soft = smoothstep(0.5, 0.1, length(c));
-            float a = soft * vAlpha;
-            if (a < 0.02) discard;
-            gl_FragColor = vec4(uColor, a);
-          }
-        `,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    [],
-  );
+  const particleMat = useMemo(() => createCirclePointMaterial(POISON_HOT), []);
 
   useFrame((_, dt) => {
     const p = room.state?.projectiles?.get(id) as
@@ -262,7 +231,7 @@ export function PoisonDartProjectileEffect({ room, id }: { room: Room; id: strin
       positions[i * 3 + 2] = m.z;
       const appear = THREE.MathUtils.smoothstep(u, 0, 0.15);
       const fade = (1 - u) * (1 - u);
-      sizes[i] = m.size * appear * 42;
+      sizes[i] = m.size * appear * 28;
       alphas[i] = appear * fade * 0.9;
       living++;
     }

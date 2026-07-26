@@ -167,48 +167,18 @@ export const STATUSES: Record<string, StatusDef> = {
     durationMs: 3000,
     tickMs: 500,
     damagePerTick: 4,
-    maxStacks: 3,
-    stackRule: "stack",
+    maxStacks: 1,
+    stackRule: "refresh",
     color: "#fb923c",
     tag: "BRN",
   },
+  /**
+   * Shared poison DoT — every poison spell applies this (like burning / bleeding).
+   * 2 dmg × 7 ticks over 5s per stack; stacks up to 3×.
+   */
   poisoned: {
     id: "poisoned",
     name: "Poisoned",
-    polarity: "debuff",
-    mechanic: "dot",
-    durationMs: 4000,
-    tickMs: 750,
-    damagePerTick: 3,
-    maxStacks: 5,
-    stackRule: "stack",
-    color: "#c084fc",
-    tag: "PSN",
-  },
-  /**
-   * Spikes E venom — 5 dmg × 6 ticks over ~3s (500ms cadence).
-   * duration slightly past the 6th tick so the last pulse lands.
-   */
-  spikeVenom: {
-    id: "spikeVenom",
-    name: "Venom",
-    polarity: "debuff",
-    mechanic: "dot",
-    durationMs: 3200,
-    tickMs: 500,
-    damagePerTick: 5,
-    maxStacks: 1,
-    stackRule: "refresh",
-    color: "#166534",
-    tag: "VEN",
-  },
-  /**
-   * Poison Dart — 2 dmg × 7 ticks over 5s (700ms cadence) per stack.
-   * Stacks up to 3× (tick damage × stacks). With the 4 dmg dart hit ≈ 18 / stack.
-   */
-  poisonDart: {
-    id: "poisonDart",
-    name: "Poison",
     polarity: "debuff",
     mechanic: "dot",
     durationMs: 5000,

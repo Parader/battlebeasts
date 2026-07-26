@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST, FIREWALL_CAST } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -26,6 +26,8 @@ export type CharacterAnimationConfig = {
   castFrostMist?: string;
   /** Heal Beam / Standing 2H Magic Attack 04. */
   castHealBeam?: string;
+  /** Firewall / Standing 2H Magic Area Attack 01. */
+  castFirewall?: string;
   /** Poison Dart / Right Hook. */
   castPoisonDart?: string;
   /** Counter / Female Dance Pose. */
@@ -72,6 +74,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castFrostMist: "Standing 2H Magic Attack 03",
   /** Standing 2H Magic Attack 04 (was historically exported as magic_2h). */
   castHealBeam: "Standing 2H Magic Attack 04",
+  castFirewall: "Standing 2H Magic Area Attack 01",
   castPoisonDart: "Right Hook",
   castCounter: "Female Dance Pose",
   castAoE: "magic_aoe",
@@ -185,6 +188,10 @@ export const abilityAnimationBindings: Record<
     upper: "castHealBeam",
     upperTimeScale: HEAL_BEAM_CAST.playbackRate,
     upperHoldAtSec: HEAL_BEAM_CAST.holdFrame / HEAL_BEAM_CAST.fps,
+  },
+  firewall: {
+    upper: "castFirewall",
+    upperTimeScale: FIREWALL_CAST.playbackRate,
   },
   frostBall: {
     upper: "castFrost",

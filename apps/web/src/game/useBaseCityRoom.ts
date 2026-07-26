@@ -7,7 +7,7 @@ import type { FxBurst, DamagePopup } from "./CombatVfx";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime";
 import { abilityHudRuntime } from "./abilityHudRuntime";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, clearCrescentSpawnState } from "./vfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, usesFirewallFx, clearCrescentSpawnState } from "./vfx";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 import { playBoltHitSfx, playSlamHitSfx } from "./gameSfx";
 
@@ -495,7 +495,8 @@ export function useBaseCityRoom(options: Options) {
                         (usesSpikeFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesGrooveFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesHealBeamFx(msg.abilityId) && msg.kind === "aoe");
+                        (usesHealBeamFx(msg.abilityId) && msg.kind === "aoe") ||
+                        (usesFirewallFx(msg.abilityId) && msg.kind === "aoe");
 
                     if (!skipGroundBurst) {
                         const key = ++fxKeyRef.current;
@@ -554,6 +555,15 @@ export function useBaseCityRoom(options: Options) {
                             z: msg.z,
                             y: 0.02,
                         }, { lifeMs: 560 });
+                    }
+
+                    if (msg.kind === "aoe" && usesFirewallFx(msg.abilityId)) {
+                        spawnImpactEffect(msg.abilityId, {
+                            x: msg.x,
+                            z: msg.z,
+                            y: 0.03,
+                            yaw: msg.yaw,
+                        }, { lifeMs: 5200, radius: msg.radius });
                     }
 
                     if (

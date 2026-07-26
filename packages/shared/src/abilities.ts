@@ -130,7 +130,8 @@ export type AbilityEffectKind =
   | "coneChannel"
   | "pulseHeal"
   | "healBeam"
-  | "decoy";
+  | "decoy"
+  | "firewall";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
 export type SpellTag =
@@ -277,6 +278,11 @@ export interface AbilityDef {
   spikeStaggerMs?: number;
   /** Distance of the first spike in front of the caster. */
   spikeStart?: number;
+  /**
+   * Persistent ground zone lifetime (Firewall).
+   * Ticks `damage` every `tickMs` while active.
+   */
+  zoneDurationMs?: number;
   /** Frost Mist: half-angle of the spray cone (radians). */
   coneHalfAngle?: number;
   /** Frost Mist: starting cone length before it expands to `range`. */
@@ -464,10 +470,38 @@ export const SPIKES_CAST = {
   playbackRate: 1.75,
 } as const;
 
+/**
+ * Standing 2H Magic Area Attack 01 @ 30fps — clip 3.0s (90 frames).
+ * Firewall ignites at original frame 42; cancelable before that.
+ */
+export const FIREWALL_CAST = {
+  fps: 30,
+  releaseFrame: 42,
+  clipDurationSec: 3,
+  /** Faster windup; frame 42 still = ignition in clip time. */
+  playbackRate: 1.75,
+  zoneDurationMs: 4500,
+  tickMs: 400,
+} as const;
+
 function spikesReleaseWallMs(): number {
   return (
     (SPIKES_CAST.releaseFrame / SPIKES_CAST.fps / SPIKES_CAST.playbackRate) * 1000
   );
+}
+
+function firewallReleaseWallMs(): number {
+  return (
+    (FIREWALL_CAST.releaseFrame /
+      FIREWALL_CAST.fps /
+      FIREWALL_CAST.playbackRate) *
+    1000
+  );
+}
+
+function firewallRecoveryWallMs(): number {
+  /** Soft settle after the wall appears (clip continues in the background). */
+  return 420;
 }
 
 /**
@@ -736,7 +770,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "poisonDart",
     name: "Poison Dart",
     description:
-      "Snap a venomous dart with a right hook. Light impact, then a slow poison that eats at them for 5 seconds. Stacks up to three times.",
+      "Snap a venomous dart with a right hook. Light impact, then Poisoned (stacks up to 3, shared with Spikes).",
     cooldownMs: 2200,
     range: 11,
     shape: "projectile",
@@ -760,7 +794,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
-    applyOnHit: [{ statusId: "poisonDart", chance: 1 }],
+    applyOnHit: [{ statusId: "poisoned", chance: 1 }],
   },
   /**
    * Electrical augment (Space) — short cast, then +60% move for 3s.
@@ -808,7 +842,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "standard",
     tags: ["Buff", "Self", "Defense", "Shield", "Cast"],
     damage: 0,
-    allowedSlots: ["q", "e", "f"],
+    allowedSlots: ["q", "e"],
     timing: {
       anticipationMs: authoredForWallMs(90),
       castMs: authoredForWallMs(Math.max(16, barrierReleaseWallMs() - 90)),
@@ -941,7 +975,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnSelf: [{ statusId: "cloaked", durationMs: 2000 }],
   },
   /**
-   * Gust — circular push wave. Default F pick (also equippable on Q).
+   * Gust — circular push wave. Equippable on Q.
    * Hits shove targets outward, then slow them briefly.
    */
   gust: {
@@ -958,8 +992,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     radius: 3.5,
     knockback: 9.5,
     knockbackMs: 320,
-    allowedSlots: ["q", "f"],
-    defaultSlot: "f",
+    allowedSlots: ["q"],
     // magic_aoe: suck ends @48, blow @54 — wall times scale with playbackRate
     timing: {
       anticipationMs: authoredForWallMs(gustAnticipationWallMs()),
@@ -1018,12 +1051,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
   /**
    * Spikes (E) — staggered poison needles along the aim line.
    * Anim: Standing 1H Magic Attack 03 — first spike @ frame 30.
+   * Applies shared `poisoned` DoT (same status as Poison Dart).
    */
   spikes: {
     id: "spikes",
     name: "Spikes",
     description:
-      "Venomous spikes erupt from the ground in a fast staggered line. Narrow path, long reach; poisons anyone caught.",
+      "Venomous spikes erupt from the ground in a fast staggered line. Narrow path, long reach; applies Poisoned (stacks with Poison Dart).",
     cooldownMs: 5500,
     range: 10,
     shape: "aoe",
@@ -1048,7 +1082,49 @@ export const ABILITIES: Record<string, AbilityDef> = {
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
-    applyOnHit: [{ statusId: "spikeVenom", chance: 1 }],
+    applyOnHit: [{ statusId: "poisoned", chance: 1 }],
+  },
+  /**
+   * Firewall (R) — stationary fire wall perpendicular to aim.
+   * Anim: Standing 2H Magic Area Attack 01 — ignites @ frame 42 (cancel before).
+   * Draws from center out to both edges; burns in place for several seconds.
+   */
+  firewall: {
+    id: "firewall",
+    name: "Firewall",
+    description:
+      "Crack the earth and raise a wall of flame. Ignites at the climax of the cast — cancel anytime before then. The wall draws from its center to both edges and scorches anyone who stands in it.",
+    cooldownMs: 10000,
+    /** Full wall length (center → each edge = half). */
+    range: 13,
+    shape: "aoe",
+    effectKind: "firewall",
+    tags: ["Line", "GroundEffect", "Area", "Damage", "DamageOverTime", "Debuff", "Persistent", "Cast"],
+    /** Damage per zone tick. */
+    damage: 4,
+    /** Hit thickness of the wall corridor. */
+    radius: 0.9,
+    /** Segment count along the wall for hit checks. */
+    spikeCount: 15,
+    /** Distance in front of caster to the wall midline. */
+    spikeStart: 3.2,
+    tickMs: FIREWALL_CAST.tickMs,
+    zoneDurationMs: FIREWALL_CAST.zoneDurationMs,
+    allowedSlots: ["r"],
+    timing: {
+      anticipationMs: authoredForWallMs(100),
+      castMs: authoredForWallMs(Math.max(16, firewallReleaseWallMs() - 100)),
+      impactMs: authoredForWallMs(180),
+      recoveryMs: authoredForWallMs(firewallRecoveryWallMs()),
+      anticipationMoveMul: 0.45,
+      castMoveMul: 0.25,
+      impactMoveMul: 0.4,
+      recoveryMoveMul: 0.9,
+      canCancelAnticipation: true,
+      /** Locked once the wall ignites (impact). */
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "burning", chance: 1 }],
   },
   /**
    * Frost Mist (R) — expanding ice spray cone.
@@ -1090,7 +1166,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     interruptible: false,
   },
   /**
-   * Heal Beam (Q/E/F) — narrow forward heal channel.
+   * Heal Beam (F) — narrow forward heal channel.
    * Anim: Standing 2H Magic Attack 04 — beam starts @ frame 32.
    */
   healBeam: {
@@ -1108,7 +1184,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     healTicks: HEAL_BEAM_CAST.healTicks,
     tickMs: HEAL_BEAM_CAST.healTickMs,
     coneHalfAngle: HEAL_BEAM_CAST.beamHalfAngle,
-    allowedSlots: ["q", "e", "f"],
+    allowedSlots: ["f"],
+    defaultSlot: "f",
     timing: {
       anticipationMs: authoredForWallMs(90),
       castMs: authoredForWallMs(Math.max(16, healBeamReleaseWallMs() - 90)),
@@ -1164,10 +1241,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
 };
 
 /** Ordered by SPELL_SLOTS: LMB, RMB, Space, Q, E, R, F */
-export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map((slot) => {
-  const found = Object.values(ABILITIES).find((a) => a.defaultSlot === slot.id);
-  return found?.id ?? "bolt";
-});
+export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map((slot) =>
+  defaultAbilityForSlot(slot.id),
+);
 
 export function canEquipInSlot(abilityId: string, slotId: SpellSlotId): boolean {
   const def = ABILITIES[abilityId];

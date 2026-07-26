@@ -3,43 +3,8 @@ import { createGroundDecalMaterial } from "./materials/groundDecal";
 import { createTrailMaterial } from "./materials/trailMaterial";
 import { createEnergyBallMaterial, createEnergyRingMaterial } from "./materials/energyBall";
 import { createLightningBoltMaterial } from "./materials/lightningBolt";
+import { createCirclePointMaterial } from "./materials/circlePoint";
 import { groundPresets } from "./presets/ground";
-
-/** Soft additive point-sprite (matches AdditiveParticleBurst). */
-function createParticleBurstMaterial(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Color("#e0f2fe") },
-    },
-    vertexShader: /* glsl */ `
-      attribute float aSize;
-      attribute float aAlpha;
-      varying float vAlpha;
-      void main() {
-        vAlpha = aAlpha;
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = aSize * (180.0 / max(-mv.z, 0.5));
-        gl_Position = projectionMatrix * mv;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uColor;
-      varying float vAlpha;
-      void main() {
-        vec2 c = gl_PointCoord - 0.5;
-        float d = length(c);
-        float soft = smoothstep(0.5, 0.1, d);
-        float a = soft * vAlpha;
-        if (a < 0.02) discard;
-        gl_FragColor = vec4(uColor, a);
-      }
-    `,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-  });
-}
 
 /**
  * Compile spell VFX shader programs once so the first cast doesn't hitch.
@@ -65,6 +30,7 @@ export function warmSpellMaterials(
   // GroundDecal: normal + additive (shape/style are uniforms — program variants by blend).
   addMesh(createGroundDecalMaterial(groundPresets.earthSlam, "circle"));
   addMesh(createGroundDecalMaterial(groundPresets.frostBallAura, "circle"));
+  addMesh(createGroundDecalMaterial(groundPresets.fireWallAura, "rect"));
   addMesh(createGroundDecalMaterial(groundPresets.windSmoke, "circle"));
   addMesh(
     createGroundDecalMaterial(
@@ -92,8 +58,8 @@ export function warmSpellMaterials(
   // Surge / status lightning (cheap to include)
   addMesh(createLightningBoltMaterial("#67e8f9"));
 
-  // Additive particle burst points
-  const particleMat = createParticleBurstMaterial();
+  // Soft circle.png point sprites (AdditiveParticleBurst)
+  const particleMat = createCirclePointMaterial("#e0f2fe");
   toDispose.push(particleMat);
   const particleGeo = new THREE.BufferGeometry();
   particleGeo.setAttribute(

@@ -20,6 +20,7 @@ export const PATCH_NOTES: readonly PatchNote[] = [
     highlights: [
       "Counter (Q): rooted gold-glow stance — deny the next melee/projectile hit, then +20% damage, +20% move, and 40% resistance for 3s (cuts other casts; cancel anytime)",
       "Poison Dart (RMB): right-hook throw with stacking poison (up to 3) and a poison icon on health bars",
+      "Firewall (E/Q/F): lava-crack ground + vertical flame wall that ignites mid-cast (cancel before), draws center→edges, burns with a flame icon on health bars",
       "Barrier: self absorb bubble that charges through the cast",
       "Heal Beam: channelled ally heal line",
       "Critical hits: 5% chance for 1.5× damage or healing",

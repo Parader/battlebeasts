@@ -16,6 +16,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   healBeam: "#6ee7b7",
   poisonDart: "#4d7c0f",
   counter: "#f5c542",
+  firewall: "#f97316",
 };
 
 export function abilityVfxColor(abilityId: string, fallback = "#38bdf8"): string {

@@ -8,7 +8,13 @@ import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, PoisonDar
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
-import { PoisonHpBadge, readPoisonStacks, syncPoisonBadge } from "./PoisonHpBadge";
+import {
+  StatusHpBadgeStack,
+  readBurningStacks,
+  readPoisonStacks,
+  syncBurningBadge,
+  syncPoisonBadge,
+} from "./StatusHpBadgeStack";
 import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
@@ -714,6 +720,7 @@ function HpBillboard({
     const shield = useRef<THREE.Mesh>(null);
     const poisonBadge = useRef<HTMLDivElement>(null);
     const poisonStacksEl = useRef<HTMLSpanElement>(null);
+    const burningBadge = useRef<HTMLDivElement>(null);
     const lastPoisonStacks = useRef(0);
     useFrame(() => {
         const t = room?.state?.targets?.get(targetId) as
@@ -727,6 +734,7 @@ function HpBillboard({
         const s = shield.current;
         if (!m || !t) {
             syncPoisonBadge(poisonBadge.current, poisonStacksEl.current, 0, lastPoisonStacks);
+            syncBurningBadge(burningBadge.current, 0);
             return;
         }
         const maxHp = Math.max(1, t.maxHp);
@@ -755,6 +763,7 @@ function HpBillboard({
             readPoisonStacks(rows),
             lastPoisonStacks,
         );
+        syncBurningBadge(burningBadge.current, readBurningStacks(rows));
     });
     return (
         <group position={[0, y, 0]}>
@@ -770,7 +779,11 @@ function HpBillboard({
                 <planeGeometry args={[1, 0.1]} />
                 <meshBasicMaterial color="#60a5fa" />
             </mesh>
-            <PoisonHpBadge badgeRef={poisonBadge} stacksRef={poisonStacksEl} />
+            <StatusHpBadgeStack
+                poisonBadgeRef={poisonBadge}
+                poisonStacksRef={poisonStacksEl}
+                burningBadgeRef={burningBadge}
+            />
         </group>
     );
 }

@@ -2,6 +2,7 @@ import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { ObjectPool } from "../pool";
+import { createCirclePointMaterial } from "../materials/circlePoint";
 
 export type ParticleBurstOpts = {
   color: string;
@@ -55,7 +56,7 @@ function createParticle(): Particle {
 }
 
 /**
- * Additive point-sprite burst (CPU-sim, GPU draw).
+ * Additive point-sprite burst (CPU-sim, GPU draw) using soft circle.png.
  * Auto-hides when all particles die. Re-fire with `trigger` bump or remount.
  */
 export function AdditiveParticleBurst({
@@ -92,40 +93,12 @@ export function AdditiveParticleBurst({
     return geo;
   }, [positions, sizes, alphas]);
 
-  const material = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      uniforms: {
-        uColor: { value: new THREE.Color(color) },
-      },
-      vertexShader: /* glsl */ `
-        attribute float aSize;
-        attribute float aAlpha;
-        varying float vAlpha;
-        void main() {
-          vAlpha = aAlpha;
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = aSize * (180.0 / max(-mv.z, 0.5));
-          gl_Position = projectionMatrix * mv;
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform vec3 uColor;
-        varying float vAlpha;
-        void main() {
-          vec2 c = gl_PointCoord - 0.5;
-          float d = length(c);
-          float soft = smoothstep(0.5, 0.1, d);
-          float a = soft * vAlpha;
-          if (a < 0.02) discard;
-          gl_FragColor = vec4(uColor, a);
-        }
-      `,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-    });
-  }, [color]);
+  const material = useMemo(() => createCirclePointMaterial(color), [color]);
+
+  useEffect(() => {
+    const u = material.uniforms.uColor?.value as THREE.Color | undefined;
+    u?.set(color);
+  }, [material, color]);
 
   const burst = () => {
     for (const p of active.current) pool.release(p);
@@ -201,7 +174,7 @@ export function AdditiveParticleBurst({
         fadeIn > 1e-4 ? THREE.MathUtils.smoothstep(t, 0, fadeIn) : 1;
       const fade = (1 - t) * (1 - t);
       const sz = THREE.MathUtils.lerp(p.size, p.sizeEnd, t);
-      sizes[i] = sz * appear * 40;
+      sizes[i] = sz * appear * 28;
       alphas[i] = appear * fade;
       living++;
     }

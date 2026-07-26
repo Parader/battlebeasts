@@ -27,6 +27,7 @@ export {
   usesFrostMistFx,
   usesGrooveFx,
   usesHealBeamFx,
+  usesFirewallFx,
   BoltProjectileEffect,
   CrescentCastEffect,
   CrescentImpactEffect,
@@ -48,6 +49,8 @@ export { GroundMagicCircle } from "./components/GroundMagicCircle";
 export { GroundDecal } from "./components/GroundDecal";
 export { RuneDecal } from "./components/RuneDecal";
 export { AdditiveParticleBurst } from "./components/AdditiveParticleBurst";
+export { FireParticleField } from "./components/FireParticleField";
+export { LavaGroundStrip } from "./components/LavaGroundStrip";
 
 export {
   groundPresets,

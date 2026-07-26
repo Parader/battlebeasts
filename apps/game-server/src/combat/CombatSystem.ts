@@ -35,6 +35,7 @@ import {
   scaleForCrit,
   sampleTravel,
   spikeLinePoints,
+  firewallWallPoints,
   sweepTravel,
   tickProjectiles,
   totalCastDurationMs,
@@ -140,6 +141,18 @@ type PendingSpike = {
   hitIds: Set<string>;
 };
 
+type PendingFirewall = {
+  ownerId: string;
+  abilityId: string;
+  /** Wall segment centers for hit tests. */
+  points: Vec2[];
+  radius: number;
+  damage: number;
+  nextTickAt: number;
+  expiresAt: number;
+  tickMs: number;
+};
+
 type PendingFrostMist = {
   ownerId: string;
   abilityId: string;
@@ -208,6 +221,7 @@ export class CombatSystem {
   private knockbacks = new Map<string, ActiveKnockback>();
   private combos = new Map<string, ActiveCombo>();
   private pendingSpikes: PendingSpike[] = [];
+  private pendingFirewalls: PendingFirewall[] = [];
   private pendingFrostMist: PendingFrostMist[] = [];
   private pendingGrooveHeal: PendingGrooveHeal[] = [];
   private pendingHealBeam: PendingHealBeam[] = [];
@@ -563,6 +577,7 @@ export class CombatSystem {
     this.advanceCasts(now);
     this.advanceCombos(now);
     this.advancePendingSpikes(now);
+    this.advancePendingFirewalls(now);
     this.advancePendingFrostMist(now);
     this.advancePendingGrooveHeal(now);
     this.advancePendingHealBeam(now);
@@ -890,6 +905,8 @@ export class CombatSystem {
 
     if (kind === "spikeWave" && !deferHit) {
       this.scheduleSpikeWave(sessionId, ownerBody, def, now);
+    } else if (kind === "firewall" && !deferHit) {
+      this.scheduleFirewall(sessionId, ownerBody, def, now);
     } else if (kind === "coneChannel" && !deferHit) {
       this.scheduleFrostMist(sessionId, def, now);
     } else if (kind === "healBeam" && !deferHit) {
@@ -1185,6 +1202,66 @@ export class CombatSystem {
         hitIds,
       });
     }
+  }
+
+  private scheduleFirewall(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const wall = firewallWallPoints(ownerBody, def);
+    const durationMs = Math.max(800, def.zoneDurationMs ?? 4500);
+    const tickMs = Math.max(120, def.tickMs ?? 400);
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: wall.mid.x,
+      z: wall.mid.z,
+      radius: wall.halfLength,
+      yaw: wall.yaw,
+      ownerId: sessionId,
+    });
+    this.pendingFirewalls.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      points: wall.points,
+      radius: def.radius ?? 0.9,
+      damage: def.damage,
+      nextTickAt: now,
+      expiresAt: now + durationMs,
+      tickMs,
+    });
+  }
+
+  private advancePendingFirewalls(now: number) {
+    if (this.pendingFirewalls.length === 0) return;
+    const remain: PendingFirewall[] = [];
+    const bodies = this.collectBodies();
+    for (const zone of this.pendingFirewalls) {
+      if (now >= zone.expiresAt) continue;
+      while (zone.nextTickAt <= now && zone.nextTickAt < zone.expiresAt) {
+        const hitIds = new Set<string>();
+        for (const p of zone.points) {
+          const hits = resolveInstantHits(
+            p,
+            zone.radius,
+            zone.damage,
+            zone.ownerId,
+            bodies,
+            (o, t) => this.canHurt(o, t),
+          );
+          for (const hit of hits) {
+            if (hitIds.has(hit.targetId)) continue;
+            hitIds.add(hit.targetId);
+            this.applyDamage(hit.targetId, hit.damage, zone.ownerId, zone.abilityId, now);
+          }
+        }
+        zone.nextTickAt += zone.tickMs;
+      }
+      if (now < zone.expiresAt) remain.push(zone);
+    }
+    this.pendingFirewalls = remain;
   }
 
   private scheduleFrostMist(sessionId: string, def: AbilityDef, now: number) {

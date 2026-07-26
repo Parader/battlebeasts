@@ -4,7 +4,13 @@ import { Billboard } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { totalShieldAbsorb } from "@battlebeasts/shared";
-import { PoisonHpBadge, readPoisonStacks, syncPoisonBadge } from "./PoisonHpBadge";
+import {
+  StatusHpBadgeStack,
+  readBurningStacks,
+  readPoisonStacks,
+  syncBurningBadge,
+  syncPoisonBadge,
+} from "./StatusHpBadgeStack";
 
 type Props = {
   room: Room | null;
@@ -25,6 +31,7 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
   const shield = useRef<THREE.Mesh>(null);
   const poisonBadge = useRef<HTMLDivElement>(null);
   const poisonStacksEl = useRef<HTMLSpanElement>(null);
+  const burningBadge = useRef<HTMLDivElement>(null);
   const lingerUntil = useRef(0);
   const prevHp = useRef<number | null>(null);
   const lastPoisonStacks = useRef(0);
@@ -34,9 +41,11 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
     const m = fill.current;
     const s = shield.current;
     const badge = poisonBadge.current;
+    const burnBadge = burningBadge.current;
     if (!g || !m || !sessionId || !room) {
       if (g) g.visible = false;
-      if (badge) badge.style.visibility = "hidden";
+      if (badge) badge.style.display = "none";
+      if (burnBadge) burnBadge.style.display = "none";
       return;
     }
     const p = room.state?.players?.get(sessionId) as
@@ -52,7 +61,8 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       | undefined;
     if (!p || p.disconnected || typeof p.hp !== "number" || p.hp <= 0) {
       g.visible = false;
-      if (badge) badge.style.visibility = "hidden";
+      if (badge) badge.style.display = "none";
+      if (burnBadge) burnBadge.style.display = "none";
       prevHp.current = p?.hp ?? null;
       lastPoisonStacks.current = 0;
       return;
@@ -70,21 +80,30 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
     const damaged = p.hp < maxHp - 0.05;
     const now = performance.now();
     const poisonStacks = readPoisonStacks(rows);
+    const burningStacks = readBurningStacks(rows);
     const poisoned = poisonStacks > 0;
+    const burning = burningStacks > 0;
 
     if (prevHp.current != null && p.hp < prevHp.current - 0.05) {
       lingerUntil.current = now + COMBAT_LINGER_MS;
     }
     prevHp.current = p.hp;
 
-    if (damaged || shieldRatio > 0 || casting || poisoned) {
+    if (damaged || shieldRatio > 0 || casting || poisoned || burning) {
       lingerUntil.current = now + COMBAT_LINGER_MS;
     }
 
-    const inCombat = damaged || shieldRatio > 0 || casting || poisoned || now < lingerUntil.current;
+    const inCombat =
+      damaged ||
+      shieldRatio > 0 ||
+      casting ||
+      poisoned ||
+      burning ||
+      now < lingerUntil.current;
     if (!inCombat) {
       g.visible = false;
-      if (badge) badge.style.visibility = "hidden";
+      if (badge) badge.style.display = "none";
+      if (burnBadge) burnBadge.style.display = "none";
       lastPoisonStacks.current = 0;
       return;
     }
@@ -105,6 +124,7 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
     }
 
     syncPoisonBadge(badge, poisonStacksEl.current, poisonStacks, lastPoisonStacks);
+    syncBurningBadge(burnBadge, burningStacks);
   });
 
   return (
@@ -122,7 +142,11 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
           <planeGeometry args={[1, 0.055]} />
           <meshBasicMaterial color="#60a5fa" depthTest={false} toneMapped={false} />
         </mesh>
-        <PoisonHpBadge badgeRef={poisonBadge} stacksRef={poisonStacksEl} />
+        <StatusHpBadgeStack
+          poisonBadgeRef={poisonBadge}
+          poisonStacksRef={poisonStacksEl}
+          burningBadgeRef={burningBadge}
+        />
       </group>
     </Billboard>
   );

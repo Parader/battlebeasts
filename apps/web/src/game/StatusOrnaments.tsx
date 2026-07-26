@@ -1,8 +1,9 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { STATUSES } from "@battlebeasts/shared";
 import { createLightningBoltMaterial, tickLightningBolt } from "./vfx/materials/lightningBolt";
+import { createCirclePointMaterial } from "./vfx/materials/circlePoint";
 import { CounterStatusFx } from "./CounterStatusFx";
 
 export type StatusRowLite = {
@@ -61,9 +62,11 @@ function basicMat(color: string, opacity: number) {
 const BOLT_COUNT = 6;
 const SURGE_COLOR = "#67e8f9";
 const SURGE_HOT = "#fef08a";
-const POISON_WISP_COUNT = 10;
+const POISON_WISP_COUNT = 6;
+const BURN_WISP_COUNT = 10;
 /** Any DoT that should show the emanating poison cloud. */
-const POISON_STATUS_IDS = new Set(["poisoned", "spikeVenom", "poisonDart"]);
+const POISON_STATUS_IDS = new Set(["poisoned"]);
+const BURN_STATUS_IDS = new Set(["burning"]);
 
 /**
  * World-space malus ornaments over a unit (stun tornado, poison, bleed, slow)
@@ -73,7 +76,9 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
   const stun = useRef<THREE.Group>(null);
   const stunRings = useRef<(THREE.Group | null)[]>([null, null, null]);
   const poison = useRef<THREE.Group>(null);
-  const poisonWisps = useRef<(THREE.Mesh | null)[]>([]);
+  const poisonPoints = useRef<THREE.Points>(null);
+  const burn = useRef<THREE.Group>(null);
+  const burnWisps = useRef<(THREE.Mesh | null)[]>([]);
   const bleed = useRef<THREE.Group>(null);
   const slow = useRef<THREE.Group>(null);
   const rooted = useRef<THREE.Group>(null);
@@ -85,11 +90,41 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     () => [basicMat("#ffffff", 0.8), basicMat("#f8fafc", 0.65), basicMat("#e2e8f0", 0.5)] as const,
     [],
   );
-  const poisonMats = useMemo(
+  const poisonPositions = useMemo(() => new Float32Array(POISON_WISP_COUNT * 3), []);
+  const poisonSizes = useMemo(() => new Float32Array(POISON_WISP_COUNT), []);
+  const poisonAlphas = useMemo(() => new Float32Array(POISON_WISP_COUNT), []);
+  const poisonGeo = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(poisonPositions, 3));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(poisonSizes, 1));
+    geo.setAttribute("aAlpha", new THREE.BufferAttribute(poisonAlphas, 1));
+    return geo;
+  }, [poisonPositions, poisonSizes, poisonAlphas]);
+  /** Same Points + circle.png path as dart bursts — not SpriteMaterial (that hung the tab). */
+  const poisonPointMat = useMemo(() => createCirclePointMaterial("#4ade80"), []);
+  const poisonCoreMat = useMemo(
     () =>
-      Array.from({ length: POISON_WISP_COUNT }, (_, i) =>
+      new THREE.MeshBasicMaterial({
+        color: "#052e16",
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      poisonGeo.dispose();
+      poisonPointMat.dispose();
+    };
+  }, [poisonGeo, poisonPointMat]);
+  const burnMats = useMemo(
+    () =>
+      Array.from({ length: BURN_WISP_COUNT }, (_, i) =>
         new THREE.MeshBasicMaterial({
-          color: i % 3 === 0 ? "#166534" : i % 3 === 1 ? "#14532d" : "#4ade80",
+          color: i % 3 === 0 ? "#fff7ed" : i % 3 === 1 ? "#fb923c" : "#ea580c",
           transparent: true,
           opacity: 0.35,
           depthWrite: false,
@@ -99,10 +134,10 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       ),
     [],
   );
-  const poisonCoreMat = useMemo(
+  const burnCoreMat = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
-        color: "#052e16",
+        color: "#7c2d12",
         transparent: true,
         opacity: 0.28,
         depthWrite: false,
@@ -177,6 +212,24 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     [],
   );
 
+  const burnWispSpecs = useMemo(
+    () =>
+      Array.from({ length: BURN_WISP_COUNT }, (_, i) => {
+        const a = (i / BURN_WISP_COUNT) * Math.PI * 2 + 0.2;
+        return {
+          ang: a,
+          radius: 0.2 + (i % 4) * 0.065,
+          baseY: 0.5 + (i % 3) * 0.16,
+          rise: 0.6 + (i % 5) * 0.14,
+          size: 0.045 + (i % 3) * 0.022,
+          speed: 0.55 + (i % 4) * 0.14,
+          phase: i * 0.81,
+          spin: 0.75 + (i % 3) * 0.4,
+        };
+      }),
+    [],
+  );
+
   const boltRefresh = useRef(0);
   const root = useRef<THREE.Group>(null);
   const worldPos = useRef(new THREE.Vector3());
@@ -193,6 +246,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     if (rows.length === 0) {
       if (stun.current) stun.current.visible = false;
       if (poison.current) poison.current.visible = false;
+      if (burn.current) burn.current.visible = false;
       if (bleed.current) bleed.current.visible = false;
       if (slow.current) slow.current.visible = false;
       if (rooted.current) rooted.current.visible = false;
@@ -205,6 +259,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
 
     const has = (id: string) => rows.some((r) => r.statusId === id);
     const poisoned = rows.some((r) => POISON_STATUS_IDS.has(r.statusId));
+    const burning = rows.some((r) => BURN_STATUS_IDS.has(r.statusId));
 
     if (stun.current) {
       stun.current.visible = has("stunned");
@@ -222,27 +277,49 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     if (poison.current) {
       poison.current.visible = poisoned;
       if (poisoned) {
-        for (let i = 0; i < poisonWisps.current.length; i++) {
-          const mesh = poisonWisps.current[i];
-          const spec = wispSpecs[i];
-          const mat = poisonMats[i];
-          if (!mesh || !spec || !mat) continue;
+        for (let i = 0; i < POISON_WISP_COUNT; i++) {
+          const spec = wispSpecs[i]!;
           const cycle = (t * spec.speed + spec.phase) % 1;
           const ang = spec.ang + t * spec.spin;
           const y = spec.baseY + cycle * spec.rise;
           const outward = 0.85 + cycle * 0.55;
+          poisonPositions[i * 3] = Math.cos(ang) * spec.radius * outward;
+          poisonPositions[i * 3 + 1] = y;
+          poisonPositions[i * 3 + 2] = Math.sin(ang) * spec.radius * outward;
+          const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.55 ? 1 - (cycle - 0.55) / 0.45 : 1;
+          // Size into the same distance formula as AdditiveParticleBurst (×40)
+          poisonSizes[i] = spec.size * (0.7 + cycle * 1.1) * 36;
+          poisonAlphas[i] = Math.max(0, fade) * (0.35 + (i % 3) * 0.08);
+        }
+        poisonGeo.attributes.position!.needsUpdate = true;
+        poisonGeo.attributes.aSize!.needsUpdate = true;
+        poisonGeo.attributes.aAlpha!.needsUpdate = true;
+        poisonCoreMat.opacity = 0.18 + 0.1 * (0.5 + 0.5 * Math.sin(t * 4.2));
+      }
+    }
+    if (burn.current) {
+      burn.current.visible = burning;
+      if (burning) {
+        for (let i = 0; i < burnWisps.current.length; i++) {
+          const mesh = burnWisps.current[i];
+          const spec = burnWispSpecs[i];
+          const mat = burnMats[i];
+          if (!mesh || !spec || !mat) continue;
+          const cycle = (t * spec.speed + spec.phase) % 1;
+          const ang = spec.ang + t * spec.spin;
+          const y = spec.baseY + cycle * spec.rise;
+          const outward = 0.8 + cycle * 0.5;
           mesh.position.set(
             Math.cos(ang) * spec.radius * outward,
             y,
             Math.sin(ang) * spec.radius * outward,
           );
-          const s = spec.size * (0.7 + cycle * 1.1);
+          const s = spec.size * (0.65 + cycle * 1.2);
           mesh.scale.setScalar(s);
-          // Fade in low, peak mid, dissolve as it drifts up
-          const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.55 ? 1 - (cycle - 0.55) / 0.45 : 1;
-          mat.opacity = Math.max(0, fade) * (0.22 + (i % 3) * 0.06);
+          const fade = cycle < 0.12 ? cycle / 0.12 : cycle > 0.5 ? 1 - (cycle - 0.5) / 0.5 : 1;
+          mat.opacity = Math.max(0, fade) * (0.28 + (i % 3) * 0.07);
         }
-        poisonCoreMat.opacity = 0.18 + 0.1 * (0.5 + 0.5 * Math.sin(t * 4.2));
+        burnCoreMat.opacity = 0.16 + 0.12 * (0.5 + 0.5 * Math.sin(t * 5.1));
       }
     }
     if (bleed.current) {
@@ -378,11 +455,24 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
           <sphereGeometry args={[0.55, 10, 10]} />
           <primitive object={poisonCoreMat} attach="material" />
         </mesh>
-        {poisonMats.map((mat, i) => (
+        <points
+          ref={poisonPoints}
+          geometry={poisonGeo}
+          material={poisonPointMat}
+          frustumCulled={false}
+        />
+      </group>
+
+      <group ref={burn} visible={false}>
+        <mesh position={[0, 1.0, 0]} scale={[0.5, 0.8, 0.42]}>
+          <sphereGeometry args={[0.55, 10, 10]} />
+          <primitive object={burnCoreMat} attach="material" />
+        </mesh>
+        {burnMats.map((mat, i) => (
           <mesh
-            key={i}
+            key={`burn-${i}`}
             ref={(el) => {
-              poisonWisps.current[i] = el;
+              burnWisps.current[i] = el;
             }}
           >
             <sphereGeometry args={[1, 6, 6]} />

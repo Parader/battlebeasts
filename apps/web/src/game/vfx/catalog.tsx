@@ -18,6 +18,7 @@ import { HealSwooshEffect } from "./effects/healSwoosh";
 import { HealBeamEffect } from "./effects/healBeam";
 import { PoisonDartCastEffect } from "./effects/poisonDartCast";
 import { PoisonDartProjectileEffect } from "./effects/poisonDartProjectile";
+import { FirewallGroundEffect } from "./effects/firewallGround";
 
 export type ProjectileVfxId = "bolt" | "grasp" | "poisonDart";
 export type CastVfxId = "bolt" | "crescent" | "frostBall" | "barrier" | "poisonDart";
@@ -30,7 +31,8 @@ export type ImpactVfxId =
   | "frostMist"
   | "groove"
   | "healBeam"
-  | "poisonDart";
+  | "poisonDart"
+  | "firewall";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
 export const CATALOG_PROJECTILES = new Set<string>(["bolt", "grasp", "poisonDart"]);
@@ -93,6 +95,10 @@ export function usesHealBeamFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "healBeam";
 }
 
+export function usesFirewallFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "firewall";
+}
+
 export type VfxFollowContext = {
   room: Room | null;
   localSessionId: string | null;
@@ -134,6 +140,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (usesHealBeamFx(shot.abilityId)) {
     return <HealBeamEffect key={shot.key} shot={shot} follow={ctx} />;
   }
+  if (usesFirewallFx(shot.abilityId)) {
+    return <FirewallGroundEffect key={shot.key} shot={shot} />;
+  }
   if (usesGrooveFx(shot.abilityId)) {
     return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
   }
@@ -157,4 +166,5 @@ export {
   HealBeamEffect,
   PoisonDartCastEffect,
   PoisonDartProjectileEffect,
+  FirewallGroundEffect,
 };

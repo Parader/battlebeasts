@@ -70,6 +70,28 @@ export const groundPresets = {
     /** Slow yaw for the following aura disc (rad/s). */
     spin: 0.45,
   },
+  /**
+   * Firewall hit corridor — frostBallAura shading, fire colors, normal blend
+   * so it reads clearly on grass (same visibility idea as frost ball).
+   */
+  fireWallAura: {
+    element: "ice",
+    shape: "rect",
+    colorCore: "#fecaca",
+    colorMid: "#ef4444",
+    colorEdge: "#7f1d1d",
+    noiseScale: 8.5,
+    breakup: 0.45,
+    opacity: 0.9,
+    radius: 0.5,
+    lifeMs: 5200,
+    ringWidth: 0.14,
+    softness: 0.04,
+    aspect: 1,
+    innerRatio: 0.08,
+    /** Must stay 0 — corridor must not rotate relative to the wall. */
+    spin: 0,
+  },
   waterSplash: {
     element: "water",
     shape: "ring",

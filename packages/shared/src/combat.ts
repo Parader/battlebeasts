@@ -198,6 +198,37 @@ export function spikeLinePoints(
 }
 
 /**
+ * Firewall wall samples — perpendicular to aim, centered in front of caster.
+ * Ordered left → right so VFX can grow from the middle outward.
+ * Hit samples are inset so endpoint circles don't overshoot the painted wall.
+ */
+export function firewallWallPoints(
+  owner: CombatBody,
+  def: AbilityDef,
+): { mid: Vec2; yaw: number; halfLength: number; points: Vec2[] } {
+  const count = Math.max(1, Math.floor(def.spikeCount ?? 11));
+  const midDist = Math.max(1.2, def.spikeStart ?? 3.4);
+  const halfLength = Math.max(1.5, (def.range > 0 ? def.range : 9) * 0.5);
+  const hitRadius = Math.max(0.4, def.radius ?? 0.9);
+  /** Keep sample centers inside the visual wall so ticks don't land past the VFX. */
+  const hitHalf = Math.max(1.2, halfLength - hitRadius * 0.7);
+  const mid = pointInFront(owner, owner.yaw, midDist);
+  const face = facingVector(owner.yaw);
+  // Perpendicular in XZ (right when facing +yaw forward).
+  const rightX = face.z;
+  const rightZ = -face.x;
+  const points: Vec2[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = count === 1 ? 0 : (i / (count - 1)) * 2 - 1;
+    points.push({
+      x: mid.x + rightX * hitHalf * t,
+      z: mid.z + rightZ * hitHalf * t,
+    });
+  }
+  return { mid, yaw: owner.yaw, halfLength, points };
+}
+
+/**
  * Facing cone test (XZ). `halfAngle` in radians; `targetRadius` softens the rim.
  */
 export function inFacingCone(

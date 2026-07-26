@@ -9,6 +9,7 @@ import {
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope, smooth01 } from "../easing";
+import { createCirclePointMaterial } from "../materials/circlePoint";
 
 const BEAM_COLOR = "#6ee7b7";
 const BEAM_HOT = "#a7f3d0";
@@ -149,42 +150,7 @@ export function HealBeamEffect({
     return geo;
   }, [positions, sizes, alphas]);
 
-  const particleMat = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        uniforms: {
-          uColor: { value: new THREE.Color(BEAM_HOT) },
-        },
-        vertexShader: /* glsl */ `
-          attribute float aSize;
-          attribute float aAlpha;
-          varying float vAlpha;
-          void main() {
-            vAlpha = aAlpha;
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = aSize * (180.0 / max(-mv.z, 0.5));
-            gl_Position = projectionMatrix * mv;
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          uniform vec3 uColor;
-          varying float vAlpha;
-          void main() {
-            vec2 c = gl_PointCoord - 0.5;
-            float d = length(c);
-            float soft = smoothstep(0.5, 0.08, d);
-            float a = soft * vAlpha;
-            if (a < 0.02) discard;
-            gl_FragColor = vec4(uColor, a);
-          }
-        `,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    [],
-  );
+  const particleMat = useMemo(() => createCirclePointMaterial(BEAM_HOT), []);
 
   const coreMat = useMemo(
     () =>
@@ -345,7 +311,7 @@ export function HealBeamEffect({
         positions[idx * 3 + 2] = p.z;
         const appear = THREE.MathUtils.smoothstep(u, 0, 0.12);
         const out = (1 - u) * (1 - u);
-        sizes[idx] = p.size * appear * (38 + 10 * fade);
+        sizes[idx] = p.size * appear * (26 + 6 * fade);
         alphas[idx] = appear * out * fade * 0.95;
         living++;
       }

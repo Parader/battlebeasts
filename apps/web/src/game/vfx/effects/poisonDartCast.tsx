@@ -88,7 +88,7 @@ export function PoisonDartCastEffect({
         <AdditiveParticleBurst
           color={POISON_DARK}
           origin={[0, 0, 0]}
-          count={16}
+          count={9}
           life={0.45}
           speed={0.7}
           speedSpread={0.7}
@@ -103,7 +103,7 @@ export function PoisonDartCastEffect({
         <AdditiveParticleBurst
           color={POISON_HOT}
           origin={[0, 0, 0]}
-          count={10}
+          count={6}
           life={0.38}
           speed={1.1}
           speedSpread={0.6}

@@ -301,6 +301,7 @@ export class CharacterAnimationController {
     if (config.castSpikes) this.registerUpperCast("castSpikes", config.castSpikes);
     if (config.castFrostMist) this.registerUpperCast("castFrostMist", config.castFrostMist);
     if (config.castHealBeam) this.registerUpperCast("castHealBeam", config.castHealBeam);
+    if (config.castFirewall) this.registerUpperCast("castFirewall", config.castFirewall);
     if (config.castPoisonDart) this.registerUpperCast("castPoisonDart", config.castPoisonDart);
     if (config.castAoE) this.registerUpperCast("castAoE", config.castAoE);
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
