@@ -7,6 +7,7 @@ import { groundPresets } from "../presets/ground";
  */
 export function SmashCrackEffect({ shot }: { shot: OneShotEffect }) {
   const p = groundPresets.earthSlam;
+  const radius = shot.radius ?? p.radius;
   return (
     <GroundDecal
       preset={p}
@@ -16,7 +17,7 @@ export function SmashCrackEffect({ shot }: { shot: OneShotEffect }) {
       y={0.03}
       born={shot.born}
       life={shot.life}
-      radius={p.radius}
+      radius={radius}
     />
   );
 }

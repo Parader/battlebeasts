@@ -4,7 +4,7 @@ const CHAIN_URL = "/assets/vfx/chain-strip.png";
 
 let chainTex: THREE.Texture | null = null;
 
-/** Shared tiled chain-strip texture for projectile + rooted VFX. */
+/** Shared tiled chain-strip texture for projectile + chained VFX. */
 export function getChainTexture(): THREE.Texture {
   if (!chainTex) {
     chainTex = new THREE.TextureLoader().load(CHAIN_URL);

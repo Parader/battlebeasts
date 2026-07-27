@@ -14,8 +14,11 @@ export {
   character1AnimationConfig,
   defaultCharacterAnimationConfig,
   abilityAnimationBindings,
+  emoteAnimationClips,
   type CharacterAnimationConfig,
 } from "./animationConfig";
+
+export { playEmoteAnimation } from "./emoteAnimation";
 
 export { debugPrintAnimationAssets } from "./debugAnimations";
 

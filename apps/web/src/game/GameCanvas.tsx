@@ -14,6 +14,8 @@ type Props = {
     predictedRef: MutableRefObject<PredictedPose>;
     phase: SessionPhase;
     contentMode: string | null;
+    /** Freeze the main WebGL loop (e.g. while a second preview Canvas is open). */
+    suspended?: boolean;
 };
 
 const pitch = (CAMERA.pitchDeg * Math.PI) / 180;
@@ -50,6 +52,8 @@ export const GameCanvas = memo(function GameCanvas({
     predictedRef,
     phase,
     contentMode,
+    /** Freeze the main WebGL loop (e.g. while a second preview Canvas is open). */
+    suspended = false,
 }: Props) {
     const inContent = phase === "content";
 
@@ -58,6 +62,7 @@ export const GameCanvas = memo(function GameCanvas({
             className="h-full w-full touch-none"
             shadows
             dpr={[1, 1.5]}
+            frameloop={suspended ? "never" : "always"}
             gl={{ antialias: true, powerPreference: "high-performance" }}
             camera={{
                 fov: CAMERA.fov,

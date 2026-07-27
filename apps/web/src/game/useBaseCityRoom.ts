@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, HEAL_BEAM_CAST, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, HEAL_BEAM_CAST, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { FxBurst, DamagePopup } from "./CombatVfx";
@@ -8,8 +8,9 @@ import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { setWorldStaticColliders } from "./worldCollidersRuntime";
 import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime";
 import { abilityHudRuntime } from "./abilityHudRuntime";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, usesFirewallFx, clearCrescentSpawnState } from "./vfx";
+import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, usesFirewallFx, usesIceLanceExplodeFx, clearCrescentSpawnState } from "./vfx";
 import { takePortalChannelBubbleScale } from "./vfx/portalChannelRuntime";
+import { setActiveEmote, clearActiveEmote, isEmoteActive } from "./emoteRuntime";
 import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
 import { playBoltHitSfx, playSlamHitSfx } from "./gameSfx";
 
@@ -28,6 +29,18 @@ const HUB_STATICS = baseCityStaticColliders();
 const ARENA_STATICS = arenaStaticColliders();
 
 const PVP_MODE_IDS = new Set<string>(PVP_MODES.map((m) => m.id));
+
+/** Movement key codes — closing the emote pie / cancelling an active emote shares this set. */
+const MOVE_KEY_CODES = new Set([
+    "KeyW",
+    "ArrowUp",
+    "KeyS",
+    "ArrowDown",
+    "KeyA",
+    "ArrowLeft",
+    "KeyD",
+    "ArrowRight",
+]);
 
 const DAMAGE_POPUP_LIFE_MS = 900;
 
@@ -160,10 +173,14 @@ export function useBaseCityRoom(options: Options) {
         silver: 0,
         gold: 0,
         essence: 0,
+        rubies: 0,
         talentPoints: 0,
         talentBuild: {} as Record<string, number>,
         loadout: [] as string[],
         talents: [] as string[],
+        unlocks: null as import("@battlebeasts/shared").PlayerUnlocks | null,
+        loadoutPresets: [] as Array<{ slotIndex: number; name: string; abilityIds: string[] }>,
+        activeLoadoutSlot: 0,
     });
     const fxKeyRef = useRef(0);
     const dmgKeyRef = useRef(0);
@@ -172,6 +189,12 @@ export function useBaseCityRoom(options: Options) {
     const keysRef = useRef({ up: false, down: false, left: false, right: false });
     /** Hold-to-cast for mouse slots (LMB / RMB). */
     const heldCastSlotsRef = useRef({ mouse0: false, mouse2: false });
+    /** V-key emote pie wheel. */
+    const [emotePieOpen, setEmotePieOpen] = useState(false);
+    const emotePieOpenRef = useRef(false);
+    const [emoteAimAngle, setEmoteAimAngle] = useState(0);
+    const emoteAimAngleRef = useRef(0);
+    const emoteSlotsRef = useRef<(string | null)[]>(emptyEmoteSlots());
     const yawRef = useRef(0);
     const roomRef = useRef<Room | null>(null);
     const clientRef = useRef<Client | null>(null);
@@ -278,6 +301,8 @@ export function useBaseCityRoom(options: Options) {
             contentModeRef.current = mode ?? null;
             setActiveUi(null);
             setMatchPause(null);
+            emotePieOpenRef.current = false;
+            setEmotePieOpen(false);
             combatOverlayRuntime.clear();
             clearInteractPrompt();
             setNearInteract(null);
@@ -343,16 +368,27 @@ export function useBaseCityRoom(options: Options) {
                     loadout?: string[];
                     talents?: string[];
                     talentBuild?: Record<string, number>;
+                    unlocks?: import("@battlebeasts/shared").PlayerUnlocks;
+                    loadoutPresets?: Array<{
+                        slotIndex: number;
+                        name: string;
+                        abilityIds: string[];
+                    }>;
+                    activeLoadoutSlot?: number;
                 }) => {
                     setEconomy({
                         copper: msg.resources?.copper ?? 0,
                         silver: msg.resources?.silver ?? 0,
                         gold: msg.resources?.gold ?? 0,
                         essence: msg.resources?.essence ?? 0,
+                        rubies: msg.resources?.rubies ?? 0,
                         talentPoints: msg.resources?.talent_points ?? 0,
                         talentBuild: msg.talentBuild ?? {},
                         loadout: msg.loadout ?? [],
                         talents: msg.talents ?? [],
+                        unlocks: msg.unlocks ?? null,
+                        loadoutPresets: msg.loadoutPresets ?? [],
+                        activeLoadoutSlot: msg.activeLoadoutSlot ?? 0,
                     });
                 },
             );
@@ -379,6 +415,19 @@ export function useBaseCityRoom(options: Options) {
             joined.onMessage("hub_roster", (msg: { players?: HubRosterPlayer[] }) => {
                 setHubRoster(Array.isArray(msg.players) ? msg.players : []);
             });
+
+            joined.onMessage(
+                "emote_fx",
+                (msg: { sessionId: string; emoteId: string; phase: "start" | "cancel" }) => {
+                    if (!msg?.sessionId) return;
+                    if (msg.phase === "start" && msg.emoteId) {
+                        const def = getEmote(msg.emoteId);
+                        if (def) setActiveEmote(msg.sessionId, msg.emoteId, def.durationMs);
+                    } else {
+                        clearActiveEmote(msg.sessionId);
+                    }
+                },
+            );
 
             joined.onMessage("party_update", (msg: { party?: PartySnapshot | null }) => {
                 const next = msg.party ?? null;
@@ -426,6 +475,7 @@ export function useBaseCityRoom(options: Options) {
                     abilityId: string;
                     x: number;
                     z: number;
+                    y?: number;
                     x2?: number;
                     z2?: number;
                     radius?: number;
@@ -557,7 +607,8 @@ export function useBaseCityRoom(options: Options) {
                         (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesGrooveFx(msg.abilityId) && msg.kind === "aoe") ||
                         (usesHealBeamFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesFirewallFx(msg.abilityId) && msg.kind === "aoe");
+                        (usesFirewallFx(msg.abilityId) && msg.kind === "aoe") ||
+                        (usesIceLanceExplodeFx(msg.abilityId) && msg.kind === "aoe");
 
                     if (!skipGroundBurst) {
                         const key = ++fxKeyRef.current;
@@ -602,11 +653,15 @@ export function useBaseCityRoom(options: Options) {
                     }
 
                     if (msg.kind === "aoe" && usesAoeCrackFx(msg.abilityId)) {
-                        spawnImpactEffect(msg.abilityId, {
-                            x: msg.x,
-                            z: msg.z,
-                            y: 0.04,
-                        });
+                        spawnImpactEffect(
+                            msg.abilityId,
+                            {
+                                x: msg.x,
+                                z: msg.z,
+                                y: 0.04,
+                            },
+                            { radius: msg.radius ?? 2.6 },
+                        );
                         if (msg.abilityId === "smash") playSlamHitSfx();
                     }
 
@@ -625,6 +680,19 @@ export function useBaseCityRoom(options: Options) {
                             y: 0.03,
                             yaw: msg.yaw,
                         }, { lifeMs: 5200, radius: msg.radius });
+                    }
+
+                    if (msg.kind === "aoe" && usesIceLanceExplodeFx(msg.abilityId)) {
+                        spawnImpactEffect(
+                            msg.abilityId,
+                            {
+                              x: msg.x,
+                              z: msg.z,
+                              /** Stuck ≈1.05, grounded ≈0.28 — fragments spawn at the lance. */
+                              y: typeof msg.y === "number" ? msg.y : 0.85,
+                            },
+                            { lifeMs: 900, radius: msg.radius ?? 1.65 },
+                        );
                     }
 
                     if (
@@ -978,6 +1046,10 @@ export function useBaseCityRoom(options: Options) {
             keysRef.current = { up: false, down: false, left: false, right: false };
             heldCastSlotsRef.current = { mouse0: false, mouse2: false };
             pendingCastRef.current = undefined;
+            if (emotePieOpenRef.current) {
+                emotePieOpenRef.current = false;
+                setEmotePieOpen(false);
+            }
         }
         // Death (and any full input lock from it) must drop optimistic cast lock.
         if (diedAt != null) {
@@ -988,6 +1060,10 @@ export function useBaseCityRoom(options: Options) {
     useEffect(() => {
         loadoutRef.current = normalizeLoadout(economy.loadout);
     }, [economy.loadout]);
+
+    useEffect(() => {
+        emoteSlotsRef.current = economy.unlocks?.emoteSlots ?? emptyEmoteSlots();
+    }, [economy.unlocks]);
 
     const queueCastFromSlotInput = useCallback((slotInput: "mouse0" | "mouse2" | "space" | "q" | "e" | "r") => {
         if (inputLockedRef.current) return;
@@ -1114,6 +1190,20 @@ export function useBaseCityRoom(options: Options) {
         const onKey = (e: KeyboardEvent, down: boolean) => {
             if (inputLockedRef.current) return;
             if (e.repeat && down) return;
+
+            // WASD / Esc while the emote pie is open — dismiss without casting
+            // (movement / cancel-cast below still runs normally).
+            if (down && emotePieOpenRef.current && (MOVE_KEY_CODES.has(e.code) || e.code === "Escape")) {
+                emotePieOpenRef.current = false;
+                setEmotePieOpen(false);
+            }
+
+            // Moving while a full-body emote is playing cancels it immediately.
+            if (down && MOVE_KEY_CODES.has(e.code) && sessionIdRef.current && isEmoteActive(sessionIdRef.current)) {
+                clearActiveEmote(sessionIdRef.current);
+                roomRef.current?.send("cancel_emote");
+            }
+
             switch (e.code) {
                 case "KeyW":
                 case "ArrowUp":
@@ -1185,6 +1275,30 @@ export function useBaseCityRoom(options: Options) {
                         queueCancelCast();
                     }
                     break;
+                case "KeyV":
+                    if (down) {
+                        if (phaseRef.current !== "hub") break;
+                        e.preventDefault();
+                        emotePieOpenRef.current = true;
+                        setEmotePieOpen(true);
+                        // Seed the highlight from the last known cursor position
+                        // immediately, in case the mouse doesn't move before release.
+                        setEmoteAimAngle(emoteAimAngleRef.current);
+                    } else if (emotePieOpenRef.current) {
+                        e.preventDefault();
+                        emotePieOpenRef.current = false;
+                        setEmotePieOpen(false);
+                        const idx = angleToEmoteSlotIndex(emoteAimAngleRef.current, EMOTE_PIE_SLOT_COUNT);
+                        const emoteId = emoteSlotsRef.current[idx] ?? null;
+                        if (emoteId) {
+                            const def = getEmote(emoteId);
+                            if (def && sessionIdRef.current) {
+                                setActiveEmote(sessionIdRef.current, emoteId, def.durationMs);
+                            }
+                            roomRef.current?.send("cast_emote", { emoteId });
+                        }
+                    }
+                    break;
             }
         };
         const down = (e: KeyboardEvent) => onKey(e, true);
@@ -1212,6 +1326,13 @@ export function useBaseCityRoom(options: Options) {
         const onMouseUp = (e: MouseEvent) => {
             if (e.button === 0) heldCastSlotsRef.current.mouse0 = false;
             if (e.button === 2) heldCastSlotsRef.current.mouse2 = false;
+        };
+        const onMouseMoveForEmotePie = (e: MouseEvent) => {
+            emoteAimAngleRef.current = Math.atan2(
+                e.clientY - window.innerHeight / 2,
+                e.clientX - window.innerWidth / 2,
+            );
+            if (emotePieOpenRef.current) setEmoteAimAngle(emoteAimAngleRef.current);
         };
         const clearHeld = () => {
             heldCastSlotsRef.current.mouse0 = false;
@@ -1256,6 +1377,7 @@ export function useBaseCityRoom(options: Options) {
 
         window.addEventListener("mousedown", onMouseDown);
         window.addEventListener("mouseup", onMouseUp);
+        window.addEventListener("mousemove", onMouseMoveForEmotePie);
         window.addEventListener("blur", clearHeld);
         window.addEventListener("contextmenu", onContextMenu);
         return () => {
@@ -1265,6 +1387,7 @@ export function useBaseCityRoom(options: Options) {
             document.removeEventListener("auxclick", onSideButtonCapture, capture);
             window.removeEventListener("mousedown", onMouseDown);
             window.removeEventListener("mouseup", onMouseUp);
+            window.removeEventListener("mousemove", onMouseMoveForEmotePie);
             window.removeEventListener("blur", clearHeld);
             window.removeEventListener("contextmenu", onContextMenu);
         };
@@ -1691,15 +1814,33 @@ export function useBaseCityRoom(options: Options) {
                           }
                         | undefined;
                     if (me && typeof me.copper === "number") {
-                        setEconomy((prev) => ({
-                            ...prev,
-                            copper: me.copper ?? prev.copper,
-                            silver: me.silver ?? prev.silver,
-                            gold: me.gold ?? prev.gold,
-                            essence: me.essence ?? prev.essence,
-                            loadout: me.loadout ? me.loadout.split(",").filter(Boolean) : prev.loadout,
-                            talents: me.talents ? me.talents.split(",").filter(Boolean) : prev.talents,
-                        }));
+                        const nextLoadout = me.loadout
+                            ? me.loadout.split(",").filter(Boolean)
+                            : null;
+                        const nextTalents = me.talents
+                            ? me.talents.split(",").filter(Boolean)
+                            : null;
+                        setEconomy((prev) => {
+                            const loadoutUnchanged =
+                                !nextLoadout ||
+                                nextLoadout.join(",") === prev.loadout.join(",");
+                            const talentsUnchanged =
+                                !nextTalents ||
+                                nextTalents.join(",") === prev.talents.join(",");
+                            return {
+                                ...prev,
+                                copper: me.copper ?? prev.copper,
+                                silver: me.silver ?? prev.silver,
+                                gold: me.gold ?? prev.gold,
+                                essence: me.essence ?? prev.essence,
+                                rubies:
+                                    typeof (me as { rubies?: number }).rubies === "number"
+                                        ? (me as { rubies: number }).rubies
+                                        : prev.rubies,
+                                loadout: loadoutUnchanged ? prev.loadout : nextLoadout!,
+                                talents: talentsUnchanged ? prev.talents : nextTalents!,
+                            };
+                        });
                     }
                     if (me && typeof me.hp === "number") {
                         const shieldRows: { statusId?: string; stacks?: number }[] = [];
@@ -1892,5 +2033,7 @@ export function useBaseCityRoom(options: Options) {
         cancelParty,
         leaveParty,
         respondPartyInvite,
+        emotePieOpen,
+        emoteAimAngle,
     };
 }

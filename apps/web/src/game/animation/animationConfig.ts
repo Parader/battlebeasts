@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST, FIREWALL_CAST } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, EMOTES } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -30,6 +30,8 @@ export type CharacterAnimationConfig = {
   castFirewall?: string;
   /** Poison Dart / Right Hook. */
   castPoisonDart?: string;
+  /** Ice Lance / Baseball Pitching. */
+  castIceLance?: string;
   /** Counter / Female Dance Pose. */
   castCounter?: string;
   /** Portal / praying channel. */
@@ -78,6 +80,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castHealBeam: "Standing 2H Magic Attack 04",
   castFirewall: "Standing 2H Magic Area Attack 01",
   castPoisonDart: "Right Hook",
+  castIceLance: "Baseball Pitching",
   castCounter: "Female Dance Pose",
   castPraying: "praying",
   castAoE: "magic_aoe",
@@ -115,6 +118,15 @@ export const character1AnimationConfig: CharacterAnimationConfig = {
 
 /** Default = hero. */
 export const defaultCharacterAnimationConfig = heroAnimationConfig;
+
+/**
+ * emoteId → clip name inside `/hero.glb`, derived from the shared EMOTES
+ * catalog. Full-body dance clips are resolved by name (see `resolveClip`),
+ * so they don't need dedicated entries on `CharacterAnimationConfig`.
+ */
+export const emoteAnimationClips: Record<string, string> = Object.fromEntries(
+  Object.values(EMOTES).map((e) => [e.id, e.animClip]),
+);
 
 /** Ability id → logical cast / full-body key used by the avatar bridge. */
 export const abilityAnimationBindings: Record<
@@ -204,6 +216,10 @@ export const abilityAnimationBindings: Record<
   poisonDart: {
     upper: "castPoisonDart",
     upperTimeScale: POISON_DART_CAST.playbackRate,
+  },
+  iceLance: {
+    upper: "castIceLance",
+    upperTimeScale: ICE_LANCE_CAST.playbackRate,
   },
   barrier: {
     upper: "castBarrier",

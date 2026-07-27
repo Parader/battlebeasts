@@ -9,7 +9,9 @@ import {
   heroAnimationConfig,
   debugPrintAnimationAssets,
   playRandomDeath,
+  playEmoteAnimation,
 } from "./animation";
+import { getActiveEmote } from "./emoteRuntime";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
@@ -20,6 +22,7 @@ import { smashHopOffsetY } from "./smashHop";
 import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { findBone } from "./vfx/attach";
+import { registerCharacterRoot } from "./characterRoots";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { InteractPromptBillboard } from "./InteractPromptBillboard";
@@ -64,6 +67,7 @@ export function CharacterAvatar({
   const velocity = useRef(new THREE.Vector3());
   const lastCastId = useRef("");
   const comboAnimHoldUntil = useRef(0);
+  const lastEmoteId = useRef<string | null>(null);
   const seededMove = useRef(false);
   const visualYaw = useRef(0);
   const yawLocked = useRef(false);
@@ -112,6 +116,12 @@ export function CharacterAvatar({
       setEquipped(equippedFromPlayer(me));
     }
   }, [color, scene, room, localSessionId]);
+
+  useEffect(() => {
+    if (!localSessionId) return;
+    registerCharacterRoot(localSessionId, scene);
+    return () => registerCharacterRoot(localSessionId, null);
+  }, [scene, localSessionId]);
 
   useEffect(() => {
     const controller = new CharacterAnimationController(
@@ -206,6 +216,7 @@ export function CharacterAvatar({
       wasDeadRef.current = true;
       lastCastId.current = "";
       comboAnimHoldUntil.current = 0;
+      lastEmoteId.current = null;
       controller.cancelAbilityAnimation();
       const played = playRandomDeath(controller, animations);
       deathSinkRef.current = startDeathSink(played?.duration ?? 2.6);
@@ -253,6 +264,18 @@ export function CharacterAvatar({
 
     syncPlayerCast(controller, room, localSessionId, lastCastId, comboAnimHoldUntil);
 
+    // Full-body emote pie wheel — independent of the ability cast schema fields.
+    const activeEmoteId = localSessionId ? getActiveEmote(localSessionId) : null;
+    if (activeEmoteId) {
+      if (lastEmoteId.current !== activeEmoteId) {
+        lastEmoteId.current = activeEmoteId;
+        playEmoteAnimation(controller, activeEmoteId);
+      }
+    } else if (lastEmoteId.current) {
+      lastEmoteId.current = null;
+      controller.cancelFullBodyAction();
+    }
+
     // Jump Attack / Portal keep mouse aim; dash still locks facing for the dive.
     const fullBodyName = controller.getState().activeFullBodyName;
     const jumpAim =
@@ -268,6 +291,8 @@ export function CharacterAvatar({
       me?.castAbilityId === "groove" ||
       fullBodyName === "jazzDance" ||
       fullBodyName === "Jazz Dancing";
+    /** Emote wheel dances: full-body plays, but facing still follows the cursor. */
+    const emoteAim = Boolean(activeEmoteId);
     /** Body faces travel; head tracks cursor (cloak + Groove channel). */
     const moveBodyAim = crouchWalkActive || grooveActive;
     const movingForBody = moveBodyAim && speed > CLOAK_MOVE_SPEED_EPS;
@@ -277,10 +302,11 @@ export function CharacterAvatar({
         !jumpAim &&
         !portalAim &&
         !crouchWalkActive &&
-        !grooveActive) ||
+        !grooveActive &&
+        !emoteAim) ||
       false;
 
-    if (jumpAim || portalAim) {
+    if (jumpAim || portalAim || emoteAim) {
       visualYaw.current = p.yaw;
     } else if (moveBodyAim) {
       // Body faces travel direction; idle keeps last move facing.

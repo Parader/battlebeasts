@@ -15,6 +15,7 @@ export function useAudioSettings() {
     settings,
     setMaster: (master: number) => setAudioSettings({ master }),
     setMusic: (music: number) => setAudioSettings({ music }),
+    setAmbiance: (ambiance: number) => setAudioSettings({ ambiance }),
     setEffects: (effects: number) => setAudioSettings({ effects }),
     setAll: (patch: Partial<AudioSettings>) => setAudioSettings(patch),
   };

@@ -102,6 +102,11 @@ export class CharacterAnimationController {
   private readonly legsOnlyActions = new Map<LocoSlot, THREE.AnimationAction>();
   private readonly upperLocoActions = new Map<LocoSlot, THREE.AnimationAction>();
   private readonly upperCastByName = new Map<string, THREE.AnimationAction>();
+  /**
+   * True when a cast drives Mixamo hips for aim twist (default).
+   * Athletic clips can opt out so loco keeps feet planted.
+   */
+  private readonly upperCastOwnsHips = new WeakMap<THREE.AnimationAction, boolean>();
   private readonly fullBodyClips = new Map<string, THREE.AnimationClip>();
 
   private locoCurrent: LocoWeights = { ...ZERO_LOCO_WEIGHTS };
@@ -118,6 +123,8 @@ export class CharacterAnimationController {
   private castWeightTarget = 0;
   private activeCast: THREE.AnimationAction | null = null;
   private activeCastName: string | null = null;
+  /** Whether the active (or fading) upper cast drives hips for aim twist. */
+  private castOwnsHips = true;
   private upperGen = 0;
   private castOnComplete: (() => void) | null = null;
   /** When set, freeze the active upper cast once clip time reaches this. */
@@ -177,6 +184,7 @@ export class CharacterAnimationController {
       castFrostMist: config.castFrostMist,
       castHealBeam: config.castHealBeam,
       castPoisonDart: config.castPoisonDart,
+      castIceLance: config.castIceLance,
       castAoE: config.castAoE,
       castMelee: config.castMelee,
       dash: config.dash,
@@ -303,6 +311,10 @@ export class CharacterAnimationController {
     if (config.castHealBeam) this.registerUpperCast("castHealBeam", config.castHealBeam);
     if (config.castFirewall) this.registerUpperCast("castFirewall", config.castFirewall);
     if (config.castPoisonDart) this.registerUpperCast("castPoisonDart", config.castPoisonDart);
+    // Baseball Pitching leans the pelvis hard — upper-only keeps feet planted.
+    if (config.castIceLance) {
+      this.registerUpperCast("castIceLance", config.castIceLance, { ownHips: false });
+    }
     if (config.castAoE) this.registerUpperCast("castAoE", config.castAoE);
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);
@@ -325,15 +337,27 @@ export class CharacterAnimationController {
     }
   }
 
-  registerUpperCast(logicalName: string, clipName: string): void {
+  /**
+   * Register an upper-body cast clip.
+   * @param options.ownHips — default true: include hips for Mixamo aim twist.
+   *   Pass false for athletic clips (e.g. Baseball Pitching) so loco keeps feet planted.
+   */
+  registerUpperCast(
+    logicalName: string,
+    clipName: string,
+    options: { ownHips?: boolean } = {},
+  ): void {
     const src = resolveClip(this.sourceClips, clipName);
     if (!src) {
       console.warn(`[CharacterAnimation] cannot register upper cast "${logicalName}" → "${clipName}"`);
       return;
     }
-    // Include hips so Mixamo aim twist stays with the cast (upper-only looked sideways).
-    // Plant hips Y to idle height — Mixamo casts crouch hard and drive feet through the floor.
-    const castClip = createCastBodyClip(plantHipsRootMotion(src, this.plantHipsY));
+    const ownHips = options.ownHips !== false;
+    // Default: include hips so Mixamo aim twist stays with the cast. Plant hips Y so
+    // crouches don't sink feet. Athletic clips opt out (ownHips: false).
+    const castClip = ownHips
+      ? createCastBodyClip(plantHipsRootMotion(src, this.plantHipsY))
+      : createUpperBodyClip(src);
     if (castClip.tracks.length === 0) {
       console.warn(`[CharacterAnimation] cast clip has no tracks after mask: ${clipName}`);
       return;
@@ -344,6 +368,7 @@ export class CharacterAnimationController {
     action.setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = true;
     action.stop();
+    this.upperCastOwnsHips.set(action, ownHips);
     this.upperCastByName.set(logicalName, action);
     this.upperCastByName.set(src.name, action);
     this.upperCastByName.set(clipName, action);
@@ -398,9 +423,11 @@ export class CharacterAnimationController {
     );
 
     const locoUpperMul = this.layerMulUpper * (1 - this.castWeight);
-    // While casting, legs-only loco so cast hips own Mixamo aim twist
-    const hipsLocoMul = this.layerMulLower * (1 - this.castWeight);
-    const legsLocoMul = this.layerMulLower * this.castWeight;
+    // While casting with hip-owning clips, legs-only loco so cast hips own Mixamo aim twist.
+    // Upper-only casts (athletic pitches) leave full lower loco so feet stay planted.
+    const useCastHips = this.castOwnsHips && this.castWeight > 0.01;
+    const hipsLocoMul = this.layerMulLower * (useCastHips ? 1 - this.castWeight : 1);
+    const legsLocoMul = this.layerMulLower * (useCastHips ? this.castWeight : 0);
 
     this.stunBlend +=
       ((this.stunned && this.stunIdleLower ? 1 : 0) - this.stunBlend) *
@@ -599,6 +626,7 @@ export class CharacterAnimationController {
     this.casting = true;
     this.activeCast = action;
     this.activeCastName = animationName;
+    this.castOwnsHips = this.upperCastOwnsHips.get(action) ?? true;
     this.castWeightTarget = 1;
     // Small kick so the first frame isn't fully loco-upper
     this.castWeight = Math.max(this.castWeight, 0.15);

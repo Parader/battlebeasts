@@ -11,7 +11,7 @@ export const groundPresets = {
     noiseScale: 6.8,
     breakup: 0.9,
     opacity: 1,
-    radius: 2.35,
+    radius: 2.75,
     lifeMs: 1800,
     ringWidth: 0.11,
     softness: 0.04,

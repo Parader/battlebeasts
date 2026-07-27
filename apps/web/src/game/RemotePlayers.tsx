@@ -8,7 +8,9 @@ import {
   CharacterAnimationController,
   heroAnimationConfig,
   playRandomDeath,
+  playEmoteAnimation,
 } from "./animation";
+import { getActiveEmote } from "./emoteRuntime";
 import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
@@ -21,6 +23,7 @@ import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndica
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { PlayerNameBillboard } from "./PlayerNameBillboard";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
+import { registerCharacterRoot } from "./characterRoots";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -60,6 +63,7 @@ function RemotePlayerAvatar({
   const controllerRef = useRef<CharacterAnimationController | null>(null);
   const lastCastId = useRef("");
   const comboAnimHoldUntil = useRef(0);
+  const lastEmoteId = useRef<string | null>(null);
   const aimColor = AIM_RELATION_COLORS[relation];
 
   const renderPos = useRef(new THREE.Vector3());
@@ -88,6 +92,11 @@ function RemotePlayerAvatar({
   const animations = gltf.animations;
 
   useEffect(() => {
+    registerCharacterRoot(sessionId, scene);
+    return () => registerCharacterRoot(sessionId, null);
+  }, [scene, sessionId]);
+
+  useEffect(() => {
     const controller = new CharacterAnimationController(
       scene,
       animations,
@@ -112,6 +121,7 @@ function RemotePlayerAvatar({
         lastCastId.current = "";
         comboAnimHoldUntil.current = 0;
       }
+      lastEmoteId.current = null;
       return;
     }
 
@@ -215,6 +225,7 @@ function RemotePlayerAvatar({
       wasDeadRef.current = true;
       lastCastId.current = "";
       comboAnimHoldUntil.current = 0;
+      lastEmoteId.current = null;
       controller.cancelAbilityAnimation();
       const played = playRandomDeath(controller, animations);
       deathSinkRef.current = startDeathSink(played?.duration ?? 2.6);
@@ -245,6 +256,19 @@ function RemotePlayerAvatar({
 
     // Sync casts before reading override state so dash locks facing this frame
     syncPlayerCast(controller, room, sessionId, lastCastId, comboAnimHoldUntil);
+
+    // Full-body emote pie wheel — independent of the ability cast schema fields.
+    const activeEmoteId = getActiveEmote(sessionId);
+    if (activeEmoteId) {
+      if (lastEmoteId.current !== activeEmoteId) {
+        lastEmoteId.current = activeEmoteId;
+        playEmoteAnimation(controller, activeEmoteId);
+      }
+    } else if (lastEmoteId.current) {
+      lastEmoteId.current = null;
+      controller.cancelFullBodyAction();
+    }
+
     const fullBodyName = controller.getState().activeFullBodyName;
     const jumpAim =
       fullBodyName === "jumpAttack" ||
@@ -254,9 +278,11 @@ function RemotePlayerAvatar({
       p.castAbilityId === "portal" ||
       fullBodyName === "castPraying" ||
       fullBodyName === "praying";
+    /** Emote wheel dances: full-body plays, but facing still follows the cursor. */
+    const emoteAim = Boolean(activeEmoteId);
     yawLocked.current =
-      controller.getState().fullBody === "override" && !jumpAim && !portalAim;
-    if (jumpAim || portalAim) {
+      controller.getState().fullBody === "override" && !jumpAim && !portalAim && !emoteAim;
+    if (jumpAim || portalAim || emoteAim) {
       renderYaw.current = p.yaw;
     } else if (!yawLocked.current) {
       renderYaw.current = dampYawClamped(

@@ -104,8 +104,14 @@ export function syncAbilityCast(
       }
       return;
     }
-    // Channel holds (Counter) keep the end pose through impact.
-    if (player.castPhase === "impact" && binding.holdEndPoseOnRecovery) {
+    // Counter / Portal: freeze through the rooted channel impact.
+    // Smash also sets holdEndPoseOnRecovery, but needs airTimeScale during impact
+    // so the leap plays — freeze only on recovery (above).
+    if (
+      player.castPhase === "impact" &&
+      binding.holdEndPoseOnRecovery &&
+      typeof binding.airTimeScale !== "number"
+    ) {
       if (typeof binding.holdPoseAtSec === "number") {
         controller.freezeFullBodyAt(binding.holdPoseAtSec);
       }

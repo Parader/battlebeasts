@@ -1,7 +1,7 @@
 import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import { useRef } from "react";
-import { ABILITIES, phaseDurationMs, totalCastDurationMs, POISON_DART_CAST } from "@battlebeasts/shared";
+import { ABILITIES, phaseDurationMs, totalCastDurationMs, POISON_DART_CAST, ICE_LANCE_CAST } from "@battlebeasts/shared";
 import { CATALOG_CAST_FX, usesBridgedAoeFx, usesMeleeSwoopFx } from "./catalog";
 import { spawnCastEffect, spawnImpactEffect, cancelFollowOwnerVfx } from "./runtime";
 import type { VfxHandle } from "./types";
@@ -40,6 +40,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
   const pending = useRef(new Map<string, PendingMuzzle>());
   const fired = useRef(new Set<string>());
   const frostHand = useRef(new Map<string, VfxHandle>());
+  const iceLanceHand = useRef(new Map<string, VfxHandle>());
   const barrierCast = useRef(new Map<string, VfxHandle>());
   const gustWave = useRef(new Map<string, VfxHandle>());
 
@@ -55,6 +56,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       const catalog =
         !!abilityId && CATALOG_CAST_FX.has(abilityId) && !usesMeleeSwoopFx(abilityId);
       const isFrost = abilityId === "frostBall";
+      const isIceLance = abilityId === "iceLance";
       const isBarrier = abilityId === "barrier";
       const isGust = usesBridgedAoeFx(abilityId);
 
@@ -115,6 +117,46 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         }
       }
 
+      // Ice Lance: spike from anticipation → hand bone → same mesh becomes projectile.
+      if (catalog && isIceLance) {
+        const enteringAnticipation = phase === "anticipation" && prev !== "anticipation";
+        const missedAnticipation =
+          phase === "cast" &&
+          prev !== "anticipation" &&
+          prev !== "cast" &&
+          !iceLanceHand.current.has(sessionId);
+        if (enteringAnticipation || missedAnticipation) {
+          iceLanceHand.current.get(sessionId)?.cancel();
+          const def = ABILITIES[abilityId];
+          const chargeMs = def
+            ? (enteringAnticipation
+                ? phaseDurationMs(def, "anticipation") + phaseDurationMs(def, "cast")
+                : phaseDurationMs(def, "cast")) + 120
+            : 2200;
+          const flightMs = def
+            ? ((def.range > 0 ? def.range : 14) / (def.speed ?? 28)) * 1000
+            : 500;
+          const fuseMs = def?.detonate?.delayMs ?? 2000;
+          const lifeMs = chargeMs + flightMs + fuseMs + 800;
+          const yaw = raw.yaw ?? 0;
+          const x = (raw.x ?? 0) + Math.sin(yaw) * ICE_LANCE_CAST.spawnOffset;
+          const z = (raw.z ?? 0) + Math.cos(yaw) * ICE_LANCE_CAST.spawnOffset;
+          iceLanceHand.current.set(
+            sessionId,
+            spawnCastEffect(
+              abilityId,
+              { x, z, yaw, y: ICE_LANCE_CAST.handY },
+              {
+                followOwnerId: sessionId,
+                followSpawnOffset: ICE_LANCE_CAST.spawnOffset,
+                lifeMs,
+                chargeMs,
+              },
+            ),
+          );
+        }
+      }
+
       // Barrier: rising ground particles + growing bubble from cast start.
       if (catalog && isBarrier) {
         const enteringAnticipation = phase === "anticipation" && prev !== "anticipation";
@@ -151,7 +193,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       }
 
       // Bolt-style: schedule muzzle when cast phase begins
-      if (catalog && !isFrost && !isBarrier && phase === "cast" && prev !== "cast") {
+      if (catalog && !isFrost && !isIceLance && !isBarrier && phase === "cast" && prev !== "cast") {
         const def = ABILITIES[abilityId];
         const castMs = def ? phaseDurationMs(def, "cast") : 200;
         // Poison Dart: release exactly at impact (Right Hook frame 11) — no early lead.
@@ -175,6 +217,8 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         if (phase === "cancel" || phase === "interrupt" || phase === "idle" || phase === "") {
           frostHand.current.get(sessionId)?.cancel();
           frostHand.current.delete(sessionId);
+          iceLanceHand.current.get(sessionId)?.cancel();
+          iceLanceHand.current.delete(sessionId);
           barrierCast.current.get(sessionId)?.cancel();
           barrierCast.current.delete(sessionId);
           gustWave.current.get(sessionId)?.cancel();
@@ -209,6 +253,32 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         }
         frostHand.current.delete(sessionId);
       }
+      if (isIceLance && phase === "impact" && prev !== "impact") {
+        if (!iceLanceHand.current.has(sessionId)) {
+          const def = ABILITIES[abilityId];
+          const flightMs = def
+            ? ((def.range > 0 ? def.range : 14) / (def.speed ?? 28)) * 1000
+            : 500;
+          const fuseMs = def?.detonate?.delayMs ?? 2000;
+          const yaw = raw.yaw ?? 0;
+          const x = (raw.x ?? 0) + Math.sin(yaw) * ICE_LANCE_CAST.spawnOffset;
+          const z = (raw.z ?? 0) + Math.cos(yaw) * ICE_LANCE_CAST.spawnOffset;
+          iceLanceHand.current.set(
+            sessionId,
+            spawnCastEffect(
+              abilityId,
+              { x, z, yaw, y: ICE_LANCE_CAST.handY },
+              {
+                followOwnerId: sessionId,
+                followSpawnOffset: ICE_LANCE_CAST.spawnOffset,
+                lifeMs: flightMs + fuseMs + 800,
+                chargeMs: 1,
+              },
+            ),
+          );
+        }
+        iceLanceHand.current.delete(sessionId);
+      }
       // Barrier shot keeps running through the shield buff — only drop the handle map entry.
       if (isBarrier && phase === "impact" && prev !== "impact") {
         barrierCast.current.delete(sessionId);
@@ -231,6 +301,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       if (
         catalog &&
         !isFrost &&
+        !isIceLance &&
         !isBarrier &&
         phase === "impact" &&
         prev !== "impact" &&
@@ -251,6 +322,8 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
         fired.current.delete(id);
         frostHand.current.get(id)?.cancel();
         frostHand.current.delete(id);
+        iceLanceHand.current.get(id)?.cancel();
+        iceLanceHand.current.delete(id);
         barrierCast.current.get(id)?.cancel();
         barrierCast.current.delete(id);
         cancelFollowOwnerVfx("barrier", id);

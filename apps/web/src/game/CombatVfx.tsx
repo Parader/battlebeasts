@@ -110,6 +110,10 @@ function ProjectileRouter({
         // Orb + aura are owned by FrostBallCastEffect (charge → same mesh flight).
         return null;
     }
+    if (abilityId === "iceLance") {
+        // Spike is owned by IceLanceCastEffect (hand → same mesh flight/stick).
+        return null;
+    }
     if (abilityId === "grasp") {
         return <GraspProjectileEffect room={room} id={id} />;
     }

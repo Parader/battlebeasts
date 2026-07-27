@@ -23,7 +23,7 @@ export class PlayerState extends Schema {
   /** Creature hide pattern id (`plain` | `scales` | …). */
   @type("string") pattern = "plain";
   /** Ink color for pattern markings. */
-  @type("string") patternColor = "#1f2937";
+  @type("string") patternColor = "#f8fafc";
   /** Equipped wearable cosmetics (catalog id, or "" = none). */
   @type("string") cosmeticHat = "";
   @type("string") cosmeticShoulders = "";
@@ -50,6 +50,8 @@ export class PlayerState extends Schema {
   @type("number") gold = 0;
   /** Magical currency. */
   @type("number") essence = 0;
+  /** Premium placeholder (no match earn / no v1 gates). */
+  @type("number") rubies = 0;
   /** Comma-separated ability ids (Battlerite slots). */
   @type("string") loadout = DEFAULT_LOADOUT.join(",");
   /** Comma-separated talent ids. */
@@ -82,6 +84,10 @@ export class ProjectileState extends Schema {
   @type("number") radius = 0.35;
   /** Outer slow shell for aura projectiles (0 = none). */
   @type("number") slowRadius = 0;
+  /** "flight" | "stuck" | "grounded" — sticky fuse projectiles. */
+  @type("string") mode = "flight";
+  /** Target id while stuck (empty otherwise). */
+  @type("string") stuckTargetId = "";
 }
 
 /** Practice dummy / neutral world target. */
@@ -111,7 +117,7 @@ export class DecoyState extends Schema {
   @type("number") vz = 0;
   @type("string") color = "#4ade80";
   @type("string") pattern = "plain";
-  @type("string") patternColor = "#1f2937";
+  @type("string") patternColor = "#f8fafc";
   /** Server epoch ms when this decoy despawns. */
   @type("number") expiresAt = 0;
 }

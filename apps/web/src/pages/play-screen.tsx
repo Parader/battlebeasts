@@ -4,6 +4,7 @@ import { GameCanvas } from "@/game/GameCanvas";
 import { useBaseCityRoom } from "@/game/useBaseCityRoom";
 import { useAssetPreload } from "@/game/useAssetPreload";
 import { useGameMusic } from "@/game/useGameMusic";
+import { useGameAmbiance } from "@/game/useGameAmbiance";
 import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
@@ -17,13 +18,15 @@ import { MatchRecapPanel } from "@/game/ui/MatchRecapPanel";
 import { PartyLobbyPanel } from "@/game/ui/PartyLobbyPanel";
 import { PartyInviteToast } from "@/game/ui/PartyInviteToast";
 import { AbilityBar } from "@/game/ui/AbilityBar";
+import { EmotePieHud } from "@/game/ui/EmotePieHud";
 import { StatusBar } from "@/game/ui/StatusBar";
 import { ConfirmDialog } from "@/game/ui/ConfirmDialog";
 import { GameLoadingOverlay } from "@/game/ui/GameLoadingOverlay";
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
-import { formatWallet } from "@battlebeasts/shared";
+import { emptyEmoteSlots } from "@battlebeasts/shared";
+import { WalletDisplay } from "../game/ui/CoinDisplay";
 import { clearPreferredHub, loadPreferredHub, savePreferredHub } from "@/game/contentRejoin";
 
 const WS_URL =
@@ -121,6 +124,8 @@ export const PlayScreen = () => {
         cancelParty,
         leaveParty,
         respondPartyInvite,
+        emotePieOpen,
+        emoteAimAngle,
     } = useBaseCityRoom({
         endpoint: WS_URL,
         userId,
@@ -145,6 +150,7 @@ export const PlayScreen = () => {
     }, [playReady]);
 
     useGameMusic(playReady ? (inContent ? "arena" : "village") : null);
+    useGameAmbiance(playReady ? (inContent ? "arena" : "village") : null);
 
     const loadingStatusLabel = !assetsReady
         ? inContent
@@ -177,6 +183,10 @@ export const PlayScreen = () => {
     const shieldPct = Math.max(0, Math.min(100, (localHp.shield / hpMax) * 100));
     const shieldLeft = Math.min(hpPct, Math.max(0, 100 - shieldPct));
     const isHubOwner = effectiveHubOwnerId === userId;
+    // Appearance + Merchant each spin up a second WebGL Canvas; pause the game
+    // view so dual contexts don't fight (gear mesh compile was crashing the tab).
+    const suspendGameGl =
+        activeUi === "customization" || activeUi === "shop";
 
     return (
         <div className="relative h-dvh w-full overflow-hidden bg-black">
@@ -186,6 +196,7 @@ export const PlayScreen = () => {
                 predictedRef={predictedRef}
                 phase={phase}
                 contentMode={contentMode}
+                suspended={suspendGameGl}
             />
 
             {!playReady ? (
@@ -277,7 +288,11 @@ export const PlayScreen = () => {
                                 {friendsApi.requests.length + friendsApi.invites.length} pending
                             </span>
                         )}
-                        {!inContent && <span className="bb-chip">{formatWallet(economy)}</span>}
+                        {!inContent && (
+                            <span className="bb-chip">
+                                <WalletDisplay wallet={economy} />
+                            </span>
+                        )}
                         {!inContent && (
                             <HubRoster
                                 players={hubRoster}
@@ -390,6 +405,14 @@ export const PlayScreen = () => {
 
             {playReady && <AbilityBar loadout={economy.loadout} />}
 
+            {playReady && !inContent && (
+                <EmotePieHud
+                    slots={economy.unlocks?.emoteSlots ?? emptyEmoteSlots()}
+                    aimAngleRad={emoteAimAngle}
+                    visible={emotePieOpen}
+                />
+            )}
+
             {playReady && helpOpen && (
                 <div
                     data-ui-overlay
@@ -407,6 +430,9 @@ export const PlayScreen = () => {
                             C / Esc / mouse side buttons — cancel (Bolt: until projectile fires; others:
                             anticipation)
                         </li>
+                        {!inContent && (
+                            <li>Hold V — emote wheel (aim with mouse, release to dance; WASD cancels)</li>
+                        )}
                         {!inContent && <li>Practice dummy — damage it with abilities for copper</li>}
                     </ul>
                     {localPlayer && (

@@ -236,6 +236,16 @@ export interface AbilityDef {
   tickMs?: number;
   /** Statuses refreshed on targets inside `slowRadius` each aura tick. */
   applyAuraSlow?: StatusApplication[];
+  /**
+   * Contact projectile that sticks (on hit) or drops (on miss/wall), then
+   * explodes after `delayMs`. Impact still uses `damage` (direct / counterable);
+   * the blast uses `detonate.damage` via raw AoE (not counterable).
+   */
+  detonate?: {
+    delayMs: number;
+    damage: number;
+    radius: number;
+  };
   /** Optional hit-chain before cooldown (LMB flurries). */
   combo?: AbilityCombo;
   /**
@@ -259,6 +269,11 @@ export interface AbilityDef {
   allowedSlots: SpellSlotId[];
   /** Preferred slot when building the default kit (omit for alternate picks). */
   defaultSlot?: SpellSlotId;
+  /**
+   * Essence cost to unlock in Spell Armoury.
+   * Omit / 0 = starter (always owned with DEFAULT_LOADOUT).
+   */
+  unlockCostEssence?: number;
   /** Radial knockback distance (world units) on AoE/melee hit. */
   knockback?: number;
   /** Knockback translate duration in ms (default 220). */
@@ -476,6 +491,39 @@ function poisonDartRecoveryWallMs(): number {
 }
 
 /**
+ * Baseball Pitching (hero.glb) @ 30fps — clip ~5.23s.
+ * Frame 24 = ice lance appears in the throwing hand.
+ * Frame 64 = release / projectile spawn.
+ * playbackRate compresses windup→throw while keeping those frame markers.
+ */
+export const ICE_LANCE_CAST = {
+  fps: 30,
+  spawnFrame: 24,
+  releaseFrame: 64,
+  clipDurationSec: 5.233333,
+  playbackRate: 1.85,
+  spawnOffset: 0.55,
+  handY: 1.2,
+} as const;
+
+function iceLanceSpawnWallMs(): number {
+  return (
+    (ICE_LANCE_CAST.spawnFrame / ICE_LANCE_CAST.fps / ICE_LANCE_CAST.playbackRate) * 1000
+  );
+}
+
+function iceLanceReleaseWallMs(): number {
+  return (
+    (ICE_LANCE_CAST.releaseFrame / ICE_LANCE_CAST.fps / ICE_LANCE_CAST.playbackRate) *
+    1000
+  );
+}
+
+function iceLanceRecoveryWallMs(): number {
+  return 180;
+}
+
+/**
  * Standing 1H Magic Attack 03 (hero.glb) @ 30fps — clip ~2.33s (70 frames).
  * Frame 30 = first venom spike erupts.
  */
@@ -624,7 +672,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "SingleTarget", "Instant"],
-    damage: 18,
+    damage: 15,
     speed: 22,
     spawnOffset: 0.32,
     allowedSlots: ["m1"],
@@ -643,9 +691,50 @@ export const ABILITIES: Record<string, AbilityDef> = {
       cancelUntilPhase: "cast",
     },
   },
+  /**
+   * Ice Lance (LMB alt) — Baseball Pitching. Spike appears at frame 24, thrown
+   * at 64. Sticks on hit (direct impact), or drops on miss; explodes after 1.4s
+   * for a second non-direct blast.
+   */
+  iceLance: {
+    id: "iceLance",
+    unlockCostEssence: 8,
+    name: "Ice Lance",
+    description:
+      "Hurl an ice spike. Direct impact sticks it to the target; after 1.4 seconds it detonates for a frost blast. Misses plant in the ground and explode the same way.",
+    cooldownMs: 900,
+    range: 14,
+    shape: "projectile",
+    effectKind: "standard",
+    tags: ["Projectile", "Damage", "SingleTarget", "Explosion", "Area", "Cast"],
+    damage: 16,
+    speed: 28,
+    radius: 0.4,
+    spawnOffset: ICE_LANCE_CAST.spawnOffset,
+    detonate: {
+      delayMs: 1400,
+      damage: 15,
+      radius: 1.65,
+    },
+    allowedSlots: ["m1"],
+    defaultSlot: "m1",
+    timing: {
+      anticipationMs: authoredForWallMs(iceLanceSpawnWallMs()),
+      castMs: authoredForWallMs(iceLanceReleaseWallMs() - iceLanceSpawnWallMs()),
+      impactMs: authoredForWallMs(80),
+      recoveryMs: authoredForWallMs(iceLanceRecoveryWallMs()),
+      anticipationMoveMul: 0.85,
+      castMoveMul: 0.55,
+      impactMoveMul: 0.7,
+      recoveryMoveMul: 1,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+  },
   /** Close-range magical slash — 3 quick hits, then CD (or CD if chain stops early). */
   crescent: {
     id: "crescent",
+    unlockCostEssence: 8,
     name: "Crescent",
     description:
       "Close-range slash combo — three quick hits. Chain swings or stop early to start cooldown.",
@@ -684,7 +773,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "standard",
     tags: ["Area", "Damage", "Movement", "Stun", "Control", "Cast"],
     damage: 12,
-    radius: 1.9,
+    radius: 2.6,
     allowedSlots: ["m2"],
     defaultSlot: "m2",
     // Windup start→19 (fast), air 19→54 (unchanged rate), then 150ms pose hold.
@@ -747,6 +836,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
   frostBall: {
     id: "frostBall",
+    unlockCostEssence: 10,
     name: "Frost Ball",
     description:
       "Slow drifting frost orb with a ground aura. Ticks damage and refreshes slow on anyone standing in the disc until it expires.",
@@ -785,6 +875,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   poisonDart: {
     id: "poisonDart",
+    unlockCostEssence: 8,
     name: "Poison Dart",
     description:
       "Snap a venomous dart with a right hook. Light impact, then Poisoned (stacks up to 3, shared with Spikes).",
@@ -925,6 +1016,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
   dash: {
     id: "dash",
+    unlockCostEssence: 6,
     name: "Dash",
     description: "Dive forward with brief iframes, then a short haste. Cuts other casts.",
     cooldownMs: 4000,
@@ -967,6 +1059,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   portal: {
     id: "portal",
+    unlockCostEssence: 12,
     name: "Portal",
     description:
       "Hold Space to plant and channel. A landing marker slides farther with charge — release to blink there. At max range you have a second to confirm or the cast cancels. Cooldown starts on any successful blink.",
@@ -1012,6 +1105,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   decoy: {
     id: "decoy",
+    unlockCostEssence: 10,
     name: "Decoy",
     description:
       "Spawn an identical clone that drifts with your move (or stands still), then cloak for a short time. Invisible to enemies / ghost to yourself. Casting or interacting reveals you; you can still take damage.",
@@ -1042,6 +1136,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   gust: {
     id: "gust",
+    unlockCostEssence: 8,
     name: "Gust",
     description:
       "Circular push wave at your feet. Knocks enemies outward, then slows them briefly.",
@@ -1116,9 +1211,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   chainJump: {
     id: "chainJump",
+    unlockCostEssence: 10,
     name: "Chain Jump",
     description:
-      "Fling a chain hook forward. On hit, leap to the enemy and root them for half a second.",
+      "Fling a chain hook forward. On hit, leap to the enemy and bind them in chains for half a second.",
     cooldownMs: 7000,
     range: 12,
     shape: "projectile",
@@ -1147,7 +1243,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
-    applyOnHit: [{ statusId: "rooted", durationMs: 500, chance: 1 }],
+    applyOnHit: [{ statusId: "chained", durationMs: 500, chance: 1 }],
   },
   /**
    * Spikes (E) — staggered poison needles along the aim line.
@@ -1156,6 +1252,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   spikes: {
     id: "spikes",
+    unlockCostEssence: 8,
     name: "Spikes",
     description:
       "Venomous spikes erupt from the ground in a fast staggered line. Narrow path, long reach; applies Poisoned (stacks with Poison Dart).",
@@ -1192,6 +1289,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   firewall: {
     id: "firewall",
+    unlockCostEssence: 12,
     name: "Firewall",
     description:
       "Crack the earth and raise a wall of flame. Ignites at the climax of the cast — cancel anytime before then. The wall draws from its center to both edges and scorches anyone who stands in it.",
@@ -1234,6 +1332,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   frostMist: {
     id: "frostMist",
+    unlockCostEssence: 12,
     name: "Frost Mist",
     description:
       "Spray an expanding cone of frost. Ticks damage and deepens chill — stacking onto whatever slow they already have — until they freeze solid at the feet.",
@@ -1310,6 +1409,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   groove: {
     id: "groove",
+    unlockCostEssence: 10,
     name: "Groove",
     description:
       "Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. If a pulse heals nobody, gain a 4 HP shield for 8s (stacks). 40% damage resistance while channeling. Cancel anytime.",
@@ -1345,6 +1445,19 @@ export const ABILITIES: Record<string, AbilityDef> = {
 export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map((slot) =>
   defaultAbilityForSlot(slot.id),
 );
+
+/** True for the seven default loadout picks (always unlocked). */
+export function isStarterLoadoutAbility(abilityId: string): boolean {
+  return (DEFAULT_LOADOUT as readonly string[]).includes(abilityId);
+}
+
+/** Essence needed to unlock; 0 = already free / starter. */
+export function abilityUnlockCostEssence(abilityId: string): number {
+  if (isStarterLoadoutAbility(abilityId)) return 0;
+  const def = ABILITIES[abilityId];
+  if (!def) return 0;
+  return Math.max(0, def.unlockCostEssence ?? 8);
+}
 
 export function canEquipInSlot(abilityId: string, slotId: SpellSlotId): boolean {
   const def = ABILITIES[abilityId];
@@ -1442,8 +1555,13 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
   } else if (def.damage > 0) {
     parts.push(`${def.damage} dmg`);
   }
+  if (def.detonate) {
+    parts.push(
+      `fuse ${formatSeconds(def.detonate.delayMs)} → ${def.detonate.damage} blast r${def.detonate.radius}`,
+    );
+  }
 
-  if (def.radius != null && def.radius > 0) {
+  if (def.radius != null && def.radius > 0 && !def.detonate) {
     parts.push(`AoE ${def.radius}`);
   }
   if (def.spikeCount && def.spikeCount > 1) {

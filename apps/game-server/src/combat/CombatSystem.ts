@@ -31,7 +31,6 @@ import {
   resolveKit,
   resolveTravel,
   resolveConeHits,
-  inFacingCone,
   rollCrit,
   scaleForCrit,
   sampleTravel,
@@ -395,6 +394,8 @@ export class CombatSystem {
     st.vz = sim.vz;
     st.radius = sim.hitRadius;
     st.slowRadius = sim.slowRadius;
+    st.mode = sim.mode;
+    st.stuckTargetId = sim.stuckTargetId ?? "";
     this.room.state.projectiles.set(id, st);
     return true;
   }
@@ -667,12 +668,16 @@ export class CombatSystem {
     const bodies = this.collectBodies();
     this.simList.length = 0;
     for (const sim of this.sims.values()) this.simList.push(sim);
-    const { removedIds, hits, slows } = tickProjectiles(
+    const { removedIds, hits, slows, explodes } = tickProjectiles(
       this.simList,
       dt,
       bodies,
       (o, t) => this.canHurt(o, t),
       this.wallColliders,
+      (abilityId) => {
+        const delay = ABILITIES[abilityId]?.detonate?.delayMs ?? 0;
+        return delay > 0 ? delay / 1000 : 0;
+      },
     );
 
     for (const hit of hits) {
@@ -716,6 +721,33 @@ export class CombatSystem {
         );
       }
     }
+    for (const blast of explodes) {
+      // Detonate blast — raw AoE (not direct / does not trigger Counter).
+      // Match Ice Lance plant heights: body stick vs dirt plant.
+      const blastY = blast.mode === "stuck" ? 1.05 : 0.28;
+      this.fx({
+        kind: "aoe",
+        abilityId: blast.abilityId,
+        x: blast.x,
+        z: blast.z,
+        y: blastY,
+        radius: blast.radius,
+        ownerId: blast.ownerId,
+      });
+      const blastHits = resolveInstantHits(
+        { x: blast.x, z: blast.z },
+        blast.radius,
+        blast.damage,
+        blast.ownerId,
+        bodies,
+        (o, t) => this.canHurt(o, t),
+      );
+      for (const hit of blastHits) {
+        this.applyRawDamage(hit.targetId, hit.damage, blast.ownerId, blast.abilityId, {
+          triggersCounter: false,
+        });
+      }
+    }
     for (const id of removedIds) {
       this.sims.delete(id);
       this.room.state.projectiles.delete(id);
@@ -725,6 +757,10 @@ export class CombatSystem {
       if (!st) continue;
       st.x = sim.x;
       st.z = sim.z;
+      st.vx = sim.vx;
+      st.vz = sim.vz;
+      st.mode = sim.mode;
+      st.stuckTargetId = sim.stuckTargetId ?? "";
     }
   }
 
@@ -1067,6 +1103,8 @@ export class CombatSystem {
           st.vz = sim.vz;
           st.radius = sim.hitRadius;
           st.slowRadius = sim.slowRadius;
+          st.mode = sim.mode;
+          st.stuckTargetId = sim.stuckTargetId ?? "";
           this.room.state.projectiles.set(id, st);
         }
       }
@@ -1513,6 +1551,7 @@ export class CombatSystem {
 
   /**
    * Heal allies + practice dummies in a narrow facing cone (not enemies).
+   * Walls and units soft-occlude like Frost Mist — beam does not pierce.
    */
   private applyHealBeamTick(
     origin: { x: number; z: number },
@@ -1524,26 +1563,32 @@ export class CombatSystem {
     abilityId: string,
   ) {
     if (!(amount > 0) || !(range > 0)) return;
-    const soft = COLLISION.playerRadius;
-    const inBeam = (x: number, z: number) =>
-      inFacingCone(origin, yaw, range, halfAngle, { x, z }, soft);
-
-    for (const [id, player] of this.room.state.players) {
-      if (id === casterId) continue;
-      if (player.disconnected || player.hp <= 0) continue;
-      if (player.role === "spectator" || player.roundDead) continue;
-      const caster = this.room.state.players.get(casterId);
-      // Prefer same-team when teams exist; otherwise heal any other player (hub).
-      if (caster?.team && player.team && caster.team !== player.team) continue;
-      if (!inBeam(player.x, player.z)) continue;
-      this.applyHealAmount(id, amount, casterId, abilityId);
+    const hits = resolveConeHits(
+      origin,
+      yaw,
+      range,
+      halfAngle,
+      amount,
+      casterId,
+      this.collectBodies(),
+      (o, tid) => this.canHealBeamTarget(o, tid),
+      { walls: this.wallColliders, softOcclude: true },
+    );
+    for (const hit of hits) {
+      this.applyHealAmount(hit.targetId, amount, casterId, abilityId);
     }
+  }
 
-    for (const [id, target] of this.room.state.targets) {
-      if (target.hp <= 0) continue;
-      if (!inBeam(target.x, target.z)) continue;
-      this.applyHealAmount(id, amount, casterId, abilityId);
-    }
+  /** Allies (same team / hub) and practice dummies — never enemies. */
+  private canHealBeamTarget(casterId: string, targetId: string): boolean {
+    if (casterId === targetId) return false;
+    if (this.room.state.targets.has(targetId)) return true;
+    const player = this.room.state.players.get(targetId);
+    if (!player || player.disconnected || player.hp <= 0) return false;
+    if (player.role === "spectator" || player.roundDead) return false;
+    const caster = this.room.state.players.get(casterId);
+    if (caster?.team && player.team && caster.team !== player.team) return false;
+    return true;
   }
 
   private advancePendingGrooveHeal(now: number) {
@@ -1988,14 +2033,17 @@ export class CombatSystem {
     damage: number,
     attackerSessionId: string,
     abilityId: string,
+    opts?: { /** Default true — set false for fuse blasts / aura-like ticks. */ triggersCounter?: boolean },
   ): boolean {
     const now = Date.now();
     const atkDef = ABILITIES[abilityId];
     const dealtMul = this.statuses.getDamageDealtMul(attackerSessionId);
     const scaledIn = damage > 0 ? damage * dealtMul : damage;
+    const allowCounter = opts?.triggersCounter !== false;
 
     // Armed Counter: deny the next melee / direct projectile, then riposte buffs.
     if (
+      allowCounter &&
       scaledIn > 0 &&
       this.room.state.players.has(targetId) &&
       this.statuses.has(targetId, "counterArmed") &&

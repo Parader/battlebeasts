@@ -38,6 +38,8 @@ import {
 } from "@battlebeasts/shared";
 
 import { TalentNatureIcon, primaryTalentNatureTag } from "./TalentNatureIcon";
+import { GameIcon } from "./GameIcon";
+import { TALENT_TREE_ICONS } from "./gameIcons";
 
 const TREE_ACCENT: Record<TalentTreeId, string> = {
   Destruction: "#b45309",
@@ -329,7 +331,15 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
                 style={{ "--bb-talent-accent": TREE_ACCENT[id] } as CSSProperties}
                 onClick={() => setTree(id)}
               >
-                <span className="bb-talent-rail__tab-name">{id}</span>
+                <span className="bb-talent-rail__tab-main">
+                  <GameIcon
+                    id={TALENT_TREE_ICONS[id]}
+                    size={18}
+                    gray={on ? 0.95 : 0.72}
+                    className="bb-talent-rail__tab-icon"
+                  />
+                  <span className="bb-talent-rail__tab-name">{id}</span>
+                </span>
                 <span className="bb-talent-rail__tab-pts">
                   {pts}/{TALENT_TREE_CAP}
                 </span>

@@ -19,11 +19,13 @@ import { HealSwooshEffect } from "./effects/healSwoosh";
 import { HealBeamEffect } from "./effects/healBeam";
 import { PoisonDartCastEffect } from "./effects/poisonDartCast";
 import { PoisonDartProjectileEffect } from "./effects/poisonDartProjectile";
+import { IceLanceCastEffect } from "./effects/iceLanceCast";
+import { IceLanceExplodeEffect } from "./effects/iceLanceExplode";
 import { FirewallGroundEffect } from "./effects/firewallGround";
 import { PortalBlinkEffect } from "./effects/portalBlink";
 
 export type ProjectileVfxId = "bolt" | "grasp" | "chainJump" | "poisonDart";
-export type CastVfxId = "bolt" | "crescent" | "frostBall" | "barrier" | "poisonDart";
+export type CastVfxId = "bolt" | "crescent" | "frostBall" | "barrier" | "poisonDart" | "iceLance";
 export type ImpactVfxId =
   | "bolt"
   | "crescent"
@@ -35,13 +37,21 @@ export type ImpactVfxId =
   | "healBeam"
   | "poisonDart"
   | "firewall"
-  | "portal";
+  | "portal"
+  | "iceLance";
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
 export const CATALOG_PROJECTILES = new Set<string>(["bolt", "grasp", "chainJump", "poisonDart"]);
 
 /** Abilities with dedicated cast one-shots (muzzle / swoop / hand charge). */
-export const CATALOG_CAST_FX = new Set<string>(["bolt", "crescent", "frostBall", "barrier", "poisonDart"]);
+export const CATALOG_CAST_FX = new Set<string>([
+  "bolt",
+  "crescent",
+  "frostBall",
+  "barrier",
+  "poisonDart",
+  "iceLance",
+]);
 
 /** Abilities with dedicated hit impact one-shots (not landing AoE cracks). */
 export const CATALOG_IMPACT_FX = new Set<string>(["bolt", "crescent", "poisonDart"]);
@@ -57,6 +67,9 @@ export const CATALOG_AOE_CRACK = new Set<string>(["smash"]);
 
 /** AoE that skips legacy ring; VFX is owned by SpellVfxBridge (timed to anim). */
 export const CATALOG_AOE_BRIDGED = new Set<string>(["gust"]);
+
+/** Sticky-detonate frost blast (Ice Lance). */
+export const CATALOG_ICE_LANCE_EXPLODE = new Set<string>(["iceLance"]);
 
 export function hasCatalogProjectile(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_PROJECTILES.has(abilityId);
@@ -102,6 +115,10 @@ export function usesFirewallFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "firewall";
 }
 
+export function usesIceLanceExplodeFx(abilityId: string | undefined): boolean {
+  return !!abilityId && CATALOG_ICE_LANCE_EXPLODE.has(abilityId);
+}
+
 export type VfxFollowContext = {
   room: Room | null;
   localSessionId: string | null;
@@ -116,6 +133,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
     }
     if (shot.abilityId === "frostBall") {
       return <FrostBallCastEffect key={shot.key} shot={shot} follow={ctx} />;
+    }
+    if (shot.abilityId === "iceLance") {
+      return <IceLanceCastEffect key={shot.key} shot={shot} follow={ctx} />;
     }
     if (shot.abilityId === "barrier") {
       return <BarrierCastEffect key={shot.key} shot={shot} follow={ctx} />;
@@ -152,6 +172,9 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (usesGrooveFx(shot.abilityId)) {
     return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
   }
+  if (usesIceLanceExplodeFx(shot.abilityId)) {
+    return <IceLanceExplodeEffect key={shot.key} shot={shot} />;
+  }
   return <BoltImpactEffect key={shot.key} shot={shot} />;
 }
 
@@ -173,6 +196,8 @@ export {
   HealBeamEffect,
   PoisonDartCastEffect,
   PoisonDartProjectileEffect,
+  IceLanceCastEffect,
+  IceLanceExplodeEffect,
   FirewallGroundEffect,
   PortalBlinkEffect,
 };

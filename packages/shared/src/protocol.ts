@@ -66,7 +66,13 @@ export type ClientMessage =
   | { type: "close_ui" }
   | { type: "portal_confirm"; portal: "pvp" | "pve"; params: Record<string, unknown> }
   | { type: "shop_buy"; itemId: string }
+  | { type: "unlock_ability"; abilityId: string }
   | { type: "set_loadout"; abilityIds: string[] }
+  | { type: "save_loadout_preset"; slotIndex: number; abilityIds: string[]; name?: string }
+  | { type: "select_loadout_preset"; slotIndex: number }
+  | { type: "set_emote_loadout"; emoteSlots: (string | null)[] }
+  | { type: "cast_emote"; emoteId: string }
+  | { type: "cancel_emote" }
   | { type: "set_talents"; talentIds: string[] }
   | { type: "set_color"; color: string }
   | { type: "set_pattern"; pattern: string; patternColor?: string }
@@ -119,6 +125,12 @@ export type ServerMessage =
   | { type: "queue_status"; queued: boolean; modes?: string[] }
   | { type: "transfer"; room: string; roomId?: string; options?: Record<string, unknown> }
   | { type: "inventory"; resources: Record<string, number>; loadout?: string[]; talents?: string[] }
+  | {
+      type: "emote_fx";
+      sessionId: string;
+      emoteId: string;
+      phase: "start" | "cancel";
+    }
   | {
       type: "match_pause";
       reason: "pvp_reconnect" | "pve_reconnect" | "resume_grace";

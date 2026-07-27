@@ -3,12 +3,13 @@ export interface ResourceDef {
   name: string;
 }
 
-/** Metal stack (WoW-style) + magical essence. */
+/** Metal stack (WoW-style) + magical essence + premium rubies placeholder. */
 export const RESOURCES: Record<string, ResourceDef> = {
   copper: { id: "copper", name: "Copper" },
   silver: { id: "silver", name: "Silver" },
   gold: { id: "gold", name: "Gold" },
   essence: { id: "essence", name: "Essence" },
+  rubies: { id: "rubies", name: "Rubies" },
 };
 
 export const COPPER_PER_SILVER = 100;
@@ -23,6 +24,7 @@ export type CoinPurse = {
 
 export type Wallet = CoinPurse & {
   essence: number;
+  rubies: number;
 };
 
 export function coinsToCopper(purse: CoinPurse): number {
@@ -57,7 +59,8 @@ export function formatCoins(purse: CoinPurse): string {
 }
 
 export function formatWallet(wallet: Wallet): string {
-  return `${formatCoins(wallet)} · ${wallet.essence} essence`;
+  const rubies = wallet.rubies ?? 0;
+  return `${formatCoins(wallet)} · ${wallet.essence} essence · ${rubies} rubies`;
 }
 
 export function canAffordCoins(purse: CoinPurse, costCopper: number): boolean {
@@ -80,33 +83,17 @@ export function addCoins(purse: CoinPurse, add: Partial<CoinPurse>): CoinPurse {
 
 export type ShopCost =
   | { kind: "coins"; copper: number }
-  | { kind: "essence"; amount: number };
-
-export interface ShopItemDef {
-  id: string;
-  name: string;
-  cost: ShopCost;
-}
-
-export const SHOP_ITEMS: Record<string, ShopItemDef> = {
-  health_tonic: {
-    id: "health_tonic",
-    name: "Health Tonic",
-    cost: { kind: "coins", copper: 50 }, // 50c
-  },
-  paint_red: {
-    id: "paint_red",
-    name: "Crimson Paint",
-    cost: { kind: "essence", amount: 3 },
-  },
-  copper_pouch: {
-    id: "copper_pouch",
-    name: "Copper Pouch",
-    cost: { kind: "essence", amount: 1 },
-  },
-};
+  | { kind: "essence"; amount: number }
+  | { kind: "rubies"; amount: number };
 
 export function formatShopCost(cost: ShopCost): string {
   if (cost.kind === "essence") return `${cost.amount} essence`;
+  if (cost.kind === "rubies") return `${cost.amount} rubies`;
   return formatCoins(copperToCoins(cost.copper));
+}
+
+export function canAffordShopCost(wallet: Wallet, cost: ShopCost): boolean {
+  if (cost.kind === "essence") return wallet.essence >= cost.amount;
+  if (cost.kind === "rubies") return wallet.rubies >= cost.amount;
+  return canAffordCoins(wallet, cost.copper);
 }

@@ -58,7 +58,7 @@ export type ProjectileSim = {
   vz: number;
   damage: number;
   hitRadius: number;
-  /** Seconds remaining before despawn. */
+  /** Seconds remaining before despawn (flight only; detonate uses explodeIn). */
   life: number;
   /** Session/target ids already hit (contact projectiles: no multi-hit). */
   hitIds: Set<string>;
@@ -75,6 +75,19 @@ export type ProjectileSim = {
   tickSec: number;
   /** Accumulator toward next aura tick. */
   tickAcc: number;
+  /**
+   * Sticky / ground fuse (Ice Lance). `flight` until contact, miss, or wall;
+   * then `stuck` (follow target) or `grounded` until explodeIn elapses.
+   */
+  mode: "flight" | "stuck" | "grounded";
+  /** Target id while mode === "stuck". */
+  stuckTargetId: string | null;
+  /** Seconds until detonation blast (active in stuck/grounded). */
+  explodeIn: number;
+  /** Detonation blast damage (0 = no detonate behavior). */
+  explodeDamage: number;
+  /** Detonation blast radius. */
+  explodeRadius: number;
 };
 
 export type CombatFxEvent = {
@@ -82,6 +95,8 @@ export type CombatFxEvent = {
   abilityId: string;
   x: number;
   z: number;
+  /** World Y for height-aware FX (e.g. Ice Lance stuck vs grounded blast). */
+  y?: number;
   /** Portal blink destination (kind === "portal"). */
   x2?: number;
   z2?: number;
@@ -140,6 +155,7 @@ export function createProjectile(
   const maxRange = def.range > 0 ? def.range : 12;
   const aura = def.aura === true;
   const hitRadius = def.radius ?? COMBAT.projectileHitRadius;
+  const det = def.detonate;
   return {
     id,
     ownerId: owner.id,
@@ -158,6 +174,11 @@ export function createProjectile(
     tickSec: Math.max(0.05, (def.tickMs ?? 250) / 1000),
     // Fire first aura pulse immediately on spawn.
     tickAcc: aura ? Math.max(0.05, (def.tickMs ?? 250) / 1000) : 0,
+    mode: "flight",
+    stuckTargetId: null,
+    explodeIn: 0,
+    explodeDamage: det?.damage ?? 0,
+    explodeRadius: det?.radius ?? 0,
   };
 }
 
@@ -507,14 +528,37 @@ export type ProjectileSlowEvent = {
   targetId: string;
 };
 
+export type ProjectileExplodeEvent = {
+  projectileId: string;
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  damage: number;
+  radius: number;
+  /** Where the lance was when it detonated — drives blast height. */
+  mode: "stuck" | "grounded";
+};
+
 export type ProjectileTickResult = {
   removedIds: string[];
   hits: ProjectileHitEvent[];
   slows: ProjectileSlowEvent[];
+  explodes: ProjectileExplodeEvent[];
 };
 
+function armDetonate(p: ProjectileSim, delaySec: number, mode: "stuck" | "grounded", targetId: string | null) {
+  p.mode = mode;
+  p.stuckTargetId = targetId;
+  p.vx = 0;
+  p.vz = 0;
+  p.explodeIn = delaySec;
+  p.life = Math.max(p.life, delaySec + 0.05);
+}
+
 /** Advance projectiles; mutates projectile positions and hitIds.
- *  Wall collisions despawn without a damage hit (no hit VFX).
+ *  Wall collisions despawn without a damage hit (no hit VFX), unless the
+ *  projectile has a detonate fuse — then it plants and explodes.
  */
 export function tickProjectiles(
   projectiles: ProjectileSim[],
@@ -522,24 +566,73 @@ export function tickProjectiles(
   bodies: CombatBody[],
   canHurt: (ownerId: string, targetId: string) => boolean,
   walls: readonly WallCollider[] = [],
+  detonateDelaySecByAbility: (abilityId: string) => number = () => 0,
 ): ProjectileTickResult {
   const removedIds: string[] = [];
   const hits: ProjectileHitEvent[] = [];
   const slows: ProjectileSlowEvent[] = [];
+  const explodes: ProjectileExplodeEvent[] = [];
+
+  const bodyById = new Map<string, CombatBody>();
+  for (const b of bodies) bodyById.set(b.id, b);
 
   for (const p of projectiles) {
+    const canDetonate = p.explodeDamage > 0 && p.explodeRadius > 0;
+    const fuseSec = canDetonate ? Math.max(0.05, detonateDelaySecByAbility(p.abilityId)) : 0;
+
+    // --- Stuck / grounded fuse ---
+    if (p.mode === "stuck" || p.mode === "grounded") {
+      if (p.mode === "stuck" && p.stuckTargetId) {
+        const target = bodyById.get(p.stuckTargetId);
+        if (!target || target.hp <= 0 || target.vulnerable === false) {
+          p.mode = "grounded";
+          p.stuckTargetId = null;
+        } else {
+          p.x = target.x;
+          p.z = target.z;
+        }
+      }
+      p.explodeIn -= dt;
+      if (p.explodeIn <= 0) {
+        explodes.push({
+          projectileId: p.id,
+          ownerId: p.ownerId,
+          abilityId: p.abilityId,
+          x: p.x,
+          z: p.z,
+          damage: p.explodeDamage,
+          radius: p.explodeRadius,
+          mode: p.mode === "stuck" ? "stuck" : "grounded",
+        });
+        removedIds.push(p.id);
+      }
+      continue;
+    }
+
+    // --- Flight ---
     const fromX = p.x;
     const fromZ = p.z;
     p.x += p.vx * dt;
     p.z += p.vz * dt;
     p.life -= dt;
-    if (p.life <= 0) {
-      removedIds.push(p.id);
+
+    if (walls.length > 0 && projectileHitsWalls(fromX, fromZ, p.x, p.z, p.wallRadius, walls)) {
+      if (canDetonate) {
+        p.x = fromX;
+        p.z = fromZ;
+        armDetonate(p, fuseSec, "grounded", null);
+      } else {
+        removedIds.push(p.id);
+      }
       continue;
     }
 
-    if (walls.length > 0 && projectileHitsWalls(fromX, fromZ, p.x, p.z, p.wallRadius, walls)) {
-      removedIds.push(p.id);
+    if (p.life <= 0) {
+      if (canDetonate) {
+        armDetonate(p, fuseSec, "grounded", null);
+      } else {
+        removedIds.push(p.id);
+      }
       continue;
     }
 
@@ -609,12 +702,16 @@ export function tickProjectiles(
         x: body.x,
         z: body.z,
       });
-      removedIds.push(p.id);
+      if (canDetonate) {
+        armDetonate(p, fuseSec, "stuck", body.id);
+      } else {
+        removedIds.push(p.id);
+      }
       break;
     }
   }
 
-  return { removedIds: [...new Set(removedIds)], hits, slows };
+  return { removedIds: [...new Set(removedIds)], hits, slows, explodes };
 }
 
 export function abilityOrThrow(id: string): AbilityDef {

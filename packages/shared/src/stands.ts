@@ -190,7 +190,8 @@ export const COSMETIC_COLORS = [
 
 /** Ink / marking colors for creature patterns (independent of hide tint). */
 export const COSMETIC_PATTERN_COLORS = [
-  "#1f2937",
+  "#f8fafc", // chalk / white (starter)
+  "#1f2937", // charcoal
   "#7f1d1d",
   "#1e3a8a",
   "#14532d",

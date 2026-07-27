@@ -5,13 +5,16 @@ export type AudioSettings = {
   master: number;
   /** 0–1 music bus (multiplied by master) */
   music: number;
-  /** 0–1 SFX bus (multiplied by master) — ready for future effect sounds */
+  /** 0–1 ambient bed bus (multiplied by master) */
+  ambiance: number;
+  /** 0–1 SFX bus (multiplied by master) — combat / UI sounds */
   effects: number;
 };
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   master: 1,
   music: 0.7,
+  ambiance: 0.65,
   effects: 1,
 };
 
@@ -25,10 +28,11 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
-function normalize( partial: Partial<AudioSettings> | null | undefined): AudioSettings {
+function normalize(partial: Partial<AudioSettings> | null | undefined): AudioSettings {
   return {
     master: clamp01(partial?.master ?? DEFAULT_AUDIO_SETTINGS.master),
     music: clamp01(partial?.music ?? DEFAULT_AUDIO_SETTINGS.music),
+    ambiance: clamp01(partial?.ambiance ?? DEFAULT_AUDIO_SETTINGS.ambiance),
     effects: clamp01(partial?.effects ?? DEFAULT_AUDIO_SETTINGS.effects),
   };
 }
@@ -77,7 +81,12 @@ export function getMusicOutputVolume(): number {
   return settings.master * settings.music;
 }
 
-/** Final SFX output (master × effects) — for future combat/UI sounds. */
+/** Final ambiance output (master × ambiance). */
+export function getAmbianceOutputVolume(): number {
+  return settings.master * settings.ambiance;
+}
+
+/** Final SFX output (master × effects). */
 export function getEffectOutputVolume(): number {
   return settings.master * settings.effects;
 }

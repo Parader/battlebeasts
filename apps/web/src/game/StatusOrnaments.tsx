@@ -64,8 +64,8 @@ const SURGE_COLOR = "#67e8f9";
 const SURGE_HOT = "#fef08a";
 const POISON_WISP_COUNT = 6;
 const BURN_WISP_COUNT = 10;
-/** Flat overlapping ovals that spin around rooted feet. */
-const ROOT_OVAL_COUNT = 18;
+/** Flat overlapping ovals that spin around chained feet. */
+const CHAIN_OVAL_COUNT = 18;
 /** Any DoT that should show the emanating poison cloud. */
 const POISON_STATUS_IDS = new Set(["poisoned"]);
 const BURN_STATUS_IDS = new Set(["burning"]);
@@ -84,10 +84,14 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
   const bleed = useRef<THREE.Group>(null);
   const slow = useRef<THREE.Group>(null);
   const rooted = useRef<THREE.Group>(null);
-  const rootLift = useRef<THREE.Group>(null);
-  const rootOvals = useRef<(THREE.Mesh | null)[]>([]);
-  /** 0 = faded out, 1 = fully visible. */
+  const rootShards = useRef<(THREE.Mesh | null)[]>([]);
+  /** 0 = faded out, 1 = fully visible (frost ice spikes). */
   const rootReveal = useRef(0);
+  const chained = useRef<THREE.Group>(null);
+  const chainLift = useRef<THREE.Group>(null);
+  const chainOvals = useRef<(THREE.Mesh | null)[]>([]);
+  /** 0 = faded out, 1 = fully visible (chain ground rings). */
+  const chainReveal = useRef(0);
   const surge = useRef<THREE.Group>(null);
   const bolts = useRef<(THREE.Mesh | null)[]>([]);
 
@@ -152,7 +156,32 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
   );
   const bleedMats = useMemo(() => [0, 1, 2, 3].map(() => basicMat("#f87171", 0.65)), []);
   const slowMat = useMemo(() => basicMat("#93c5fd", 0.5), []);
-  const rootOvalMat = useMemo(
+  const rootIceMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: "#0c4a6e",
+        emissive: "#7dd3fc",
+        emissiveIntensity: 0.55,
+        roughness: 0.35,
+        metalness: 0.15,
+        transparent: true,
+        opacity: 0.92,
+      }),
+    [],
+  );
+  const rootGlowMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#e0f2fe",
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+    [],
+  );
+  const chainOvalMat = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
         color: "#6b6b74",
@@ -165,7 +194,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       }),
     [],
   );
-  const rootGlowMat = useMemo(
+  const chainGlowMat = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
         color: "#a1a1aa",
@@ -249,29 +278,49 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     const safeDt = Math.min(0.05, dt);
     const has = (id: string) => rows.some((r) => r.statusId === id);
 
-    // Root fade always ticks — even when rooted was the last status
-    // (otherwise rows.length===0 returns early and snaps the chains off).
-    if (rooted.current && rootLift.current) {
+    // Frost / chain fades always tick — even when that status was the last
+    // (otherwise rows.length===0 returns early and snaps the VFX off).
+    const revealSpeed = 5;
+    if (rooted.current) {
       const wantRoot = has("rooted");
-      // ~0.2s fade in / out
-      const revealSpeed = 5;
       rootReveal.current = THREE.MathUtils.clamp(
         rootReveal.current + (wantRoot ? 1 : -1) * safeDt * revealSpeed,
         0,
         1,
       );
       const p = rootReveal.current;
-      const eased = p * p * (3 - 2 * p); // smoothstep fade
+      const eased = p * p * (3 - 2 * p);
       rooted.current.visible = p > 0.001;
-      rootLift.current.position.y = 0.03;
-      rootOvalMat.opacity = eased;
-      rootGlowMat.opacity = (0.2 + 0.1 * (0.5 + 0.5 * Math.sin(t * 3.2))) * eased;
-
+      rootIceMat.opacity = 0.92 * eased;
+      rootGlowMat.opacity = (0.28 + 0.15 * (0.5 + 0.5 * Math.sin(t * 3.2))) * eased;
       if (p > 0.001) {
-        rooted.current.rotation.y += safeDt * 2.4;
-        rootOvalMat.emissiveIntensity = (0.18 + 0.12 * (0.5 + 0.5 * Math.sin(t * 4))) * eased;
-        for (let i = 0; i < rootOvals.current.length; i++) {
-          const mesh = rootOvals.current[i];
+        for (let i = 0; i < rootShards.current.length; i++) {
+          const mesh = rootShards.current[i];
+          if (!mesh) continue;
+          const pulse = 0.85 + 0.15 * Math.sin(t * 5 + i);
+          mesh.scale.y = pulse;
+        }
+        rootIceMat.emissiveIntensity = (0.4 + 0.25 * (0.5 + 0.5 * Math.sin(t * 4))) * eased;
+      }
+    }
+    if (chained.current && chainLift.current) {
+      const wantChain = has("chained");
+      chainReveal.current = THREE.MathUtils.clamp(
+        chainReveal.current + (wantChain ? 1 : -1) * safeDt * revealSpeed,
+        0,
+        1,
+      );
+      const p = chainReveal.current;
+      const eased = p * p * (3 - 2 * p);
+      chained.current.visible = p > 0.001;
+      chainLift.current.position.y = 0.03;
+      chainOvalMat.opacity = eased;
+      chainGlowMat.opacity = (0.2 + 0.1 * (0.5 + 0.5 * Math.sin(t * 3.2))) * eased;
+      if (p > 0.001) {
+        chained.current.rotation.y += safeDt * 2.4;
+        chainOvalMat.emissiveIntensity = (0.18 + 0.12 * (0.5 + 0.5 * Math.sin(t * 4))) * eased;
+        for (let i = 0; i < chainOvals.current.length; i++) {
+          const mesh = chainOvals.current[i];
           if (!mesh) continue;
           mesh.position.y = 0.04 + 0.01 * Math.sin(t * 5 + i * 0.7);
         }
@@ -521,25 +570,68 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         </mesh>
       </group>
 
-      <group ref={rooted} position={[0, 0, 0]} visible={false}>
-        <group ref={rootLift} position={[0, 0.03, 0]}>
+      {/* Frost Mist — ice spikes around the feet */}
+      <group ref={rooted} position={[0, 0.02, 0]} visible={false}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+          <ringGeometry args={[0.22, 0.42, 20]} />
+          <primitive object={rootGlowMat} attach="material" />
+        </mesh>
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+          const a = (i / 8) * Math.PI * 2 + 0.12;
+          const h = 0.72 + (i % 3) * 0.12;
+          const lean = 0.18 + (i % 2) * 0.08;
+          return (
+            <mesh
+              key={`outer-${i}`}
+              ref={(el) => {
+                rootShards.current[i] = el;
+              }}
+              material={rootIceMat}
+              position={[Math.cos(a) * 0.34, h * 0.48, Math.sin(a) * 0.34]}
+              rotation={[lean, a + Math.PI / 2, i % 2 === 0 ? 0.08 : -0.1]}
+            >
+              <coneGeometry args={[0.038, h, 3]} />
+            </mesh>
+          );
+        })}
+        {[0, 1, 2, 3, 4].map((i) => {
+          const a = (i / 5) * Math.PI * 2 + 0.4;
+          const h = 0.42 + (i % 2) * 0.1;
+          const idx = 8 + i;
+          return (
+            <mesh
+              key={`inner-${i}`}
+              ref={(el) => {
+                rootShards.current[idx] = el;
+              }}
+              material={rootIceMat}
+              position={[Math.cos(a) * 0.18, h * 0.45, Math.sin(a) * 0.18]}
+              rotation={[0.55, a, 0.2]}
+            >
+              <coneGeometry args={[0.028, h, 3]} />
+            </mesh>
+          );
+        })}
+      </group>
+
+      {/* Chain Jump — spinning ground chain links */}
+      <group ref={chained} position={[0, 0, 0]} visible={false}>
+        <group ref={chainLift} position={[0, 0.03, 0]}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
             <ringGeometry args={[0.28, 0.52, 24]} />
-            <primitive object={rootGlowMat} attach="material" />
+            <primitive object={chainGlowMat} attach="material" />
           </mesh>
-          {/* Spinning ring of overlapping ovals on the ground */}
-          {Array.from({ length: ROOT_OVAL_COUNT }, (_, i) => {
-            const a = (i / ROOT_OVAL_COUNT) * Math.PI * 2;
+          {Array.from({ length: CHAIN_OVAL_COUNT }, (_, i) => {
+            const a = (i / CHAIN_OVAL_COUNT) * Math.PI * 2;
             const r = 0.38;
             return (
               <mesh
                 key={`oval-${i}`}
                 ref={(el) => {
-                  rootOvals.current[i] = el;
+                  chainOvals.current[i] = el;
                 }}
-                material={rootOvalMat}
+                material={chainOvalMat}
                 position={[Math.cos(a) * r, 0.04, Math.sin(a) * r]}
-                // Flat on ground; long axis tangent so neighbors overlap
                 rotation={[-Math.PI / 2, 0, a + Math.PI / 2]}
                 scale={[1.55, 0.88, 1]}
               >

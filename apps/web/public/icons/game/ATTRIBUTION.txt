@@ -1,0 +1,7 @@
+Icons from https://game-icons.net (CC BY 3.0 unless an author notes CC0).
+
+White SVGs copied into this folder for BattleBeasts UI (shop, appearance, talents).
+
+Please credit: "Icons made by Lorc, Delapouite, sbed, Skoll, Lucas, Carl Olsen, Zeromancer, and Caro Asercion".
+
+Full author list for the archive: see the download package license.txt.

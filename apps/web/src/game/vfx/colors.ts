@@ -17,6 +17,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   groove: "#6ee7b7",
   healBeam: "#6ee7b7",
   poisonDart: "#4d7c0f",
+  iceLance: "#7dd3fc",
   counter: "#f5c542",
   firewall: "#f97316",
 };

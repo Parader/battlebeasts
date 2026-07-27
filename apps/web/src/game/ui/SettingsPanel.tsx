@@ -48,7 +48,7 @@ function VolumeSlider({
 }
 
 export function SettingsPanel({ open, onClose }: Props) {
-  const { settings, setMaster, setMusic, setEffects } = useAudioSettings();
+  const { settings, setMaster, setMusic, setAmbiance, setEffects } = useAudioSettings();
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const unseen = hasUnseenPatchNotes();
 
@@ -63,7 +63,18 @@ export function SettingsPanel({ open, onClose }: Props) {
               <p className="bb-section-label">Audio</p>
               <div className="space-y-4">
                 <VolumeSlider label="Master" value={settings.master} onChange={setMaster} />
-                <VolumeSlider label="Music" value={settings.music} onChange={setMusic} />
+                <VolumeSlider
+                  label="Music"
+                  value={settings.music}
+                  onChange={setMusic}
+                  hint="Hub and arena soundtracks."
+                />
+                <VolumeSlider
+                  label="Ambiance"
+                  value={settings.ambiance}
+                  onChange={setAmbiance}
+                  hint="Environmental beds (village air, etc.)."
+                />
                 <VolumeSlider
                   label="Effects"
                   value={settings.effects}

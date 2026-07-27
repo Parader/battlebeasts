@@ -3,6 +3,7 @@ import { ARENA_SCENE_URL, HUB_SCENE_URL } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
 import { CHARACTER_URL } from "./characterVisual";
 import { preloadArenaMusic, preloadVillageMusic } from "./gameMusic";
+import { preloadArenaAmbiance, preloadVillageAmbiance } from "./gameAmbiance";
 import { preloadCombatSfx } from "./gameSfx";
 import { GROUND_TEXTURE_URLS } from "./TexturedGround";
 
@@ -83,6 +84,7 @@ export async function preloadHubAssets(
       () => preloadGltf(hubSceneUrl()),
       () => preloadTextures(GROUND_TEXTURE_URLS),
       () => preloadVillageMusic(),
+      () => preloadVillageAmbiance(),
       () => preloadCombatSfx(),
     ],
     onProgress,
@@ -98,6 +100,7 @@ export async function preloadArenaAssets(
       () => preloadGltf(CHARACTER_URL),
       () => preloadGltf(arenaSceneUrl()),
       () => preloadArenaMusic(),
+      () => preloadArenaAmbiance(),
     ],
     onProgress,
   );

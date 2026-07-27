@@ -17,8 +17,12 @@ type Props = {
  */
 export function EquippedCosmetics({ characterRoot, equipped, opacity = 1 }: Props) {
   useEffect(() => {
-    syncEmbeddedCosmetics(characterRoot, equipped);
-    setCharacterOpacity(characterRoot, opacity);
+    try {
+      syncEmbeddedCosmetics(characterRoot, equipped);
+      setCharacterOpacity(characterRoot, opacity);
+    } catch (err) {
+      console.warn("[EquippedCosmetics] sync failed:", err);
+    }
   }, [characterRoot, equipped, opacity]);
 
   return null;

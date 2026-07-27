@@ -11,22 +11,30 @@ import {
   HUB_SPAWN,
   INTERACT,
   LOADOUT_SIZE,
+  MAX_COIN_LOADOUT_SLOTS,
   MAX_TALENTS,
   RESPAWN_LOCK_MS,
   SHOP_ITEMS,
+  SPELL_SLOTS,
+  STARTER_COLORS,
   STARTER_TALENT_POINTS,
   TALENTS,
   TALENT_POINT_BUDGET,
   TALENT_TREE_IDS,
   TICK_MS,
+  abilityUnlockCostEssence,
   addCoins,
   applyMovement,
   applyYaw,
+  canAffordShopCost,
+  canEquipInSlot,
   clampBuildToOwned,
   clearTree,
+  emptyPlayerUnlocks,
   formatCoins,
   formatShopCost,
   formatWallet,
+  getEmote,
   HUB_PORTALS,
   HUB_PRACTICE_DUMMIES,
   HUB_STANDS,
@@ -34,12 +42,19 @@ import {
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   normalizeCosmeticsEquipped,
+  normalizeEmoteSlots,
   cosmeticsEquippedFromFields,
   cosmeticsEquippedToFields,
   applyCosmeticEquip,
   isCosmeticSlot,
   normalizeLoadout,
   normalizeTalentBuild,
+  ownsAbility,
+  ownsColor,
+  ownsCosmetic,
+  ownsEmote,
+  ownsPattern,
+  ownsPatternColor,
   phaseDurationMs,
   resolvePveTransfer,
   spendCoins,
@@ -47,7 +62,10 @@ import {
   pointInInteractZone,
   totalPointsSpent,
   type PlayerInput,
+  type PlayerUnlocks,
   type PvpSeat,
+  type ShopCost,
+  type ShopGrant,
   type TalentBuild,
   type TalentTreeId,
   type Wallet,
@@ -64,15 +82,18 @@ import {
 } from "../matchmaking/hubParty.js";
 import {
   loadEconomy,
+  saveActiveLoadoutSlot,
   saveInventory,
   saveLoadout,
+  saveLoadoutPreset,
+  savePlayerUnlocks,
   saveProfileColor,
   saveProfileCosmeticsEquipped,
-  saveProfilePattern,
   saveProfilePatternColor,
   saveProfileAppearance,
   saveTalentBuild,
   saveTalents,
+  type LoadoutPresetRow,
 } from "../persistence.js";
 import { takePendingLoot } from "../pendingLoot.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
@@ -120,6 +141,11 @@ export class BaseCityRoom extends Room<BaseCityState> {
   /** Owned talent points + ranked catalog build (not schema-synced). */
   private talentPointsBySession = new Map<string, number>();
   private talentBuildBySession = new Map<string, TalentBuild>();
+  private unlocksBySession = new Map<string, PlayerUnlocks>();
+  private loadoutPresetsBySession = new Map<string, LoadoutPresetRow[]>();
+  private activeLoadoutSlotBySession = new Map<string, number>();
+  /** Emote anti-spam / active window (epoch ms). */
+  private emoteUntilBySession = new Map<string, number>();
 
   onCreate(options: AuthJoinOptions) {
     this.setState(new BaseCityState());
@@ -153,6 +179,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
         this.applyWallet(player, {
           ...addCoins(this.walletOf(player), { copper: DUMMY_HIT_COPPER }),
           essence: player.essence,
+          rubies: player.rubies,
         });
         void this.persistInventory(attackerSessionId, player);
         this.sendInventory(client, player);
@@ -193,8 +220,40 @@ export class BaseCityRoom extends Room<BaseCityState> {
       void this.handleShopBuy(client, message.itemId);
     });
 
+    this.onMessage("unlock_ability", (client, message: { abilityId?: string }) => {
+      void this.handleUnlockAbility(client, message?.abilityId ?? "");
+    });
+
     this.onMessage("set_loadout", (client, message: { abilityIds: string[] }) => {
       void this.handleSetLoadout(client, message.abilityIds ?? []);
+    });
+
+    this.onMessage(
+      "save_loadout_preset",
+      (client, message: { slotIndex?: number; abilityIds?: string[]; name?: string }) => {
+        void this.handleSaveLoadoutPreset(
+          client,
+          message?.slotIndex ?? 0,
+          message?.abilityIds ?? [],
+          message?.name,
+        );
+      },
+    );
+
+    this.onMessage("select_loadout_preset", (client, message: { slotIndex?: number }) => {
+      void this.handleSelectLoadoutPreset(client, message?.slotIndex ?? 0);
+    });
+
+    this.onMessage("set_emote_loadout", (client, message: { emoteSlots?: (string | null)[] }) => {
+      void this.handleSetEmoteLoadout(client, message?.emoteSlots ?? []);
+    });
+
+    this.onMessage("cast_emote", (client, message: { emoteId?: string }) => {
+      this.handleCastEmote(client, message?.emoteId ?? "");
+    });
+
+    this.onMessage("cancel_emote", (client) => {
+      this.handleCancelEmote(client);
     });
 
     this.onMessage("set_talents", (client, message: { talentIds: string[] }) => {
@@ -319,15 +378,22 @@ export class BaseCityRoom extends Room<BaseCityState> {
     this.talentBuildBySession.set(client.sessionId, {});
 
     if (verified.isGuest) {
+      const unlocks = emptyPlayerUnlocks();
+      this.unlocksBySession.set(client.sessionId, unlocks);
+      this.loadoutPresetsBySession.set(client.sessionId, [
+        { slotIndex: 0, name: "Loadout 1", abilityIds: [...DEFAULT_LOADOUT] },
+      ]);
+      this.activeLoadoutSlotBySession.set(client.sessionId, 0);
       const starter = normalizeCoins({ copper: 75, silver: 2, gold: 0 });
       player.copper = starter.copper;
       player.silver = starter.silver;
       player.gold = starter.gold;
       player.essence = 12;
+      player.rubies = 0;
       player.color =
-        verified.color && (COSMETIC_COLORS as readonly string[]).includes(verified.color)
+        verified.color && ownsColor(unlocks.colors, verified.color)
           ? verified.color
-          : COSMETIC_COLORS[0];
+          : STARTER_COLORS[0]!;
       player.pattern = DEFAULT_COSMETIC_PATTERN;
       player.patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
     } else {
@@ -336,18 +402,27 @@ export class BaseCityRoom extends Room<BaseCityState> {
       player.silver = eco.silver;
       player.gold = eco.gold;
       player.essence = eco.essence;
+      player.rubies = eco.rubies;
       player.loadout = normalizeLoadout(eco.abilityIds).join(",");
       player.talents = eco.talentIds.slice(0, MAX_TALENTS).join(",");
       this.talentPointsBySession.set(client.sessionId, eco.talentPoints);
       this.talentBuildBySession.set(client.sessionId, eco.talentBuild);
-      player.color =
-        (eco.color && (COSMETIC_COLORS as readonly string[]).includes(eco.color)
+      this.unlocksBySession.set(client.sessionId, eco.unlocks);
+      this.loadoutPresetsBySession.set(client.sessionId, eco.loadoutPresets);
+      this.activeLoadoutSlotBySession.set(client.sessionId, eco.activeLoadoutSlot);
+      const preferredColor =
+        eco.color && ownsColor(eco.unlocks.colors, eco.color)
           ? eco.color
-          : verified.color && (COSMETIC_COLORS as readonly string[]).includes(verified.color)
+          : verified.color && ownsColor(eco.unlocks.colors, verified.color)
             ? verified.color
-            : COSMETIC_COLORS[0]);
-      player.pattern = normalizeCosmeticPattern(eco.pattern);
-      player.patternColor = normalizeCosmeticPatternColor(eco.patternColor);
+            : STARTER_COLORS[0]!;
+      player.color = preferredColor;
+      player.pattern = ownsPattern(eco.unlocks.patterns, eco.pattern ?? "")
+        ? normalizeCosmeticPattern(eco.pattern)
+        : DEFAULT_COSMETIC_PATTERN;
+      player.patternColor = ownsPatternColor(eco.unlocks.patternColors, eco.patternColor ?? "")
+        ? normalizeCosmeticPatternColor(eco.patternColor)
+        : DEFAULT_COSMETIC_PATTERN_COLOR;
       this.applyCosmeticsEquipped(player, eco.cosmeticsEquipped ?? {});
       if (player.copper === 0 && player.silver === 0 && player.gold === 0 && player.essence === 0) {
         const soft = normalizeCoins({ copper: 50, silver: 1, gold: 0 });
@@ -368,12 +443,23 @@ export class BaseCityRoom extends Room<BaseCityState> {
     });
 
     const loot = takePendingLoot(verified.userId);
-    if (loot && (loot.copper > 0 || loot.silver > 0 || loot.gold > 0 || loot.essence > 0)) {
+    if (
+      loot &&
+      (loot.copper > 0 ||
+        loot.silver > 0 ||
+        loot.gold > 0 ||
+        loot.essence > 0 ||
+        (loot.rubies ?? 0) > 0)
+    ) {
       const coins = addCoins(this.walletOf(player), loot);
-      this.applyWallet(player, { ...coins, essence: player.essence + loot.essence });
+      this.applyWallet(player, {
+        ...coins,
+        essence: player.essence + loot.essence,
+        rubies: player.rubies + (loot.rubies ?? 0),
+      });
       void this.persistInventory(client.sessionId, player);
       client.send("toast", {
-        message: `Loot: ${formatWallet(loot)}`,
+        message: `Loot: ${formatWallet({ ...loot, rubies: loot.rubies ?? 0 })}`,
       });
     }
 
@@ -412,6 +498,13 @@ export class BaseCityRoom extends Room<BaseCityState> {
       // reconnection window expired
     }
 
+    // Flush unlocks before seat teardown (covers failed mid-session saves / late schema).
+    const unlocks = this.unlocksBySession.get(client.sessionId);
+    if (unlocks) {
+      await this.persistUnlocks(client.sessionId, unlocks);
+    }
+    await this.persistInventory(client.sessionId, player);
+
     this.stripPlayerSession(client.sessionId);
   }
 
@@ -428,6 +521,10 @@ export class BaseCityRoom extends Room<BaseCityState> {
     this.diedAtBySession.delete(sessionId);
     this.talentPointsBySession.delete(sessionId);
     this.talentBuildBySession.delete(sessionId);
+    this.unlocksBySession.delete(sessionId);
+    this.loadoutPresetsBySession.delete(sessionId);
+    this.activeLoadoutSlotBySession.delete(sessionId);
+    this.emoteUntilBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
     this.broadcastHubRoster();
   }
@@ -481,6 +578,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
       silver: player.silver,
       gold: player.gold,
       essence: player.essence,
+      rubies: player.rubies,
     };
   }
 
@@ -490,6 +588,11 @@ export class BaseCityRoom extends Room<BaseCityState> {
     player.silver = coins.silver;
     player.gold = coins.gold;
     player.essence = wallet.essence;
+    player.rubies = Math.max(0, wallet.rubies ?? 0);
+  }
+
+  private unlocksOf(sessionId: string): PlayerUnlocks {
+    return this.unlocksBySession.get(sessionId) ?? emptyPlayerUnlocks();
   }
 
   private sendInventory(client: Client, player: PlayerState) {
@@ -500,11 +603,15 @@ export class BaseCityRoom extends Room<BaseCityState> {
         silver: wallet.silver,
         gold: wallet.gold,
         essence: wallet.essence,
+        rubies: wallet.rubies,
         talent_points: this.talentPointsBySession.get(client.sessionId) ?? 0,
       },
       loadout: player.loadout.split(",").filter(Boolean),
       talents: player.talents.split(",").filter(Boolean),
       talentBuild: this.talentBuildBySession.get(client.sessionId) ?? {},
+      unlocks: this.unlocksOf(client.sessionId),
+      loadoutPresets: this.loadoutPresetsBySession.get(client.sessionId) ?? [],
+      activeLoadoutSlot: this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0,
     });
   }
 
@@ -524,6 +631,131 @@ export class BaseCityRoom extends Room<BaseCityState> {
       this.walletOf(player),
       this.talentPointsBySession.get(sessionId),
     );
+  }
+
+  private async persistUnlocks(sessionId: string, unlocks: PlayerUnlocks): Promise<boolean> {
+    this.unlocksBySession.set(sessionId, unlocks);
+    const identity = this.identities.get(sessionId);
+    if (!identity || identity.isGuest) return true;
+    return savePlayerUnlocks(identity.userId, unlocks);
+  }
+
+  private debitShopCost(player: PlayerState, cost: ShopCost): boolean {
+    const wallet = this.walletOf(player);
+    if (!canAffordShopCost(wallet, cost)) return false;
+    if (cost.kind === "coins") {
+      const next = spendCoins(wallet, cost.copper);
+      if (!next) return false;
+      this.applyWallet(player, { ...next, essence: wallet.essence, rubies: wallet.rubies });
+      return true;
+    }
+    if (cost.kind === "essence") {
+      this.applyWallet(player, {
+        ...wallet,
+        essence: wallet.essence - cost.amount,
+      });
+      return true;
+    }
+    this.applyWallet(player, {
+      ...wallet,
+      rubies: wallet.rubies - cost.amount,
+    });
+    return true;
+  }
+
+  private creditShopCost(player: PlayerState, cost: ShopCost): void {
+    const wallet = this.walletOf(player);
+    if (cost.kind === "coins") {
+      this.applyWallet(player, {
+        ...addCoins(wallet, { copper: cost.copper }),
+        essence: wallet.essence,
+        rubies: wallet.rubies,
+      });
+      return;
+    }
+    if (cost.kind === "essence") {
+      this.applyWallet(player, {
+        ...wallet,
+        essence: wallet.essence + cost.amount,
+      });
+      return;
+    }
+    this.applyWallet(player, {
+      ...wallet,
+      rubies: wallet.rubies + cost.amount,
+    });
+  }
+
+  private alreadyOwnsGrant(unlocks: PlayerUnlocks, grant: ShopGrant): boolean {
+    switch (grant.kind) {
+      case "color":
+        return ownsColor(unlocks.colors, grant.hex);
+      case "pattern":
+        return ownsPattern(unlocks.patterns, grant.patternId);
+      case "pattern_color":
+        return ownsPatternColor(unlocks.patternColors, grant.hex);
+      case "cosmetic":
+        return ownsCosmetic(unlocks.cosmetics, grant.itemId);
+      case "emote":
+        return ownsEmote(unlocks.emotes, grant.emoteId);
+      case "loadout_slot":
+        return unlocks.loadoutSlotCount >= grant.toCount;
+      case "consumable":
+      case "item_stack":
+        return false;
+      default:
+        return false;
+    }
+  }
+
+  /** Validate owned abilities + slot rules; returns cleaned ids or null. */
+  private validateLoadoutAbilityIds(
+    client: Client,
+    abilityIds: string[],
+  ): string[] | null {
+    const unlocks = this.unlocksOf(client.sessionId);
+    const cleaned = abilityIds.filter((id) => id in ABILITIES);
+    if (cleaned.length !== LOADOUT_SIZE) {
+      client.send("toast", { message: `Assign all ${LOADOUT_SIZE} slots` });
+      return null;
+    }
+    if (new Set(cleaned).size !== cleaned.length) {
+      client.send("toast", { message: "Duplicate abilities not allowed" });
+      return null;
+    }
+    for (let i = 0; i < LOADOUT_SIZE; i++) {
+      const id = cleaned[i]!;
+      if (!ownsAbility(unlocks.abilities, id)) {
+        client.send("toast", { message: `Ability not unlocked: ${id}` });
+        return null;
+      }
+      const slotId = SPELL_SLOTS[i]!.id;
+      if (!canEquipInSlot(id, slotId)) {
+        client.send("toast", { message: `${id} cannot go in slot ${slotId}` });
+        return null;
+      }
+    }
+    return normalizeLoadout(cleaned);
+  }
+
+  private upsertPresetInSession(
+    sessionId: string,
+    slotIndex: number,
+    abilityIds: string[],
+    name?: string,
+  ) {
+    const presets = [...(this.loadoutPresetsBySession.get(sessionId) ?? [])];
+    const idx = presets.findIndex((p) => p.slotIndex === slotIndex);
+    const row: LoadoutPresetRow = {
+      slotIndex,
+      name: name || presets[idx]?.name || `Loadout ${slotIndex + 1}`,
+      abilityIds,
+    };
+    if (idx >= 0) presets[idx] = row;
+    else presets.push(row);
+    presets.sort((a, b) => a.slotIndex - b.slotIndex);
+    this.loadoutPresetsBySession.set(sessionId, presets);
+    return row;
   }
 
   private async handleBuyTalentPoints(client: Client, count: number) {
@@ -623,16 +855,21 @@ export class BaseCityRoom extends Room<BaseCityState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
     if (!(COSMETIC_COLORS as readonly string[]).includes(color)) return;
+    const unlocks = this.unlocksOf(client.sessionId);
+    if (!ownsColor(unlocks.colors, color)) {
+      client.send("toast", { message: "Body color not unlocked" });
+      return;
+    }
     player.color = color;
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
       const ok = await saveProfileColor(identity.userId, color);
       client.send("toast", {
-        message: ok ? "Hide tint saved to your account" : "Tint applied (account save failed)",
+        message: ok ? "Body color saved to your account" : "Color applied (account save failed)",
       });
       return;
     }
-    client.send("toast", { message: "Hide tint updated (sign in to save)" });
+    client.send("toast", { message: "Body color updated (sign in to save)" });
   }
 
   private async handleSetPattern(
@@ -642,11 +879,21 @@ export class BaseCityRoom extends Room<BaseCityState> {
   ) {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
+    const unlocks = this.unlocksOf(client.sessionId);
     const next = normalizeCosmeticPattern(pattern);
-    player.pattern = next;
-    if (patternColor != null) {
-      player.patternColor = normalizeCosmeticPatternColor(patternColor);
+    if (!ownsPattern(unlocks.patterns, next)) {
+      client.send("toast", { message: "Pattern not unlocked" });
+      return;
     }
+    if (patternColor != null) {
+      const nextColor = normalizeCosmeticPatternColor(patternColor);
+      if (!ownsPatternColor(unlocks.patternColors, nextColor)) {
+        client.send("toast", { message: "Pattern color not unlocked" });
+        return;
+      }
+      player.patternColor = nextColor;
+    }
+    player.pattern = next;
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
       const ok = await saveProfileAppearance(identity.userId, {
@@ -674,7 +921,12 @@ export class BaseCityRoom extends Room<BaseCityState> {
     player: PlayerState,
     patternColor: string,
   ) {
+    const unlocks = this.unlocksOf(client.sessionId);
     const next = normalizeCosmeticPatternColor(patternColor);
+    if (!ownsPatternColor(unlocks.patternColors, next)) {
+      client.send("toast", { message: "Pattern color not unlocked" });
+      return;
+    }
     player.patternColor = next;
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
@@ -722,7 +974,13 @@ export class BaseCityRoom extends Room<BaseCityState> {
   ) {
     const player = this.state.players.get(client.sessionId);
     if (!player || !slotRaw || !isCosmeticSlot(slotRaw)) return;
-    const next = applyCosmeticEquip(this.cosmeticsEquippedOf(player), slotRaw, itemId);
+    const unlocks = this.unlocksOf(client.sessionId);
+    const next = applyCosmeticEquip(
+      this.cosmeticsEquippedOf(player),
+      slotRaw,
+      itemId,
+      unlocks.cosmetics,
+    );
     if (!next) {
       client.send("toast", { message: "Cannot equip that item" });
       return;
@@ -747,60 +1005,329 @@ export class BaseCityRoom extends Room<BaseCityState> {
       return;
     }
 
-    if (item.cost.kind === "coins") {
-      const next = spendCoins(this.walletOf(player), item.cost.copper);
-      if (!next) {
-        client.send("toast", { message: `Need ${formatShopCost(item.cost)}` });
-        return;
-      }
-      this.applyWallet(player, { ...next, essence: player.essence });
-    } else {
-      if (player.essence < item.cost.amount) {
-        client.send("toast", { message: `Need ${item.cost.amount} essence` });
-        return;
-      }
-      player.essence -= item.cost.amount;
+    const priorUnlocks = this.unlocksOf(client.sessionId);
+    const unlocks = { ...priorUnlocks };
+    unlocks.cosmetics = [...unlocks.cosmetics];
+    unlocks.colors = [...unlocks.colors];
+    unlocks.patterns = [...unlocks.patterns];
+    unlocks.patternColors = [...unlocks.patternColors];
+    unlocks.emotes = [...unlocks.emotes];
+    unlocks.abilities = [...unlocks.abilities];
+    unlocks.emoteSlots = [...unlocks.emoteSlots];
+
+    if (this.alreadyOwnsGrant(unlocks, item.grant)) {
+      client.send("toast", { message: "Already owned" });
+      return;
     }
 
-    if (itemId === "health_tonic") {
-      player.hp = Math.min(player.maxHp, player.hp + 25);
-      client.send("toast", { message: "Health tonic — +25 HP" });
-    } else if (itemId === "paint_red") {
-      player.color = "#ef4444";
-      const identity = this.identities.get(client.sessionId);
-      if (identity && !identity.isGuest) await saveProfileColor(identity.userId, player.color);
-      client.send("toast", { message: "Crimson paint applied" });
-    } else if (itemId === "copper_pouch") {
-      this.applyWallet(player, { ...addCoins(this.walletOf(player), { copper: 80 }), essence: player.essence });
-      client.send("toast", { message: `+${formatCoins({ copper: 80, silver: 0, gold: 0 })}` });
-    } else {
-      client.send("toast", { message: `Bought ${item.name}` });
+    if (item.grant.kind === "loadout_slot") {
+      if (
+        unlocks.loadoutSlotCount >= item.grant.toCount ||
+        item.grant.toCount > MAX_COIN_LOADOUT_SLOTS
+      ) {
+        client.send("toast", { message: "Loadout slot unavailable" });
+        return;
+      }
     }
 
+    if (!this.debitShopCost(player, item.cost)) {
+      client.send("toast", { message: `Need ${formatShopCost(item.cost)}` });
+      return;
+    }
+
+    const grant = item.grant;
+    let unlocksChanged = false;
+    let toastMessage = `Bought ${item.name}`;
+
+    switch (grant.kind) {
+      case "consumable":
+        if (grant.effect === "health_tonic") {
+          player.hp = Math.min(player.maxHp, player.hp + 25);
+          toastMessage = "Health tonic — +25 HP";
+        } else if (grant.effect === "copper_pouch") {
+          this.applyWallet(player, {
+            ...addCoins(this.walletOf(player), { copper: 80 }),
+            essence: player.essence,
+            rubies: player.rubies,
+          });
+          toastMessage = `+${formatCoins({ copper: 80, silver: 0, gold: 0 })}`;
+        }
+        break;
+      case "color":
+        if (!unlocks.colors.includes(grant.hex)) unlocks.colors.push(grant.hex);
+        unlocksChanged = true;
+        toastMessage = `Unlocked tint ${grant.hex}`;
+        break;
+      case "pattern":
+        if (!unlocks.patterns.includes(grant.patternId)) {
+          unlocks.patterns.push(grant.patternId);
+        }
+        unlocksChanged = true;
+        toastMessage = `Unlocked pattern ${grant.patternId}`;
+        break;
+      case "pattern_color":
+        if (!unlocks.patternColors.includes(grant.hex)) {
+          unlocks.patternColors.push(grant.hex);
+        }
+        unlocksChanged = true;
+        toastMessage = `Unlocked pattern ink ${grant.hex}`;
+        break;
+      case "cosmetic":
+        if (!unlocks.cosmetics.includes(grant.itemId)) {
+          unlocks.cosmetics.push(grant.itemId);
+        }
+        unlocksChanged = true;
+        toastMessage = `Unlocked ${item.name}`;
+        break;
+      case "emote":
+        if (!unlocks.emotes.includes(grant.emoteId)) {
+          unlocks.emotes.push(grant.emoteId);
+        }
+        unlocks.emoteSlots = normalizeEmoteSlots(unlocks.emoteSlots, unlocks.emotes);
+        unlocksChanged = true;
+        toastMessage = `Unlocked emote ${item.name}`;
+        break;
+      case "loadout_slot": {
+        unlocks.loadoutSlotCount = Math.max(unlocks.loadoutSlotCount, grant.toCount);
+        unlocksChanged = true;
+        const slotIndex = grant.toCount - 1;
+        const abilityIds = normalizeLoadout(player.loadout.split(","));
+        this.upsertPresetInSession(
+          client.sessionId,
+          slotIndex,
+          abilityIds,
+          `Loadout ${grant.toCount}`,
+        );
+        const identity = this.identities.get(client.sessionId);
+        if (identity && !identity.isGuest) {
+          await saveLoadoutPreset(
+            identity.userId,
+            slotIndex,
+            abilityIds,
+            `Loadout ${grant.toCount}`,
+          );
+        }
+        toastMessage = `Unlocked loadout preset slot ${grant.toCount}`;
+        break;
+      }
+      case "item_stack":
+        break;
+      default:
+        break;
+    }
+
+    if (unlocksChanged) {
+      const saved = await this.persistUnlocks(client.sessionId, unlocks);
+      if (!saved) {
+        this.unlocksBySession.set(client.sessionId, {
+          ...priorUnlocks,
+          cosmetics: [...priorUnlocks.cosmetics],
+          colors: [...priorUnlocks.colors],
+          patterns: [...priorUnlocks.patterns],
+          patternColors: [...priorUnlocks.patternColors],
+          emotes: [...priorUnlocks.emotes],
+          abilities: [...priorUnlocks.abilities],
+          emoteSlots: [...priorUnlocks.emoteSlots],
+        });
+        this.creditShopCost(player, item.cost);
+        client.send("toast", {
+          message: "Purchase could not be saved — you were not charged",
+        });
+        await this.persistInventory(client.sessionId, player);
+        this.sendInventory(client, player);
+        return;
+      }
+    }
+
+    client.send("toast", { message: toastMessage });
     await this.persistInventory(client.sessionId, player);
     this.sendInventory(client, player);
+  }
+
+  private async handleUnlockAbility(client: Client, abilityId: string) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !abilityId || !(abilityId in ABILITIES)) {
+      client.send("toast", { message: "Unknown ability" });
+      return;
+    }
+    const unlocks = { ...this.unlocksOf(client.sessionId) };
+    unlocks.abilities = [...unlocks.abilities];
+    if (ownsAbility(unlocks.abilities, abilityId)) {
+      client.send("toast", { message: "Already unlocked" });
+      return;
+    }
+    const cost = abilityUnlockCostEssence(abilityId);
+    if (cost <= 0) {
+      client.send("toast", { message: "Ability is free" });
+      return;
+    }
+    if (player.essence < cost) {
+      client.send("toast", { message: `Need ${cost} essence` });
+      return;
+    }
+    this.applyWallet(player, {
+      ...this.walletOf(player),
+      essence: player.essence - cost,
+    });
+    const priorAbilities = [...unlocks.abilities];
+    unlocks.abilities.push(abilityId);
+    const saved = await this.persistUnlocks(client.sessionId, unlocks);
+    if (!saved) {
+      this.unlocksBySession.set(client.sessionId, {
+        ...unlocks,
+        abilities: priorAbilities,
+      });
+      this.applyWallet(player, {
+        ...this.walletOf(player),
+        essence: player.essence + cost,
+      });
+      client.send("toast", {
+        message: "Unlock could not be saved — you were not charged",
+      });
+      await this.persistInventory(client.sessionId, player);
+      this.sendInventory(client, player);
+      return;
+    }
+    await this.persistInventory(client.sessionId, player);
+    this.sendInventory(client, player);
+    client.send("toast", {
+      message: `Unlocked ${ABILITIES[abilityId]?.name ?? abilityId} (−${cost} essence)`,
+    });
   }
 
   private async handleSetLoadout(client: Client, abilityIds: string[]) {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
-    const cleaned = abilityIds.filter((id) => id in ABILITIES);
-    if (cleaned.length !== LOADOUT_SIZE) {
-      client.send("toast", { message: `Assign all ${LOADOUT_SIZE} slots` });
-      return;
-    }
-    if (new Set(cleaned).size !== cleaned.length) {
-      client.send("toast", { message: "Duplicate abilities not allowed" });
-      return;
-    }
+    const cleaned = this.validateLoadoutAbilityIds(client, abilityIds);
+    if (!cleaned) return;
 
     player.loadout = cleaned.join(",");
     this.applyCombatKit(client.sessionId, player);
+
+    const activeSlot = this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0;
+    this.upsertPresetInSession(client.sessionId, activeSlot, cleaned);
     const identity = this.identities.get(client.sessionId);
-    if (identity && !identity.isGuest) await saveLoadout(identity.userId, cleaned);
+    if (identity && !identity.isGuest) {
+      await saveLoadoutPreset(identity.userId, activeSlot, cleaned);
+    }
     this.sendInventory(client, player);
     client.send("toast", { message: "Loadout saved" });
+  }
+
+  private async handleSaveLoadoutPreset(
+    client: Client,
+    slotIndexRaw: number,
+    abilityIds: string[],
+    name?: string,
+  ) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const unlocks = this.unlocksOf(client.sessionId);
+    const slotIndex = Math.floor(slotIndexRaw);
+    if (slotIndex < 0 || slotIndex >= unlocks.loadoutSlotCount) {
+      client.send("toast", { message: "Loadout slot locked" });
+      return;
+    }
+    const cleaned = this.validateLoadoutAbilityIds(client, abilityIds);
+    if (!cleaned) return;
+
+    const row = this.upsertPresetInSession(client.sessionId, slotIndex, cleaned, name);
+    const activeSlot = this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0;
+    if (slotIndex === activeSlot) {
+      player.loadout = cleaned.join(",");
+      this.applyCombatKit(client.sessionId, player);
+    }
+
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      await saveLoadoutPreset(identity.userId, slotIndex, cleaned, row.name);
+    }
+    this.sendInventory(client, player);
+    client.send("toast", { message: `Saved ${row.name}` });
+  }
+
+  private async handleSelectLoadoutPreset(client: Client, slotIndexRaw: number) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const unlocks = this.unlocksOf(client.sessionId);
+    const slotIndex = Math.floor(slotIndexRaw);
+    if (slotIndex < 0 || slotIndex >= unlocks.loadoutSlotCount) {
+      client.send("toast", { message: "Loadout slot locked" });
+      return;
+    }
+    const presets = this.loadoutPresetsBySession.get(client.sessionId) ?? [];
+    const preset = presets.find((p) => p.slotIndex === slotIndex);
+    const abilityIds = normalizeLoadout(preset?.abilityIds ?? DEFAULT_LOADOUT.slice());
+    for (let i = 0; i < LOADOUT_SIZE; i++) {
+      const id = abilityIds[i]!;
+      if (!ownsAbility(unlocks.abilities, id) || !canEquipInSlot(id, SPELL_SLOTS[i]!.id)) {
+        client.send("toast", { message: "Preset has locked abilities" });
+        return;
+      }
+    }
+
+    this.activeLoadoutSlotBySession.set(client.sessionId, slotIndex);
+    player.loadout = abilityIds.join(",");
+    this.applyCombatKit(client.sessionId, player);
+
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      await saveActiveLoadoutSlot(identity.userId, slotIndex);
+      await saveLoadout(identity.userId, abilityIds);
+    }
+    this.sendInventory(client, player);
+    client.send("toast", {
+      message: `Loadout ${slotIndex + 1} selected`,
+    });
+  }
+
+  private async handleSetEmoteLoadout(client: Client, emoteSlots: (string | null)[]) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const unlocks = { ...this.unlocksOf(client.sessionId) };
+    unlocks.emoteSlots = normalizeEmoteSlots(emoteSlots, unlocks.emotes);
+    await this.persistUnlocks(client.sessionId, unlocks);
+    this.sendInventory(client, player);
+    client.send("toast", { message: "Emote wheel saved" });
+  }
+
+  private handleCastEmote(client: Client, emoteId: string) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.hp <= 0 || !emoteId) return;
+    const unlocks = this.unlocksOf(client.sessionId);
+    if (!ownsEmote(unlocks.emotes, emoteId)) {
+      client.send("toast", { message: "Emote not unlocked" });
+      return;
+    }
+    if (!unlocks.emoteSlots.includes(emoteId)) {
+      client.send("toast", { message: "Emote not on wheel" });
+      return;
+    }
+    const def = getEmote(emoteId);
+    if (!def) return;
+    const now = Date.now();
+    const until = this.emoteUntilBySession.get(client.sessionId) ?? 0;
+    if (now < until - 200) {
+      // Allow recast near end; soft anti-spam while active
+      return;
+    }
+    this.emoteUntilBySession.set(client.sessionId, now + def.durationMs);
+    this.broadcast("emote_fx", {
+      sessionId: client.sessionId,
+      emoteId,
+      phase: "start",
+    });
+  }
+
+  private handleCancelEmote(client: Client) {
+    if (!this.state.players.get(client.sessionId)) return;
+    this.emoteUntilBySession.delete(client.sessionId);
+    this.broadcast("emote_fx", {
+      sessionId: client.sessionId,
+      emoteId: "",
+      phase: "cancel",
+    });
   }
 
   private async handleSetTalents(client: Client, talentIds: string[]) {
@@ -1448,6 +1975,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
       this.applyWallet(player, {
         ...addCoins(this.walletOf(player), { copper: DUMMY_COPPER_REWARD }),
         essence: player.essence,
+        rubies: player.rubies,
       });
       void this.persistInventory(sessionId, player);
       this.sendInventory(client, player);

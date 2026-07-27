@@ -28,6 +28,7 @@ export {
   usesGrooveFx,
   usesHealBeamFx,
   usesFirewallFx,
+  usesIceLanceExplodeFx,
   BoltProjectileEffect,
   CrescentCastEffect,
   CrescentImpactEffect,
@@ -43,6 +44,8 @@ export {
   HealBeamEffect,
   PoisonDartCastEffect,
   PoisonDartProjectileEffect,
+  IceLanceCastEffect,
+  IceLanceExplodeEffect,
   renderOneShot,
 } from "./catalog";
 

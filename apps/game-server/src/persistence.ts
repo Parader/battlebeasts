@@ -2,11 +2,16 @@ import { createClient } from "@supabase/supabase-js";
 import {
   DEFAULT_LOADOUT,
   STARTER_TALENT_POINTS,
+  cosmeticsEquippedToFields,
   normalizeCoins,
   normalizeCosmeticsEquipped,
   normalizeLoadout,
+  normalizePlayerUnlocks,
   normalizeTalentBuild,
+  sanitizeUnlocksWithEquipped,
+  emptyPlayerUnlocks,
   type CosmeticsEquipped,
+  type PlayerUnlocks,
   type TalentBuild,
   type Wallet,
 } from "@battlebeasts/shared";
@@ -19,6 +24,12 @@ const serverKey =
 
 const supabase = url && serverKey ? createClient(url, serverKey) : null;
 
+export type LoadoutPresetRow = {
+  slotIndex: number;
+  name: string;
+  abilityIds: string[];
+};
+
 export type EconomySnapshot = Wallet & {
   abilityIds: string[];
   talentIds: string[];
@@ -28,6 +39,9 @@ export type EconomySnapshot = Wallet & {
   pattern?: string;
   patternColor?: string;
   cosmeticsEquipped?: CosmeticsEquipped;
+  unlocks: PlayerUnlocks;
+  loadoutPresets: LoadoutPresetRow[];
+  activeLoadoutSlot: number;
 };
 
 export type ProfileAppearance = {
@@ -42,19 +56,30 @@ const DEFAULT_ECO: EconomySnapshot = {
   silver: 0,
   gold: 0,
   essence: 0,
+  rubies: 0,
   abilityIds: [...DEFAULT_LOADOUT],
   talentIds: [],
   talentPoints: STARTER_TALENT_POINTS,
   talentBuild: {},
   cosmeticsEquipped: normalizeCosmeticsEquipped({}),
+  unlocks: emptyPlayerUnlocks(),
+  loadoutPresets: [{ slotIndex: 0, name: "Loadout 1", abilityIds: [...DEFAULT_LOADOUT] }],
+  activeLoadoutSlot: 0,
 };
 
 export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   if (!supabase) {
-    return { ...DEFAULT_ECO, copper: 75, silver: 2, essence: 12, talentPoints: STARTER_TALENT_POINTS };
+    return {
+      ...DEFAULT_ECO,
+      copper: 75,
+      silver: 2,
+      essence: 12,
+      talentPoints: STARTER_TALENT_POINTS,
+      unlocks: emptyPlayerUnlocks(),
+    };
   }
 
-  const [inv, loadout, talents, profile] = await Promise.all([
+  const [inv, loadout, talents, profile, unlocksRes, presetsRes] = await Promise.all([
     supabase.from("inventory").select("resource_id, quantity").eq("user_id", userId),
     supabase.from("loadouts").select("ability_ids").eq("user_id", userId).maybeSingle(),
     supabase
@@ -64,13 +89,25 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
       .maybeSingle(),
     supabase
       .from("profiles")
-      .select("color, pattern, pattern_color, cosmetics_equipped")
+      .select("color, pattern, pattern_color, cosmetics_equipped, active_loadout_slot")
       .eq("id", userId)
       .maybeSingle(),
+    supabase.from("player_unlocks").select("*").eq("user_id", userId).maybeSingle(),
+    supabase
+      .from("loadout_presets")
+      .select("slot_index, name, ability_ids")
+      .eq("user_id", userId)
+      .order("slot_index", { ascending: true }),
   ]);
 
   if (profile.error) {
     console.warn("[persistence] load profile appearance failed:", profile.error.message);
+  }
+  if (unlocksRes.error) {
+    console.warn(
+      "[persistence] player_unlocks missing — run migration 20260727000000_shop_unlocks_rubies.sql:",
+      unlocksRes.error.message,
+    );
   }
 
   let profileRow: {
@@ -78,41 +115,136 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     pattern?: string;
     pattern_color?: string;
     cosmetics_equipped?: unknown;
+    active_loadout_slot?: number;
   } | null = profile.data ?? null;
 
-  if (profile.error && /cosmetics_equipped/i.test(profile.error.message)) {
-    console.warn(
-      "[persistence] cosmetics_equipped missing — run migration 20260726000000_profile_cosmetics_equipped.sql",
-    );
+  if (profile.error && /cosmetics_equipped|active_loadout_slot/i.test(profile.error.message)) {
     const fallback = await supabase
       .from("profiles")
-      .select("color, pattern, pattern_color")
+      .select("color, pattern, pattern_color, cosmetics_equipped")
       .eq("id", userId)
       .maybeSingle();
-    profileRow = fallback.data;
+    if (!fallback.error) {
+      profileRow = fallback.data;
+    } else if (/cosmetics_equipped/i.test(fallback.error.message)) {
+      const bare = await supabase
+        .from("profiles")
+        .select("color, pattern, pattern_color")
+        .eq("id", userId)
+        .maybeSingle();
+      profileRow = bare.data;
+    }
+  }
+
+  // Retry unlocks once if PostgREST schema cache is still catching up after a migration.
+  let unlocksData = unlocksRes.data;
+  let unlocksError = unlocksRes.error;
+  if (unlocksError && /schema cache|could not find the table/i.test(unlocksError.message)) {
+    await new Promise((r) => setTimeout(r, 400));
+    const retry = await supabase
+      .from("player_unlocks")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+    unlocksData = retry.data;
+    unlocksError = retry.error;
+    if (unlocksError) {
+      console.warn("[persistence] player_unlocks retry failed:", unlocksError.message);
+    }
   }
 
   const qty = (id: string) => inv.data?.find((r) => r.resource_id === id)?.quantity ?? 0;
   const copper = qty("copper") + qty("scrap");
   const talentPointsRow = qty("talent_points");
-  // Missing row → starter allocation (migration seeds existing users).
   const talentPoints = inv.data?.some((r) => r.resource_id === "talent_points")
     ? talentPointsRow
     : STARTER_TALENT_POINTS;
 
+  const cosmeticsEquipped = normalizeCosmeticsEquipped(profileRow?.cosmetics_equipped);
+  const fields = cosmeticsEquippedToFields(cosmeticsEquipped);
+  const equippedCosmeticIds = [
+    fields.cosmeticHat,
+    fields.cosmeticShoulders,
+    fields.cosmeticChest,
+    fields.cosmeticGloves,
+    fields.cosmeticBelt,
+    fields.cosmeticLegs,
+    fields.cosmeticShoes,
+  ].filter(Boolean);
+
+  const abilityIds = normalizeLoadout(
+    Array.isArray(loadout.data?.ability_ids) ? loadout.data.ability_ids : null,
+  );
+
+  let unlocks = normalizePlayerUnlocks(
+    unlocksData
+      ? {
+          cosmetics: unlocksData.cosmetics,
+          colors: unlocksData.colors,
+          patterns: unlocksData.patterns,
+          pattern_colors: unlocksData.pattern_colors,
+          emotes: unlocksData.emotes,
+          abilities: unlocksData.abilities,
+          loadout_slot_count: unlocksData.loadout_slot_count,
+          emote_slots: unlocksData.emote_slots,
+        }
+      : null,
+  );
+
+  unlocks = sanitizeUnlocksWithEquipped(
+    unlocks,
+    equippedCosmeticIds,
+    profileRow?.color,
+    profileRow?.pattern,
+    profileRow?.pattern_color,
+    abilityIds,
+  );
+
+  const loadoutPresets: LoadoutPresetRow[] = (presetsRes.data ?? []).map((row) => ({
+    slotIndex: row.slot_index as number,
+    name: (row.name as string) || `Loadout ${(row.slot_index as number) + 1}`,
+    abilityIds: normalizeLoadout(
+      Array.isArray(row.ability_ids) ? (row.ability_ids as string[]) : null,
+    ),
+  }));
+
+  if (loadoutPresets.length === 0) {
+    loadoutPresets.push({ slotIndex: 0, name: "Loadout 1", abilityIds });
+  }
+
+  const activeLoadoutSlot = Math.max(
+    0,
+    Math.min(
+      unlocks.loadoutSlotCount - 1,
+      Math.floor(profileRow?.active_loadout_slot ?? 0),
+    ),
+  );
+
+  const activePreset = loadoutPresets.find((p) => p.slotIndex === activeLoadoutSlot);
+  const resolvedAbilityIds = activePreset?.abilityIds?.length
+    ? normalizeLoadout(activePreset.abilityIds)
+    : abilityIds;
+
+  // Persist sanitized unlocks once if table exists and row was empty-ish
+  if (!unlocksError) {
+    void savePlayerUnlocks(userId, unlocks);
+  }
+
   return {
     ...normalizeCoins({ copper, silver: qty("silver"), gold: qty("gold") }),
     essence: qty("essence"),
-    abilityIds: normalizeLoadout(
-      Array.isArray(loadout.data?.ability_ids) ? loadout.data.ability_ids : null,
-    ),
+    rubies: qty("rubies"),
+    abilityIds: resolvedAbilityIds,
     talentIds: Array.isArray(talents.data?.talent_ids) ? talents.data.talent_ids : [],
     talentPoints,
     talentBuild: normalizeTalentBuild(talents.data?.talent_build),
     color: profileRow?.color ?? undefined,
     pattern: profileRow?.pattern ?? undefined,
     patternColor: profileRow?.pattern_color ?? undefined,
-    cosmeticsEquipped: normalizeCosmeticsEquipped(profileRow?.cosmetics_equipped),
+    cosmeticsEquipped,
+    unlocks,
+    loadoutPresets,
+    activeLoadoutSlot,
   };
 }
 
@@ -124,11 +256,44 @@ export async function saveInventory(userId: string, wallet: Wallet, talentPoints
     { user_id: userId, resource_id: "silver", quantity: coins.silver },
     { user_id: userId, resource_id: "gold", quantity: coins.gold },
     { user_id: userId, resource_id: "essence", quantity: wallet.essence },
+    { user_id: userId, resource_id: "rubies", quantity: Math.max(0, wallet.rubies ?? 0) },
   ];
   if (typeof talentPoints === "number") {
     rows.push({ user_id: userId, resource_id: "talent_points", quantity: Math.max(0, talentPoints) });
   }
   await supabase.from("inventory").upsert(rows, { onConflict: "user_id,resource_id" });
+}
+
+export async function savePlayerUnlocks(userId: string, unlocks: PlayerUnlocks): Promise<boolean> {
+  if (!supabase) return true;
+  const normalized = normalizePlayerUnlocks(unlocks);
+  const payload = {
+    user_id: userId,
+    cosmetics: normalized.cosmetics,
+    colors: normalized.colors,
+    patterns: normalized.patterns,
+    pattern_colors: normalized.patternColors,
+    emotes: normalized.emotes,
+    abilities: normalized.abilities,
+    loadout_slot_count: normalized.loadoutSlotCount,
+    emote_slots: normalized.emoteSlots,
+    updated_at: new Date().toISOString(),
+  };
+
+  const attempt = async () =>
+    supabase.from("player_unlocks").upsert(payload, { onConflict: "user_id" });
+
+  let { error } = await attempt();
+  // PostgREST can lag after migrations — one retry after a brief wait.
+  if (error && /schema cache|could not find the table/i.test(error.message)) {
+    await new Promise((r) => setTimeout(r, 400));
+    ({ error } = await attempt());
+  }
+  if (error) {
+    console.warn("[persistence] savePlayerUnlocks failed:", error.message);
+    return false;
+  }
+  return true;
 }
 
 export async function saveLoadout(userId: string, abilityIds: string[]): Promise<void> {
@@ -137,6 +302,38 @@ export async function saveLoadout(userId: string, abilityIds: string[]): Promise
     { user_id: userId, ability_ids: abilityIds, updated_at: new Date().toISOString() },
     { onConflict: "user_id" },
   );
+}
+
+export async function saveLoadoutPreset(
+  userId: string,
+  slotIndex: number,
+  abilityIds: string[],
+  name?: string,
+): Promise<void> {
+  if (!supabase) return;
+  await supabase.from("loadout_presets").upsert(
+    {
+      user_id: userId,
+      slot_index: slotIndex,
+      name: name || `Loadout ${slotIndex + 1}`,
+      ability_ids: abilityIds,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,slot_index" },
+  );
+  // Keep legacy single-row loadout in sync when saving active kit
+  await saveLoadout(userId, abilityIds);
+}
+
+export async function saveActiveLoadoutSlot(userId: string, slotIndex: number): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("profiles")
+    .update({ active_loadout_slot: slotIndex, updated_at: new Date().toISOString() })
+    .eq("id", userId);
+  if (error) {
+    console.warn("[persistence] saveActiveLoadoutSlot failed:", error.message);
+  }
 }
 
 export async function saveTalents(userId: string, talentIds: string[]): Promise<void> {
@@ -178,7 +375,6 @@ export async function saveProfileAppearance(
   const { error } = await supabase.from("profiles").update(patch).eq("id", userId);
   if (error) {
     console.warn("[persistence] saveProfileAppearance failed:", error.message, patch);
-    // If cosmetics column is missing, still try to save the rest.
     if (appearance.cosmeticsEquipped != null && /cosmetics_equipped/i.test(error.message)) {
       console.warn(
         "[persistence] cosmetics_equipped missing — run migration 20260726000000_profile_cosmetics_equipped.sql",
@@ -202,10 +398,7 @@ export async function saveProfilePattern(userId: string, pattern: string): Promi
   return saveProfileAppearance(userId, { pattern });
 }
 
-export async function saveProfilePatternColor(
-  userId: string,
-  patternColor: string,
-): Promise<boolean> {
+export async function saveProfilePatternColor(userId: string, patternColor: string): Promise<boolean> {
   return saveProfileAppearance(userId, { patternColor });
 }
 

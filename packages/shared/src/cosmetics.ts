@@ -52,6 +52,22 @@ export const COSMETIC_CATALOG: Record<string, CosmeticItemDef> = {
     name: "Shoulder Set 1",
     meshNames: ["Shoulder set 1 - 1", "Shoulder set 1 - 2"],
   },
+  /**
+   * Boots → Set 1: left boot + right boot (3 skinned pieces each).
+   */
+  shoes_set_1: {
+    id: "shoes_set_1",
+    slot: "shoes",
+    name: "Boot Set 1",
+    meshNames: [
+      "Bottomboot",
+      "Middleboot",
+      "Upperboot",
+      "Bottomboot2",
+      "Middleboot2",
+      "Upperboot2",
+    ],
+  },
 };
 
 export const COSMETIC_SLOT_LABELS: Record<CosmeticSlot, string> = {
@@ -61,7 +77,7 @@ export const COSMETIC_SLOT_LABELS: Record<CosmeticSlot, string> = {
   gloves: "Gloves",
   belt: "Belt",
   legs: "Legs",
-  shoes: "Shoes",
+  shoes: "Boots",
 };
 
 /** All object/mesh names for a catalog item. */
@@ -88,11 +104,14 @@ export function cosmeticMeshName(def: CosmeticItemDef): string {
 }
 
 /** All known gear object/mesh name keys from the catalog. */
+let _catalogMeshKeys: Set<string> | null = null;
 export function catalogCosmeticMeshNames(): Set<string> {
+  if (_catalogMeshKeys) return _catalogMeshKeys;
   const names = new Set<string>();
   for (const def of Object.values(COSMETIC_CATALOG)) {
     for (const n of cosmeticMeshNames(def)) names.add(cosmeticNameKey(n));
   }
+  _catalogMeshKeys = names;
   return names;
 }
 
@@ -117,13 +136,14 @@ export function cosmeticsForSlot(slot: CosmeticSlot): CosmeticItemDef[] {
   return Object.values(COSMETIC_CATALOG).filter((item) => item.slot === slot);
 }
 
+/** Lean starter: no free gear — buy from Merchant. */
 export function starterCosmeticIds(): string[] {
-  return Object.keys(COSMETIC_CATALOG);
+  return [];
 }
 
-export function ownsCosmetic(_owned: string[] | null | undefined, itemId: string): boolean {
-  void _owned;
-  return Boolean(COSMETIC_CATALOG[itemId]);
+export function ownsCosmetic(owned: string[] | null | undefined, itemId: string): boolean {
+  if (!COSMETIC_CATALOG[itemId]) return false;
+  return Boolean(owned?.includes(itemId));
 }
 
 export function emptyCosmeticsEquipped(): CosmeticsEquipped {
@@ -204,12 +224,13 @@ export function applyCosmeticEquip(
   current: CosmeticsEquipped,
   slot: CosmeticSlot,
   itemId: string | null,
+  owned: string[] | null | undefined = null,
 ): CosmeticsEquipped | null {
   if (itemId == null || itemId === "") {
     return { ...normalizeCosmeticsEquipped(current), [slot]: null };
   }
   const def = COSMETIC_CATALOG[itemId];
   if (!def || def.slot !== slot) return null;
-  if (!ownsCosmetic(null, itemId)) return null;
+  if (!ownsCosmetic(owned, itemId)) return null;
   return { ...normalizeCosmeticsEquipped(current), [slot]: itemId };
 }
