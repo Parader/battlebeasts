@@ -122,6 +122,61 @@ export class DecoyState extends Schema {
   @type("number") expiresAt = 0;
 }
 
+/** Persistent Volcano zone — walk collision + client mesh sync. */
+export class VolcanoState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") yaw = 0;
+  @type("number") radius = 1.35;
+  /** rising | active | sinking */
+  @type("string") phase = "rising";
+  /** Server epoch ms when the volcano should finish sinking / despawn. */
+  @type("number") expiresAt = 0;
+}
+
+/** Fixed protection dome — blocks inbound projectiles only. */
+export class ProtectionBubbleState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  /** Fully formed radius. */
+  @type("number") radius = 4.75;
+  /** forming | active | fading */
+  @type("string") phase = "forming";
+  /** Server epoch ms when form completes. */
+  @type("number") formEndsAt = 0;
+  /** Server epoch ms when active protection ends (fade begins). */
+  @type("number") activeEndsAt = 0;
+  /** Server epoch ms when schema entry is deleted. */
+  @type("number") expiresAt = 0;
+}
+
+/** Planted Spore Shroom — step trap with growth stages. */
+export class ShroomState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") yaw = 0;
+  /** Step trigger radius. */
+  @type("number") triggerRadius = 0.9;
+  /** Explosion / spore cloud radius. */
+  @type("number") blastRadius = 3.4;
+  /** 1 | 2 | 3 growth stage. */
+  @type("number") stage = 1;
+  /** Which mesh variant from the GLB (0 or 1). */
+  @type("number") variant = 0;
+  /** False while still casting — visual only until armed. */
+  @type("boolean") armed = false;
+  /** "alive" | "sinking" — sinking plays a bury anim before delete. */
+  @type("string") phase = "alive";
+  /** Server epoch ms when the shroom despawns if never triggered. */
+  @type("number") expiresAt = 0;
+}
+
 export class BaseCityState extends Schema {
   @type("number") tick = 0;
   @type("boolean") paused = false;
@@ -140,4 +195,7 @@ export class BaseCityState extends Schema {
   @type({ map: ProjectileState }) projectiles = new MapSchema<ProjectileState>();
   @type({ map: WorldTargetState }) targets = new MapSchema<WorldTargetState>();
   @type({ map: DecoyState }) decoys = new MapSchema<DecoyState>();
+  @type({ map: VolcanoState }) volcanoes = new MapSchema<VolcanoState>();
+  @type({ map: ProtectionBubbleState }) protectionBubbles = new MapSchema<ProtectionBubbleState>();
+  @type({ map: ShroomState }) shrooms = new MapSchema<ShroomState>();
 }

@@ -1,19 +1,23 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { Html, useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, totalShieldAbsorb, type CosmeticsEquipped } from "@battlebeasts/shared";
-import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, ChainJumpProjectileEffect, PoisonDartProjectileEffect, hasCatalogProjectile } from "./vfx";
+import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, ChainJumpProjectileEffect, PoisonDartProjectileEffect, hasCatalogProjectile, isOwnedByCastProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import {
   StatusHpBadgeStack,
   readBurningStacks,
+  readBleedingStacks,
   readPoisonStacks,
+  readRejuvenationStacks,
   syncBurningBadge,
+  syncBleedingBadge,
   syncPoisonBadge,
+  syncRejuvenationBadge,
 } from "./StatusHpBadgeStack";
 import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
@@ -21,6 +25,10 @@ import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { playBoltCastSfx } from "./gameSfx";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
+
+export { Volcanoes } from "./vfx/Volcanoes";
+export { ProtectionBubbles } from "./vfx/ProtectionBubbles";
+export { Shrooms } from "./vfx/Shrooms";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -94,6 +102,16 @@ function LegacyProjectileMesh({ room, id }: { room: Room; id: string }) {
     );
 }
 
+const PROJECTILE_RENDERERS: Record<
+    string,
+    (props: { room: Room; id: string }) => ReactNode
+> = {
+    grasp: ({ room, id }) => <GraspProjectileEffect room={room} id={id} />,
+    chainJump: ({ room, id }) => <ChainJumpProjectileEffect room={room} id={id} />,
+    poisonDart: ({ room, id }) => <PoisonDartProjectileEffect room={room} id={id} />,
+    bolt: ({ room, id }) => <BoltProjectileEffect room={room} id={id} />,
+};
+
 function ProjectileRouter({
     room,
     id,
@@ -106,25 +124,19 @@ function ProjectileRouter({
     const abilityId =
         (room.state?.projectiles?.get(id) as { abilityId?: string } | undefined)?.abilityId ??
         knownAbilityId;
-    if (abilityId === "frostBall") {
-        // Orb + aura are owned by FrostBallCastEffect (charge → same mesh flight).
+    if (isOwnedByCastProjectile(abilityId)) {
+        // Mesh owned by cast one-shot (charge → same mesh flight / stick).
         return null;
     }
-    if (abilityId === "iceLance") {
-        // Spike is owned by IceLanceCastEffect (hand → same mesh flight/stick).
-        return null;
-    }
-    if (abilityId === "grasp") {
-        return <GraspProjectileEffect room={room} id={id} />;
-    }
-    if (abilityId === "chainJump") {
-        return <ChainJumpProjectileEffect room={room} id={id} />;
-    }
-    if (abilityId === "poisonDart") {
-        return <PoisonDartProjectileEffect room={room} id={id} />;
-    }
-    if (hasCatalogProjectile(abilityId)) {
-        return <BoltProjectileEffect room={room} id={id} />;
+    if (abilityId) {
+        const render = PROJECTILE_RENDERERS[abilityId];
+        if (render) return <>{render({ room, id })}</>;
+        if (hasCatalogProjectile(abilityId)) {
+            return <BoltProjectileEffect room={room} id={id} />;
+        }
+        if (import.meta.env.DEV) {
+            console.warn(`[vfx] missing projectile renderer for abilityId=${abilityId}; using legacy sphere`);
+        }
     }
     if (!room.state?.projectiles?.get(id)) return null;
     return <LegacyProjectileMesh room={room} id={id} />;
@@ -288,15 +300,15 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
 
     const color = isHeal
         ? isCrit
-            ? "#86efac"
-            : "#bbf7d0"
+            ? "#4ade80"
+            : "#22c55e"
         : isCrit
           ? "#f87171"
           : "#fecaca";
     const shadow = isHeal
         ? isCrit
-            ? "0 1px 0 #14532d, 0 0 12px rgba(74,222,128,0.95)"
-            : "0 1px 0 #14532d, 0 0 8px rgba(22,101,52,0.85)"
+            ? "0 1px 0 #14532d, 0 0 14px rgba(74,222,128,0.95)"
+            : "0 1px 0 #14532d, 0 0 10px rgba(34,197,94,0.9)"
         : isCrit
           ? "0 1px 0 #7f1d1d, 0 0 14px rgba(239,68,68,0.95)"
           : "0 1px 0 #450a0a, 0 0 8px rgba(127,29,29,0.85)";
@@ -728,7 +740,13 @@ function HpBillboard({
     const poisonBadge = useRef<HTMLDivElement>(null);
     const poisonStacksEl = useRef<HTMLSpanElement>(null);
     const burningBadge = useRef<HTMLDivElement>(null);
+    const bleedingBadge = useRef<HTMLDivElement>(null);
+    const bleedingStacksEl = useRef<HTMLSpanElement>(null);
+    const rejuvenationBadge = useRef<HTMLDivElement>(null);
+    const rejuvenationStacksEl = useRef<HTMLSpanElement>(null);
     const lastPoisonStacks = useRef(0);
+    const lastBleedingStacks = useRef(0);
+    const lastRejuvenationStacks = useRef(0);
     useFrame(() => {
         const t = room?.state?.targets?.get(targetId) as
             | {
@@ -742,6 +760,13 @@ function HpBillboard({
         if (!m || !t) {
             syncPoisonBadge(poisonBadge.current, poisonStacksEl.current, 0, lastPoisonStacks);
             syncBurningBadge(burningBadge.current, 0);
+            syncBleedingBadge(bleedingBadge.current, bleedingStacksEl.current, 0, lastBleedingStacks);
+            syncRejuvenationBadge(
+                rejuvenationBadge.current,
+                rejuvenationStacksEl.current,
+                0,
+                lastRejuvenationStacks,
+            );
             return;
         }
         const maxHp = Math.max(1, t.maxHp);
@@ -771,6 +796,18 @@ function HpBillboard({
             lastPoisonStacks,
         );
         syncBurningBadge(burningBadge.current, readBurningStacks(rows));
+        syncBleedingBadge(
+            bleedingBadge.current,
+            bleedingStacksEl.current,
+            readBleedingStacks(rows),
+            lastBleedingStacks,
+        );
+        syncRejuvenationBadge(
+            rejuvenationBadge.current,
+            rejuvenationStacksEl.current,
+            readRejuvenationStacks(rows),
+            lastRejuvenationStacks,
+        );
     });
     return (
         <group position={[0, y, 0]}>
@@ -790,6 +827,10 @@ function HpBillboard({
                 poisonBadgeRef={poisonBadge}
                 poisonStacksRef={poisonStacksEl}
                 burningBadgeRef={burningBadge}
+                bleedingBadgeRef={bleedingBadge}
+                bleedingStacksRef={bleedingStacksEl}
+                rejuvenationBadgeRef={rejuvenationBadge}
+                rejuvenationStacksRef={rejuvenationStacksEl}
             />
         </group>
     );

@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, slotIndexForInput, FROST_MIST_CAST, GROOVE_CAST, HEAL_BEAM_CAST, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
+import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
-import type { FxBurst, DamagePopup } from "./CombatVfx";
+import type { DamagePopup } from "./CombatVfx";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { setWorldStaticColliders } from "./worldCollidersRuntime";
 import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime";
 import { abilityHudRuntime } from "./abilityHudRuntime";
-import { abilityVfxColor, CATALOG_IMPACT_FX, spawnImpactEffect, cancelFollowOwnerVfx, usesMeleeSwoopFx, usesAoeCrackFx, usesBridgedAoeFx, usesSpikeFx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, usesFirewallFx, usesIceLanceExplodeFx, clearCrescentSpawnState } from "./vfx";
+import { spawnImpactEffect, cancelFollowOwnerVfx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, clearCrescentSpawnState } from "./vfx";
+import { dispatchCombatFxVfx } from "./vfx/combatFxDispatch";
 import { takePortalChannelBubbleScale } from "./vfx/portalChannelRuntime";
 import { setActiveEmote, clearActiveEmote, isEmoteActive } from "./emoteRuntime";
-import { notifyCrescentHit, notifyCrescentMelee } from "./vfx/crescentSpawn";
-import { playBoltHitSfx, playSlamHitSfx } from "./gameSfx";
+import { getGroundAim } from "./groundAimRuntime";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     aoe: "#c084fc",
@@ -597,207 +597,27 @@ export function useBaseCityRoom(options: Options) {
                         return;
                     }
 
-                    // Follow-caster swoops / crack landings / spike pops / frost mist skip the legacy ground ring.
-                    const skipGroundBurst =
-                        (usesMeleeSwoopFx(msg.abilityId) &&
-                            (msg.kind === "melee" || msg.kind === "hit")) ||
-                        (usesAoeCrackFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesBridgedAoeFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesSpikeFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesGrooveFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesHealBeamFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesFirewallFx(msg.abilityId) && msg.kind === "aoe") ||
-                        (usesIceLanceExplodeFx(msg.abilityId) && msg.kind === "aoe");
-
-                    if (!skipGroundBurst) {
-                        const key = ++fxKeyRef.current;
-                        const life = msg.kind === "hit" ? 280 : msg.kind === "dash" ? 220 : 450;
-                        const tint =
-                            msg.kind === "hit"
-                                ? abilityVfxColor(msg.abilityId, FX_COLORS.hit)
-                                : abilityVfxColor(msg.abilityId, FX_COLORS[msg.kind]);
-                        const burst: FxBurst = {
-                            key,
-                            kind: msg.kind,
-                            x: msg.x,
-                            z: msg.z,
-                            radius: msg.radius ?? (msg.kind === "hit" ? 0.7 : 2.2),
-                            born: performance.now(),
-                            life,
-                            color: tint,
-                        };
-                        combatOverlayRuntime.pushBurst(burst);
-                    }
-
-                    if (usesMeleeSwoopFx(msg.abilityId) && msg.ownerId) {
-                        const owner = joined.state?.players?.get(msg.ownerId) as
-                            | { x?: number; z?: number; yaw?: number }
-                            | undefined;
-                        const localOwner = msg.ownerId === sessionIdRef.current;
-                        const yaw = localOwner ? yawRef.current : (owner?.yaw ?? yawRef.current);
-                        const payload = {
-                            x: msg.x,
-                            z: msg.z,
-                            yaw,
-                            ownerId: msg.ownerId,
-                            casterX: localOwner ? predictedRef.current.x : owner?.x,
-                            casterZ: localOwner ? predictedRef.current.z : owner?.z,
-                            comboHit: msg.comboHit,
-                        };
-                        if (msg.kind === "melee") {
-                            notifyCrescentMelee(payload);
-                        } else if (msg.kind === "hit") {
-                            notifyCrescentHit(payload);
-                        }
-                    }
-
-                    if (msg.kind === "aoe" && usesAoeCrackFx(msg.abilityId)) {
-                        spawnImpactEffect(
-                            msg.abilityId,
-                            {
-                                x: msg.x,
-                                z: msg.z,
-                                y: 0.04,
-                            },
-                            { radius: msg.radius ?? 2.6 },
-                        );
-                        if (msg.abilityId === "smash") playSlamHitSfx();
-                    }
-
-                    if (msg.kind === "aoe" && usesSpikeFx(msg.abilityId)) {
-                        spawnImpactEffect(msg.abilityId, {
-                            x: msg.x,
-                            z: msg.z,
-                            y: 0.02,
-                        }, { lifeMs: 560 });
-                    }
-
-                    if (msg.kind === "aoe" && usesFirewallFx(msg.abilityId)) {
-                        spawnImpactEffect(msg.abilityId, {
-                            x: msg.x,
-                            z: msg.z,
-                            y: 0.03,
-                            yaw: msg.yaw,
-                        }, { lifeMs: 5200, radius: msg.radius });
-                    }
-
-                    if (msg.kind === "aoe" && usesIceLanceExplodeFx(msg.abilityId)) {
-                        spawnImpactEffect(
-                            msg.abilityId,
-                            {
-                              x: msg.x,
-                              z: msg.z,
-                              /** Stuck ≈1.05, grounded ≈0.28 — fragments spawn at the lance. */
-                              y: typeof msg.y === "number" ? msg.y : 0.85,
-                            },
-                            { lifeMs: 900, radius: msg.radius ?? 1.65 },
-                        );
-                    }
-
-                    if (
-                        msg.kind === "aoe" &&
-                        usesFrostMistFx(msg.abilityId) &&
-                        (msg.comboHit ?? 1) === 1
-                    ) {
-                        // One continuous cone for the whole channel (first tick only).
-                        let yaw = typeof msg.yaw === "number" ? msg.yaw : 0;
-                        if (msg.ownerId) {
-                            const owner = joined.state?.players?.get(msg.ownerId) as
-                                | { yaw?: number }
-                                | undefined;
-                            const localOwner = msg.ownerId === sessionIdRef.current;
-                            yaw = localOwner ? yawRef.current : (owner?.yaw ?? yaw);
-                        }
-                        const mistDef = ABILITIES.frostMist;
-                        const channelMs =
-                            FROST_MIST_CAST.mistTicks * FROST_MIST_CAST.mistTickMs + 350;
-                        spawnImpactEffect(
-                            msg.abilityId,
-                            {
-                                x: msg.x,
-                                z: msg.z,
-                                y: 0.04,
-                                yaw,
-                            },
-                            {
-                                lifeMs: channelMs,
-                                radius: mistDef?.range ?? 11,
-                                startRadius: mistDef?.mistStartRange ?? 3.2,
-                                growMs: FROST_MIST_CAST.mistGrowMs,
-                                followOwnerId: msg.ownerId,
-                            },
-                        );
-                    }
-
-                    if (msg.kind === "aoe" && usesGrooveFx(msg.abilityId)) {
-                        let yaw = typeof msg.yaw === "number" ? msg.yaw : 0;
-                        if (msg.ownerId) {
-                            const owner = joined.state?.players?.get(msg.ownerId) as
-                                | { yaw?: number }
-                                | undefined;
-                            const localOwner = msg.ownerId === sessionIdRef.current;
-                            yaw = localOwner ? yawRef.current : (owner?.yaw ?? yaw);
-                        }
-                        const grooveDef = ABILITIES.groove;
-                        spawnImpactEffect(
-                            msg.abilityId,
-                            {
-                                x: msg.x,
-                                z: msg.z,
-                                y: 1.0,
-                                yaw,
-                            },
-                            {
-                                lifeMs: GROOVE_CAST.channelMs + 200,
-                                radius: grooveDef?.radius ?? 7,
-                                followOwnerId: msg.ownerId,
-                            },
-                        );
-                    }
-
-                    if (
-                        msg.kind === "aoe" &&
-                        usesHealBeamFx(msg.abilityId) &&
-                        (msg.comboHit ?? 1) === 1
-                    ) {
-                        let yaw = typeof msg.yaw === "number" ? msg.yaw : 0;
-                        if (msg.ownerId) {
-                            const owner = joined.state?.players?.get(msg.ownerId) as
-                                | { yaw?: number }
-                                | undefined;
-                            const localOwner = msg.ownerId === sessionIdRef.current;
-                            yaw = localOwner ? yawRef.current : (owner?.yaw ?? yaw);
-                        }
-                        const beamDef = ABILITIES.healBeam;
-                        const channelMs =
-                            HEAL_BEAM_CAST.healTicks * HEAL_BEAM_CAST.healTickMs + 280;
-                        spawnImpactEffect(
-                            msg.abilityId,
-                            {
-                                x: msg.x,
-                                z: msg.z,
-                                y: 1.1,
-                                yaw,
-                            },
-                            {
-                                lifeMs: channelMs,
-                                radius: beamDef?.range ?? HEAL_BEAM_CAST.range,
-                                growMs: 140,
-                                followOwnerId: msg.ownerId,
-                            },
-                        );
-                    }
-
-                    if (msg.kind === "hit" && msg.abilityId === "bolt") {
-                        playBoltHitSfx();
-                    }
+                    dispatchCombatFxVfx(msg, {
+                        localSessionId: sessionIdRef.current,
+                        localYaw: yawRef.current,
+                        predicted: predictedRef.current,
+                        getOwner: (ownerId) =>
+                            joined.state?.players?.get(ownerId) as
+                                | { x?: number; z?: number; yaw?: number }
+                                | undefined,
+                        pushBurst: (burst) => combatOverlayRuntime.pushBurst(burst),
+                        nextFxKey: () => ++fxKeyRef.current,
+                        fxColors: FX_COLORS,
+                    });
 
                     if (msg.kind === "hit" && typeof msg.damage === "number" && msg.damage > 0) {
                         const key = ++dmgKeyRef.current;
                         const ang = Math.random() * Math.PI * 2;
                         const isHeal =
-                            usesGrooveFx(msg.abilityId) || usesHealBeamFx(msg.abilityId);
+                            usesGrooveFx(msg.abilityId) ||
+                            usesHealBeamFx(msg.abilityId) ||
+                            getStatus(msg.abilityId)?.mechanic === "hot" ||
+                            (ABILITIES[msg.abilityId]?.heal ?? 0) > 0;
                         const popup: DamagePopup = {
                             key,
                             amount: msg.damage,
@@ -812,24 +632,6 @@ export function useBaseCityRoom(options: Options) {
                             driftZ: Math.sin(ang) * (0.35 + Math.random() * 0.45),
                         };
                         combatOverlayRuntime.pushPopup(popup);
-                    }
-
-                    if (msg.kind === "hit" && CATALOG_IMPACT_FX.has(msg.abilityId)) {
-                        const y = msg.abilityId === "crescent" ? 1.05 : 0.7;
-                        let yaw = 0;
-                        if (msg.ownerId) {
-                            const owner = joined.state?.players?.get(msg.ownerId) as
-                                | { yaw?: number }
-                                | undefined;
-                            const localOwner = msg.ownerId === sessionIdRef.current;
-                            yaw = localOwner ? yawRef.current : (owner?.yaw ?? 0);
-                        }
-                        spawnImpactEffect(msg.abilityId, {
-                            x: msg.x,
-                            z: msg.z,
-                            y,
-                            yaw,
-                        });
                     }
                 },
             );
@@ -1065,7 +867,7 @@ export function useBaseCityRoom(options: Options) {
         emoteSlotsRef.current = economy.unlocks?.emoteSlots ?? emptyEmoteSlots();
     }, [economy.unlocks]);
 
-    const queueCastFromSlotInput = useCallback((slotInput: "mouse0" | "mouse2" | "space" | "q" | "e" | "r") => {
+    const queueCastFromSlotInput = useCallback((slotInput: "mouse0" | "mouse2" | "space" | "q" | "e" | "r" | "f") => {
         if (inputLockedRef.current) return;
         const idx = slotIndexForInput(slotInput);
         if (idx < 0) return;
@@ -1117,7 +919,7 @@ export function useBaseCityRoom(options: Options) {
      * Clears other mouse holds so the new press can cast / retry when the lock frees.
      */
     const beginCastFromSlotInput = useCallback(
-        (slotInput: "mouse0" | "mouse2" | "space" | "q" | "e" | "r") => {
+        (slotInput: "mouse0" | "mouse2" | "space" | "q" | "e" | "r" | "f") => {
             if (slotInput === "mouse0") {
                 heldCastSlotsRef.current.mouse0 = true;
                 heldCastSlotsRef.current.mouse2 = false;
@@ -1585,14 +1387,20 @@ export function useBaseCityRoom(options: Options) {
                 const targetsMap = r.state?.targets as
                     | Map<string, { x: number; z: number; hp?: number }>
                     | undefined;
+                const volcanoesMap = r.state?.volcanoes as
+                    | Map<string, { x: number; z: number; radius?: number; phase?: string }>
+                    | undefined;
                 if (playersMap) {
                     const localUserId = playersMap.get(r.sessionId)?.id ?? null;
-                    const dynamics = unitCollidersExcept(
-                        playersMap.entries(),
-                        targetsMap?.entries() ?? null,
-                        r.sessionId,
-                        localUserId,
-                    );
+                    const dynamics = [
+                        ...unitCollidersExcept(
+                            playersMap.entries(),
+                            targetsMap?.entries() ?? null,
+                            r.sessionId,
+                            localUserId,
+                        ),
+                        ...(volcanoesMap ? volcanoColliders(volcanoesMap.entries()) : []),
+                    ];
                     const statics = staticsForPhase(phaseRef.current, contentModeRef.current);
                     predictor.setWorldColliders(statics, dynamics);
                     setWorldStaticColliders(statics);
@@ -1783,6 +1591,13 @@ export function useBaseCityRoom(options: Options) {
                         confirmCast: confirmCast || undefined,
                         interactId: canAct ? pendingInteractRef.current : undefined,
                     };
+                    // Always send cursor ground aim so placed spells (shrooms/volcano)
+                    // can track the pointer during windup, not only on the cast frame.
+                    const aim = getGroundAim();
+                    if (aim) {
+                        input.aimX = aim.x;
+                        input.aimZ = aim.z;
+                    }
                     pendingInteractRef.current = undefined;
 
                     if (canAct) {

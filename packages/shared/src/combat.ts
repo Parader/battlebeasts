@@ -1,8 +1,8 @@
-import { ABILITIES, travelDistance, type AbilityDef } from "./abilities";
+import { ABILITIES, MAGMA_ORBS_CAST, travelDistance, type AbilityDef } from "./abilities";
 import { length2, normalize2 } from "./sim";
 import type { Vec2 } from "./protocol";
-import type { WallCollider } from "./collision";
-import { lastFreeTBeforeWalls, projectileHitsWalls } from "./collision";
+import type { WallCollider, ProtectionBubbleCollider } from "./collision";
+import { lastFreeTBeforeWalls, projectileHitsWalls, projectileHitsProtectionBubbles } from "./collision";
 
 /** Angular pie slices for cone wall occlusion (Frost Mist). */
 export const CONE_OCCLUSION_SECTORS = 24;
@@ -88,6 +88,11 @@ export type ProjectileSim = {
   explodeDamage: number;
   /** Detonation blast radius. */
   explodeRadius: number;
+  /**
+   * Protection bubbles this shot spawned inside — may leave and curve through
+   * without being treated as an exterior hit.
+   */
+  passBubbleIds: Set<string>;
 };
 
 export type CombatFxEvent = {
@@ -120,6 +125,11 @@ export type CombatFxEvent = {
   cooldownMs?: number;
   /** 1-based combo swing index when relevant. */
   comboHit?: number;
+  /**
+   * Style / sub-event index.
+   * Volcano rocks: 1 = telegraph (red circle + arc), 2 = impact shatter.
+   */
+  variant?: number;
 };
 
 export function facingVector(yaw: number): Vec2 {
@@ -129,6 +139,142 @@ export function facingVector(yaw: number): Vec2 {
 export function pointInFront(origin: Vec2, yaw: number, distance: number): Vec2 {
   const f = facingVector(yaw);
   return { x: origin.x + f.x * distance, z: origin.z + f.z * distance };
+}
+
+/** Frozen Magma Orbs flight geometry (matches client Bezier). */
+export type MagmaOrbsFlightPath = {
+  left0: Vec2;
+  right0: Vec2;
+  ctrlL: Vec2;
+  ctrlR: Vec2;
+  collide: Vec2;
+};
+
+function magmaOrbsLateral(
+  origin: Vec2,
+  yaw: number,
+  ahead: number,
+  side: -1 | 1,
+  lateral: number,
+): Vec2 {
+  const f = facingVector(yaw);
+  const rx = f.z;
+  const rz = -f.x;
+  return {
+    x: origin.x + f.x * ahead + rx * lateral * side,
+    z: origin.z + f.z * ahead + rz * lateral * side,
+  };
+}
+
+function magmaOrbsFlightControl(
+  from: Vec2,
+  collide: Vec2,
+  yaw: number,
+  side: -1 | 1,
+): Vec2 {
+  const f = facingVector(yaw);
+  const rx = f.z;
+  const rz = -f.x;
+  const bow = MAGMA_ORBS_CAST.arcBow;
+  return {
+    x: (from.x + collide.x) * 0.5 + rx * side * bow + f.x * 0.55,
+    z: (from.z + collide.z) * 0.5 + rz * side * bow + f.z * 0.55,
+  };
+}
+
+/** Build flight path at launch — same pose the client freezes. */
+export function buildMagmaOrbsFlightPath(
+  owner: Vec2,
+  yaw: number,
+  meetRange = MAGMA_ORBS_CAST.meetRange,
+): MagmaOrbsFlightPath {
+  const lat = MAGMA_ORBS_CAST.lateral * 1.2;
+  const ahead = MAGMA_ORBS_CAST.emergeAhead;
+  const collide = pointInFront(owner, yaw, Math.max(2, meetRange));
+  const left0 = magmaOrbsLateral(owner, yaw, ahead, -1, lat);
+  const right0 = magmaOrbsLateral(owner, yaw, ahead, 1, lat);
+  return {
+    left0,
+    right0,
+    ctrlL: magmaOrbsFlightControl(left0, collide, yaw, -1),
+    ctrlR: magmaOrbsFlightControl(right0, collide, yaw, 1),
+    collide,
+  };
+}
+
+/** Cubic ease-in — accelerate into the crash (matches client). */
+export function magmaOrbsFlightT(linear01: number): number {
+  const u = Math.max(0, Math.min(1, linear01));
+  return u * u * u;
+}
+
+function quadBezier2(p0: Vec2, p1: Vec2, p2: Vec2, t: number): Vec2 {
+  const u = 1 - t;
+  return {
+    x: u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x,
+    z: u * u * p0.z + 2 * u * t * p1.z + t * t * p2.z,
+  };
+}
+
+/** Sample both orb XZ positions at eased flight progress 0..1. */
+export function sampleMagmaOrbsFlight(
+  path: MagmaOrbsFlightPath,
+  t01: number,
+): { left: Vec2; right: Vec2 } {
+  const t = Math.max(0, Math.min(1, t01));
+  return {
+    left: quadBezier2(path.left0, path.ctrlL, path.collide, t),
+    right: quadBezier2(path.right0, path.ctrlR, path.collide, t),
+  };
+}
+
+/**
+ * Earliest Bezier parameter t∈[0,1] along one orb path before a wall blocks it.
+ * Returns 1 when the full path is clear (walls only — not units).
+ */
+export function magmaOrbMaxFlightT(
+  p0: Vec2,
+  ctrl: Vec2,
+  end: Vec2,
+  walls: readonly WallCollider[],
+  wallRadius: number,
+  steps = 48,
+): number {
+  if (!walls.length) return 1;
+  if (projectileHitsWalls(p0.x, p0.z, p0.x, p0.z, wallRadius, walls)) return 0;
+
+  let prev = p0;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const cur = quadBezier2(p0, ctrl, end, t);
+    if (!projectileHitsWalls(prev.x, prev.z, cur.x, cur.z, wallRadius, walls)) {
+      prev = cur;
+      continue;
+    }
+    let lo = (i - 1) / steps;
+    let hi = t;
+    for (let k = 0; k < 12; k++) {
+      const mid = (lo + hi) * 0.5;
+      const a = quadBezier2(p0, ctrl, end, lo);
+      const m = quadBezier2(p0, ctrl, end, mid);
+      if (projectileHitsWalls(a.x, a.z, m.x, m.z, wallRadius, walls)) hi = mid;
+      else lo = mid;
+    }
+    return lo;
+  }
+  return 1;
+}
+
+/** Max flight t for both Magma Orbs against world walls. */
+export function magmaOrbsMaxFlightTs(
+  path: MagmaOrbsFlightPath,
+  walls: readonly WallCollider[],
+  wallRadius = MAGMA_ORBS_CAST.flightHitRadius,
+): { left: number; right: number } {
+  return {
+    left: magmaOrbMaxFlightT(path.left0, path.ctrlL, path.collide, walls, wallRadius),
+    right: magmaOrbMaxFlightT(path.right0, path.ctrlR, path.collide, walls, wallRadius),
+  };
 }
 
 export function circlesOverlap(
@@ -179,6 +325,7 @@ export function createProjectile(
     explodeIn: 0,
     explodeDamage: det?.damage ?? 0,
     explodeRadius: det?.radius ?? 0,
+    passBubbleIds: new Set(),
   };
 }
 
@@ -230,6 +377,34 @@ export function spikeLinePoints(
     pts.push(pointInFront(owner, owner.yaw, start + (end - start) * t));
   }
   return pts;
+}
+
+/**
+ * Clamp a ground aim point to `maxRange` from the caster.
+ * Degenerate aim (on top of caster) falls back along `yaw` at mid-range.
+ */
+export function clampGroundAim(
+  owner: { x: number; z: number; yaw: number },
+  aim: { x: number; z: number } | null | undefined,
+  maxRange: number,
+): Vec2 {
+  const cap = Math.max(0.5, maxRange);
+  if (
+    !aim ||
+    !Number.isFinite(aim.x) ||
+    !Number.isFinite(aim.z)
+  ) {
+    return pointInFront(owner, owner.yaw, cap * 0.55);
+  }
+  const dx = aim.x - owner.x;
+  const dz = aim.z - owner.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.05) {
+    return pointInFront(owner, owner.yaw, cap * 0.55);
+  }
+  if (dist <= cap) return { x: aim.x, z: aim.z };
+  const s = cap / dist;
+  return { x: owner.x + dx * s, z: owner.z + dz * s };
 }
 
 /**
@@ -567,6 +742,7 @@ export function tickProjectiles(
   canHurt: (ownerId: string, targetId: string) => boolean,
   walls: readonly WallCollider[] = [],
   detonateDelaySecByAbility: (abilityId: string) => number = () => 0,
+  protectionBubbles: readonly ProtectionBubbleCollider[] = [],
 ): ProjectileTickResult {
   const removedIds: string[] = [];
   const hits: ProjectileHitEvent[] = [];
@@ -616,7 +792,22 @@ export function tickProjectiles(
     p.z += p.vz * dt;
     p.life -= dt;
 
-    if (walls.length > 0 && projectileHitsWalls(fromX, fromZ, p.x, p.z, p.wallRadius, walls)) {
+    const hitWall =
+      walls.length > 0 &&
+      projectileHitsWalls(fromX, fromZ, p.x, p.z, p.wallRadius, walls);
+    const hitBubble =
+      !hitWall &&
+      protectionBubbles.length > 0 &&
+      projectileHitsProtectionBubbles(
+        fromX,
+        fromZ,
+        p.x,
+        p.z,
+        p.wallRadius,
+        protectionBubbles,
+        p.passBubbleIds,
+      );
+    if (hitWall || hitBubble) {
       if (canDetonate) {
         p.x = fromX;
         p.z = fromZ;

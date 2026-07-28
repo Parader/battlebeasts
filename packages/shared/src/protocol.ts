@@ -5,6 +5,12 @@ export interface PlayerInput {
   moveZ: number;
   yaw: number;
   castId?: string;
+  /**
+   * Ground aim point for placed abilities (Volcano).
+   * Only meaningful when `castId` is set; server clamps to ability range.
+   */
+  aimX?: number;
+  aimZ?: number;
   /** Cancel current cast — only honored while cancelUntilPhase allows. */
   cancelCast?: boolean;
   /** Confirm hold-to-release channel (e.g. Portal Space release). */

@@ -98,6 +98,30 @@ export function syncAbilityCast(
     if (controller.getState().upperBody === "idle" && controller.getState().fullBody === "none") {
       return;
     }
+    // Blood Rush: crouch hold → swap to Crouched To Sprinting on impact.
+    if (
+      player.castPhase === "impact" &&
+      binding.impactFullBody &&
+      !lastCastId.current.endsWith(":sprint")
+    ) {
+      lastCastId.current = `${castKey}:sprint`;
+      const logical = String(binding.impactFullBody);
+      const mapped =
+        logical in heroAnimationConfig
+          ? heroAnimationConfig[logical as keyof typeof heroAnimationConfig]
+          : undefined;
+      const clipName = mapped != null ? String(mapped) : logical;
+      const opts = {
+        desiredDuration: binding.impactFullBodyAnimDurationSec,
+        timeScale: binding.impactFullBodyTimeScale,
+        restoreLayers: true,
+      };
+      const ok =
+        controller.playFullBodyAction(logical, opts) ||
+        controller.playFullBodyAction(clipName, opts);
+      if (!ok) lastCastId.current = castKey;
+      return;
+    }
     if (player.castPhase === "recovery" && binding.holdEndPoseOnRecovery) {
       if (typeof binding.holdPoseAtSec === "number") {
         controller.freezeFullBodyAt(binding.holdPoseAtSec);
@@ -110,7 +134,8 @@ export function syncAbilityCast(
     if (
       player.castPhase === "impact" &&
       binding.holdEndPoseOnRecovery &&
-      typeof binding.airTimeScale !== "number"
+      typeof binding.airTimeScale !== "number" &&
+      !binding.impactFullBody
     ) {
       if (typeof binding.holdPoseAtSec === "number") {
         controller.freezeFullBodyAt(binding.holdPoseAtSec);

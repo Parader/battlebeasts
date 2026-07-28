@@ -29,6 +29,8 @@ export {
   usesHealBeamFx,
   usesFirewallFx,
   usesIceLanceExplodeFx,
+  usesVolcanoFx,
+  isOwnedByCastProjectile,
   BoltProjectileEffect,
   CrescentCastEffect,
   CrescentImpactEffect,
@@ -48,6 +50,11 @@ export {
   IceLanceExplodeEffect,
   renderOneShot,
 } from "./catalog";
+
+export { getAbilityVfxProfile } from "./profiles/registry";
+export type { AbilityVfxProfile, CastEngine } from "./profiles/types";
+export { dispatchCombatFxVfx } from "./combatFxDispatch";
+export type { CombatFxMessage, CombatFxDispatchCtx } from "./combatFxDispatch";
 
 export { GroundMagicCircle } from "./components/GroundMagicCircle";
 export { GroundDecal } from "./components/GroundDecal";

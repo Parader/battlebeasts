@@ -394,6 +394,83 @@ export function projectileHitsWalls(
   return false;
 }
 
+/** Soft dome that blocks inbound projectiles only (XZ circle). */
+export type ProtectionBubbleCollider = {
+  /** Stable zone id when available (for spawn-inside pass-through). */
+  id?: string;
+  x: number;
+  z: number;
+  radius: number;
+};
+
+/** True when a point sits inside (or on) the bubble disc, with optional pad. */
+export function pointInProtectionBubble(
+  x: number,
+  z: number,
+  bubble: ProtectionBubbleCollider,
+  pad = 0,
+): boolean {
+  const R = Math.max(0.1, bubble.radius) + pad;
+  const dx = x - bubble.x;
+  const dz = z - bubble.z;
+  return dx * dx + dz * dz <= R * R;
+}
+
+/**
+ * True when a projectile segment crosses into a protection bubble from outside.
+ * Projectiles that start inside may leave freely.
+ */
+export function projectileEntersProtectionBubble(
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  projRadius: number,
+  bubble: ProtectionBubbleCollider,
+): boolean {
+  const R = Math.max(0.1, bubble.radius) + Math.max(0, projRadius);
+  const R2 = R * R;
+  const fdx = fromX - bubble.x;
+  const fdz = fromZ - bubble.z;
+  const fromD2 = fdx * fdx + fdz * fdz;
+  // Started inside / on shell — outbound and interior travel allowed.
+  if (fromD2 <= R2) return false;
+
+  const tdx = toX - bubble.x;
+  const tdz = toZ - bubble.z;
+  const toD2 = tdx * tdx + tdz * tdz;
+  if (toD2 <= R2) return true;
+
+  // Both outside — block chords that cut through the disc (fast projectiles).
+  const dx = toX - fromX;
+  const dz = toZ - fromZ;
+  const len2 = dx * dx + dz * dz;
+  if (len2 < 1e-10) return false;
+  const t = Math.max(0, Math.min(1, (-fdx * dx - fdz * dz) / len2));
+  const cx = fromX + dx * t - bubble.x;
+  const cz = fromZ + dz * t - bubble.z;
+  return cx * cx + cz * cz <= R2;
+}
+
+export function projectileHitsProtectionBubbles(
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  projRadius: number,
+  bubbles: readonly ProtectionBubbleCollider[],
+  /** Bubble ids that this projectile may freely leave / re-curve through. */
+  passBubbleIds?: ReadonlySet<string>,
+): boolean {
+  for (const b of bubbles) {
+    if (b.id && passBubbleIds?.has(b.id)) continue;
+    if (projectileEntersProtectionBubble(fromX, fromZ, toX, toZ, projRadius, b)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function circleHitsAnyWall(
   x: number,
   z: number,
@@ -551,6 +628,26 @@ export function unitCollidersExcept(
 ): CircleCollider[] {
   const out = playerCollidersExcept(players, exceptPlayerId, exceptUserId);
   if (targets) out.push(...targetColliders(targets));
+  return out;
+}
+
+/** Active volcano bodies — walk-block only (dashes still pass). */
+export function volcanoColliders(
+  volcanoes: Iterable<
+    [string, { x: number; z: number; radius?: number; phase?: string }]
+  >,
+): CircleCollider[] {
+  const out: CircleCollider[] = [];
+  for (const [id, v] of volcanoes) {
+    if (v.phase === "sinking") continue;
+    out.push({
+      id: `volcano_${id}`,
+      shape: "circle",
+      x: v.x,
+      z: v.z,
+      radius: Math.max(0.4, v.radius ?? 1.35),
+    });
+  }
   return out;
 }
 

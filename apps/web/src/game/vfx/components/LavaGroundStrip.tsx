@@ -31,7 +31,6 @@ uniform float uOpacity;
 uniform float uProgress;
 uniform float uSideFade;
 uniform float uEndFade;
-uniform float uTime;
 uniform vec2 uRepeat;
 varying vec2 vUv;
 
@@ -50,7 +49,6 @@ void main() {
     smoothstep(0.0, uEndFade, 1.0 - vUv.x);
 
   vec2 uv = vUv * uRepeat;
-  uv.x += uTime * 0.03;
   vec4 tex = texture2D(uMap, uv);
 
   // Dark rock mostly transparent; hot cracks/flow stay opaque
@@ -101,7 +99,6 @@ export function LavaGroundStrip({
         uProgress: { value: 0 },
         uSideFade: { value: sideFade },
         uEndFade: { value: endFade },
-        uTime: { value: 0 },
         uRepeat: { value: new THREE.Vector2(Math.max(1, length / Math.max(width, 0.01)), 1) },
       },
       vertexShader: VS,
@@ -128,14 +125,13 @@ export function LavaGroundStrip({
     };
   }, [material]);
 
-  useFrame(({ clock }) => {
+  useFrame(() => {
     const m = mesh.current;
     if (!m) return;
     const progress = progressRef?.current ?? 1;
     const opacity = opacityMulRef?.current ?? 1;
     material.uniforms.uProgress!.value = progress;
     material.uniforms.uOpacity!.value = opacity * 0.92;
-    material.uniforms.uTime!.value = clock.elapsedTime;
     m.visible = opacity > 0.02 && progress > 0.02;
   });
 

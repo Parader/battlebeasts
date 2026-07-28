@@ -100,6 +100,7 @@ function colorAt(t: number, out: THREE.Color) {
 }
 
 const fireTexCache = new Map<string, THREE.Texture>();
+const fireMatCache = new Map<string, THREE.ShaderMaterial>();
 
 function getFireTexture(url: string): THREE.Texture {
   let tex = fireTexCache.get(url);
@@ -109,6 +110,31 @@ function getFireTexture(url: string): THREE.Texture {
     fireTexCache.set(url, tex);
   }
   return tex;
+}
+
+/** Shared across firewall/volcano — one compile, no per-mount dispose hitch. */
+export function getSharedFireMaterial(url = "/assets/vfx/fire.png"): THREE.ShaderMaterial {
+  let mat = fireMatCache.get(url);
+  if (!mat) {
+    mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uMap: { value: getFireTexture(url) },
+      },
+      vertexShader: VS,
+      fragmentShader: FS,
+      blending: THREE.AdditiveBlending,
+      depthTest: true,
+      depthWrite: false,
+      transparent: true,
+      toneMapped: false,
+    });
+    fireMatCache.set(url, mat);
+  }
+  return mat;
+}
+
+function getFireMaterial(url: string): THREE.ShaderMaterial {
+  return getSharedFireMaterial(url);
 }
 
 export function FireParticleField({
@@ -163,30 +189,14 @@ export function FireParticleField({
     return geo;
   }, [positions, sizes, colors, angles]);
 
-  const material = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        uniforms: {
-          uMap: { value: getFireTexture(textureUrl) },
-        },
-        vertexShader: VS,
-        fragmentShader: FS,
-        blending: THREE.AdditiveBlending,
-        depthTest: true,
-        depthWrite: false,
-        transparent: true,
-        toneMapped: false,
-      }),
-    [textureUrl],
-  );
+  const material = useMemo(() => getFireMaterial(textureUrl), [textureUrl]);
 
   useEffect(() => {
     return () => {
       geometry.dispose();
-      material.dispose();
-      // Shared texture cache — do not dispose map here.
+      // Shared fire mat/texture — do not dispose here.
     };
-  }, [geometry, material]);
+  }, [geometry]);
 
   useFrame((_, dt) => {
     const pts = points.current;

@@ -1,9 +1,12 @@
 import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
+import { POISON_DART_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope } from "../easing";
+import { findBone } from "../attach";
+import { getCharacterRoot } from "../../characterRoots";
 import { createEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 
@@ -11,7 +14,10 @@ const POISON = "#4d7c0f";
 const POISON_DARK = "#1a2e05";
 const POISON_HOT = "#84cc16";
 
-/** Dark poison puff at the hook hand as the dart leaves. */
+/**
+ * Dark poison puff at the hook hand when the dart leaves.
+ * Prefers RightHand bone; falls back to yaw + spawnOffset.
+ */
 export function PoisonDartCastEffect({
   shot,
   follow,
@@ -24,13 +30,26 @@ export function PoisonDartCastEffect({
   const coreMat = useMemo(() => createEnergyBallMaterial(POISON_HOT, 0), []);
   const glowMat = useMemo(() => createEnergyBallMaterial(POISON_DARK, 0), []);
   const light = useRef<THREE.PointLight>(null);
+  const worldPos = useRef(new THREE.Vector3());
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: shot.y });
 
   useFrame(() => {
     const age = (performance.now() - shot.born) / shot.life;
 
-    if (shot.followOwnerId) {
-      const offset = shot.followSpawnOffset ?? 0.72;
+    const charRoot = getCharacterRoot(shot.followOwnerId);
+    const hand =
+      (charRoot &&
+        (findBone(charRoot, "RightHand", { partial: true }) ??
+          findBone(charRoot, "mixamorig:RightHand", { partial: true }))) ||
+      null;
+
+    if (hand) {
+      hand.getWorldPosition(worldPos.current);
+      pose.current.x = worldPos.current.x;
+      pose.current.y = worldPos.current.y;
+      pose.current.z = worldPos.current.z;
+    } else if (shot.followOwnerId) {
+      const offset = shot.followSpawnOffset ?? POISON_DART_CAST.spawnOffset;
       const local =
         follow.localSessionId &&
         shot.followOwnerId === follow.localSessionId &&
@@ -42,6 +61,7 @@ export function PoisonDartCastEffect({
         pose.current.yaw = local.yaw;
         pose.current.x = local.x + Math.sin(local.yaw) * offset;
         pose.current.z = local.z + Math.cos(local.yaw) * offset;
+        pose.current.y = shot.y || POISON_DART_CAST.handY;
       } else {
         const p = follow.room?.state?.players?.get(shot.followOwnerId) as
           | { x?: number; z?: number; yaw?: number }
@@ -51,12 +71,13 @@ export function PoisonDartCastEffect({
           pose.current.yaw = yaw;
           pose.current.x = (p.x ?? pose.current.x) + Math.sin(yaw) * offset;
           pose.current.z = (p.z ?? pose.current.z) + Math.cos(yaw) * offset;
+          pose.current.y = shot.y || POISON_DART_CAST.handY;
         }
       }
     }
 
     if (root.current) {
-      root.current.position.set(pose.current.x, 0, pose.current.z);
+      root.current.position.set(pose.current.x, pose.current.y, pose.current.z);
     }
 
     const g = group.current;
@@ -66,16 +87,16 @@ export function PoisonDartCastEffect({
       return;
     }
     g.visible = true;
-    const amp = softEnvelope(age, 0.35, 0.55);
-    g.scale.setScalar(0.1 + amp * 0.5);
+    const amp = softEnvelope(age, 0.28, 0.5);
+    g.scale.setScalar(0.1 + amp * 0.45);
     coreMat.opacity = amp * 0.75;
     glowMat.opacity = amp * 0.45;
     if (light.current) light.current.intensity = amp * 1.4;
   });
 
   return (
-    <group ref={root} position={[shot.x, 0, shot.z]}>
-      <group ref={group} position={[0, shot.y, 0]} scale={0.1}>
+    <group ref={root} position={[shot.x, shot.y, shot.z]}>
+      <group ref={group} scale={0.1}>
         <mesh>
           <sphereGeometry args={[0.1, 10, 10]} />
           <primitive object={coreMat} attach="material" />

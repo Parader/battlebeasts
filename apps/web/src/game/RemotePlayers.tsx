@@ -23,6 +23,7 @@ import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndica
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { PlayerNameBillboard } from "./PlayerNameBillboard";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
+import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
 import { registerCharacterRoot } from "./characterRoots";
 
 useGLTF.preload(CHARACTER_URL);
@@ -278,11 +279,18 @@ function RemotePlayerAvatar({
       p.castAbilityId === "portal" ||
       fullBodyName === "castPraying" ||
       fullBodyName === "praying";
+    const bloodRushAim =
+      p.castAbilityId === "bloodRush" &&
+      (p.castPhase === "anticipation" || p.castPhase === "cast");
     /** Emote wheel dances: full-body plays, but facing still follows the cursor. */
     const emoteAim = Boolean(activeEmoteId);
     yawLocked.current =
-      controller.getState().fullBody === "override" && !jumpAim && !portalAim && !emoteAim;
-    if (jumpAim || portalAim || emoteAim) {
+      controller.getState().fullBody === "override" &&
+      !jumpAim &&
+      !portalAim &&
+      !bloodRushAim &&
+      !emoteAim;
+    if (jumpAim || portalAim || bloodRushAim || emoteAim) {
       renderYaw.current = p.yaw;
     } else if (!yawLocked.current) {
       renderYaw.current = dampYawClamped(
@@ -323,6 +331,7 @@ function RemotePlayerAvatar({
         }}
       />
       <PortalChannelAura room={room} sessionId={sessionId} />
+      <BloodRushChargeAura room={room} sessionId={sessionId} />
       <group ref={aimRef}>
         <AimIndicator color={aimColor} />
       </group>

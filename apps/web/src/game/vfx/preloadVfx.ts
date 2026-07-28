@@ -70,6 +70,39 @@ export function warmSpellMaterials(
   particleGeo.setAttribute("aAlpha", new THREE.BufferAttribute(new Float32Array([1]), 1));
   group.add(new THREE.Points(particleGeo, particleMat));
 
+  // Firewall / volcano fire field (shared ShaderMaterial program)
+  const fireMat = new THREE.ShaderMaterial({
+    uniforms: { uMap: { value: null } },
+    vertexShader: /* glsl */ `
+      attribute float aSize; attribute float aAngle; attribute vec4 aColor;
+      varying vec4 vColor; varying vec2 vAngle;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = min(aSize * (160.0 / max(-mv.z, 0.6)), 64.0);
+        vAngle = vec2(cos(aAngle), sin(aAngle));
+        vColor = aColor;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D uMap; varying vec4 vColor; varying vec2 vAngle;
+      void main() {
+        vec2 coords = (gl_PointCoord - 0.5) * mat2(vAngle.x, vAngle.y, -vAngle.y, vAngle.x) + 0.5;
+        vec4 col = texture2D(uMap, coords) * vColor;
+        if (col.a < 0.03) discard;
+        gl_FragColor = col;
+      }`,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    depthWrite: false,
+  });
+  toDispose.push(fireMat);
+  const fireGeo = new THREE.BufferGeometry();
+  fireGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
+  fireGeo.setAttribute("aSize", new THREE.BufferAttribute(new Float32Array([1]), 1));
+  fireGeo.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array([1, 1, 1, 1]), 4));
+  fireGeo.setAttribute("aAngle", new THREE.BufferAttribute(new Float32Array([0]), 1));
+  group.add(new THREE.Points(fireGeo, fireMat));
+
   scene.add(group);
   try {
     gl.compile(scene, camera);
@@ -77,6 +110,7 @@ export function warmSpellMaterials(
     scene.remove(group);
     plane.dispose();
     particleGeo.dispose();
+    fireGeo.dispose();
     for (const mat of toDispose) mat.dispose();
     group.clear();
   }

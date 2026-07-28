@@ -27,6 +27,9 @@ export type VfxSpawnOpts = {
   startRadius?: number;
   /** Frost mist: ms to ease startRadius → radius. */
   growMs?: number;
+  /** Optional secondary origin (e.g. volcano → rock land). */
+  originX?: number;
+  originZ?: number;
 };
 
 export type VfxHandle = {
@@ -54,4 +57,6 @@ export type OneShotEffect = {
   radius?: number;
   startRadius?: number;
   growMs?: number;
+  originX?: number;
+  originZ?: number;
 };

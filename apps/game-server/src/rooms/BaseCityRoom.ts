@@ -1719,6 +1719,9 @@ export class BaseCityRoom extends Room<BaseCityState> {
         player.z = next.z;
         player.yaw = applyYaw(player.yaw, input.yaw);
 
+        if (input.aimX != null && input.aimZ != null) {
+          this.combat.refreshCastAim(sessionId, input.aimX, input.aimZ);
+        }
         if (input.cancelCast) {
           this.combat.tryCancelCast(sessionId, player, now);
         }
@@ -1729,6 +1732,8 @@ export class BaseCityRoom extends Room<BaseCityState> {
           this.combat.tryBeginCast(sessionId, player, input.castId, now, {
             moveX: input.moveX,
             moveZ: input.moveZ,
+            aimX: input.aimX,
+            aimZ: input.aimZ,
           });
         }
 

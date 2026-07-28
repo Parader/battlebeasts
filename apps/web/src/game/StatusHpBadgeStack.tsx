@@ -1,11 +1,18 @@
 import { type CSSProperties, type RefObject } from "react";
 import { Html } from "@react-three/drei";
+import { assetUrl } from "./assetUrl";
 
 /** Status ids that show the poison badge above HP bars. */
 export const POISON_BADGE_IDS = new Set(["poisoned"]);
 
 /** Status ids that show the burning badge above HP bars. */
 export const BURNING_BADGE_IDS = new Set(["burning"]);
+
+/** Status ids that show the bleed badge above HP bars. */
+export const BLEEDING_BADGE_IDS = new Set(["bleeding"]);
+
+/** Status ids that show the rejuvenation badge above HP bars. */
+export const REJUVENATION_BADGE_IDS = new Set(["rejuvenated"]);
 
 export function readPoisonStacks(
   rows: { statusId?: string; stacks?: number }[],
@@ -25,6 +32,30 @@ export function readBurningStacks(
   let stacks = 0;
   for (const row of rows) {
     if (row.statusId && BURNING_BADGE_IDS.has(row.statusId)) {
+      stacks = Math.max(stacks, row.stacks ?? 1);
+    }
+  }
+  return stacks;
+}
+
+export function readBleedingStacks(
+  rows: { statusId?: string; stacks?: number }[],
+): number {
+  let stacks = 0;
+  for (const row of rows) {
+    if (row.statusId && BLEEDING_BADGE_IDS.has(row.statusId)) {
+      stacks = Math.max(stacks, row.stacks ?? 1);
+    }
+  }
+  return stacks;
+}
+
+export function readRejuvenationStacks(
+  rows: { statusId?: string; stacks?: number }[],
+): number {
+  let stacks = 0;
+  for (const row of rows) {
+    if (row.statusId && REJUVENATION_BADGE_IDS.has(row.statusId)) {
       stacks = Math.max(stacks, row.stacks ?? 1);
     }
   }
@@ -62,6 +93,10 @@ type StackProps = {
   poisonBadgeRef: RefObject<HTMLDivElement | null>;
   poisonStacksRef: RefObject<HTMLSpanElement | null>;
   burningBadgeRef: RefObject<HTMLDivElement | null>;
+  bleedingBadgeRef: RefObject<HTMLDivElement | null>;
+  bleedingStacksRef: RefObject<HTMLSpanElement | null>;
+  rejuvenationBadgeRef: RefObject<HTMLDivElement | null>;
+  rejuvenationStacksRef: RefObject<HTMLSpanElement | null>;
   /** Anchor for the left edge of the icon row (above HP bar). */
   position?: [number, number, number];
 };
@@ -74,6 +109,10 @@ export function StatusHpBadgeStack({
   poisonBadgeRef,
   poisonStacksRef,
   burningBadgeRef,
+  bleedingBadgeRef,
+  bleedingStacksRef,
+  rejuvenationBadgeRef,
+  rejuvenationStacksRef,
   position = [-0.55, 0.22, 0],
 }: StackProps) {
   return (
@@ -87,6 +126,38 @@ export function StatusHpBadgeStack({
           transform: "translate(0, -50%)",
         }}
       >
+        <div
+          ref={rejuvenationBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(20, 83, 45, 0.92)",
+            border: "1px solid #4ade80",
+          }}
+          title="Rejuvenation"
+        >
+          {/* heart-plus — clear heal/HoT (distinct from poison droplet). */}
+          <img
+            src={assetUrl("icons/game/heart-plus.svg")}
+            alt=""
+            width={12}
+            height={12}
+            draggable={false}
+            aria-hidden
+            style={{ display: "block" }}
+          />
+          <span
+            ref={rejuvenationStacksRef}
+            style={{
+              ...STACK_PILL,
+              background: "#14532d",
+              border: "1px solid #4ade80",
+              color: "#dcfce7",
+            }}
+          >
+            1
+          </span>
+        </div>
+
         <div
           ref={poisonBadgeRef}
           style={{
@@ -142,6 +213,42 @@ export function StatusHpBadgeStack({
             />
           </svg>
         </div>
+
+        <div
+          ref={bleedingBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(127, 29, 29, 0.92)",
+            border: "1px solid #f87171",
+          }}
+          title="Bleeding"
+        >
+          <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
+            <path
+              fill="#fecaca"
+              d="M8 1.4c.15 1.5 1.55 2.7 2.35 4 .85 1.35 1.15 2.55 1.15 3.55 0 2.05-1.7 3.55-3.5 3.55S4.5 10.95 4.5 8.95c0-1 .3-2.2 1.15-3.55C6.45 4.1 7.85 2.9 8 1.4z"
+            />
+            <path
+              fill="#ef4444"
+              d="M8 4.8c.12.95.75 1.55 1.15 2.25.35.6.5 1.15.5 1.6 0 1-.75 1.75-1.65 1.75S6.35 9.65 6.35 8.65c0-.45.15-1 .5-1.6.4-.7 1.03-1.3 1.15-2.25z"
+            />
+            <path
+              fill="#7f1d1d"
+              d="M8 7.6c.06.45.32.7.52 1.05.16.28.23.52.23.72 0 .45-.35.78-.75.78s-.75-.33-.75-.78c0-.2.07-.44.23-.72.2-.35.46-.6.52-1.05z"
+            />
+          </svg>
+          <span
+            ref={bleedingStacksRef}
+            style={{
+              ...STACK_PILL,
+              background: "#7f1d1d",
+              border: "1px solid #f87171",
+              color: "#fee2e2",
+            }}
+          >
+            1
+          </span>
+        </div>
       </div>
     </Html>
   );
@@ -169,4 +276,42 @@ export function syncPoisonBadge(
 export function syncBurningBadge(badge: HTMLDivElement | null, burningStacks: number) {
   if (!badge) return;
   badge.style.display = burningStacks > 0 ? "flex" : "none";
+}
+
+export function syncBleedingBadge(
+  badge: HTMLDivElement | null,
+  stacksEl: HTMLSpanElement | null,
+  bleedingStacks: number,
+  lastStacks: { current: number },
+) {
+  if (!badge) return;
+  if (bleedingStacks <= 0) {
+    badge.style.display = "none";
+    lastStacks.current = 0;
+    return;
+  }
+  badge.style.display = "flex";
+  if (bleedingStacks !== lastStacks.current) {
+    lastStacks.current = bleedingStacks;
+    if (stacksEl) stacksEl.textContent = String(bleedingStacks);
+  }
+}
+
+export function syncRejuvenationBadge(
+  badge: HTMLDivElement | null,
+  stacksEl: HTMLSpanElement | null,
+  stacks: number,
+  lastStacks: { current: number },
+) {
+  if (!badge) return;
+  if (stacks <= 0) {
+    badge.style.display = "none";
+    lastStacks.current = 0;
+    return;
+  }
+  badge.style.display = "flex";
+  if (stacks !== lastStacks.current) {
+    lastStacks.current = stacks;
+    if (stacksEl) stacksEl.textContent = String(stacks);
+  }
 }

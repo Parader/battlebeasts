@@ -26,9 +26,11 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   groove: 4200,
   healBeam: 2200,
   poisonDart: 420,
-  firewall: 5200,
+  firewall: 7600,
   iceLance: 900,
   portal: 320,
+  volcano: 900,
+  bloodRush: 700,
 };
 
 /**
@@ -142,6 +144,8 @@ class VfxRuntime {
       radius: opts?.radius,
       startRadius: opts?.startRadius,
       growMs: opts?.growMs,
+      originX: opts?.originX,
+      originZ: opts?.originZ,
     };
     this.shots.push(shot);
     this.scheduleEmit();

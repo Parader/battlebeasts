@@ -74,7 +74,12 @@ export interface AbilityTravel {
    * `leap` = soft takeoff/land (smoothstep) matched to a ballistic hop.
    */
   progressEase?: "linear" | "leap";
-}
+  /**
+   * While translating, apply `damage` + `applyOnHit` to units crossed
+   * (once per cast). Used by Blood Rush.
+   */
+  hitAlongPath?: boolean;
+};
 
 /**
  * Invulnerability window relative to cast start (anticipation begin,
@@ -131,7 +136,11 @@ export type AbilityEffectKind =
   | "pulseHeal"
   | "healBeam"
   | "decoy"
-  | "firewall";
+  | "firewall"
+  | "volcano"
+  | "magmaOrbs"
+  | "protectionBubble"
+  | "shrooms";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
 export type SpellTag =
@@ -223,6 +232,11 @@ export interface AbilityDef {
   iFrames?: AbilityIFrames;
   /** Statuses applied to hit targets when the effect resolves. */
   applyOnHit?: StatusApplication[];
+  /**
+   * If set, a hit on a target at or below this HP fraction (0–1)
+   * deals their remaining HP instead (execute). Blood Rush uses 0.25.
+   */
+  executeBelowHpFrac?: number;
   /** Statuses applied to caster when the effect resolves. */
   applyOnSelf?: StatusApplication[];
   /**
@@ -436,6 +450,57 @@ function barrierRecoveryWallMs(): number {
 }
 
 /**
+ * Spore Shrooms (LMB) — Standing 1H Cast Spell 01 @ 30fps.
+ * Frame 18: shroom begins emerging. Frame 36: armed and triggerable.
+ */
+export const SHROOM_CAST = {
+  fps: 30,
+  spawnFrame: 18,
+  effectiveFrame: 36,
+  clipDurationSec: 2.3,
+  playbackRate: 1.35,
+  /** Cursor ground aim — plants at cursor, clamped to this max distance. */
+  range: 7,
+  /** Footpad that arms the step trigger. */
+  triggerRadius: 0.9,
+  /** Ally heal / enemy poison blast radius (VFX cloud). */
+  blastRadius: 3.4,
+  /** Poison apply radius — inset so hits stay inside the cloud visual. */
+  poisonRadius: 2.5,
+  /** Stage 1 → 2. */
+  stage2Ms: 4000,
+  /** Stage 1 → 3 (stage2 + stage-2 dwell). */
+  stage3Ms: 10000,
+  /** Despawn if never stepped on. */
+  maxLifeMs: 32000,
+  /** Max living plants per caster; oldest sinks when exceeded. */
+  maxActive: 3,
+  /** Cull / expire sink animation. */
+  sinkMs: 480,
+  /** Burst is poison-only on enemy trigger (no direct explode damage). */
+  explodeDamage: 0,
+  cooldownMs: 1000,
+  unlockCostEssence: 9,
+} as const;
+
+function shroomSpawnWallMs(): number {
+  return (
+    (SHROOM_CAST.spawnFrame / SHROOM_CAST.fps / SHROOM_CAST.playbackRate) * 1000
+  );
+}
+
+function shroomEffectiveWallMs(): number {
+  return (
+    (SHROOM_CAST.effectiveFrame / SHROOM_CAST.fps / SHROOM_CAST.playbackRate) *
+    1000
+  );
+}
+
+function shroomRecoveryWallMs(): number {
+  return 200;
+}
+
+/**
  * Standing 1H Magic Attack 02 (hero.glb) @ 30fps.
  * Frame 19 = frost ball release.
  */
@@ -501,7 +566,7 @@ export const ICE_LANCE_CAST = {
   spawnFrame: 24,
   releaseFrame: 64,
   clipDurationSec: 5.233333,
-  playbackRate: 1.85,
+  playbackRate: 2.1,
   spawnOffset: 0.55,
   handY: 1.2,
 } as const;
@@ -545,9 +610,110 @@ export const FIREWALL_CAST = {
   clipDurationSec: 3,
   /** Faster windup; frame 42 still = ignition in clip time. */
   playbackRate: 1.75,
-  zoneDurationMs: 4500,
+  zoneDurationMs: 7500,
   tickMs: 400,
 } as const;
+
+/**
+ * Volcano (F) — same Standing 2H Magic Area Attack 01 clip as Firewall.
+ * Erupts at frame 42; rocks barrage for `zoneDurationMs` after emerge.
+ */
+export const VOLCANO_CAST = {
+  fps: FIREWALL_CAST.fps,
+  releaseFrame: FIREWALL_CAST.releaseFrame,
+  clipDurationSec: FIREWALL_CAST.clipDurationSec,
+  playbackRate: FIREWALL_CAST.playbackRate,
+  /** Active rock-throw window after volcano finishes rising. */
+  zoneDurationMs: 10000,
+  /** ~1.5 rocks / sec. */
+  rockIntervalMs: 650,
+  /** Red circle + boulder arc lead time before impact. */
+  telegraphMs: 1300,
+  rockRingMin: 2.2,
+  rockRingMax: 7.0,
+  rockBlastRadius: 2.2,
+  collideRadius: 1.35,
+  /** How often bodies pressed against the volcano re-apply burning. */
+  contactTickMs: 400,
+  riseMs: 900,
+  sinkMs: 800,
+} as const;
+
+/**
+ * Protection Bubble (F) — Standing 2H Magic Area Attack 02 (falls back to 01 in hero.glb).
+ * Locked cast; places a fixed dome that blocks inbound projectiles only.
+ */
+export const PROTECTION_BUBBLE_CAST = {
+  fps: FIREWALL_CAST.fps,
+  releaseFrame: FIREWALL_CAST.releaseFrame,
+  clipDurationSec: FIREWALL_CAST.clipDurationSec,
+  playbackRate: FIREWALL_CAST.playbackRate,
+  /** Dome radius (XZ) — roomy enough to cast from inside. */
+  radius: 4.75,
+  /** Visual / collide grow-in. */
+  formMs: 850,
+  /** Fully formed protection window. */
+  zoneDurationMs: 7000,
+  /** Soft dissolve after active ends. */
+  fadeMs: 550,
+  cooldownMs: 15000,
+  unlockCostEssence: 12,
+} as const;
+
+/**
+ * Magma Orbs (RMB) — Standing 2H Magic Attack 05 @ 30fps.
+ * Frame 24: twin magma boulders start rising. Hold loft through frame 60,
+ * then arc on round paths and collide into each other (explode).
+ */
+export const MAGMA_ORBS_CAST = {
+  fps: 30,
+  emergeFrame: 24,
+  /** Orbs leave loft and begin curved flight. */
+  launchFrame: 60,
+  /** Head-on collide + detonate. */
+  explodeFrame: 88,
+  clipDurationSec: 3.566667,
+  playbackRate: 1.55,
+  /** Collision / detonation distance along aim. */
+  meetRange: 7.5,
+  /** How far ahead of the caster the orbs erupt (0 = hip line; negative = behind). */
+  emergeAhead: -0.15,
+  /** Left/right offset from the aim midline at emerge. */
+  lateral: 1.25,
+  /** Extra outward bow on flight Bezier control (world units). */
+  arcBow: 2.4,
+  /** Peak extra height during flight arc. */
+  flightArcY: 1.85,
+  /** XZ hit radius while orbs are in flight (after launch). */
+  flightHitRadius: 0.7,
+  blastRadius: 2.5,
+  /** Visual blast overshoot so soft crater edges still cover the hit disc. */
+  blastVfxMul: 1.45,
+  cooldownMs: 6000,
+  unlockCostEssence: 10,
+} as const;
+
+function magmaOrbsFrameWallMs(frame: number): number {
+  return (
+    (frame / MAGMA_ORBS_CAST.fps / MAGMA_ORBS_CAST.playbackRate) * 1000
+  );
+}
+
+function magmaOrbsEmergeWallMs(): number {
+  return magmaOrbsFrameWallMs(MAGMA_ORBS_CAST.emergeFrame);
+}
+
+function magmaOrbsLaunchWallMs(): number {
+  return magmaOrbsFrameWallMs(MAGMA_ORBS_CAST.launchFrame);
+}
+
+function magmaOrbsExplodeWallMs(): number {
+  return magmaOrbsFrameWallMs(MAGMA_ORBS_CAST.explodeFrame);
+}
+
+function magmaOrbsRecoveryWallMs(): number {
+  return 450;
+}
 
 function spikesReleaseWallMs(): number {
   return (
@@ -568,6 +734,53 @@ function firewallRecoveryWallMs(): number {
   /** Soft settle after the wall appears (clip continues in the background). */
   return 420;
 }
+
+function volcanoReleaseWallMs(): number {
+  return (
+    (VOLCANO_CAST.releaseFrame /
+      VOLCANO_CAST.fps /
+      VOLCANO_CAST.playbackRate) *
+    1000
+  );
+}
+
+function volcanoRecoveryWallMs(): number {
+  return firewallRecoveryWallMs();
+}
+
+function protectionBubbleReleaseWallMs(): number {
+  return (
+    (PROTECTION_BUBBLE_CAST.releaseFrame /
+      PROTECTION_BUBBLE_CAST.fps /
+      PROTECTION_BUBBLE_CAST.playbackRate) *
+    1000
+  );
+}
+
+function protectionBubbleRecoveryWallMs(): number {
+  return 420;
+}
+
+/**
+ * Blood Rush (F) — crouch charge then ultra-fast low sprint.
+ * Clips: Standing To Crouched (~0.67s), Crouched To Sprinting (~0.53s).
+ */
+export const BLOOD_RUSH_CAST = {
+  /** Wall-clock crouch before auto-dash. */
+  chargeMs: 1000,
+  /** Translate window (wall) — very fast. */
+  travelMs: 140,
+  recoveryMs: 200,
+  range: 9,
+  /** Small contact hit before bleed. */
+  damage: 6,
+  /** Sweep radius along the path. */
+  hitRadius: 0.75,
+  /** Execute (remaining HP) when target is at/below this fraction. */
+  executeBelowHpFrac: 0.25,
+  unlockCostEssence: 10,
+  cooldownMs: 12000,
+} as const;
 
 /**
  * Standing 2H Magic Attack 03 (hero.glb) @ 30fps — clip ~4.33s (130 frames).
@@ -692,6 +905,52 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
   },
   /**
+   * Spore Shrooms (LMB) — plant a growing mushroom at ground aim.
+   * Ally step → rejuvenation AoE. Enemy step → poison AoE.
+   * Anim: Standing 1H Cast Spell 01 — emerges @ 18, armed @ 36.
+   */
+  shrooms: {
+    id: "shrooms",
+    unlockCostEssence: SHROOM_CAST.unlockCostEssence,
+    name: "Spore Shrooms",
+    description:
+      "Plant up to 3 mushrooms (oldest sinks when you plant another). They grow through three stages. An ally who steps on one gains rejuvenation (stacks = stage); an enemy step bursts a poison cloud.",
+    cooldownMs: SHROOM_CAST.cooldownMs,
+    range: SHROOM_CAST.range,
+    shape: "aoe",
+    effectKind: "shrooms",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "Trap",
+      "Healing",
+      "HealOverTime",
+      "DamageOverTime",
+      "Debuff",
+      "Ally",
+      "Persistent",
+      "Cast",
+    ],
+    damage: SHROOM_CAST.explodeDamage,
+    radius: SHROOM_CAST.triggerRadius,
+    zoneDurationMs: SHROOM_CAST.maxLifeMs,
+    allowedSlots: ["m1"],
+    timing: {
+      anticipationMs: authoredForWallMs(shroomSpawnWallMs()),
+      castMs: authoredForWallMs(
+        Math.max(16, shroomEffectiveWallMs() - shroomSpawnWallMs()),
+      ),
+      impactMs: authoredForWallMs(100),
+      recoveryMs: authoredForWallMs(shroomRecoveryWallMs()),
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.45,
+      impactMoveMul: 0.65,
+      recoveryMoveMul: 0.95,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+  },
+  /**
    * Ice Lance (LMB alt) — Baseball Pitching. Spike appears at frame 24, thrown
    * at 64. Sticks on hit (direct impact), or drops on miss; explodes after 1.4s
    * for a second non-direct blast.
@@ -702,19 +961,19 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Ice Lance",
     description:
       "Hurl an ice spike. Direct impact sticks it to the target; after 1.4 seconds it detonates for a frost blast. Misses plant in the ground and explode the same way.",
-    cooldownMs: 900,
+    cooldownMs: 750,
     range: 14,
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "SingleTarget", "Explosion", "Area", "Cast"],
-    damage: 16,
+    damage: 14,
     speed: 28,
     radius: 0.4,
     spawnOffset: ICE_LANCE_CAST.spawnOffset,
     detonate: {
       delayMs: 1400,
-      damage: 15,
-      radius: 1.65,
+      damage: 18,
+      radius: 2.0,
     },
     allowedSlots: ["m1"],
     defaultSlot: "m1",
@@ -903,6 +1162,44 @@ export const ABILITIES: Record<string, AbilityDef> = {
       cancelUntilPhase: "cast",
     },
     applyOnHit: [{ statusId: "poisoned", chance: 1 }],
+  },
+  /**
+   * Magma Orbs (RMB) — twin fireballs erupt, rise, then arc to a fixed-range
+   * meet point and explode. Prep slows movement but does not root.
+   */
+  magmaOrbs: {
+    id: "magmaOrbs",
+    unlockCostEssence: MAGMA_ORBS_CAST.unlockCostEssence,
+    name: "Magma Orbs",
+    description:
+      "Smash the earth and raise two magma orbs. They loft, then swing on curved paths — stopped by walls, enemies clipped in flight catch fire. One orb reaching the meet point deals a half blast; both colliding deals full damage.",
+    cooldownMs: MAGMA_ORBS_CAST.cooldownMs,
+    range: MAGMA_ORBS_CAST.meetRange,
+    shape: "aoe",
+    effectKind: "magmaOrbs",
+    tags: ["Projectile", "Explosion", "Area", "Damage", "Debuff", "Cast"],
+    damage: 26,
+    radius: MAGMA_ORBS_CAST.blastRadius,
+    allowedSlots: ["m2"],
+    timing: {
+      anticipationMs: authoredForWallMs(magmaOrbsEmergeWallMs()),
+      castMs: authoredForWallMs(
+        Math.max(16, magmaOrbsLaunchWallMs() - magmaOrbsEmergeWallMs()),
+      ),
+      impactMs: authoredForWallMs(
+        Math.max(16, magmaOrbsExplodeWallMs() - magmaOrbsLaunchWallMs()),
+      ),
+      recoveryMs: authoredForWallMs(magmaOrbsRecoveryWallMs()),
+      /** Prep slows — never roots. */
+      anticipationMoveMul: 0.78,
+      castMoveMul: 0.62,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
+      canCancelAnticipation: true,
+      /** Locked once the orbs launch. */
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "burning", chance: 1 }],
   },
   /**
    * Electrical augment (Space) — short cast, then +60% move for 3s.
@@ -1326,6 +1623,123 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnHit: [{ statusId: "burning", chance: 1 }],
   },
   /**
+   * Volcano (F) — place a erupting volcano at ground aim (clamped to range).
+   * Anim: Standing 2H Magic Area Attack 01 — erupts @ frame 42 (cancel before).
+   * Throws flaming rocks for several seconds; impacts burn.
+   */
+  volcano: {
+    id: "volcano",
+    unlockCostEssence: 14,
+    name: "Volcano",
+    description:
+      "Crack the earth at your aim and raise a volcano. It shoves bodies aside as it emerges, burns anyone pressed against it, blocks the ground while active, and rains flaming rocks that shatter on impact and leave foes burning.",
+    cooldownMs: 16000,
+    /** Max place distance from caster. */
+    range: 10,
+    shape: "aoe",
+    effectKind: "volcano",
+    tags: ["Area", "GroundEffect", "Damage", "Debuff", "Persistent", "Cast", "Explosion"],
+    /** Damage per rock impact. */
+    damage: 14,
+    /** Movement-blocking volcano body radius. */
+    radius: VOLCANO_CAST.collideRadius,
+    tickMs: VOLCANO_CAST.rockIntervalMs,
+    zoneDurationMs: VOLCANO_CAST.zoneDurationMs,
+    allowedSlots: ["f"],
+    timing: {
+      anticipationMs: authoredForWallMs(100),
+      castMs: authoredForWallMs(Math.max(16, volcanoReleaseWallMs() - 100)),
+      impactMs: authoredForWallMs(180),
+      recoveryMs: authoredForWallMs(volcanoRecoveryWallMs()),
+      anticipationMoveMul: 0.45,
+      castMoveMul: 0.25,
+      impactMoveMul: 0.4,
+      recoveryMoveMul: 0.9,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "burning", chance: 1 }],
+  },
+  /**
+   * Protection Bubble (F) — locked cast, dome at cast origin.
+   * Blocks inbound projectiles; outbound casts from inside still leave.
+   * Anim: Standing 2H Magic Area Attack 02 (01 fallback in hero.glb).
+   */
+  protectionBubble: {
+    id: "protectionBubble",
+    unlockCostEssence: PROTECTION_BUBBLE_CAST.unlockCostEssence,
+    name: "Protection Bubble",
+    description:
+      "Weave a large dome at your feet. While it stands, enemy projectiles shatter on the outside — you can still cast out from within. Locked cast; the shield forms where you started the spell.",
+    cooldownMs: PROTECTION_BUBBLE_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "protectionBubble",
+    tags: ["Area", "Defense", "Barrier", "Persistent", "Cast", "Self"],
+    damage: 0,
+    radius: PROTECTION_BUBBLE_CAST.radius,
+    zoneDurationMs: PROTECTION_BUBBLE_CAST.zoneDurationMs,
+    allowedSlots: ["f"],
+    timing: {
+      anticipationMs: authoredForWallMs(100),
+      castMs: authoredForWallMs(Math.max(16, protectionBubbleReleaseWallMs() - 100)),
+      impactMs: authoredForWallMs(180),
+      recoveryMs: authoredForWallMs(protectionBubbleRecoveryWallMs()),
+      anticipationMoveMul: 0.4,
+      castMoveMul: 0.2,
+      impactMoveMul: 0.35,
+      recoveryMoveMul: 0.9,
+      /** Locked — cannot cancel once started. */
+      canCancelAnticipation: false,
+    },
+    interruptible: false,
+  },
+  /**
+   * Blood Rush (F) — crouch 1s, then sprint-dash. Units clipped take a nick + bleed.
+   * Unlockable F; Heal Beam stays the default.
+   */
+  bloodRush: {
+    id: "bloodRush",
+    unlockCostEssence: BLOOD_RUSH_CAST.unlockCostEssence,
+    name: "Blood Rush",
+    description:
+      "Drop into a crouch for a second, then explode forward in a low sprint. Enemies you pass through take a small hit and start bleeding. Executes foes at or below 25% health.",
+    cooldownMs: BLOOD_RUSH_CAST.cooldownMs,
+    range: BLOOD_RUSH_CAST.range,
+    shape: "dash",
+    effectKind: "standard",
+    tags: ["Dash", "Movement", "Damage", "Debuff", "DamageOverTime", "Melee"],
+    damage: BLOOD_RUSH_CAST.damage,
+    radius: BLOOD_RUSH_CAST.hitRadius,
+    executeBelowHpFrac: BLOOD_RUSH_CAST.executeBelowHpFrac,
+    allowedSlots: ["f"],
+    timing: {
+      // Split the 1s crouch charge across anticipation + cast.
+      anticipationMs: authoredForWallMs(BLOOD_RUSH_CAST.chargeMs * 0.25),
+      castMs: authoredForWallMs(BLOOD_RUSH_CAST.chargeMs * 0.75),
+      impactMs: authoredForWallMs(BLOOD_RUSH_CAST.travelMs),
+      recoveryMs: authoredForWallMs(BLOOD_RUSH_CAST.recoveryMs),
+      anticipationMoveMul: 0.05,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    travel: {
+      mode: "translate",
+      distance: BLOOD_RUSH_CAST.range,
+      durationMs: authoredForWallMs(BLOOD_RUSH_CAST.travelMs),
+      hitAlongPath: true,
+    },
+    iFrames: {
+      startMs: authoredForWallMs(BLOOD_RUSH_CAST.chargeMs),
+      durationMs: authoredForWallMs(BLOOD_RUSH_CAST.travelMs + 40),
+    },
+    applyOnHit: [{ statusId: "bleeding", chance: 1 }],
+    interruptsOtherCasts: true,
+  },
+  /**
    * Frost Mist (R) — expanding ice spray cone.
    * Anim: Standing 2H Magic Attack 03 — mist starts @ frame 34.
    * Progressive chill: +10% per tick onto current slow (20% if unsowed); root at 100%.
@@ -1586,6 +2000,9 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
   }
   if (def.knockback) {
     parts.push(`knockback ${def.knockback}`);
+  }
+  if (def.executeBelowHpFrac != null && def.executeBelowHpFrac > 0) {
+    parts.push(`execute ≤${Math.round(def.executeBelowHpFrac * 100)}%`);
   }
   if (def.pull) {
     parts.push(def.leapToTarget ? `leap ${def.pull}` : `pull ${def.pull}`);

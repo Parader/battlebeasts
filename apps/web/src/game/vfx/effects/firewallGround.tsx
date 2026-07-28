@@ -6,8 +6,13 @@ import { FireParticleField } from "../components/FireParticleField";
 import { LavaGroundStrip } from "../components/LavaGroundStrip";
 
 const GROW_MS = 620;
-/** Matches ability `radius` — corridor width = 2 × this. */
+/** Matches ability `radius` — corridor half-width for hits. */
 const HIT_HALF_WIDTH = 0.9;
+/**
+ * VFX is wider than the hit half-width so side-fade + lava heat-mask still
+ * read as covering the full scorched corridor.
+ */
+const VISUAL_WIDTH_MUL = 1.85;
 
 type CrackVent = {
   along: number;
@@ -56,9 +61,10 @@ function buildFireVents(halfLen: number, thickness: number, seed: number): Crack
  */
 export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
   const halfLen = Math.max(2, shot.radius ?? 6.5);
-  const thickness = 1.7;
-  const fullLen = halfLen * 2;
   const hitWidth = HIT_HALF_WIDTH * 2;
+  const visualWidth = hitWidth * VISUAL_WIDTH_MUL;
+  const thickness = visualWidth * 0.95;
+  const fullLen = halfLen * 2;
   const lifeMs = Math.max(1200, shot.life);
   const yaw = Number.isFinite(shot.yaw) ? (shot.yaw as number) : 0;
 
@@ -86,7 +92,7 @@ export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
     const u = Math.max(0, Math.min(1, age / lifeMs));
     const grow = Math.max(0, Math.min(1, age / GROW_MS));
     auraProgress.current = 1 - (1 - grow) * (1 - grow);
-    auraOpacity.current = softEnvelope(u, 0.05, 0.26);
+    auraOpacity.current = softEnvelope(u, 0.04, 0.88);
   });
 
   const x = Number.isFinite(shot.x) ? shot.x : 0;
@@ -96,9 +102,9 @@ export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
     <group position={[x, 0, z]} rotation={[0, yaw, 0]}>
       <LavaGroundStrip
         length={fullLen}
-        width={hitWidth}
+        width={visualWidth}
         y={0.036}
-        sideFade={0.3}
+        sideFade={0.22}
         endFade={0.07}
         progressRef={auraProgress}
         opacityMulRef={auraOpacity}
@@ -106,13 +112,13 @@ export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
 
       <FireParticleField
         emitters={fireEmitters}
-        rate={85}
-        maxParticles={280}
+        rate={95}
+        maxParticles={320}
         textureUrl="/assets/vfx/fire.png"
-        maxLife={1.2}
-        maxSize={0.4}
-        rise={2.1}
-        spread={0.18}
+        maxLife={1.25}
+        maxSize={0.55}
+        rise={2.15}
+        spread={0.34}
         progressRef={auraProgress}
         opacityMulRef={auraOpacity}
       />

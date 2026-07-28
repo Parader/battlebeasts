@@ -25,6 +25,7 @@ export type StatusHooks = {
   /** Called when a stun (or other interrupt) should cancel an in-progress cast. */
   onInterruptCast?: (targetId: string) => void;
   onDotDamage?: (targetId: string, damage: number, statusId: string, sourceId: string) => void;
+  onHotHeal?: (targetId: string, heal: number, statusId: string, sourceId: string) => void;
 };
 
 /**
@@ -240,6 +241,13 @@ export class StatusSystem {
         while (row.nextTickAt > 0 && now >= row.nextTickAt && now < row.expiresAt) {
           const dmg = def.damagePerTick * Math.max(1, row.stacks);
           this.hooks.onDotDamage?.(targetId, dmg, def.id, row.sourceId);
+          row.nextTickAt += def.tickMs;
+        }
+      }
+      if (def.mechanic === "hot" && def.tickMs && def.healPerTick && row.nextTickAt > 0) {
+        while (row.nextTickAt > 0 && now >= row.nextTickAt && now < row.expiresAt) {
+          const heal = def.healPerTick * Math.max(1, row.stacks);
+          this.hooks.onHotHeal?.(targetId, heal, def.id, row.sourceId);
           row.nextTickAt += def.tickMs;
         }
       }

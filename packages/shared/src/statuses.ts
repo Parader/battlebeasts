@@ -14,6 +14,7 @@ export type StatusMechanic =
   | "haste" // moveMul > 1
   | "stealth" // invisible to enemies; still takes damage
   | "dot" // periodic damage (fire, poison, bleed…)
+  | "hot" // periodic heal (rejuvenation…)
   | "shield" // absorb (stub for later)
   | "resist" // damageTakenMul < 1 while active
   | "empower"; // damageDealtMul > 1 while active
@@ -31,6 +32,8 @@ export interface StatusDef {
   tickMs?: number;
   /** Damage dealt each tick (DoT). */
   damagePerTick?: number;
+  /** Healing restored each tick (HoT). */
+  healPerTick?: number;
   /**
    * Movement multiplier while active (multiplicative across statuses).
    * Stun/root force 0 regardless.
@@ -203,6 +206,22 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "stack",
     color: "#3f6212",
     tag: "PSN",
+  },
+  /**
+   * Ally shroom burst — HoT. 2 heal/tick × stacks (max 3); longer, slower ticks.
+   */
+  rejuvenated: {
+    id: "rejuvenated",
+    name: "Rejuvenation",
+    polarity: "buff",
+    mechanic: "hot",
+    durationMs: 8000,
+    tickMs: 1000,
+    healPerTick: 2,
+    maxStacks: 3,
+    stackRule: "stack",
+    color: "#86efac",
+    tag: "REJ",
   },
   bleeding: {
     id: "bleeding",

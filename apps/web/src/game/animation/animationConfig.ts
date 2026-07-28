@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, EMOTES } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, EMOTES } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -28,6 +28,10 @@ export type CharacterAnimationConfig = {
   castHealBeam?: string;
   /** Firewall / Standing 2H Magic Area Attack 01. */
   castFirewall?: string;
+  /** Protection Bubble / Standing 2H Magic Area Attack 02 (01 fallback). */
+  castProtectionBubble?: string;
+  /** Magma Orbs / Standing 2H Magic Attack 05. */
+  castMagmaOrbs?: string;
   /** Poison Dart / Right Hook. */
   castPoisonDart?: string;
   /** Ice Lance / Baseball Pitching. */
@@ -43,8 +47,10 @@ export type CharacterAnimationConfig = {
   jumpAttack?: string;
   /** Full-body Jazz Dancing (Groove heal). */
   jazzDance?: string;
-  /** Idle → crouch (Decoy enter). */
+  /** Idle → crouch (Decoy enter / Blood Rush charge). */
   idleToCrouch?: string;
+  /** Crouch → sprint burst (Blood Rush dash). */
+  crouchToSprint?: string;
   /** Loop while cloaked and moving. */
   crouchWalk?: string;
   hit?: string;
@@ -79,6 +85,9 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   /** Standing 2H Magic Attack 04 (was historically exported as magic_2h). */
   castHealBeam: "Standing 2H Magic Attack 04",
   castFirewall: "Standing 2H Magic Area Attack 01",
+  /** Prefer 02 when present in the GLB; controller falls back to Area Attack 01. */
+  castProtectionBubble: "Standing 2H Magic Area Attack 02",
+  castMagmaOrbs: "Standing 2H Magic Attack 05",
   castPoisonDart: "Right Hook",
   castIceLance: "Baseball Pitching",
   castCounter: "Female Dance Pose",
@@ -90,6 +99,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   jumpAttack: "Jump Attack",
   jazzDance: "Jazz Dancing",
   idleToCrouch: "Standing To Crouched",
+  crouchToSprint: "Crouched To Sprinting",
   crouchWalk: "Crouched Walking",
   locomotionBlendResponsiveness: 12,
   idleBlendResponsiveness: 10,
@@ -186,6 +196,15 @@ export const abilityAnimationBindings: Record<
     windupTimeScale?: number;
     /** Mixer timeScale once impact / travel begins. */
     airTimeScale?: number;
+    /**
+     * Swap to this full-body clip when impact begins (Blood Rush crouch → sprint).
+     * Logical key on CharacterAnimationConfig or raw clip name.
+     */
+    impactFullBody?: keyof CharacterAnimationConfig | string;
+    /** Playback length for impactFullBody (seconds). */
+    impactFullBodyAnimDurationSec?: number;
+    /** Mixer timeScale for impactFullBody. */
+    impactFullBodyTimeScale?: number;
   }
 > = {
   bolt: { upper: "castPrimary" },
@@ -208,6 +227,23 @@ export const abilityAnimationBindings: Record<
   firewall: {
     upper: "castFirewall",
     upperTimeScale: FIREWALL_CAST.playbackRate,
+  },
+  volcano: {
+    upper: "castFirewall",
+    upperTimeScale: VOLCANO_CAST.playbackRate,
+  },
+  protectionBubble: {
+    upper: "castProtectionBubble",
+    upperTimeScale: PROTECTION_BUBBLE_CAST.playbackRate,
+  },
+  shrooms: {
+    /** Same Standing 1H Cast Spell 01 as Barrier. */
+    upper: "castBarrier",
+    upperTimeScale: SHROOM_CAST.playbackRate,
+  },
+  magmaOrbs: {
+    upper: "castMagmaOrbs",
+    upperTimeScale: MAGMA_ORBS_CAST.playbackRate,
   },
   frostBall: {
     upper: "castFrost",
@@ -260,6 +296,17 @@ export const abilityAnimationBindings: Record<
     airTimeScale: SMASH_JUMP_ATTACK.playbackRate,
   },
   dash: { fullBody: "dash" },
+  bloodRush: {
+    fullBody: "idleToCrouch",
+    /** Natural crouch — clampWhenFinished holds the low pose for the rest of the 1s charge. */
+    playNaturalSpeed: true,
+    /** Skip Mixamo's first-frame hips hitch off idle. */
+    startAtSec: 0.05,
+    impactFullBody: "crouchToSprint",
+    /** Compress ~0.53s clip into the travel window. */
+    impactFullBodyTimeScale: 0.53 / (BLOOD_RUSH_CAST.travelMs / 1000),
+    impactFullBodyAnimDurationSec: BLOOD_RUSH_CAST.travelMs / 1000,
+  },
   crescent: {
     comboUpperOnce: "attack_combo",
   },

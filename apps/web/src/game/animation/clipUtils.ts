@@ -156,6 +156,8 @@ export function createLegsOnlyClip(clip: THREE.AnimationClip): THREE.AnimationCl
 /**
  * Upper body + hips for casts. Mixamo attacks bake aim into hip yaw; without
  * hips the spell reads as sideways relative to gameplay facing.
+ * Prefer upper-only (`createUpperBodyClip`) so loco keeps feet planted —
+ * only use this when a clip truly needs hip aim twist (`ownHips: true`).
  */
 export function createCastBodyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
   return filterClipTracks(

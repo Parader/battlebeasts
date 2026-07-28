@@ -28,6 +28,7 @@ import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { InteractPromptBillboard } from "./InteractPromptBillboard";
 import { resetFootsteps, tickFootsteps } from "./gameSfx";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
+import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -276,7 +277,7 @@ export function CharacterAvatar({
       controller.cancelFullBodyAction();
     }
 
-    // Jump Attack / Portal keep mouse aim; dash still locks facing for the dive.
+    // Jump Attack / Portal / Blood Rush charge keep mouse aim; dash still locks for the dive.
     const fullBodyName = controller.getState().activeFullBodyName;
     const jumpAim =
       fullBodyName === "jumpAttack" ||
@@ -286,6 +287,10 @@ export function CharacterAvatar({
       me?.castAbilityId === "portal" ||
       fullBodyName === "castPraying" ||
       fullBodyName === "praying";
+    /** Crouch charge tracks cursor; sprint impact locks facing to the dash. */
+    const bloodRushAim =
+      me?.castAbilityId === "bloodRush" &&
+      (me?.castPhase === "anticipation" || me?.castPhase === "cast");
     const crouchWalkActive = cloaked && !castingDecoy;
     const grooveActive =
       me?.castAbilityId === "groove" ||
@@ -301,12 +306,13 @@ export function CharacterAvatar({
       (controller.getState().fullBody === "override" &&
         !jumpAim &&
         !portalAim &&
+        !bloodRushAim &&
         !crouchWalkActive &&
         !grooveActive &&
         !emoteAim) ||
       false;
 
-    if (jumpAim || portalAim || emoteAim) {
+    if (jumpAim || portalAim || bloodRushAim || emoteAim) {
       visualYaw.current = p.yaw;
     } else if (moveBodyAim) {
       // Body faces travel direction; idle keeps last move facing.
@@ -381,7 +387,10 @@ export function CharacterAvatar({
           }}
         />
         {room && localSessionId ? (
-          <PortalChannelAura room={room} sessionId={localSessionId} />
+          <>
+            <PortalChannelAura room={room} sessionId={localSessionId} />
+            <BloodRushChargeAura room={room} sessionId={localSessionId} />
+          </>
         ) : null}
       </group>
       <group ref={aimRef}>

@@ -20,6 +20,11 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   iceLance: "#7dd3fc",
   counter: "#f5c542",
   firewall: "#f97316",
+  volcano: "#ea580c",
+  magmaOrbs: "#f97316",
+  protectionBubble: "#7dd3fc",
+  shrooms: "#4ade80",
+  bloodRush: "#f87171",
 };
 
 export function abilityVfxColor(abilityId: string, fallback = "#38bdf8"): string {

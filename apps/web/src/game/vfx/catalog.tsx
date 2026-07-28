@@ -1,5 +1,5 @@
 import { ABILITIES, abilityEffectKind } from "@battlebeasts/shared";
-import type { MutableRefObject } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 import { Room } from "colyseus.js";
 import type { OneShotEffect } from "./types";
 import { BoltCastEffect } from "./effects/boltCast";
@@ -23,6 +23,21 @@ import { IceLanceCastEffect } from "./effects/iceLanceCast";
 import { IceLanceExplodeEffect } from "./effects/iceLanceExplode";
 import { FirewallGroundEffect } from "./effects/firewallGround";
 import { PortalBlinkEffect } from "./effects/portalBlink";
+import { VolcanoRockEffect } from "./effects/volcanoRock";
+import { BloodRushTrailEffect } from "./effects/bloodRushTrail";
+import { MagmaOrbsCastEffect } from "./effects/magmaOrbsCast";
+import { ShroomBurstEffect } from "./effects/shroomBurst";
+import {
+  getAbilityVfxProfile,
+  profileAoeCrackIds,
+  profileBridgedAoeIds,
+  profileCastAbilityIds,
+  profileCatalogImpactIds,
+  profileIceLanceExplodeIds,
+  profileMeleeSwoopIds,
+  profileOwnedByCastProjectileIds,
+  profileProjectileCatalogIds,
+} from "./profiles/registry";
 
 export type ProjectileVfxId = "bolt" | "grasp" | "chainJump" | "poisonDart";
 export type CastVfxId = "bolt" | "crescent" | "frostBall" | "barrier" | "poisonDart" | "iceLance";
@@ -38,38 +53,49 @@ export type ImpactVfxId =
   | "poisonDart"
   | "firewall"
   | "portal"
-  | "iceLance";
+  | "iceLance"
+  | "volcano"
+  | "bloodRush"
+  | "magmaOrbs";
+
+export type VfxFollowContext = {
+  room: Room | null;
+  localSessionId: string | null;
+  /** Local predicted pose — smoother than schema for the local caster. */
+  predictedRef?: MutableRefObject<{ x: number; z: number; yaw: number }>;
+};
+
+type ShotRenderer = (shot: OneShotEffect, ctx: VfxFollowContext) => ReactNode;
 
 /** Abilities that use the catalog projectile mesh instead of the legacy sphere. */
-export const CATALOG_PROJECTILES = new Set<string>(["bolt", "grasp", "chainJump", "poisonDart"]);
+export const CATALOG_PROJECTILES = new Set<string>(profileProjectileCatalogIds());
 
 /** Abilities with dedicated cast one-shots (muzzle / swoop / hand charge). */
 export const CATALOG_CAST_FX = new Set<string>([
-  "bolt",
-  "crescent",
-  "frostBall",
-  "barrier",
-  "poisonDart",
-  "iceLance",
+  ...profileCastAbilityIds(),
+  ...profileMeleeSwoopIds(),
 ]);
 
 /** Abilities with dedicated hit impact one-shots (not landing AoE cracks). */
-export const CATALOG_IMPACT_FX = new Set<string>(["bolt", "crescent", "poisonDart"]);
+export const CATALOG_IMPACT_FX = new Set<string>(profileCatalogImpactIds());
 
 /**
  * Melee abilities that spawn follow-caster swoops from combat_fx
  * instead of muzzle timing + ground burst rings.
  */
-export const CATALOG_MELEE_SWOOP = new Set<string>(["crescent"]);
+export const CATALOG_MELEE_SWOOP = new Set<string>(profileMeleeSwoopIds());
 
 /** AoE abilities that replace the legacy expanding ground ring. */
-export const CATALOG_AOE_CRACK = new Set<string>(["smash"]);
+export const CATALOG_AOE_CRACK = new Set<string>(profileAoeCrackIds());
 
 /** AoE that skips legacy ring; VFX is owned by SpellVfxBridge (timed to anim). */
-export const CATALOG_AOE_BRIDGED = new Set<string>(["gust"]);
+export const CATALOG_AOE_BRIDGED = new Set<string>(profileBridgedAoeIds());
 
 /** Sticky-detonate frost blast (Ice Lance). */
-export const CATALOG_ICE_LANCE_EXPLODE = new Set<string>(["iceLance"]);
+export const CATALOG_ICE_LANCE_EXPLODE = new Set<string>(profileIceLanceExplodeIds());
+
+/** Projectiles whose mesh is owned by the cast one-shot (not ProjectileRouter). */
+export const OWNED_BY_CAST_PROJECTILES = new Set<string>(profileOwnedByCastProjectileIds());
 
 export function hasCatalogProjectile(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_PROJECTILES.has(abilityId);
@@ -115,45 +141,50 @@ export function usesFirewallFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "firewall";
 }
 
+export function usesVolcanoFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "volcano";
+}
+
+export function usesMagmaOrbsFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "magmaOrbs";
+}
+
 export function usesIceLanceExplodeFx(abilityId: string | undefined): boolean {
   return !!abilityId && CATALOG_ICE_LANCE_EXPLODE.has(abilityId);
 }
 
-export type VfxFollowContext = {
-  room: Room | null;
-  localSessionId: string | null;
-  /** Local predicted pose — smoother than schema for the local caster. */
-  predictedRef?: MutableRefObject<{ x: number; z: number; yaw: number }>;
+export function isOwnedByCastProjectile(abilityId: string | undefined): boolean {
+  if (!abilityId) return false;
+  return (
+    OWNED_BY_CAST_PROJECTILES.has(abilityId) ||
+    getAbilityVfxProfile(abilityId).projectile === "ownedByCast"
+  );
+}
+
+const CAST_RENDERERS: Record<string, ShotRenderer> = {
+  crescent: (shot, ctx) => <CrescentCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  frostBall: (shot, ctx) => <FrostBallCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  iceLance: (shot, ctx) => <IceLanceCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  barrier: (shot, ctx) => <BarrierCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  poisonDart: (shot, ctx) => <PoisonDartCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  bolt: (shot, ctx) => <BoltCastEffect key={shot.key} shot={shot} follow={ctx} />,
 };
 
-export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
-  if (shot.kind === "cast") {
-    if (usesMeleeSwoopFx(shot.abilityId)) {
-      return <CrescentCastEffect key={shot.key} shot={shot} follow={ctx} />;
-    }
-    if (shot.abilityId === "frostBall") {
-      return <FrostBallCastEffect key={shot.key} shot={shot} follow={ctx} />;
-    }
-    if (shot.abilityId === "iceLance") {
-      return <IceLanceCastEffect key={shot.key} shot={shot} follow={ctx} />;
-    }
-    if (shot.abilityId === "barrier") {
-      return <BarrierCastEffect key={shot.key} shot={shot} follow={ctx} />;
-    }
-    if (shot.abilityId === "poisonDart") {
-      return <PoisonDartCastEffect key={shot.key} shot={shot} follow={ctx} />;
-    }
-    return <BoltCastEffect key={shot.key} shot={shot} follow={ctx} />;
-  }
-  if (shot.abilityId === "crescent") {
-    return <CrescentImpactEffect key={shot.key} shot={shot} />;
-  }
-  if (shot.abilityId === "smash") {
-    return <SmashCrackEffect key={shot.key} shot={shot} />;
-  }
-  if (shot.abilityId === "gust") {
-    return <GustWaveEffect key={shot.key} shot={shot} follow={ctx} />;
-  }
+const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
+  crescent: (shot) => <CrescentImpactEffect key={shot.key} shot={shot} />,
+  smash: (shot) => <SmashCrackEffect key={shot.key} shot={shot} />,
+  gust: (shot, ctx) => <GustWaveEffect key={shot.key} shot={shot} follow={ctx} />,
+  portal: (shot) => <PortalBlinkEffect key={shot.key} shot={shot} />,
+  iceLance: (shot) => <IceLanceExplodeEffect key={shot.key} shot={shot} />,
+  poisonDart: (shot) => <BoltImpactEffect key={shot.key} shot={shot} />,
+  bolt: (shot) => <BoltImpactEffect key={shot.key} shot={shot} />,
+  volcano: (shot) => <VolcanoRockEffect key={shot.key} shot={shot} />,
+  bloodRush: (shot, ctx) => <BloodRushTrailEffect key={shot.key} shot={shot} follow={ctx} />,
+  magmaOrbs: (shot, ctx) => <MagmaOrbsCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  shrooms: (shot) => <ShroomBurstEffect key={shot.key} shot={shot} />,
+};
+
+function renderByEffectKind(shot: OneShotEffect, ctx: VfxFollowContext): ReactNode | null {
   if (usesSpikeFx(shot.abilityId)) {
     return <SpikesPopEffect key={shot.key} shot={shot} />;
   }
@@ -166,14 +197,33 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
   if (usesFirewallFx(shot.abilityId)) {
     return <FirewallGroundEffect key={shot.key} shot={shot} />;
   }
-  if (shot.abilityId === "portal") {
-    return <PortalBlinkEffect key={shot.key} shot={shot} />;
-  }
   if (usesGrooveFx(shot.abilityId)) {
     return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
   }
-  if (usesIceLanceExplodeFx(shot.abilityId)) {
-    return <IceLanceExplodeEffect key={shot.key} shot={shot} />;
+  return null;
+}
+
+export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
+  if (shot.kind === "cast") {
+    if (usesMeleeSwoopFx(shot.abilityId)) {
+      return CAST_RENDERERS.crescent!(shot, ctx);
+    }
+    const cast = CAST_RENDERERS[shot.abilityId];
+    if (cast) return cast(shot, ctx);
+    if (import.meta.env.DEV) {
+      console.warn(`[vfx] missing cast renderer for abilityId=${shot.abilityId}; using bolt muzzle`);
+    }
+    return CAST_RENDERERS.bolt!(shot, ctx);
+  }
+
+  const impact = IMPACT_RENDERERS[shot.abilityId];
+  if (impact) return impact(shot, ctx);
+
+  const byKind = renderByEffectKind(shot, ctx);
+  if (byKind) return byKind;
+
+  if (import.meta.env.DEV) {
+    console.warn(`[vfx] missing impact renderer for abilityId=${shot.abilityId}; using bolt impact`);
   }
   return <BoltImpactEffect key={shot.key} shot={shot} />;
 }
@@ -200,4 +250,6 @@ export {
   IceLanceExplodeEffect,
   FirewallGroundEffect,
   PortalBlinkEffect,
+  VolcanoRockEffect,
+  BloodRushTrailEffect,
 };

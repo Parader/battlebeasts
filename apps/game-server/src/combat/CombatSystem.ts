@@ -7,11 +7,16 @@ import {
   GROOVE_CAST,
   HEAL_BEAM_CAST,
   MOVE_SPEED,
+  VOLCANO_CAST,
+  MAGMA_ORBS_CAST,
+  PROTECTION_BUBBLE_CAST,
+  SHROOM_CAST,
   abilityEffectKind,
   abilityTriggersCounter,
   canInterruptOtherCast,
   canPlayerCancelCast,
   channelChargeDistance,
+  clampGroundAim,
   createProjectile,
   dashOffset,
   isComboAbility,
@@ -22,8 +27,17 @@ import {
   moveAndCollide,
   nextCastPhase,
   unitCollidersExcept,
+  volcanoColliders,
   phaseDurationMs,
   pointInFront,
+  buildMagmaOrbsFlightPath,
+  magmaOrbsFlightT,
+  magmaOrbsMaxFlightTs,
+  sampleMagmaOrbsFlight,
+  circlesOverlap,
+  projectileEntersProtectionBubble,
+  pointInProtectionBubble,
+  type ProtectionBubbleCollider,
   resolveCastMoveMul,
   resolveComboContinueMoveMul,
   resolveCollisions,
@@ -59,6 +73,9 @@ import {
   DecoyState,
   PlayerState,
   ProjectileState,
+  ProtectionBubbleState,
+  ShroomState,
+  VolcanoState,
   WorldTargetState,
 } from "../schema/BaseCityState.js";
 import { StatusSystem } from "../status/StatusSystem.js";
@@ -92,11 +109,19 @@ type ActiveCast = {
   /** Stick direction frozen at cast start (Decoy drift). */
   moveX: number;
   moveZ: number;
+  /** Ground aim frozen at cast start (Volcano place). */
+  aimX?: number;
+  aimZ?: number;
+  /** Feet pose frozen at cast start (Protection Bubble place). */
+  originX?: number;
+  originZ?: number;
 };
 
 export type CastBeginOpts = {
   moveX?: number;
   moveZ?: number;
+  aimX?: number;
+  aimZ?: number;
 };
 
 /** How long the decoy clone stays in the world after spawn. */
@@ -114,6 +139,11 @@ type ActiveTravel = {
   endAt: number;
   /** Fire melee/AoE hit + FX when translate completes. */
   pendingLandingEffect?: boolean;
+  /** Last sample for path hit sweeps (Blood Rush). */
+  lastX?: number;
+  lastZ?: number;
+  /** Targets already nicked this cast. */
+  pathHitIds?: Set<string>;
 };
 
 type ActiveKnockback = {
@@ -156,6 +186,102 @@ type PendingFirewall = {
   nextTickAt: number;
   expiresAt: number;
   tickMs: number;
+};
+
+type PendingVolcanoRock = {
+  x: number;
+  z: number;
+  telegraphAt: number;
+  landAt: number;
+  telegraphed: boolean;
+  landed: boolean;
+};
+
+type PendingVolcano = {
+  id: string;
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  yaw: number;
+  collideRadius: number;
+  blastRadius: number;
+  damage: number;
+  /** When rising finishes and rocks may start. */
+  activeAt: number;
+  /** When active rock window ends (start sinking). */
+  activeEndsAt: number;
+  /** When schema entry is deleted. */
+  despawnAt: number;
+  nextRockAt: number;
+  rockIntervalMs: number;
+  /** Contact-burn refresh while hugging the volcano body. */
+  nextContactTickAt: number;
+  contactTickMs: number;
+  telegraphMs: number;
+  ringMin: number;
+  ringMax: number;
+  seed: number;
+  rocks: PendingVolcanoRock[];
+  phase: "rising" | "active" | "sinking";
+};
+
+type PendingMagmaOrbs = {
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  radius: number;
+  damage: number;
+  launchAt: number;
+  explodeAt: number;
+  path: ReturnType<typeof buildMagmaOrbsFlightPath>;
+  flightHitRadius: number;
+  /** Bezier t where left orb dies to a wall (1 = reaches meet). */
+  leftMaxT: number;
+  /** Bezier t where right orb dies to a wall (1 = reaches meet). */
+  rightMaxT: number;
+  /** Bubbles this cast erupted inside — curve may leave / skim without dying. */
+  passBubbleIds: Set<string>;
+  /** Targets already burned by a flying orb this cast. */
+  pathHitIds: Set<string>;
+};
+
+type PendingProtectionBubble = {
+  id: string;
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  radius: number;
+  spawnedAt: number;
+  formEndsAt: number;
+  activeEndsAt: number;
+  despawnAt: number;
+  phase: "forming" | "active" | "fading";
+};
+
+type PendingShroom = {
+  id: string;
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  yaw: number;
+  triggerRadius: number;
+  blastRadius: number;
+  damage: number;
+  plantedAt: number;
+  stage2At: number;
+  stage3At: number;
+  expiresAt: number;
+  stage: 1 | 2 | 3;
+  variant: number;
+  /** Step triggers only after cast completes. */
+  armed: boolean;
+  /** Oldest cull / expire bury. */
+  sinking: boolean;
+  sinkEndsAt: number;
 };
 
 type PendingFrostMist = {
@@ -229,6 +355,10 @@ export class CombatSystem {
   private combos = new Map<string, ActiveCombo>();
   private pendingSpikes: PendingSpike[] = [];
   private pendingFirewalls: PendingFirewall[] = [];
+  private pendingVolcanoes: PendingVolcano[] = [];
+  private pendingMagmaOrbs: PendingMagmaOrbs[] = [];
+  private pendingProtectionBubbles: PendingProtectionBubble[] = [];
+  private pendingShrooms: PendingShroom[] = [];
   private pendingFrostMist: PendingFrostMist[] = [];
   private pendingGrooveHeal: PendingGrooveHeal[] = [];
   private pendingHealBeam: PendingHealBeam[] = [];
@@ -257,6 +387,9 @@ export class CombatSystem {
       onDotDamage: (targetId, damage, statusId, sourceId) => {
         this.applyRawDamage(targetId, damage, sourceId, statusId);
       },
+      onHotHeal: (targetId, heal, statusId, sourceId) => {
+        this.applyHealAmount(targetId, heal, sourceId, statusId);
+      },
     });
   }
 
@@ -281,7 +414,7 @@ export class CombatSystem {
     return this.kits.get(sessionId);
   }
 
-  /** Authoritative move with player/static collision. */
+  /** Authoritative move with player/static/volcano collision. */
   movePlayer(sessionId: string, from: Vec2, desired: Vec2): Vec2 {
     const me = this.room.state.players.get(sessionId);
     return moveAndCollide(
@@ -289,12 +422,15 @@ export class CombatSystem {
       desired,
       COLLISION.playerRadius,
       this.staticColliders,
-      unitCollidersExcept(
-        this.room.state.players.entries(),
-        this.room.state.targets.entries(),
-        sessionId,
-        me?.id,
-      ),
+      [
+        ...unitCollidersExcept(
+          this.room.state.players.entries(),
+          this.room.state.targets.entries(),
+          sessionId,
+          me?.id,
+        ),
+        ...volcanoColliders(this.room.state.volcanoes.entries()),
+      ],
     );
   }
 
@@ -305,12 +441,15 @@ export class CombatSystem {
       pos,
       COLLISION.playerRadius,
       this.staticColliders,
-      unitCollidersExcept(
-        this.room.state.players.entries(),
-        this.room.state.targets.entries(),
-        sessionId,
-        me?.id,
-      ),
+      [
+        ...unitCollidersExcept(
+          this.room.state.players.entries(),
+          this.room.state.targets.entries(),
+          sessionId,
+          me?.id,
+        ),
+        ...volcanoColliders(this.room.state.volcanoes.entries()),
+      ],
     );
   }
 
@@ -332,6 +471,7 @@ export class CombatSystem {
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
     this.clearPendingHealBeam(sessionId);
+    this.clearUnarmedShrooms(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "cancel", now, { cooldownMs });
   }
@@ -348,6 +488,7 @@ export class CombatSystem {
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
     this.clearPendingHealBeam(sessionId);
+    this.clearUnarmedShrooms(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "interrupt", now, { cooldownMs });
   }
@@ -383,6 +524,7 @@ export class CombatSystem {
     if (!sim) return false;
     // Owner id on the sim is body.id from createProjectile — force the dummy id.
     sim.ownerId = ownerId;
+    this.stampProjectileBubblePass(sim, Date.now());
     this.sims.set(id, sim);
     const st = new ProjectileState();
     st.id = id;
@@ -516,6 +658,8 @@ export class CombatSystem {
 
     const moveX = opts?.moveX ?? 0;
     const moveZ = opts?.moveZ ?? 0;
+    const aimX = opts?.aimX;
+    const aimZ = opts?.aimZ;
 
     this.beginComboHitIndex(sessionId, player, def);
 
@@ -530,6 +674,10 @@ export class CombatSystem {
         effectFired: false,
         moveX,
         moveZ,
+        aimX,
+        aimZ,
+        originX: player.x,
+        originZ: player.z,
       });
       this.fireEffect(sessionId, player, def, now);
       const cooldownMs = this.onEffectResolved(sessionId, def, now);
@@ -538,6 +686,8 @@ export class CombatSystem {
         comboHit: this.comboHitFor(sessionId, def.id),
         moveX,
         moveZ,
+        aimX,
+        aimZ,
       });
       const live = this.casts.get(sessionId);
       if (live) live.effectFired = true;
@@ -545,7 +695,12 @@ export class CombatSystem {
       return true;
     }
 
-    this.enterPhase(sessionId, player, def, first, now, now, { moveX, moveZ });
+    this.enterPhase(sessionId, player, def, first, now, now, {
+      moveX,
+      moveZ,
+      aimX,
+      aimZ,
+    });
     // Decoy: clone + cloak commit immediately so the fake appears before the crouch.
     if (abilityEffectKind(def) === "decoy") {
       this.commitDecoyCast(sessionId, player, def, now);
@@ -560,6 +715,16 @@ export class CombatSystem {
     return true;
   }
 
+  /** Refresh ground aim on an in-progress cast (cursor tracking during windup). */
+  refreshCastAim(sessionId: string, aimX?: number, aimZ?: number) {
+    if (aimX == null || aimZ == null) return;
+    if (!Number.isFinite(aimX) || !Number.isFinite(aimZ)) return;
+    const cast = this.casts.get(sessionId);
+    if (!cast) return;
+    cast.aimX = aimX;
+    cast.aimZ = aimZ;
+  }
+
   tryCancelCast(sessionId: string, player: PlayerState, now: number): boolean {
     const cast = this.casts.get(sessionId);
     if (!cast) return false;
@@ -572,6 +737,7 @@ export class CombatSystem {
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
     this.clearPendingHealBeam(sessionId);
+    this.clearUnarmedShrooms(sessionId);
     if (def.id === "counter") {
       this.statuses.remove(sessionId, "counterArmed");
     }
@@ -655,6 +821,10 @@ export class CombatSystem {
     this.advanceCombos(now);
     this.advancePendingSpikes(now);
     this.advancePendingFirewalls(now);
+    this.advancePendingVolcanoes(now);
+    this.advancePendingMagmaOrbs(now);
+    this.advancePendingProtectionBubbles(now);
+    this.advancePendingShrooms(now);
     this.advancePendingFrostMist(now);
     this.advancePendingGrooveHeal(now);
     this.advancePendingHealBeam(now);
@@ -678,6 +848,7 @@ export class CombatSystem {
         const delay = ABILITIES[abilityId]?.detonate?.delayMs ?? 0;
         return delay > 0 ? delay / 1000 : 0;
       },
+      this.collectProtectionBubbleColliders(now),
     );
 
     for (const hit of hits) {
@@ -824,8 +995,17 @@ export class CombatSystem {
         { x: travel.fromX, z: travel.fromZ },
         pos,
       );
+      const prevX = travel.lastX ?? travel.fromX;
+      const prevZ = travel.lastZ ?? travel.fromZ;
       player.x = clamped.x;
       player.z = clamped.z;
+      travel.lastX = clamped.x;
+      travel.lastZ = clamped.z;
+
+      if (def?.travel?.hitAlongPath) {
+        this.applyTravelPathHits(sessionId, travel, def, prevX, prevZ, clamped.x, clamped.z, now);
+      }
+
       if (now >= travel.endAt) {
         const pending = travel.pendingLandingEffect;
         const abilityId = travel.abilityId;
@@ -836,6 +1016,74 @@ export class CombatSystem {
         }
       }
     }
+  }
+
+  /**
+   * Blood Rush — nick + bleed any unit the dash segment overlaps (once per cast).
+   */
+  private applyTravelPathHits(
+    sessionId: string,
+    travel: ActiveTravel,
+    def: (typeof ABILITIES)[string],
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    now: number,
+  ) {
+    if (!travel.pathHitIds) travel.pathHitIds = new Set();
+    const hitR = def.radius ?? 0.75;
+    const damage = def.damage ?? 0;
+    const bodies = this.collectBodies();
+    // Sample midpoints along the segment so fast dashes don't skip thin targets.
+    const dx = toX - fromX;
+    const dz = toZ - fromZ;
+    const len = Math.hypot(dx, dz);
+    const steps = Math.max(1, Math.ceil(len / Math.max(0.25, hitR * 0.85)));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const cx = fromX + dx * t;
+      const cz = fromZ + dz * t;
+      const hits = resolveInstantHits(
+        { x: cx, z: cz },
+        hitR,
+        damage,
+        sessionId,
+        bodies,
+        (o, tid) => this.canHurt(o, tid),
+      );
+      for (const hit of hits) {
+        if (travel.pathHitIds.has(hit.targetId)) continue;
+        travel.pathHitIds.add(hit.targetId);
+        let dmg = hit.damage;
+        const thresh = def.executeBelowHpFrac;
+        if (typeof thresh === "number" && thresh > 0) {
+          const vitals = this.readVitals(hit.targetId);
+          if (vitals && vitals.maxHp > 0 && vitals.hp / vitals.maxHp <= thresh) {
+            dmg = Math.max(dmg, vitals.hp);
+          }
+        }
+        this.applyDamage(hit.targetId, dmg, sessionId, def.id, now);
+        this.fx({
+          kind: "hit",
+          abilityId: def.id,
+          x: cx,
+          z: cz,
+          ownerId: sessionId,
+          targetId: hit.targetId,
+          damage: dmg,
+        });
+      }
+    }
+  }
+
+  /** Current HP / max for players or practice targets. */
+  private readVitals(targetId: string): { hp: number; maxHp: number } | null {
+    const player = this.room.state.players.get(targetId);
+    if (player) return { hp: player.hp, maxHp: Math.max(1, player.maxHp) };
+    const target = this.room.state.targets.get(targetId);
+    if (target) return { hp: target.hp, maxHp: Math.max(1, target.maxHp) };
+    return null;
   }
 
   private advanceCasts(now: number) {
@@ -918,6 +1166,16 @@ export class CombatSystem {
         }
       } else {
         this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt);
+        // Spore Shrooms: mesh pops at cast start (spawn frame); arms at impact.
+        if (next === "cast" && abilityEffectKind(def) === "shrooms") {
+          this.scheduleShroom(
+            sessionId,
+            this.playerBody(sessionId, player),
+            def,
+            now,
+            false,
+          );
+        }
       }
     }
   }
@@ -957,6 +1215,8 @@ export class CombatSystem {
       comboHit?: number;
       moveX?: number;
       moveZ?: number;
+      aimX?: number;
+      aimZ?: number;
     },
   ) {
     const duration = Math.max(16, phaseDurationMs(def, phase));
@@ -972,6 +1232,10 @@ export class CombatSystem {
       effectFired: prev?.effectFired ?? false,
       moveX: fxExtra?.moveX ?? prev?.moveX ?? 0,
       moveZ: fxExtra?.moveZ ?? prev?.moveZ ?? 0,
+      aimX: fxExtra?.aimX ?? prev?.aimX,
+      aimZ: fxExtra?.aimZ ?? prev?.aimZ,
+      originX: prev?.originX ?? player.x,
+      originZ: prev?.originZ ?? player.z,
     };
     this.casts.set(sessionId, cast);
 
@@ -1059,7 +1323,20 @@ export class CombatSystem {
         startAt: now + takeoffDelay,
         endAt: now + takeoffDelay + travelDur,
         pendingLandingEffect: deferHit && (def.shape === "aoe" || def.shape === "melee"),
+        lastX: player.x,
+        lastZ: player.z,
+        pathHitIds: travel.hitAlongPath ? new Set() : undefined,
       });
+      if (travel.hitAlongPath) {
+        this.fx({
+          kind: "dash",
+          abilityId: def.id,
+          x: player.x,
+          z: player.z,
+          yaw: player.yaw,
+          ownerId: sessionId,
+        });
+      }
     }
 
     if (kind === "decoy") {
@@ -1071,6 +1348,14 @@ export class CombatSystem {
       this.scheduleSpikeWave(sessionId, ownerBody, def, now);
     } else if (kind === "firewall" && !deferHit) {
       this.scheduleFirewall(sessionId, ownerBody, def, now);
+    } else if (kind === "volcano" && !deferHit) {
+      this.scheduleVolcano(sessionId, ownerBody, def, now);
+    } else if (kind === "protectionBubble" && !deferHit) {
+      this.scheduleProtectionBubble(sessionId, ownerBody, def, now);
+    } else if (kind === "shrooms" && !deferHit) {
+      this.armShrooms(sessionId, now);
+    } else if (kind === "magmaOrbs" && !deferHit) {
+      this.scheduleMagmaOrbs(sessionId, ownerBody, def, now);
     } else if (kind === "coneChannel" && !deferHit) {
       this.scheduleFrostMist(sessionId, def, now);
     } else if (kind === "healBeam" && !deferHit) {
@@ -1092,6 +1377,7 @@ export class CombatSystem {
         const id = `p_${this.nextId++}`;
         const sim = createProjectile(id, ownerBody, def);
         if (sim) {
+          this.stampProjectileBubblePass(sim, now);
           this.sims.set(id, sim);
           const st = new ProjectileState();
           st.id = id;
@@ -1428,6 +1714,839 @@ export class CombatSystem {
       if (now < zone.expiresAt) remain.push(zone);
     }
     this.pendingFirewalls = remain;
+  }
+
+  /**
+   * Magma Orbs — at launch (impact), freeze flight path, burn on contact in air.
+   * Each orb stops independently on walls. One arrival = half blast; both = full.
+   */
+  private scheduleMagmaOrbs(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const yaw = cast?.yaw ?? ownerBody.yaw;
+    const meetRange = Math.max(2, def.range > 0 ? def.range : MAGMA_ORBS_CAST.meetRange);
+    const path = buildMagmaOrbsFlightPath(ownerBody, yaw, meetRange);
+    const blastRadius = Math.max(0.8, def.radius ?? MAGMA_ORBS_CAST.blastRadius);
+    const flightMs = Math.max(16, phaseDurationMs(def, "impact"));
+    const explodeAt = now + flightMs;
+    const flightHitRadius = MAGMA_ORBS_CAST.flightHitRadius;
+    const maxT = magmaOrbsMaxFlightTs(path, this.wallColliders, flightHitRadius);
+    const passBubbleIds = this.protectionBubblePassIds(
+      [path.left0, path.right0, { x: ownerBody.x, z: ownerBody.z }],
+      now,
+      flightHitRadius,
+    );
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: path.collide.x,
+      z: path.collide.z,
+      x2: ownerBody.x,
+      z2: ownerBody.z,
+      radius: blastRadius,
+      yaw,
+      ownerId: sessionId,
+      variant: 1,
+      phaseEndsAt: explodeAt,
+    });
+
+    this.pendingMagmaOrbs.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      x: path.collide.x,
+      z: path.collide.z,
+      radius: blastRadius,
+      damage: def.damage,
+      launchAt: now,
+      explodeAt,
+      path,
+      flightHitRadius,
+      leftMaxT: maxT.left,
+      rightMaxT: maxT.right,
+      passBubbleIds,
+      pathHitIds: new Set(),
+    });
+  }
+
+  private advancePendingMagmaOrbs(now: number) {
+    if (this.pendingMagmaOrbs.length === 0) return;
+    const remain: PendingMagmaOrbs[] = [];
+    const bodies = this.collectBodies();
+    for (const orb of this.pendingMagmaOrbs) {
+      if (now < orb.explodeAt) {
+        const span = Math.max(1, orb.explodeAt - orb.launchAt);
+        const linear = Math.max(0, Math.min(1, (now - orb.launchAt) / span));
+        const t = magmaOrbsFlightT(linear);
+        let leftAlive = t <= orb.leftMaxT + 1e-4;
+        let rightAlive = t <= orb.rightMaxT + 1e-4;
+        if (!leftAlive && !rightAlive) {
+          remain.push(orb);
+          continue;
+        }
+        const { left, right } = sampleMagmaOrbsFlight(orb.path, t);
+        const prevSample = sampleMagmaOrbsFlight(
+          orb.path,
+          magmaOrbsFlightT(Math.max(0, linear - 0.04)),
+        );
+        const bubbles = this.collectProtectionBubbleColliders(now);
+        for (const b of bubbles) {
+          if (b.id && orb.passBubbleIds.has(b.id)) continue;
+          if (
+            leftAlive &&
+            projectileEntersProtectionBubble(
+              prevSample.left.x,
+              prevSample.left.z,
+              left.x,
+              left.z,
+              orb.flightHitRadius,
+              b,
+            )
+          ) {
+            orb.leftMaxT = Math.min(orb.leftMaxT, t);
+            leftAlive = false;
+          }
+          if (
+            rightAlive &&
+            projectileEntersProtectionBubble(
+              prevSample.right.x,
+              prevSample.right.z,
+              right.x,
+              right.z,
+              orb.flightHitRadius,
+              b,
+            )
+          ) {
+            orb.rightMaxT = Math.min(orb.rightMaxT, t);
+            rightAlive = false;
+          }
+        }
+        if (!leftAlive && !rightAlive) {
+          remain.push(orb);
+          continue;
+        }
+        const def = ABILITIES[orb.abilityId];
+        const burn = def?.applyOnHit;
+        for (const body of bodies) {
+          if (orb.pathHitIds.has(body.id)) continue;
+          if (!this.canHurt(orb.ownerId, body.id)) continue;
+          const hit =
+            (leftAlive &&
+              circlesOverlap(
+                left.x,
+                left.z,
+                orb.flightHitRadius,
+                body.x,
+                body.z,
+                COMBAT.playerHitRadius,
+              )) ||
+            (rightAlive &&
+              circlesOverlap(
+                right.x,
+                right.z,
+                orb.flightHitRadius,
+                body.x,
+                body.z,
+                COMBAT.playerHitRadius,
+              ));
+          if (!hit) continue;
+          orb.pathHitIds.add(body.id);
+          if (burn?.length) {
+            this.statuses.applyApplications(body.id, burn, orb.ownerId, now);
+          }
+        }
+        remain.push(orb);
+        continue;
+      }
+
+      // Full meet blast if both arrive; half radius/damage if only one clears walls.
+      const leftArrives = orb.leftMaxT >= 1 - 1e-4;
+      const rightArrives = orb.rightMaxT >= 1 - 1e-4;
+      const arriveCount = (leftArrives ? 1 : 0) + (rightArrives ? 1 : 0);
+      if (arriveCount === 0) continue;
+
+      const mul = arriveCount === 2 ? 1 : 0.5;
+      const blastR = orb.radius * mul;
+      const blastDmg = Math.max(1, Math.round(orb.damage * mul));
+
+      const hits = resolveInstantHits(
+        { x: orb.x, z: orb.z },
+        blastR,
+        blastDmg,
+        orb.ownerId,
+        bodies,
+        (o, t) => this.canHurt(o, t),
+      );
+      for (const hit of hits) {
+        this.applyDamage(hit.targetId, hit.damage, orb.ownerId, orb.abilityId, now);
+      }
+      this.fx({
+        kind: "aoe",
+        abilityId: orb.abilityId,
+        x: orb.x,
+        z: orb.z,
+        radius: blastR,
+        ownerId: orb.ownerId,
+        variant: 2,
+      });
+    }
+    this.pendingMagmaOrbs = remain;
+  }
+
+  private scheduleProtectionBubble(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const x = cast?.originX ?? ownerBody.x;
+    const z = cast?.originZ ?? ownerBody.z;
+    const radius = Math.max(1.5, def.radius ?? PROTECTION_BUBBLE_CAST.radius);
+    const formMs = PROTECTION_BUBBLE_CAST.formMs;
+    const durationMs = Math.max(500, def.zoneDurationMs ?? PROTECTION_BUBBLE_CAST.zoneDurationMs);
+    const fadeMs = PROTECTION_BUBBLE_CAST.fadeMs;
+    const formEndsAt = now + formMs;
+    const activeEndsAt = formEndsAt + durationMs;
+    const despawnAt = activeEndsAt + fadeMs;
+    const id = `bubble_${this.nextId++}`;
+
+    const st = new ProtectionBubbleState();
+    st.id = id;
+    st.ownerSessionId = sessionId;
+    st.x = x;
+    st.z = z;
+    st.radius = radius;
+    st.phase = "forming";
+    st.formEndsAt = formEndsAt;
+    st.activeEndsAt = activeEndsAt;
+    st.expiresAt = despawnAt;
+    this.room.state.protectionBubbles.set(id, st);
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x,
+      z,
+      radius,
+      yaw: ownerBody.yaw,
+      ownerId: sessionId,
+      variant: 0,
+      phaseEndsAt: despawnAt,
+    });
+
+    this.pendingProtectionBubbles.push({
+      id,
+      ownerId: sessionId,
+      abilityId: def.id,
+      x,
+      z,
+      radius,
+      spawnedAt: now,
+      formEndsAt,
+      activeEndsAt,
+      despawnAt,
+      phase: "forming",
+    });
+  }
+
+  private protectionBubbleLiveRadius(zone: PendingProtectionBubble, now: number): number {
+    if (now >= zone.despawnAt) return 0;
+    if (now < zone.formEndsAt) {
+      const span = Math.max(1, zone.formEndsAt - zone.spawnedAt);
+      const u = Math.max(0, Math.min(1, (now - zone.spawnedAt) / span));
+      const e = 1 - (1 - u) * (1 - u);
+      return zone.radius * Math.max(0.12, e);
+    }
+    if (now >= zone.activeEndsAt) {
+      const span = Math.max(1, zone.despawnAt - zone.activeEndsAt);
+      const u = Math.max(0, Math.min(1, (now - zone.activeEndsAt) / span));
+      return zone.radius * Math.max(0, 1 - u * u);
+    }
+    return zone.radius;
+  }
+
+  private collectProtectionBubbleColliders(now: number): ProtectionBubbleCollider[] {
+    const out: ProtectionBubbleCollider[] = [];
+    for (const zone of this.pendingProtectionBubbles) {
+      const r = this.protectionBubbleLiveRadius(zone, now);
+      if (r < 0.2) continue;
+      out.push({ id: zone.id, x: zone.x, z: zone.z, radius: r });
+    }
+    return out;
+  }
+
+  /** Bubbles that contain any of the given points (spawn-inside pass-through). */
+  private protectionBubblePassIds(
+    points: readonly Vec2[],
+    now: number,
+    pad = 0.15,
+  ): Set<string> {
+    const ids = new Set<string>();
+    for (const b of this.collectProtectionBubbleColliders(now)) {
+      if (!b.id) continue;
+      for (const p of points) {
+        if (pointInProtectionBubble(p.x, p.z, b, pad)) {
+          ids.add(b.id);
+          break;
+        }
+      }
+    }
+    return ids;
+  }
+
+  private stampProjectileBubblePass(sim: ProjectileSim, now: number) {
+    const ids = this.protectionBubblePassIds([{ x: sim.x, z: sim.z }], now, sim.wallRadius);
+    for (const id of ids) sim.passBubbleIds.add(id);
+  }
+
+  private advancePendingProtectionBubbles(now: number) {
+    if (this.pendingProtectionBubbles.length === 0) return;
+    const remain: PendingProtectionBubble[] = [];
+    for (const zone of this.pendingProtectionBubbles) {
+      const st = this.room.state.protectionBubbles.get(zone.id);
+      if (now >= zone.despawnAt) {
+        this.room.state.protectionBubbles.delete(zone.id);
+        continue;
+      }
+      if (zone.phase === "forming" && now >= zone.formEndsAt) {
+        zone.phase = "active";
+        if (st) st.phase = "active";
+      }
+      if (zone.phase === "active" && now >= zone.activeEndsAt) {
+        zone.phase = "fading";
+        if (st) st.phase = "fading";
+      }
+      remain.push(zone);
+    }
+    this.pendingProtectionBubbles = remain;
+  }
+
+  private scheduleShroom(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+    armed = true,
+  ) {
+    // One plant per cast — don't double-spawn if cast phase re-enters.
+    if (this.pendingShrooms.some((z) => z.ownerId === sessionId && !z.armed && !z.sinking)) {
+      return;
+    }
+
+    // Cap living plants; oldest sinks into the ground.
+    this.enforceShroomLimit(sessionId, now);
+
+    const cast = this.casts.get(sessionId);
+    const aim =
+      cast?.aimX != null && cast?.aimZ != null
+        ? { x: cast.aimX, z: cast.aimZ }
+        : undefined;
+    const pos = clampGroundAim(
+      ownerBody,
+      aim,
+      def.range > 0 ? def.range : SHROOM_CAST.range,
+    );
+    const triggerRadius = Math.max(0.35, def.radius ?? SHROOM_CAST.triggerRadius);
+    const blastRadius = SHROOM_CAST.blastRadius;
+    const id = `shroom_${this.nextId++}`;
+    const variant = this.nextId % 2;
+    const expiresAt = now + Math.max(3000, def.zoneDurationMs ?? SHROOM_CAST.maxLifeMs);
+
+    const st = new ShroomState();
+    st.id = id;
+    st.ownerSessionId = sessionId;
+    st.x = pos.x;
+    st.z = pos.z;
+    st.yaw = ownerBody.yaw;
+    st.triggerRadius = triggerRadius;
+    st.blastRadius = blastRadius;
+    st.stage = 1;
+    st.variant = variant;
+    st.armed = armed;
+    st.phase = "alive";
+    st.expiresAt = expiresAt;
+    this.room.state.shrooms.set(id, st);
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      radius: triggerRadius,
+      yaw: ownerBody.yaw,
+      ownerId: sessionId,
+      variant: 0,
+      phaseEndsAt: expiresAt,
+    });
+
+    this.pendingShrooms.push({
+      id,
+      ownerId: sessionId,
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      yaw: ownerBody.yaw,
+      triggerRadius,
+      blastRadius,
+      damage: def.damage,
+      plantedAt: now,
+      stage2At: now + SHROOM_CAST.stage2Ms,
+      stage3At: now + SHROOM_CAST.stage3Ms,
+      expiresAt,
+      stage: 1,
+      variant,
+      armed,
+      sinking: false,
+      sinkEndsAt: 0,
+    });
+  }
+
+  /** Keep at most `maxActive` living plants per owner (FIFO sink). */
+  private enforceShroomLimit(ownerId: string, now: number) {
+    const max = Math.max(1, SHROOM_CAST.maxActive);
+    const living = this.pendingShrooms.filter(
+      (z) => z.ownerId === ownerId && !z.sinking,
+    );
+    while (living.length >= max) {
+      const oldest = living.shift();
+      if (!oldest) break;
+      this.beginShroomSink(oldest, now);
+    }
+  }
+
+  private beginShroomSink(zone: PendingShroom, now: number) {
+    if (zone.sinking) return;
+    zone.sinking = true;
+    zone.armed = false;
+    zone.sinkEndsAt = now + SHROOM_CAST.sinkMs;
+    const st = this.room.state.shrooms.get(zone.id);
+    if (st) {
+      st.phase = "sinking";
+      st.armed = false;
+    }
+  }
+
+  /** Cast impact: allow step triggers on the plant spawned at cast start. */
+  private armShrooms(sessionId: string, now: number) {
+    let armedAny = false;
+    for (const zone of this.pendingShrooms) {
+      if (zone.ownerId !== sessionId || zone.armed || zone.sinking) continue;
+      zone.armed = true;
+      const st = this.room.state.shrooms.get(zone.id);
+      if (st) st.armed = true;
+      armedAny = true;
+    }
+    // Fallback if plant never spawned (e.g. cast skipped anticipation→cast).
+    if (!armedAny) {
+      const player = this.room.state.players.get(sessionId);
+      const def = ABILITIES.shrooms;
+      if (player && def) {
+        this.scheduleShroom(sessionId, this.playerBody(sessionId, player), def, now, true);
+      }
+    }
+  }
+
+  /** Cancel / interrupt before arm — remove the visual-only plant. */
+  private clearUnarmedShrooms(ownerId: string) {
+    if (this.pendingShrooms.length === 0) return;
+    const remain: PendingShroom[] = [];
+    for (const zone of this.pendingShrooms) {
+      if (zone.ownerId === ownerId && !zone.armed && !zone.sinking) {
+        this.room.state.shrooms.delete(zone.id);
+        continue;
+      }
+      remain.push(zone);
+    }
+    this.pendingShrooms = remain;
+  }
+
+  /** Allies (same team / hub), self, and practice dummies for shroom heal burst. */
+  private canShroomHealTarget(casterId: string, targetId: string): boolean {
+    if (this.room.state.targets.has(targetId)) return true;
+    const player = this.room.state.players.get(targetId);
+    if (!player || player.disconnected || player.hp <= 0) return false;
+    if (player.role === "spectator" || player.roundDead) return false;
+    if (casterId === targetId) return true;
+    const caster = this.room.state.players.get(casterId);
+    if (caster?.team && player.team && caster.team !== player.team) return false;
+    return true;
+  }
+
+  private triggerShroom(
+    zone: PendingShroom,
+    kind: "ally" | "enemy",
+    triggerTargetId: string,
+    now: number,
+  ) {
+    const bodies = this.collectBodies();
+    this.fx({
+      kind: "aoe",
+      abilityId: zone.abilityId,
+      x: zone.x,
+      z: zone.z,
+      // Ally heal is single-target; poison still uses the blast cloud.
+      radius: kind === "ally" ? zone.triggerRadius : zone.blastRadius,
+      ownerId: zone.ownerId,
+      variant: kind === "ally" ? 1 : 2,
+    });
+
+    if (kind === "ally") {
+      if (this.canShroomHealTarget(zone.ownerId, triggerTargetId)) {
+        this.statuses.applyApplications(
+          triggerTargetId,
+          [{ statusId: "rejuvenated", chance: 1, stacks: zone.stage }],
+          zone.ownerId,
+          now,
+        );
+      }
+    } else {
+      const poisonR = SHROOM_CAST.poisonRadius;
+      for (const body of bodies) {
+        if (!this.canHurt(zone.ownerId, body.id)) continue;
+        if (
+          !circlesOverlap(
+            zone.x,
+            zone.z,
+            poisonR,
+            body.x,
+            body.z,
+            COMBAT.playerHitRadius,
+          )
+        ) {
+          continue;
+        }
+        this.statuses.applyApplications(
+          body.id,
+          [{ statusId: "poisoned", chance: 1 }],
+          zone.ownerId,
+          now,
+        );
+      }
+    }
+
+    this.room.state.shrooms.delete(zone.id);
+  }
+
+  private advancePendingShrooms(now: number) {
+    if (this.pendingShrooms.length === 0) return;
+    const remain: PendingShroom[] = [];
+    const bodies = this.collectBodies();
+
+    for (const zone of this.pendingShrooms) {
+      const st = this.room.state.shrooms.get(zone.id);
+
+      if (zone.sinking) {
+        if (now >= zone.sinkEndsAt) {
+          this.room.state.shrooms.delete(zone.id);
+          continue;
+        }
+        remain.push(zone);
+        continue;
+      }
+
+      if (now >= zone.expiresAt) {
+        this.beginShroomSink(zone, now);
+        remain.push(zone);
+        continue;
+      }
+
+      if (zone.stage < 2 && now >= zone.stage2At) {
+        zone.stage = 2;
+        if (st) st.stage = 2;
+      }
+      if (zone.stage < 3 && now >= zone.stage3At) {
+        zone.stage = 3;
+        if (st) st.stage = 3;
+      }
+
+      if (!zone.armed) {
+        remain.push(zone);
+        continue;
+      }
+
+      let triggered: "ally" | "enemy" | null = null;
+      let triggerTargetId: string | null = null;
+      for (const body of bodies) {
+        if (
+          !circlesOverlap(
+            zone.x,
+            zone.z,
+            zone.triggerRadius,
+            body.x,
+            body.z,
+            COMBAT.playerHitRadius,
+          )
+        ) {
+          continue;
+        }
+        if (this.canHurt(zone.ownerId, body.id)) {
+          triggered = "enemy";
+          triggerTargetId = body.id;
+          break;
+        }
+        if (this.canShroomHealTarget(zone.ownerId, body.id)) {
+          triggered = "ally";
+          triggerTargetId = body.id;
+          break;
+        }
+      }
+
+      if (triggered && triggerTargetId) {
+        this.triggerShroom(zone, triggered, triggerTargetId, now);
+        continue;
+      }
+      remain.push(zone);
+    }
+
+    this.pendingShrooms = remain;
+  }
+
+  private scheduleVolcano(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const aim =
+      cast?.aimX != null && cast?.aimZ != null
+        ? { x: cast.aimX, z: cast.aimZ }
+        : undefined;
+    const pos = clampGroundAim(ownerBody, aim, def.range > 0 ? def.range : 10);
+    const collideRadius = Math.max(0.5, def.radius ?? VOLCANO_CAST.collideRadius);
+    const blastRadius = VOLCANO_CAST.rockBlastRadius;
+    const durationMs = Math.max(1000, def.zoneDurationMs ?? VOLCANO_CAST.zoneDurationMs);
+    const rockIntervalMs = Math.max(120, def.tickMs ?? VOLCANO_CAST.rockIntervalMs);
+    const telegraphMs = VOLCANO_CAST.telegraphMs;
+    const riseMs = VOLCANO_CAST.riseMs;
+    const sinkMs = VOLCANO_CAST.sinkMs;
+    const activeAt = now + riseMs;
+    const activeEndsAt = activeAt + durationMs;
+    const despawnAt = activeEndsAt + sinkMs;
+    const id = `volcano_${this.nextId++}`;
+
+    const st = new VolcanoState();
+    st.id = id;
+    st.ownerSessionId = sessionId;
+    st.x = pos.x;
+    st.z = pos.z;
+    st.yaw = ownerBody.yaw;
+    st.radius = collideRadius;
+    st.phase = "rising";
+    st.expiresAt = despawnAt;
+    this.room.state.volcanoes.set(id, st);
+
+    this.separateBodiesFromVolcano(pos, collideRadius);
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      radius: collideRadius,
+      yaw: ownerBody.yaw,
+      ownerId: sessionId,
+      variant: 0,
+    });
+
+    this.pendingVolcanoes.push({
+      id,
+      ownerId: sessionId,
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      yaw: ownerBody.yaw,
+      collideRadius,
+      blastRadius,
+      damage: def.damage,
+      activeAt,
+      activeEndsAt,
+      despawnAt,
+      nextRockAt: activeAt,
+      rockIntervalMs,
+      nextContactTickAt: now,
+      contactTickMs: VOLCANO_CAST.contactTickMs,
+      telegraphMs,
+      ringMin: VOLCANO_CAST.rockRingMin,
+      ringMax: VOLCANO_CAST.rockRingMax,
+      seed: (Math.floor(pos.x * 1000) ^ Math.floor(pos.z * 1000) ^ now) >>> 0,
+      rocks: [],
+      phase: "rising",
+    });
+  }
+
+  /** Push overlapping players/targets out of the volcano footprint (no knockback impulse). */
+  private separateBodiesFromVolcano(center: Vec2, volcanoRadius: number) {
+    const need = volcanoRadius + COLLISION.playerRadius + COLLISION.skin;
+    const volcanoCol = {
+      id: "volcano_spawn",
+      shape: "circle" as const,
+      x: center.x,
+      z: center.z,
+      radius: volcanoRadius,
+    };
+
+    this.room.state.players.forEach((p, id) => {
+      if (p.disconnected || p.hp <= 0 || p.roundDead) return;
+      const dist = Math.hypot(p.x - center.x, p.z - center.z);
+      if (dist >= need - 1e-4) return;
+      const pushed = resolveCollisions(
+        { x: p.x, z: p.z },
+        COLLISION.playerRadius,
+        this.staticColliders,
+        [
+          volcanoCol,
+          ...unitCollidersExcept(
+            this.room.state.players.entries(),
+            this.room.state.targets.entries(),
+            id,
+            p.id,
+          ),
+          ...volcanoColliders(this.room.state.volcanoes.entries()),
+        ],
+      );
+      p.x = pushed.x;
+      p.z = pushed.z;
+    });
+
+    this.room.state.targets.forEach((t) => {
+      if (t.hp <= 0) return;
+      const dist = Math.hypot(t.x - center.x, t.z - center.z);
+      const dummyNeed = volcanoRadius + COLLISION.dummyRadius + COLLISION.skin;
+      if (dist >= dummyNeed - 1e-4) return;
+      const pushed = resolveCollisions(
+        { x: t.x, z: t.z },
+        COLLISION.dummyRadius,
+        this.staticColliders,
+        [volcanoCol, ...volcanoColliders(this.room.state.volcanoes.entries())],
+      );
+      t.x = pushed.x;
+      t.z = pushed.z;
+    });
+  }
+
+  private advancePendingVolcanoes(now: number) {
+    if (this.pendingVolcanoes.length === 0) return;
+    const remain: PendingVolcano[] = [];
+    const bodies = this.collectBodies();
+
+    for (const zone of this.pendingVolcanoes) {
+      const st = this.room.state.volcanoes.get(zone.id);
+
+      // Pressed against the cone: refresh burning (no contact damage).
+      while (zone.nextContactTickAt <= now && zone.nextContactTickAt < zone.despawnAt) {
+        const burn = ABILITIES[zone.abilityId]?.applyOnHit;
+        if (burn?.length) {
+          for (const body of bodies) {
+            if (!this.canHurt(zone.ownerId, body.id)) continue;
+            if (
+              !circlesOverlap(
+                zone.x,
+                zone.z,
+                zone.collideRadius,
+                body.x,
+                body.z,
+                COMBAT.playerHitRadius,
+              )
+            ) {
+              continue;
+            }
+            this.statuses.applyApplications(body.id, burn, zone.ownerId, now);
+          }
+        }
+        zone.nextContactTickAt += zone.contactTickMs;
+      }
+
+      if (zone.phase === "rising" && now >= zone.activeAt) {
+        zone.phase = "active";
+        if (st) st.phase = "active";
+      }
+
+      if (zone.phase === "active") {
+        while (zone.nextRockAt <= now && zone.nextRockAt < zone.activeEndsAt) {
+          const rock = this.rollVolcanoRock(zone, zone.nextRockAt);
+          zone.rocks.push(rock);
+          zone.nextRockAt += zone.rockIntervalMs;
+        }
+
+        for (const rock of zone.rocks) {
+          if (!rock.telegraphed && now >= rock.telegraphAt) {
+            rock.telegraphed = true;
+            this.fx({
+              kind: "aoe",
+              abilityId: zone.abilityId,
+              x: rock.x,
+              z: rock.z,
+              x2: zone.x,
+              z2: zone.z,
+              radius: zone.blastRadius,
+              ownerId: zone.ownerId,
+              variant: 1,
+              phaseEndsAt: rock.landAt,
+            });
+          }
+          if (!rock.landed && now >= rock.landAt) {
+            rock.landed = true;
+            const hits = resolveInstantHits(
+              { x: rock.x, z: rock.z },
+              zone.blastRadius,
+              zone.damage,
+              zone.ownerId,
+              bodies,
+              (o, t) => this.canHurt(o, t),
+            );
+            for (const hit of hits) {
+              this.applyDamage(hit.targetId, hit.damage, zone.ownerId, zone.abilityId, now);
+            }
+            this.fx({
+              kind: "aoe",
+              abilityId: zone.abilityId,
+              x: rock.x,
+              z: rock.z,
+              radius: zone.blastRadius,
+              ownerId: zone.ownerId,
+              variant: 2,
+            });
+          }
+        }
+
+        if (now >= zone.activeEndsAt) {
+          zone.phase = "sinking";
+          if (st) st.phase = "sinking";
+        }
+      }
+
+      if (now >= zone.despawnAt) {
+        this.room.state.volcanoes.delete(zone.id);
+        continue;
+      }
+      remain.push(zone);
+    }
+
+    this.pendingVolcanoes = remain;
+  }
+
+  private rollVolcanoRock(zone: PendingVolcano, telegraphAt: number): PendingVolcanoRock {
+    // xorshift-ish from seed + rock count
+    zone.seed = (Math.imul(zone.seed, 1664525) + 1013904223) >>> 0;
+    const u1 = (zone.seed >>> 0) / 4294967296;
+    zone.seed = (Math.imul(zone.seed, 1664525) + 1013904223) >>> 0;
+    const u2 = (zone.seed >>> 0) / 4294967296;
+    const ang = u1 * Math.PI * 2;
+    const dist = zone.ringMin + u2 * (zone.ringMax - zone.ringMin);
+    return {
+      x: zone.x + Math.sin(ang) * dist,
+      z: zone.z + Math.cos(ang) * dist,
+      telegraphAt,
+      landAt: telegraphAt + zone.telegraphMs,
+      telegraphed: false,
+      landed: false,
+    };
   }
 
   private scheduleFrostMist(sessionId: string, def: AbilityDef, now: number) {

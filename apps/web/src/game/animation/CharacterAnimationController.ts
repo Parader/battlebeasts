@@ -103,8 +103,9 @@ export class CharacterAnimationController {
   private readonly upperLocoActions = new Map<LocoSlot, THREE.AnimationAction>();
   private readonly upperCastByName = new Map<string, THREE.AnimationAction>();
   /**
-   * True when a cast drives Mixamo hips for aim twist (default).
-   * Athletic clips can opt out so loco keeps feet planted.
+   * True when a cast drives Mixamo hips for aim twist.
+   * Default is false — loco keeps feet planted for all upper casts.
+   * Opt in per clip with `ownHips: true` only when hip yaw is required.
    */
   private readonly upperCastOwnsHips = new WeakMap<THREE.AnimationAction, boolean>();
   private readonly fullBodyClips = new Map<string, THREE.AnimationClip>();
@@ -124,7 +125,7 @@ export class CharacterAnimationController {
   private activeCast: THREE.AnimationAction | null = null;
   private activeCastName: string | null = null;
   /** Whether the active (or fading) upper cast drives hips for aim twist. */
-  private castOwnsHips = true;
+  private castOwnsHips = false;
   private upperGen = 0;
   private castOnComplete: (() => void) | null = null;
   /** When set, freeze the active upper cast once clip time reaches this. */
@@ -183,6 +184,9 @@ export class CharacterAnimationController {
       castSpikes: config.castSpikes,
       castFrostMist: config.castFrostMist,
       castHealBeam: config.castHealBeam,
+      castFirewall: config.castFirewall,
+      castProtectionBubble: config.castProtectionBubble,
+      castMagmaOrbs: config.castMagmaOrbs,
       castPoisonDart: config.castPoisonDart,
       castIceLance: config.castIceLance,
       castAoE: config.castAoE,
@@ -310,27 +314,32 @@ export class CharacterAnimationController {
     if (config.castFrostMist) this.registerUpperCast("castFrostMist", config.castFrostMist);
     if (config.castHealBeam) this.registerUpperCast("castHealBeam", config.castHealBeam);
     if (config.castFirewall) this.registerUpperCast("castFirewall", config.castFirewall);
-    if (config.castPoisonDart) this.registerUpperCast("castPoisonDart", config.castPoisonDart);
-    // Baseball Pitching leans the pelvis hard — upper-only keeps feet planted.
-    if (config.castIceLance) {
-      this.registerUpperCast("castIceLance", config.castIceLance, { ownHips: false });
+    if (config.castProtectionBubble) {
+      const preferred = config.castProtectionBubble;
+      const fallback = "Standing 2H Magic Area Attack 01";
+      const clipName = resolveClip(this.sourceClips, preferred) ? preferred : fallback;
+      this.registerUpperCast("castProtectionBubble", clipName);
     }
+    if (config.castMagmaOrbs) this.registerUpperCast("castMagmaOrbs", config.castMagmaOrbs);
+    if (config.castPoisonDart) this.registerUpperCast("castPoisonDart", config.castPoisonDart);
+    if (config.castIceLance) this.registerUpperCast("castIceLance", config.castIceLance);
     if (config.castAoE) this.registerUpperCast("castAoE", config.castAoE);
     if (config.castMelee) this.registerUpperCast("castMelee", config.castMelee);
     if (config.heavyCast) this.registerUpperCast("heavyCast", config.heavyCast);
 
-    for (const key of ["dash", "jumpAttack", "jazzDance", "idleToCrouch", "crouchWalk", "castCounter", "castPraying", "hit", "death", "heavyCast"] as const) {
+    for (const key of ["dash", "jumpAttack", "jazzDance", "idleToCrouch", "crouchToSprint", "crouchWalk", "castCounter", "castPraying", "hit", "death", "heavyCast"] as const) {
       const name = config[key];
       if (!name) continue;
       const src = resolveClip(clips, name);
       if (!src) continue;
       // Dash/death keep Mixamo hips Y. Jump Attack plants hips — Leap Slam hop is
       // applied on the avatar root so travel timing matches the airborne arc.
-      // Crouch / jazz dance keep vertical motion so the pose reads.
-      const prepared =
-        key === "jumpAttack"
-          ? plantHipsRootMotion(stripHorizontalRootMotion(src), this.plantHipsY)
-          : stripHorizontalRootMotion(src);
+      // Crouch To Sprint plants hips so the dash doesn't hitch-jump (server translate is flat).
+      // Decoy crouch / jazz dance keep vertical motion so the pose reads.
+      const plantHips = key === "jumpAttack" || key === "crouchToSprint";
+      const prepared = plantHips
+        ? plantHipsRootMotion(stripHorizontalRootMotion(src), this.plantHipsY)
+        : stripHorizontalRootMotion(src);
       this.fullBodyClips.set(key, prepared);
       this.fullBodyClips.set(name, prepared);
       this.fullBodyClips.set(src.name, prepared);
@@ -339,8 +348,8 @@ export class CharacterAnimationController {
 
   /**
    * Register an upper-body cast clip.
-   * @param options.ownHips — default true: include hips for Mixamo aim twist.
-   *   Pass false for athletic clips (e.g. Baseball Pitching) so loco keeps feet planted.
+   * @param options.ownHips — default false: upper-only so loco keeps feet planted.
+   *   Pass true only when a Mixamo clip needs hip yaw for aim twist.
    */
   registerUpperCast(
     logicalName: string,
@@ -352,9 +361,9 @@ export class CharacterAnimationController {
       console.warn(`[CharacterAnimation] cannot register upper cast "${logicalName}" → "${clipName}"`);
       return;
     }
-    const ownHips = options.ownHips !== false;
-    // Default: include hips so Mixamo aim twist stays with the cast. Plant hips Y so
-    // crouches don't sink feet. Athletic clips opt out (ownHips: false).
+    const ownHips = options.ownHips === true;
+    // Default: upper-only — feet stay with locomotion for every spell (incl. future).
+    // Opt-in hips for clips that bake aim twist into the pelvis.
     const castClip = ownHips
       ? createCastBodyClip(plantHipsRootMotion(src, this.plantHipsY))
       : createUpperBodyClip(src);
@@ -626,7 +635,7 @@ export class CharacterAnimationController {
     this.casting = true;
     this.activeCast = action;
     this.activeCastName = animationName;
-    this.castOwnsHips = this.upperCastOwnsHips.get(action) ?? true;
+    this.castOwnsHips = this.upperCastOwnsHips.get(action) ?? false;
     this.castWeightTarget = 1;
     // Small kick so the first frame isn't fully loco-upper
     this.castWeight = Math.max(this.castWeight, 0.15);

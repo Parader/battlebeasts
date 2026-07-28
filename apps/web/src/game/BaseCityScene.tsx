@@ -16,8 +16,9 @@ import {
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, ProtectionBubbles, Shrooms } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
+import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
 import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
 import { PlacementHelper } from "./PlacementHelper";
@@ -307,6 +308,7 @@ function LocalPlayerMesh({
 export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
     const aimNdc = useRef(new THREE.Vector2(0, 0));
+    const aimReady = useRef(false);
     const { camera, gl } = useThree();
     const groundPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
     const raycaster = useMemo(() => new THREE.Raycaster(), []);
@@ -316,24 +318,40 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     useFrame(() => {
         const p = predictedRef.current;
         localPos.current.set(p.x, 0, p.z);
+
+        // Keep ground aim fresh even when the cursor is still (cast clicks need it).
+        if (!aimReady.current) return;
+        raycaster.setFromCamera(aimNdc.current, camera);
+        if (raycaster.ray.intersectPlane(groundPlane, hit)) {
+            const origin = predictedRef.current;
+            const yaw = Math.atan2(hit.x - origin.x, hit.z - origin.z);
+            setGroundAim(hit.x, hit.z);
+            (window as unknown as { __bbSetYaw?: (y: number) => void }).__bbSetYaw?.(yaw);
+        }
     });
 
     useEffect(() => {
         const el = gl.domElement;
-        const onMove = (e: PointerEvent) => {
+        const onPointer = (e: PointerEvent) => {
             const rect = el.getBoundingClientRect();
             const ndc = aimNdc.current;
             ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
             ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            aimReady.current = true;
             raycaster.setFromCamera(ndc, camera);
             if (raycaster.ray.intersectPlane(groundPlane, hit)) {
                 const origin = predictedRef.current;
                 const yaw = Math.atan2(hit.x - origin.x, hit.z - origin.z);
+                setGroundAim(hit.x, hit.z);
                 (window as unknown as { __bbSetYaw?: (y: number) => void }).__bbSetYaw?.(yaw);
             }
         };
-        el.addEventListener("pointermove", onMove);
-        return () => el.removeEventListener("pointermove", onMove);
+        el.addEventListener("pointermove", onPointer);
+        el.addEventListener("pointerdown", onPointer);
+        return () => {
+            el.removeEventListener("pointermove", onPointer);
+            el.removeEventListener("pointerdown", onPointer);
+        };
     }, [camera, gl, groundPlane, hit, predictedRef, raycaster]);
 
     return (
@@ -372,6 +390,9 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
 
             <WorldTargets room={room} />
             <Decoys room={room} />
+            <Volcanoes room={room} />
+            <ProtectionBubbles room={room} />
+            <Shrooms room={room} localSessionId={localSessionId} />
 
             <LocalPlayerMesh
                 predictedRef={predictedRef}
