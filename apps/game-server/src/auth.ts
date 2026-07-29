@@ -23,6 +23,7 @@ export type VerifiedIdentity = {
   displayName: string;
   color?: string;
   isGuest: boolean;
+  email?: string;
 };
 
 export async function verifyJoinOptions(options: AuthJoinOptions): Promise<VerifiedIdentity> {
@@ -62,5 +63,6 @@ function identityFromUser(user: User, options: AuthJoinOptions): VerifiedIdentit
       "Hunter",
     color: options.color,
     isGuest: false,
+    email: user.email ?? undefined,
   };
 }

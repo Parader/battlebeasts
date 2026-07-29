@@ -27,44 +27,13 @@ import {
 } from "@battlebeasts/shared";
 import { AppearancePreview } from "./AppearancePreview";
 import { ShopCostDisplay } from "./CoinDisplay";
+import { ShopItemThumb } from "./ShopGrantThumb";
 import { GameIcon } from "./GameIcon";
 import {
   COSMETIC_GROUP_ICONS,
   GEAR_SLOT_ICONS,
   SHOP_CATEGORY_ICONS,
-  type GameIconId,
 } from "./gameIcons";
-import { getCreaturePatternTexture } from "../creaturePatterns";
-
-function PatternSwatch({
-  patternId,
-  patternColor,
-}: {
-  patternId: string;
-  patternColor: string;
-}) {
-  const url = useMemo(() => {
-    if (patternId === "plain") return null;
-    const tex = getCreaturePatternTexture(patternId, patternColor, "#d1d5db");
-    const img = tex?.image as HTMLCanvasElement | undefined;
-    return img?.toDataURL?.() ?? null;
-  }, [patternId, patternColor]);
-
-  if (!url) {
-    return (
-      <span
-        className="block size-full rounded-[2px]"
-        style={{ background: "linear-gradient(135deg,#e5e7eb,#9ca3af)" }}
-      />
-    );
-  }
-  return (
-    <span
-      className="block size-full rounded-[2px] bg-cover bg-center"
-      style={{ backgroundImage: `url(${url})` }}
-    />
-  );
-}
 
 function ownsShopItem(unlocks: PlayerUnlocks, item: ShopItemDef): boolean {
   const grant = item.grant;
@@ -165,46 +134,6 @@ function previewLooksFromBase(
     return { ...base, cosmeticsEquipped };
   }
   return { ...base, cosmeticsEquipped };
-}
-
-function ShopItemThumb({ item }: { item: ShopItemDef }) {
-  const grant = item.grant;
-  if (grant.kind === "color" || grant.kind === "pattern_color") {
-    return (
-      <span className="bb-shop__thumb" style={{ backgroundColor: grant.hex }} aria-hidden />
-    );
-  }
-  if (grant.kind === "pattern") {
-    return (
-      <span className="bb-shop__thumb bb-shop__thumb--pattern" aria-hidden>
-        <PatternSwatch patternId={grant.patternId} patternColor="#f8fafc" />
-      </span>
-    );
-  }
-  if (grant.kind === "cosmetic") {
-    // Slot icon lives on the gear category / list header — not on every item.
-    return null;
-  }
-  if (grant.kind === "emote") {
-    return null;
-  }
-  if (grant.kind === "loadout_slot") {
-    return (
-      <span className="bb-shop__thumb bb-shop__thumb--icon" aria-hidden>
-        <GameIcon id="skills" size={22} gray={0.82} />
-      </span>
-    );
-  }
-  if (grant.kind === "consumable") {
-    const iconId: GameIconId =
-      grant.effect === "copper_pouch" ? "shiny-purse" : "health-potion";
-    return (
-      <span className="bb-shop__thumb bb-shop__thumb--icon" aria-hidden>
-        <GameIcon id={iconId} size={22} gray={0.82} />
-      </span>
-    );
-  }
-  return <span className="bb-shop__thumb bb-shop__thumb--empty" aria-hidden />;
 }
 
 type CosmeticSub = null | "tints" | "inks" | "patterns" | "gear" | CosmeticSlot;

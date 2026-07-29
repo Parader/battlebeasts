@@ -17,6 +17,13 @@ export type ParticleBurstOpts = {
   lift?: number;
   /** Spread cone: 0 = all directions, 1 = mostly +Y. */
   upBias?: number;
+  /**
+   * Prefer downward spray (0 = none, 1 = mostly -Y).
+   * Overrides `upBias` when > 0 — used for wall fizzles.
+   */
+  downBias?: number;
+  /** Gravity on particle Y (world units / s²). Default 4.5. */
+  gravity?: number;
   /** Fraction of each particle life spent easing alpha in (0..1). */
   fadeIn?: number;
   /** Max spawn delay as a fraction of `life` so the burst isn't instant. */
@@ -69,6 +76,8 @@ export function AdditiveParticleBurst({
   sizeEnd = 0.04,
   lift = 1.2,
   upBias = 0.35,
+  downBias = 0,
+  gravity = 4.5,
   fadeIn = 0.25,
   stagger = 0.2,
   origin = [0, 0, 0] as [number, number, number],
@@ -113,12 +122,23 @@ export function AdditiveParticleBurst({
       p.y = origin[1];
       p.z = origin[2];
       const theta = Math.random() * Math.PI * 2;
-      const up = Math.random();
-      const elev = Math.acos(THREE.MathUtils.lerp(1 - upBias * 2, 1, up));
       const spd = speed + (Math.random() - 0.5) * 2 * speedSpread;
-      p.vx = Math.sin(elev) * Math.cos(theta) * spd;
-      p.vy = Math.cos(elev) * spd + lift * Math.random();
-      p.vz = Math.sin(elev) * Math.sin(theta) * spd;
+      if (downBias > 0) {
+        // elev: ~π/2 (horizontal) → π (straight down), weighted by downBias.
+        const u = Math.random();
+        const elev =
+          Math.PI * 0.5 +
+          Math.PI * 0.5 * Math.pow(u, Math.max(0.35, 1.15 - downBias));
+        p.vx = Math.sin(elev) * Math.cos(theta) * spd * (0.55 + Math.random() * 0.45);
+        p.vy = Math.cos(elev) * spd + lift * Math.random();
+        p.vz = Math.sin(elev) * Math.sin(theta) * spd * (0.55 + Math.random() * 0.45);
+      } else {
+        const up = Math.random();
+        const elev = Math.acos(THREE.MathUtils.lerp(1 - upBias * 2, 1, up));
+        p.vx = Math.sin(elev) * Math.cos(theta) * spd;
+        p.vy = Math.cos(elev) * spd + lift * Math.random();
+        p.vz = Math.sin(elev) * Math.sin(theta) * spd;
+      }
       p.size = size * (0.75 + Math.random() * 0.5);
       p.sizeEnd = sizeEnd;
       active.current.push(p);
@@ -166,7 +186,7 @@ export function AdditiveParticleBurst({
       p.x += p.vx * safeDt;
       p.y += p.vy * safeDt;
       p.z += p.vz * safeDt;
-      p.vy -= 4.5 * safeDt;
+      p.vy -= gravity * safeDt;
       positions[i * 3] = p.x;
       positions[i * 3 + 1] = p.y;
       positions[i * 3 + 2] = p.z;

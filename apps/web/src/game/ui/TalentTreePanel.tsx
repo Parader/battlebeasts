@@ -7,11 +7,11 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { Room } from "colyseus.js";
 import {
   ESSENCE_PER_TALENT_POINT,
-  ESSENCE_RESET_ALL,
-  ESSENCE_RESET_TREE,
+  ESSENCE_PER_TALENT_REFUND,
   TALENT_CATALOG,
   TALENT_POINT_BUDGET,
   TALENT_TREE_CAP,
@@ -27,8 +27,10 @@ import {
   normalizeTalentBuild,
   refundTalent,
   talentMaxRank,
+  talentPointsRemoved,
   talentRank,
   talentRankCost,
+  talentRefundEssenceCost,
   talentTreeLinks,
   totalPointsSpent,
   treePointsSpent,
@@ -38,8 +40,10 @@ import {
 } from "@battlebeasts/shared";
 
 import { TalentNatureIcon, primaryTalentNatureTag } from "./TalentNatureIcon";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { GameIcon } from "./GameIcon";
 import { TALENT_TREE_ICONS } from "./gameIcons";
+import { loadStandMenuMemory, saveStandMenuMemory } from "../standMenuMemory";
 
 const TREE_ACCENT: Record<TalentTreeId, string> = {
   Destruction: "#b45309",
@@ -50,12 +54,19 @@ const TREE_ACCENT: Record<TalentTreeId, string> = {
 };
 
 /** Natural board size — scaled up to fill the stage, never down below readable. */
-const CELL = 64;
-const GAP_X = 36;
-const GAP_Y = 44;
-const PAD = 28;
+const CELL = 76;
+const GAP_X = 40;
+const GAP_Y = 52;
+const PAD = 36;
 
-function TalentTooltip({
+type TipState = {
+  talent: CatalogTalentDef;
+  rank: number;
+  nodeState: "locked" | "available" | "learned";
+  anchor: DOMRect;
+};
+
+function TalentTooltipBody({
   talent,
   rank,
   state,
@@ -70,10 +81,10 @@ function TalentTooltip({
   const implemented = isCatalogTalentImplemented(talent);
   const nature = primaryTalentNatureTag(talent.affectedTags);
   return (
-    <div className="bb-talent-tip" role="tooltip">
+    <>
       <div className="bb-talent-tip__head">
         <span className="bb-talent-tip__icon" aria-hidden>
-          <TalentNatureIcon tags={talent.affectedTags} size={18} />
+          <TalentNatureIcon tags={talent.affectedTags} size={22} />
         </span>
         <div>
           <div className="bb-talent-tip__name">{talent.name}</div>
@@ -96,7 +107,7 @@ function TalentTooltip({
         <div className="bb-talent-tip__tags">
           {talent.affectedTags.map((tag) => (
             <span key={tag} className="bb-talent-tip__tag">
-              <TalentNatureIcon tags={[tag]} size={11} />
+              <TalentNatureIcon tags={[tag]} size={13} />
               {tag}
             </span>
           ))}
@@ -104,14 +115,73 @@ function TalentTooltip({
       ) : null}
       <p className="bb-talent-tip__hint">
         {state === "learned" && rank < maxRank
-          ? "Left-click to raise rank · Right-click to refund"
+          ? `Left-click to raise rank · Right-click to refund (${ESSENCE_PER_TALENT_REFUND} essence/pt on save)`
           : state === "learned"
-            ? "Right-click to refund a rank"
+            ? `Right-click to refund (${ESSENCE_PER_TALENT_REFUND} essence/pt on save)`
             : state === "available"
               ? "Left-click to invest"
               : "Locked — spend more points in this tree"}
       </p>
-    </div>
+    </>
+  );
+}
+
+/** Fixed-position tip outside overflow/scaled boards so top-row hovers stay readable. */
+function TalentFloatingTip({ tip }: { tip: TipState | null }) {
+  const tipRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<CSSProperties>({
+    position: "fixed",
+    left: -9999,
+    top: -9999,
+    visibility: "hidden",
+  });
+
+  useLayoutEffect(() => {
+    if (!tip || !tipRef.current) {
+      setPos({ position: "fixed", left: -9999, top: -9999, visibility: "hidden" });
+      return;
+    }
+    const el = tipRef.current;
+    const place = () => {
+      const tipRect = el.getBoundingClientRect();
+      const gap = 12;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let left = tip.anchor.left + tip.anchor.width / 2 - tipRect.width / 2;
+      left = Math.max(10, Math.min(left, vw - tipRect.width - 10));
+
+      const above = tip.anchor.top - tipRect.height - gap;
+      const below = tip.anchor.bottom + gap;
+      let top = above >= 10 ? above : below;
+      if (top + tipRect.height > vh - 10) {
+        top = Math.max(10, vh - tipRect.height - 10);
+      }
+
+      setPos({
+        position: "fixed",
+        left,
+        top,
+        visibility: "visible",
+        zIndex: 80,
+      });
+    };
+    place();
+    const raf = requestAnimationFrame(place);
+    return () => cancelAnimationFrame(raf);
+  }, [tip]);
+
+  if (!tip || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      ref={tipRef}
+      className="bb-talent-tip bb-talent-tip--float"
+      role="tooltip"
+      style={pos}
+    >
+      <TalentTooltipBody talent={tip.talent} rank={tip.rank} state={tip.nodeState} />
+    </div>,
+    document.body,
   );
 }
 
@@ -120,11 +190,13 @@ function TreeBoard({
   build,
   ownedPoints,
   onChange,
+  onHoverTip,
 }: {
   tree: TalentTreeId;
   build: TalentBuild;
   ownedPoints: number;
   onChange: (next: TalentBuild) => void;
+  onHoverTip: (tip: TipState | null) => void;
 }) {
   const { cells, rowCount } = useMemo(() => layoutTalentTree(tree), [tree]);
   const links = useMemo(() => talentTreeLinks(cells), [cells]);
@@ -145,6 +217,20 @@ function TreeBoard({
       x: PAD + c.col * (CELL + GAP_X) + CELL / 2,
       y: PAD + c.row * (CELL + GAP_Y) + CELL / 2,
     };
+  };
+
+  const showTip = (
+    talent: CatalogTalentDef,
+    rank: number,
+    nodeState: TipState["nodeState"],
+    el: HTMLElement,
+  ) => {
+    onHoverTip({
+      talent,
+      rank,
+      nodeState,
+      anchor: el.getBoundingClientRect(),
+    });
   };
 
   return (
@@ -189,7 +275,7 @@ function TreeBoard({
             <button
               key={talent.id}
               type="button"
-              title={talent.name}
+              aria-label={talent.name}
               className={[
                 "bb-talent-node",
                 state === "learned" ? "bb-talent-node--learned" : "",
@@ -205,6 +291,10 @@ function TreeBoard({
                 width: CELL,
                 height: CELL,
               }}
+              onMouseEnter={(e) => showTip(talent, rank, state, e.currentTarget)}
+              onMouseLeave={() => onHoverTip(null)}
+              onFocus={(e) => showTip(talent, rank, state, e.currentTarget)}
+              onBlur={() => onHoverTip(null)}
               onClick={() => {
                 if (canUp) onChange(investTalent(build, talent.id, ownedPoints));
               }}
@@ -214,7 +304,7 @@ function TreeBoard({
               }}
             >
               <span className="bb-talent-node__glyph" aria-hidden>
-                <TalentNatureIcon tags={talent.affectedTags} size={28} />
+                <TalentNatureIcon tags={talent.affectedTags} size={34} />
               </span>
               {!implemented ? <span className="bb-talent-node__wip">WIP</span> : null}
               {maxRank > 1 ? (
@@ -224,7 +314,6 @@ function TreeBoard({
               ) : (
                 <span className="bb-talent-node__cost">{talentRankCost(talent)}</span>
               )}
-              <TalentTooltip talent={talent} rank={rank} state={state} />
             </button>
           );
         })}
@@ -282,23 +371,57 @@ type Props = {
   essence: number;
   talentPoints: number;
   talentBuild: TalentBuild;
+  loadoutPresets: Array<{ slotIndex: number; name: string; abilityIds: string[] }>;
+  activeLoadoutSlot: number;
+  loadoutSlotCount: number;
+  onSelectPreset: (slotIndex: number) => void;
 };
 
-export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Props) {
-  const [tree, setTree] = useState<TalentTreeId>("Destruction");
+export function TalentTreePanel({
+  room,
+  essence,
+  talentPoints,
+  talentBuild,
+  loadoutPresets,
+  activeLoadoutSlot,
+  loadoutSlotCount,
+  onSelectPreset,
+}: Props) {
+  const [tree, setTree] = useState<TalentTreeId>(() => loadStandMenuMemory().talentTree);
   const [build, setBuild] = useState<TalentBuild>(() => normalizeTalentBuild(talentBuild));
   const [dirty, setDirty] = useState(false);
+  const [hoverTip, setHoverTip] = useState<TipState | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmSaveRespec, setConfirmSaveRespec] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!dirty) setBuild(normalizeTalentBuild(talentBuild));
   }, [talentBuild, dirty]);
 
+  useEffect(() => {
+    setHoverTip(null);
+  }, [tree]);
+
+  useEffect(() => {
+    // Switching loadout pulls a different talent build from the server.
+    setDirty(false);
+    setBuild(normalizeTalentBuild(talentBuild));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- slot change is the intentional trigger
+  }, [activeLoadoutSlot]);
+
   const spent = totalPointsSpent(build);
   const treeSpent = treePointsSpent(build, tree);
+  const savedBuild = normalizeTalentBuild(talentBuild);
+  const savedTreeSpent = treePointsSpent(savedBuild, tree);
+  const respecPoints = talentPointsRemoved(savedBuild, build);
+  const respecCost = talentRefundEssenceCost(respecPoints);
+  const resetTreeCost = talentRefundEssenceCost(savedTreeSpent);
   const owned = talentPoints;
   const remainingOwned = Math.max(0, owned - spent);
   const canBuy = owned < TALENT_POINT_BUDGET && essence >= ESSENCE_PER_TALENT_POINT;
+  const canSave = dirty && (respecCost <= 0 || essence >= respecCost);
+  const canResetTree = savedTreeSpent > 0 && essence >= resetTreeCost;
   const implementedCount = useMemo(
     () => Object.values(TALENT_CATALOG).filter((t) => isCatalogTalentImplemented(t)).length,
     [],
@@ -313,8 +436,50 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
     setDirty(true);
   };
 
+  const commitSave = () => {
+    room?.send("set_talent_build", { build });
+    setDirty(false);
+    setConfirmSaveRespec(false);
+  };
+
+  const commitResetTree = () => {
+    room?.send("reset_talent_tree", { tree });
+    setDirty(false);
+    setConfirmReset(false);
+  };
+
   return (
     <div className="bb-talent-panel">
+      <ConfirmDialog
+        open={confirmReset}
+        title={`Reset ${tree}?`}
+        message={
+          <>
+            Respeccing this tree removes <strong>{savedTreeSpent}</strong> talent point
+            {savedTreeSpent === 1 ? "" : "s"} and costs{" "}
+            <strong>{resetTreeCost} essence</strong> ({ESSENCE_PER_TALENT_REFUND} per point).
+            Owned points are kept; you can reinvest after.
+          </>
+        }
+        confirmLabel={`Reset (−${resetTreeCost})`}
+        onConfirm={commitResetTree}
+        onCancel={() => setConfirmReset(false)}
+      />
+      <ConfirmDialog
+        open={confirmSaveRespec}
+        title="Confirm respec?"
+        message={
+          <>
+            Saving removes or moves <strong>{respecPoints}</strong> talent point
+            {respecPoints === 1 ? "" : "s"} and costs{" "}
+            <strong>{respecCost} essence</strong> ({ESSENCE_PER_TALENT_REFUND} per point).
+          </>
+        }
+        confirmLabel={`Save (−${respecCost})`}
+        onConfirm={commitSave}
+        onCancel={() => setConfirmSaveRespec(false)}
+      />
+      <TalentFloatingTip tip={hoverTip} />
       <aside className="bb-talent-rail">
         <p className="bb-section-label">Trees</p>
         <div className="bb-talent-rail__tabs" role="tablist" aria-label="Talent trees">
@@ -329,12 +494,15 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
                 aria-selected={on}
                 className={["bb-talent-rail__tab", on ? "bb-talent-rail__tab--on" : ""].join(" ")}
                 style={{ "--bb-talent-accent": TREE_ACCENT[id] } as CSSProperties}
-                onClick={() => setTree(id)}
+                onClick={() => {
+                  setTree(id);
+                  saveStandMenuMemory({ talentTree: id });
+                }}
               >
                 <span className="bb-talent-rail__tab-main">
                   <GameIcon
                     id={TALENT_TREE_ICONS[id]}
-                    size={18}
+                    size={22}
                     gray={on ? 0.95 : 0.72}
                     className="bb-talent-rail__tab-icon"
                   />
@@ -350,6 +518,25 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
       </aside>
 
       <div className="bb-talent-main">
+        <div className="bb-loadout-presets" role="tablist" aria-label="Loadout presets">
+          {Array.from({ length: loadoutSlotCount }, (_, i) => i).map((i) => {
+            const preset = loadoutPresets.find((p) => p.slotIndex === i);
+            const active = activeLoadoutSlot === i;
+            return (
+              <button
+                key={i}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={["bb-slot-chip", active ? "bb-slot-chip--on" : ""].join(" ")}
+                onClick={() => onSelectPreset(i)}
+              >
+                {preset?.name ?? `Loadout ${i + 1}`}
+              </button>
+            );
+          })}
+        </div>
+
         <header className="bb-talent-bar">
           <div className="bb-talent-bar__info">
             <span className="bb-talent-bar__stat">
@@ -395,7 +582,8 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
           <div className="bb-talent-stage__label">
             <h3 className="bb-talent-stage__title">{tree}</h3>
             <span className="bb-meta">
-              {treeSpent}/{TALENT_TREE_CAP} in tree · click invest · right-click refund
+              {treeSpent}/{TALENT_TREE_CAP} in tree · click invest · right-click refund (
+              {ESSENCE_PER_TALENT_REFUND} essence/pt on save)
               {implementedCount < catalogCount
                 ? ` · ${implementedCount}/${catalogCount} live`
                 : ""}
@@ -416,6 +604,7 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
                 build={build}
                 ownedPoints={owned}
                 onChange={updateBuild}
+                onHoverTip={setHoverTip}
               />
             </div>
           </div>
@@ -425,37 +614,35 @@ export function TalentTreePanel({ room, essence, talentPoints, talentBuild }: Pr
           <button
             type="button"
             className="bb-btn-ink disabled:opacity-40"
-            disabled={treeSpent <= 0 || essence < ESSENCE_RESET_TREE}
-            title={`Costs ${ESSENCE_RESET_TREE} essence`}
-            onClick={() => {
-              room?.send("reset_talent_tree", { tree });
-              setDirty(false);
-            }}
+            disabled={!canResetTree}
+            title={
+              savedTreeSpent <= 0
+                ? "Nothing invested in this tree"
+                : `Costs ${resetTreeCost} essence (${savedTreeSpent} pt × ${ESSENCE_PER_TALENT_REFUND})`
+            }
+            onClick={() => setConfirmReset(true)}
           >
-            Reset tree
-          </button>
-          <button
-            type="button"
-            className="bb-btn-ink disabled:opacity-40"
-            disabled={spent <= 0 || essence < ESSENCE_RESET_ALL}
-            title={`Costs ${ESSENCE_RESET_ALL} essence`}
-            onClick={() => {
-              room?.send("reset_talent_build");
-              setDirty(false);
-            }}
-          >
-            Clear all
+            Reset tree{savedTreeSpent > 0 ? ` (−${resetTreeCost})` : ""}
           </button>
           <button
             type="button"
             className="bb-btn-brass disabled:opacity-40"
-            disabled={!dirty}
+            disabled={!canSave}
+            title={
+              !dirty
+                ? "No changes"
+                : respecCost > 0
+                  ? essence < respecCost
+                    ? `Need ${respecCost} essence to respec (${respecPoints} pt)`
+                    : `Costs ${respecCost} essence (${respecPoints} pt removed/changed)`
+                  : "Save talent build"
+            }
             onClick={() => {
-              room?.send("set_talent_build", { build });
-              setDirty(false);
+              if (respecCost > 0) setConfirmSaveRespec(true);
+              else commitSave();
             }}
           >
-            Save build
+            Save build{respecCost > 0 ? ` (−${respecCost})` : ""}
           </button>
         </footer>
       </div>

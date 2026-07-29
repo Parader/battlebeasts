@@ -1,3 +1,4 @@
+import { combatMag } from "./combatMagnitude";
 import { frostChillSlowPercent, getStatus, type StatusApplication } from "./statuses";
 
 export type AbilityShape = "projectile" | "aoe" | "dash" | "melee" | "buff";
@@ -140,7 +141,8 @@ export type AbilityEffectKind =
   | "volcano"
   | "magmaOrbs"
   | "protectionBubble"
-  | "shrooms";
+  | "shrooms"
+  | "spiritForm";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
 export type SpellTag =
@@ -435,7 +437,7 @@ export const BARRIER_CAST = {
   /** Natural Mixamo pace. */
   playbackRate: 1,
   /** Absorb HP charged over anticipation+cast, then held this long. */
-  shieldStacks: 40,
+  shieldStacks: combatMag(40),
   shieldDurationMs: 3000,
 } as const;
 
@@ -715,6 +717,60 @@ function magmaOrbsRecoveryWallMs(): number {
   return 450;
 }
 
+/**
+ * Spirit Form (Space) — Yone-style unbound: leave husk, haste as spirit, snap back.
+ */
+export const SPIRIT_FORM_CAST = {
+  formMs: 3500,
+  hasteMoveMul: 1.35,
+  /** Player nudge forward on split (world units). */
+  splitForward: 1.2,
+  /** Husk nudge backward on split (world units). */
+  huskBack: 0.8,
+  snapIframeMs: 120,
+  /** Return dash speed (world units / second). */
+  snapReturnSpeed: 70,
+  snapReturnMinMs: 45,
+  snapReturnMaxMs: 140,
+  cooldownMs: 9000,
+  unlockCostEssence: 10,
+  /** Ground timer ring radius. */
+  timerRingRadius: 0.55,
+  /** Husk↔spirit tether hit radius (enemies crossing the link). */
+  linkHitRadius: 0.5,
+  /** Stun applied once per target when they touch the link. */
+  linkStunMs: 700,
+} as const;
+
+/**
+ * Hand Shield (RMB) — channel a frontal blue disc that shatters projectiles.
+ * Anims: Standing Block Start → Idle (loop) → End.
+ */
+export const HAND_SHIELD_CAST = {
+  /** Projectile-block channel once the shield is up. */
+  channelMs: 3500,
+  /** Standing Block Start natural length (sec). */
+  startClipSec: 0.533,
+  /** Standing Block Idle natural length (sec). */
+  idleClipSec: 2.8,
+  /** Standing Block End natural length (sec). */
+  endClipSec: 1.333,
+  /** Recovery wall time — End clip is compressed into this. */
+  recoveryMs: 450,
+  /** Disc center distance ahead of the caster (world units). */
+  shieldForward: 0.22,
+  /** Disc radius that catches inbound projectiles. */
+  shieldRadius: 0.7,
+  cooldownMs: 8000,
+  unlockCostEssence: 10,
+  /** Move mul while raising / holding the shield. */
+  channelMoveMul: 0.45,
+} as const;
+
+/** Status + collider duration: channel hold through Block End recovery. */
+export const HAND_SHIELD_ARMED_MS =
+  HAND_SHIELD_CAST.channelMs + HAND_SHIELD_CAST.recoveryMs;
+
 function spikesReleaseWallMs(): number {
   return (
     (SPIKES_CAST.releaseFrame / SPIKES_CAST.fps / SPIKES_CAST.playbackRate) * 1000
@@ -773,7 +829,7 @@ export const BLOOD_RUSH_CAST = {
   recoveryMs: 200,
   range: 9,
   /** Small contact hit before bleed. */
-  damage: 6,
+  damage: combatMag(6),
   /** Sweep radius along the path. */
   hitRadius: 0.75,
   /** Execute (remaining HP) when target is at/below this fraction. */
@@ -827,7 +883,7 @@ export const HEAL_BEAM_CAST = {
   clipDurationSec: 3.366667,
   /** Slight compress so frame 32 arrives a bit sooner. */
   playbackRate: 1.15,
-  healPerTick: 7,
+  healPerTick: combatMag(7),
   healTicks: 8,
   /** 8 × 200ms ≈ 1.6s beam. */
   healTickMs: 200,
@@ -856,13 +912,13 @@ export const GROOVE_CAST = {
   clipDurationSec: 2.766667,
   /** Heal pulses while channeling. */
   healTicks: 12,
-  healPerTick: 8,
+  healPerTick: combatMag(8),
   /** Gap between heal ticks (12 × 550ms = 6.6s channel). */
   healTickMs: 550,
   /** Heal aura / dance channel wall time. */
   channelMs: 12 * 550,
   /** Solo pulse (nobody healed): absorb shield granted each tick. */
-  soloShieldPerTick: 4,
+  soloShieldPerTick: combatMag(4),
   soloShieldDurationMs: 8000,
   anticipationMs: 120,
   castMs: 180,
@@ -873,6 +929,19 @@ export const GROOVE_CAST = {
 function authoredForWallMs(wallMs: number): number {
   return wallMs / CAST_EXECUTION_SCALE;
 }
+
+/**
+ * Revenge (Q) — Counter stance, then instant blink behind the attacker.
+ * Character vanishes for `vanishMs`, then reappears at the landing spot.
+ */
+export const REVENGE_CAST = {
+  /** Rooted deny window (matches Counter). */
+  armedMs: 1200,
+  /** How far behind the attacker to land. */
+  behindDist: 1.45,
+  /** Invisible window after the instant teleport (reappear after this). */
+  vanishMs: 500,
+} as const;
 
 /** Minimal v0 kit — one ability per Battlerite slot. */
 export const ABILITIES: Record<string, AbilityDef> = {
@@ -885,7 +954,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "SingleTarget", "Instant"],
-    damage: 15,
+    damage: combatMag(15),
     speed: 22,
     spawnOffset: 0.32,
     allowedSlots: ["m1"],
@@ -966,13 +1035,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "SingleTarget", "Explosion", "Area", "Cast"],
-    damage: 14,
+    damage: combatMag(14),
     speed: 28,
     radius: 0.4,
     spawnOffset: ICE_LANCE_CAST.spawnOffset,
     detonate: {
       delayMs: 1400,
-      damage: 18,
+      damage: combatMag(18),
       radius: 2.0,
     },
     allowedSlots: ["m1"],
@@ -1002,7 +1071,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "melee",
     effectKind: "standard",
     tags: ["Melee", "Damage", "MultiHit", "Combo", "Instant"],
-    damage: 16,
+    damage: combatMag(16),
     /** Tight frontal slash — was 2.0 and felt like a wide AoE. */
     radius: 1.15,
     allowedSlots: ["m1"],
@@ -1031,7 +1100,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "aoe",
     effectKind: "standard",
     tags: ["Area", "Damage", "Movement", "Stun", "Control", "Cast"],
-    damage: 12,
+    damage: combatMag(12),
     radius: 2.6,
     allowedSlots: ["m2"],
     defaultSlot: "m2",
@@ -1104,7 +1173,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Area", "Damage", "DamageOverTime", "Debuff", "GroundEffect", "Persistent", "Cast"],
-    damage: 3,
+    damage: combatMag(3),
     speed: 3.5,
     /** Damage + slow share the same aura radius (matches frost disc visual). */
     radius: 3.9,
@@ -1130,7 +1199,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
   /**
    * Poison Dart (RMB) — fast Right Hook throw.
-   * 4 hit + poison 2×7 over 5s ≈ 18 per stack; stacks up to 3×.
+   * combatMag(4) hit + poison stacks (shared DoT).
    */
   poisonDart: {
     id: "poisonDart",
@@ -1143,7 +1212,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "DamageOverTime", "Debuff", "SingleTarget", "Cast"],
-    damage: 4,
+    damage: combatMag(4),
     speed: 28,
     spawnOffset: POISON_DART_CAST.spawnOffset,
     allowedSlots: ["m2"],
@@ -1178,7 +1247,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "aoe",
     effectKind: "magmaOrbs",
     tags: ["Projectile", "Explosion", "Area", "Damage", "Debuff", "Cast"],
-    damage: 26,
+    damage: combatMag(26),
     radius: MAGMA_ORBS_CAST.blastRadius,
     allowedSlots: ["m2"],
     timing: {
@@ -1233,14 +1302,101 @@ export const ABILITIES: Record<string, AbilityDef> = {
     interruptsOtherCasts: true,
   },
   /**
-   * Barrier — short cast, blue absorb bubble (40 HP / 3s).
+   * Spirit Form (Space) — leave a husk, surge forward as spirit with haste.
+   * Recast or timer snaps you back to the husk.
+   */
+  spiritForm: {
+    id: "spiritForm",
+    unlockCostEssence: SPIRIT_FORM_CAST.unlockCostEssence,
+    name: "Spirit Form",
+    description:
+      "Split from your body — leave a husk behind and rush forward as a spirit with bonus move speed. The link between you and your husk stuns enemies that pass through it. Recast Space or wait for the timer to snap back to your husk.",
+    cooldownMs: SPIRIT_FORM_CAST.cooldownMs,
+    range: SPIRIT_FORM_CAST.splitForward,
+    shape: "buff",
+    effectKind: "spiritForm",
+    tags: ["Movement", "Haste", "Buff", "Self", "Blink", "Dash", "CrowdControl"],
+    damage: 0,
+    allowedSlots: ["space"],
+    timing: {
+      anticipationMs: 40,
+      castMs: 80,
+      impactMs: 120,
+      recoveryMs: 100,
+      anticipationMoveMul: 0.4,
+      castMoveMul: 0.2,
+      impactMoveMul: 1,
+      recoveryMoveMul: 1,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    /** Small forward nudge on split (matches server commitSpiritForm). */
+    travel: {
+      mode: "translate",
+      distance: SPIRIT_FORM_CAST.splitForward,
+      durationMs: 100,
+    },
+    applyOnSelf: [
+      {
+        statusId: "spiritFormed",
+        durationMs: SPIRIT_FORM_CAST.formMs,
+      },
+    ],
+    iFrames: {
+      startMs: 0,
+      durationMs: SPIRIT_FORM_CAST.snapIframeMs,
+    },
+    interruptsOtherCasts: true,
+  },
+  /**
+   * Hand Shield (RMB) — raise a blue disc in front of your hand.
+   * Blocks projectiles for 3.5s. Cancel anytime. Standing Block Start/Idle/End.
+   */
+  handShield: {
+    id: "handShield",
+    unlockCostEssence: HAND_SHIELD_CAST.unlockCostEssence,
+    name: "Hand Shield",
+    description:
+      "Raise a blue shield in front of your hand. Enemy projectiles that hit the disc shatter. Channel for 3.5s — cancel anytime. Blocks through the drop animation.",
+    cooldownMs: HAND_SHIELD_CAST.cooldownMs,
+    range: 0,
+    shape: "buff",
+    effectKind: "standard",
+    tags: ["Channel", "Defense", "Barrier", "Self", "Cast"],
+    damage: 0,
+    allowedSlots: ["m2"],
+    timing: {
+      anticipationMs: 100,
+      castMs: Math.max(
+        16,
+        Math.round(HAND_SHIELD_CAST.startClipSec * 1000) - 100,
+      ),
+      impactMs: HAND_SHIELD_CAST.channelMs,
+      recoveryMs: HAND_SHIELD_CAST.recoveryMs,
+      anticipationMoveMul: HAND_SHIELD_CAST.channelMoveMul,
+      castMoveMul: HAND_SHIELD_CAST.channelMoveMul,
+      impactMoveMul: HAND_SHIELD_CAST.channelMoveMul,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: true,
+      /** Cancel allowed through the whole hold. */
+      cancelUntilPhase: "impact",
+    },
+    /** Only player cancel / stun ends the channel — Surge/Dash cannot cut it. */
+    interruptible: false,
+    /**
+     * Armed on channel start — stays through Block End recovery
+     * (`HAND_SHIELD_ARMED_MS`) so the disappear anim still blocks.
+     */
+  },
+  /**
+   * Barrier — short cast, blue absorb bubble (combatMag(40) HP / 3s).
    * Anim: Standing 1H Cast Spell 01.
    */
   barrier: {
     id: "barrier",
     name: "Barrier",
     description:
-      "Locked cast — absorb bubble charges to 40 shield over the windup (3s once complete). Damage during cast only eats what you've built so far.",
+      `Locked cast — absorb bubble charges to ${combatMag(40)} shield over the windup (3s once complete). Damage during cast only eats what you've built so far.`,
     cooldownMs: 6000,
     range: 0,
     shape: "buff",
@@ -1264,7 +1420,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     /** Surge/Dash/etc. cannot cut this cast. */
     interruptible: false,
     /**
-     * Absorb ramps 0→40 during anticipation+cast (server PendingBarrier).
+     * Absorb ramps 0→combatMag(40) during anticipation+cast (server PendingBarrier).
      * applyOnSelf is unused — CombatSystem owns the charge so mid-cast damage
      * only eats what has been built so far.
      */
@@ -1310,6 +1466,39 @@ export const ABILITIES: Record<string, AbilityDef> = {
      * Armed at cast begin (CombatSystem) so root + glow start immediately.
      * applyOnSelf unused for the window itself.
      */
+  },
+  /**
+   * Revenge (Q) — same stance window as Counter, red glow.
+   * On deny: teleport behind the attacker. No riposte buffs (for now).
+   */
+  revenge: {
+    id: "revenge",
+    unlockCostEssence: 10,
+    name: "Revenge",
+    description:
+      "Plant into a dance stance and glow red for 1.2s (no movement). Cancel anytime. The next direct hit (melee or projectile — not ground AoE) is denied — you vanish, blink behind the attacker, then reappear.",
+    cooldownMs: 9000,
+    range: 0,
+    shape: "buff",
+    effectKind: "standard",
+    tags: ["Buff", "Self", "Defense", "Counter", "Channel", "Movement"],
+    damage: 0,
+    allowedSlots: ["q"],
+    timing: {
+      anticipationMs: 40,
+      castMs: 60,
+      impactMs: 1100,
+      recoveryMs: 80,
+      anticipationMoveMul: 0,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 1,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "impact",
+    },
+    interruptible: false,
+    interruptsOtherCasts: true,
+    cutsAnyCast: true,
   },
   dash: {
     id: "dash",
@@ -1442,7 +1631,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "aoe",
     effectKind: "standard",
     tags: ["Area", "Nova", "Damage", "Knockback", "Debuff", "Control", "Cast"],
-    damage: 12,
+    damage: combatMag(12),
     radius: 3.5,
     knockback: 9.5,
     knockbackMs: 320,
@@ -1478,7 +1667,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "Pull", "Debuff", "Control", "SingleTarget", "Cast"],
-    damage: 5,
+    damage: combatMag(5),
     speed: 26,
     radius: 0.55,
     spawnOffset: 0.42,
@@ -1517,7 +1706,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "Pull", "Dash", "Debuff", "Control", "SingleTarget", "Cast"],
-    damage: 5,
+    damage: combatMag(5),
     /** Faster hook than Grasp so the leap feels snappier. */
     speed: 40,
     radius: 0.55,
@@ -1558,7 +1747,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "aoe",
     effectKind: "spikeWave",
     tags: ["Line", "GroundEffect", "Damage", "DamageOverTime", "Debuff", "MultiHit", "Cast"],
-    damage: 4,
+    damage: combatMag(4),
     /** Hit width per spike — keep the corridor tight. */
     radius: 0.55,
     spikeCount: 9,
@@ -1597,7 +1786,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "firewall",
     tags: ["Line", "GroundEffect", "Area", "Damage", "DamageOverTime", "Debuff", "Persistent", "Cast"],
     /** Damage per zone tick. */
-    damage: 4,
+    damage: combatMag(4),
     /** Hit thickness of the wall corridor. */
     radius: 0.9,
     /** Segment count along the wall for hit checks. */
@@ -1640,7 +1829,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "volcano",
     tags: ["Area", "GroundEffect", "Damage", "Debuff", "Persistent", "Cast", "Explosion"],
     /** Damage per rock impact. */
-    damage: 14,
+    damage: combatMag(14),
     /** Movement-blocking volcano body radius. */
     radius: VOLCANO_CAST.collideRadius,
     tickMs: VOLCANO_CAST.rockIntervalMs,
@@ -1755,7 +1944,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "aoe",
     effectKind: "coneChannel",
     tags: ["Cone", "Channel", "Area", "Damage", "Debuff", "Control", "Root", "DamageOverTime"],
-    damage: 3,
+    damage: combatMag(3),
     /** Max half-angle once fully spread (~40°). */
     coneHalfAngle: 0.7,
     mistStartRange: 3.2,
@@ -1819,14 +2008,14 @@ export const ABILITIES: Record<string, AbilityDef> = {
    * Groove (R) — Jazz Dancing heal channel.
    * Self-centered AoE heals in ticks while aura + dance stay up (~6.6s; cancel anytime).
    * Others get full ticks; caster gets half of total HP restored to others. 40% DR while channeling.
-   * Lonely pulses (no HP restored to others) grant +4 absorb shield for 8s (stacks).
+   * Lonely pulses (no HP restored to others) grant combatMag(4) absorb shield for 8s (stacks).
    */
   groove: {
     id: "groove",
     unlockCostEssence: 10,
     name: "Groove",
     description:
-      "Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. If a pulse heals nobody, gain a 4 HP shield for 8s (stacks). 40% damage resistance while channeling. Cancel anytime.",
+      `Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. If a pulse heals nobody, gain a ${combatMag(4)} HP shield for 8s (stacks). 40% damage resistance while channeling. Cancel anytime.`,
     cooldownMs: 10000,
     range: 0,
     shape: "aoe",

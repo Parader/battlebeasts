@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, EMOTES } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, EMOTES } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -38,6 +38,12 @@ export type CharacterAnimationConfig = {
   castIceLance?: string;
   /** Counter / Female Dance Pose. */
   castCounter?: string;
+  /** Hand Shield / Standing Block Start. */
+  castBlockStart?: string;
+  /** Hand Shield / Standing Block Idle (loop). */
+  castBlockIdle?: string;
+  /** Hand Shield / Standing Block End. */
+  castBlockEnd?: string;
   /** Portal / praying channel. */
   castPraying?: string;
   castAoE?: string;
@@ -91,6 +97,9 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castPoisonDart: "Right Hook",
   castIceLance: "Baseball Pitching",
   castCounter: "Female Dance Pose",
+  castBlockStart: "Standing Block Start",
+  castBlockIdle: "Standing Block Idle",
+  castBlockEnd: "Standing Block End",
   castPraying: "praying",
   castAoE: "magic_aoe",
   castMelee: "attack",
@@ -205,6 +214,15 @@ export const abilityAnimationBindings: Record<
     impactFullBodyAnimDurationSec?: number;
     /** Mixer timeScale for impactFullBody. */
     impactFullBodyTimeScale?: number;
+    /** Loop impactFullBody while impact holds (Hand Shield idle). */
+    impactFullBodyLoop?: boolean;
+    /**
+     * Play this full-body clip on recovery (Hand Shield End).
+     * Logical key on CharacterAnimationConfig or raw clip name.
+     */
+    recoveryFullBody?: keyof CharacterAnimationConfig | string;
+    /** Playback length for recoveryFullBody (seconds). */
+    recoveryFullBodyAnimDurationSec?: number;
   }
 > = {
   bolt: { upper: "castPrimary" },
@@ -268,6 +286,21 @@ export const abilityAnimationBindings: Record<
     /** Snap into pose; freeze for the rooted channel. */
     fullBodyAnimDurationSec: 0.15,
   },
+  revenge: {
+    fullBody: "castCounter",
+    holdEndPoseOnRecovery: true,
+    holdPoseAtSec: 0.05,
+    fullBodyAnimDurationSec: 0.15,
+  },
+  handShield: {
+    fullBody: "castBlockStart",
+    playNaturalSpeed: true,
+    fullBodyAnimDurationSec: HAND_SHIELD_CAST.startClipSec,
+    impactFullBody: "castBlockIdle",
+    impactFullBodyLoop: true,
+    recoveryFullBody: "castBlockEnd",
+    recoveryFullBodyAnimDurationSec: HAND_SHIELD_CAST.recoveryMs / 1000,
+  },
   portal: {
     fullBody: "castPraying",
     holdEndPoseOnRecovery: true,
@@ -296,6 +329,10 @@ export const abilityAnimationBindings: Record<
     airTimeScale: SMASH_JUMP_ATTACK.playbackRate,
   },
   dash: { fullBody: "dash" },
+  spiritForm: {
+    fullBody: "crouchToSprint",
+    fullBodyAnimDurationSec: 0.35,
+  },
   bloodRush: {
     fullBody: "idleToCrouch",
     /** Natural crouch — clampWhenFinished holds the low pose for the rest of the 1s charge. */

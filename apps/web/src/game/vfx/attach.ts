@@ -18,6 +18,25 @@ export function findBone(
   return found;
 }
 
+/**
+ * Resolve a Mixamo hand bone without matching finger children
+ * (`RightHandThumb1` etc. also contain "RightHand").
+ */
+export function findHandBone(
+  root: THREE.Object3D,
+  side: "left" | "right" = "right",
+): THREE.Object3D | null {
+  const want = side === "left" ? "lefthand" : "righthand";
+  let exact: THREE.Object3D | null = null;
+  let endsWith: THREE.Object3D | null = null;
+  root.traverse((obj) => {
+    const n = obj.name.toLowerCase().replace(/^mixamorig:/, "");
+    if (n === want) exact = obj;
+    else if (!endsWith && (n.endsWith(want) || n === `hand_${side[0]}`)) endsWith = obj;
+  });
+  return exact ?? endsWith;
+}
+
 export type AttachHandle = {
   /** Detach and stop following. */
   release: () => void;

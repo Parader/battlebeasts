@@ -6,13 +6,14 @@ import {
   DEFAULT_COSMETIC_PATTERN_COLOR,
   DEFAULT_LOADOUT,
   ESSENCE_PER_TALENT_POINT,
-  ESSENCE_RESET_ALL,
-  ESSENCE_RESET_TREE,
+  ESSENCE_PER_TALENT_REFUND,
+  HEALTH_TONIC_HEAL,
   HUB_SPAWN,
   INTERACT,
   LOADOUT_SIZE,
   MAX_COIN_LOADOUT_SLOTS,
   MAX_TALENTS,
+  PLAYER_BASE_MAX_HP,
   RESPAWN_LOCK_MS,
   SHOP_ITEMS,
   SPELL_SLOTS,
@@ -56,11 +57,16 @@ import {
   ownsPattern,
   ownsPatternColor,
   phaseDurationMs,
+  QUEST_CATALOG,
+  questPeriodKey,
   resolvePveTransfer,
   spendCoins,
   baseCityStaticColliders,
   pointInInteractZone,
   totalPointsSpent,
+  talentPointsRemoved,
+  talentRefundEssenceCost,
+  treePointsSpent,
   type PlayerInput,
   type PlayerUnlocks,
   type PvpSeat,
@@ -81,6 +87,8 @@ import {
   type HubParty,
 } from "../matchmaking/hubParty.js";
 import {
+  claimPendingRewardGrants,
+  insertRewardGrant,
   loadEconomy,
   saveActiveLoadoutSlot,
   saveInventory,
@@ -96,14 +104,18 @@ import {
   type LoadoutPresetRow,
 } from "../persistence.js";
 import { takePendingLoot } from "../pendingLoot.js";
+import { ADMIN_GRANT_MAX_PER_FIELD, isAdminEmail } from "../admin.js";
+import {
+  bumpQuest,
+  findReferralForInvitee,
+  insertClosedChest,
+  listClosedChests,
+  listQuestProgress,
+  openChest,
+} from "../quests.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
-const DUMMY_COOLDOWN_MS = 1500;
-const DUMMY_COPPER_REWARD = 3;
-const DUMMY_HIT_COPPER = 1;
-/** How often an aggro'd dummy fires bolt at its attacker. */
-/** Gap after recovery before the dummy starts another cast. */
 const DUMMY_BOLT_GAP_MS = 420;
 /** Drop aggro if the dummy hasn't been damaged for this long. */
 const DUMMY_DEAGGRO_MS = 5000;
@@ -128,7 +140,6 @@ export class BaseCityRoom extends Room<BaseCityState> {
   private inputs = new Map<string, PlayerInput[]>();
   private ownerId: string | null = null;
   private identities = new Map<string, VerifiedIdentity>();
-  private dummyCooldownUntil = new Map<string, number>();
   private dummyAggro = new Map<string, DummyAggro>();
   /** Join / soft spawn pose — respawn returns here. */
   private spawnBySession = new Map<string, { x: number; z: number; yaw: number }>();
@@ -173,16 +184,6 @@ export class BaseCityRoom extends Room<BaseCityState> {
             lastHitAt: now,
           });
         }
-        const player = this.state.players.get(attackerSessionId);
-        const client = this.clients.find((c) => c.sessionId === attackerSessionId);
-        if (!player || !client) return;
-        this.applyWallet(player, {
-          ...addCoins(this.walletOf(player), { copper: DUMMY_HIT_COPPER }),
-          essence: player.essence,
-          rubies: player.rubies,
-        });
-        void this.persistInventory(attackerSessionId, player);
-        this.sendInventory(client, player);
       },
       onTargetKilled: (targetId) => {
         this.clearDummyCast(targetId);
@@ -272,10 +273,6 @@ export class BaseCityRoom extends Room<BaseCityState> {
       void this.handleResetTalentTree(client, message?.tree);
     });
 
-    this.onMessage("reset_talent_build", (client) => {
-      void this.handleResetTalentBuild(client);
-    });
-
     this.onMessage(
       "portal_confirm",
       (
@@ -302,8 +299,44 @@ export class BaseCityRoom extends Room<BaseCityState> {
       this.handleHubKick(client, message?.sessionId);
     });
 
+    this.onMessage(
+      "hub_grant_resources",
+      (
+        client,
+        message: {
+          targetSessionId?: string;
+          essence?: number;
+          copper?: number;
+          silver?: number;
+          gold?: number;
+        },
+      ) => {
+        void this.handleHubGrantResources(client, message);
+      },
+    );
+
+    this.onMessage("hub_quests", (client) => {
+      void this.handleHubQuests(client);
+    });
+
+    this.onMessage("hub_open_chest", (client, message: { chestId?: string }) => {
+      void this.handleHubOpenChest(client, message?.chestId);
+    });
+
+    this.onMessage("hub_spawn_chest", (client, message: { quality?: string }) => {
+      void this.handleHubSpawnChest(client, message?.quality);
+    });
+
+    this.onMessage("hub_friend_code_redeemed", (client) => {
+      void this.handleFriendCodeRedeemed(client);
+    });
+
     this.onMessage("party_invite", (client, message: { sessionId?: string }) => {
       this.handlePartyInvite(client, message?.sessionId);
+    });
+
+    this.onMessage("party_invite_friend", (client, message: { userId?: string }) => {
+      this.handlePartyInviteFriend(client, message?.userId);
     });
 
     this.onMessage("party_respond", (client, message: { accept?: boolean; partyId?: string }) => {
@@ -381,7 +414,12 @@ export class BaseCityRoom extends Room<BaseCityState> {
       const unlocks = emptyPlayerUnlocks();
       this.unlocksBySession.set(client.sessionId, unlocks);
       this.loadoutPresetsBySession.set(client.sessionId, [
-        { slotIndex: 0, name: "Loadout 1", abilityIds: [...DEFAULT_LOADOUT] },
+        {
+          slotIndex: 0,
+          name: "Loadout 1",
+          abilityIds: [...DEFAULT_LOADOUT],
+          talentBuild: {},
+        },
       ]);
       this.activeLoadoutSlotBySession.set(client.sessionId, 0);
       const starter = normalizeCoins({ copper: 75, silver: 2, gold: 0 });
@@ -424,14 +462,6 @@ export class BaseCityRoom extends Room<BaseCityState> {
         ? normalizeCosmeticPatternColor(eco.patternColor)
         : DEFAULT_COSMETIC_PATTERN_COLOR;
       this.applyCosmeticsEquipped(player, eco.cosmeticsEquipped ?? {});
-      if (player.copper === 0 && player.silver === 0 && player.gold === 0 && player.essence === 0) {
-        const soft = normalizeCoins({ copper: 50, silver: 1, gold: 0 });
-        player.copper = soft.copper;
-        player.silver = soft.silver;
-        player.gold = soft.gold;
-        player.essence = 2;
-        void saveInventory(verified.userId, this.walletOf(player));
-      }
     }
 
     this.state.players.set(client.sessionId, player);
@@ -442,7 +472,17 @@ export class BaseCityRoom extends Room<BaseCityState> {
       yaw: player.yaw,
     });
 
-    const loot = takePendingLoot(verified.userId);
+    const dbLoot = await claimPendingRewardGrants(verified.userId);
+    const memLoot = takePendingLoot(verified.userId);
+    const loot = dbLoot
+      ? {
+          copper: dbLoot.copper ?? 0,
+          silver: dbLoot.silver ?? 0,
+          gold: dbLoot.gold ?? 0,
+          essence: dbLoot.essence ?? 0,
+          rubies: dbLoot.rubies ?? 0,
+        }
+      : memLoot;
     if (
       loot &&
       (loot.copper > 0 ||
@@ -470,15 +510,19 @@ export class BaseCityRoom extends Room<BaseCityState> {
     const visiting = this.ownerId && verified.userId !== this.ownerId;
     client.send("toast", {
       message: verified.isGuest
-        ? "Welcome (guest) — blast the dummy with abilities for copper"
+        ? "Welcome (guest) — try abilities on the practice dummy"
         : visiting
           ? `Visiting hub`
           : `Welcome home, ${verified.displayName}`,
     });
     this.sendInventory(client, player);
     this.broadcastHubRoster();
+    if (isAdminEmail(verified.email)) {
+      client.send("hub_you_are_admin", { admin: true });
+    }
     // Catch soft-leave ghosts that survived eviction (collision without a model).
     this.purgeDuplicateUserSeats(client.sessionId);
+    this.tryJoinPendingParty(client);
   }
 
   async onLeave(client: Client, consented: boolean) {
@@ -516,7 +560,6 @@ export class BaseCityRoom extends Room<BaseCityState> {
     this.state.players.delete(sessionId);
     this.inputs.delete(sessionId);
     this.identities.delete(sessionId);
-    this.dummyCooldownUntil.delete(sessionId);
     this.spawnBySession.delete(sessionId);
     this.diedAtBySession.delete(sessionId);
     this.talentPointsBySession.delete(sessionId);
@@ -617,9 +660,10 @@ export class BaseCityRoom extends Room<BaseCityState> {
 
   /** Bake combat kit + apply max HP from live talents. */
   private applyCombatKit(sessionId: string, player: PlayerState) {
-    this.combat.syncSessionKit(sessionId, player.loadout, player.talents);
+    const talentBuild = this.talentBuildBySession.get(sessionId) ?? {};
+    this.combat.syncSessionKit(sessionId, player.loadout, player.talents, talentBuild);
     const bonus = this.combat.getSessionKit(sessionId)?.maxHpBonus ?? 0;
-    player.maxHp = 100 + bonus;
+    player.maxHp = PLAYER_BASE_MAX_HP + bonus;
     player.hp = Math.min(player.hp, player.maxHp);
   }
 
@@ -742,20 +786,45 @@ export class BaseCityRoom extends Room<BaseCityState> {
     sessionId: string,
     slotIndex: number,
     abilityIds: string[],
-    name?: string,
+    opts?: { name?: string; talentBuild?: TalentBuild },
   ) {
     const presets = [...(this.loadoutPresetsBySession.get(sessionId) ?? [])];
     const idx = presets.findIndex((p) => p.slotIndex === slotIndex);
+    const existing = idx >= 0 ? presets[idx] : undefined;
     const row: LoadoutPresetRow = {
       slotIndex,
-      name: name || presets[idx]?.name || `Loadout ${slotIndex + 1}`,
+      name: opts?.name || existing?.name || `Loadout ${slotIndex + 1}`,
       abilityIds,
+      talentBuild:
+        opts?.talentBuild !== undefined
+          ? normalizeTalentBuild(opts.talentBuild)
+          : existing?.talentBuild ?? {},
     };
     if (idx >= 0) presets[idx] = row;
     else presets.push(row);
     presets.sort((a, b) => a.slotIndex - b.slotIndex);
     this.loadoutPresetsBySession.set(sessionId, presets);
     return row;
+  }
+
+  /** Persist spells+talents for the active loadout preset (and optional account talent mirror). */
+  private async persistActiveLoadoutPreset(
+    client: Client,
+    abilityIds: string[],
+    talentBuild: TalentBuild,
+  ) {
+    const activeSlot = this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0;
+    const row = this.upsertPresetInSession(client.sessionId, activeSlot, abilityIds, {
+      talentBuild,
+    });
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      await saveLoadoutPreset(identity.userId, activeSlot, abilityIds, {
+        name: row.name,
+        talentBuild,
+      });
+      await saveTalentBuild(identity.userId, talentBuild);
+    }
   }
 
   private async handleBuyTalentPoints(client: Client, count: number) {
@@ -777,30 +846,52 @@ export class BaseCityRoom extends Room<BaseCityState> {
       return;
     }
     player.essence -= cost;
-    this.talentPointsBySession.set(client.sessionId, owned + buy);
+    const nextOwned = owned + buy;
+    this.talentPointsBySession.set(client.sessionId, nextOwned);
     await this.persistInventory(client.sessionId, player);
     this.sendInventory(client, player);
     client.send("toast", {
       message: `Bought ${buy} talent point${buy === 1 ? "" : "s"} (−${cost} essence)`,
     });
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      // Approximate spent as owned − starter (floor 0).
+      const spent = Math.max(0, nextOwned - STARTER_TALENT_POINTS);
+      void bumpQuest(identity.userId, { type: "talent_points_spent", totalSpent: spent });
+    }
   }
 
   private async handleSetTalentBuild(client: Client, raw: TalentBuild) {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
     const owned = this.talentPointsBySession.get(client.sessionId) ?? 0;
+    const current = this.talentBuildBySession.get(client.sessionId) ?? {};
     let build = normalizeTalentBuild(raw);
     build = clampBuildToOwned(build, owned);
     if (totalPointsSpent(build) > Math.min(owned, TALENT_POINT_BUDGET)) {
       client.send("toast", { message: "Build exceeds owned talent points" });
       return;
     }
+    const removed = talentPointsRemoved(current, build);
+    const cost = talentRefundEssenceCost(removed);
+    if (cost > 0 && player.essence < cost) {
+      client.send("toast", {
+        message: `Need ${cost} essence to respec (${removed} pt × ${ESSENCE_PER_TALENT_REFUND})`,
+      });
+      return;
+    }
+    if (cost > 0) player.essence -= cost;
     this.talentBuildBySession.set(client.sessionId, build);
-    const identity = this.identities.get(client.sessionId);
-    if (identity && !identity.isGuest) await saveTalentBuild(identity.userId, build);
+    if (cost > 0) await this.persistInventory(client.sessionId, player);
+    const abilityIds = normalizeLoadout(player.loadout.split(","));
+    await this.persistActiveLoadoutPreset(client, abilityIds, build);
+    this.applyCombatKit(client.sessionId, player);
     this.sendInventory(client, player);
     client.send("toast", {
-      message: `Talent build saved (${totalPointsSpent(build)}/${owned} pts)`,
+      message:
+        cost > 0
+          ? `Talent build saved (${totalPointsSpent(build)}/${owned} pts, −${cost} essence)`
+          : `Talent build saved (${totalPointsSpent(build)}/${owned} pts)`,
     });
   }
 
@@ -808,46 +899,28 @@ export class BaseCityRoom extends Room<BaseCityState> {
     const player = this.state.players.get(client.sessionId);
     if (!player || !tree || !(TALENT_TREE_IDS as readonly string[]).includes(tree)) return;
     const current = this.talentBuildBySession.get(client.sessionId) ?? {};
-    const next = clearTree(current, tree);
-    if (totalPointsSpent(next) === totalPointsSpent(current)) {
+    const removed = treePointsSpent(current, tree);
+    if (removed <= 0) {
       client.send("toast", { message: `No points invested in ${tree}` });
       return;
     }
-    if (player.essence < ESSENCE_RESET_TREE) {
-      client.send("toast", { message: `Need ${ESSENCE_RESET_TREE} essence to reset ${tree}` });
+    const next = clearTree(current, tree);
+    const cost = talentRefundEssenceCost(removed);
+    if (player.essence < cost) {
+      client.send("toast", {
+        message: `Need ${cost} essence to reset ${tree} (${removed} pt × ${ESSENCE_PER_TALENT_REFUND})`,
+      });
       return;
     }
-    player.essence -= ESSENCE_RESET_TREE;
+    player.essence -= cost;
     this.talentBuildBySession.set(client.sessionId, next);
     await this.persistInventory(client.sessionId, player);
-    const identity = this.identities.get(client.sessionId);
-    if (identity && !identity.isGuest) await saveTalentBuild(identity.userId, next);
+    const abilityIds = normalizeLoadout(player.loadout.split(","));
+    await this.persistActiveLoadoutPreset(client, abilityIds, next);
+    this.applyCombatKit(client.sessionId, player);
     this.sendInventory(client, player);
     client.send("toast", {
-      message: `Reset ${tree} (−${ESSENCE_RESET_TREE} essence)`,
-    });
-  }
-
-  private async handleResetTalentBuild(client: Client) {
-    const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-    const current = this.talentBuildBySession.get(client.sessionId) ?? {};
-    if (totalPointsSpent(current) <= 0) {
-      client.send("toast", { message: "No talent points invested" });
-      return;
-    }
-    if (player.essence < ESSENCE_RESET_ALL) {
-      client.send("toast", { message: `Need ${ESSENCE_RESET_ALL} essence to reset all talents` });
-      return;
-    }
-    player.essence -= ESSENCE_RESET_ALL;
-    this.talentBuildBySession.set(client.sessionId, {});
-    await this.persistInventory(client.sessionId, player);
-    const identity = this.identities.get(client.sessionId);
-    if (identity && !identity.isGuest) await saveTalentBuild(identity.userId, {});
-    this.sendInventory(client, player);
-    client.send("toast", {
-      message: `Talent build cleared (−${ESSENCE_RESET_ALL} essence)`,
+      message: `Reset ${tree} (−${cost} essence, ${removed} pt)`,
     });
   }
 
@@ -1042,7 +1115,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
     switch (grant.kind) {
       case "consumable":
         if (grant.effect === "health_tonic") {
-          player.hp = Math.min(player.maxHp, player.hp + 25);
+          player.hp = Math.min(player.maxHp, player.hp + HEALTH_TONIC_HEAL);
           toastMessage = "Health tonic — +25 HP";
         } else if (grant.effect === "copper_pouch") {
           this.applyWallet(player, {
@@ -1092,20 +1165,17 @@ export class BaseCityRoom extends Room<BaseCityState> {
         unlocksChanged = true;
         const slotIndex = grant.toCount - 1;
         const abilityIds = normalizeLoadout(player.loadout.split(","));
-        this.upsertPresetInSession(
-          client.sessionId,
-          slotIndex,
-          abilityIds,
-          `Loadout ${grant.toCount}`,
-        );
+        const talentBuild = this.talentBuildBySession.get(client.sessionId) ?? {};
+        this.upsertPresetInSession(client.sessionId, slotIndex, abilityIds, {
+          name: `Loadout ${grant.toCount}`,
+          talentBuild,
+        });
         const identity = this.identities.get(client.sessionId);
         if (identity && !identity.isGuest) {
-          await saveLoadoutPreset(
-            identity.userId,
-            slotIndex,
-            abilityIds,
-            `Loadout ${grant.toCount}`,
-          );
+          await saveLoadoutPreset(identity.userId, slotIndex, abilityIds, {
+            name: `Loadout ${grant.toCount}`,
+            talentBuild,
+          });
         }
         toastMessage = `Unlocked loadout preset slot ${grant.toCount}`;
         break;
@@ -1193,6 +1263,13 @@ export class BaseCityRoom extends Room<BaseCityState> {
     client.send("toast", {
       message: `Unlocked ${ABILITIES[abilityId]?.name ?? abilityId} (−${cost} essence)`,
     });
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      void bumpQuest(identity.userId, {
+        type: "spell_unlocked",
+        totalOwned: unlocks.abilities.length,
+      });
+    }
   }
 
   private async handleSetLoadout(client: Client, abilityIds: string[]) {
@@ -1205,12 +1282,8 @@ export class BaseCityRoom extends Room<BaseCityState> {
     player.loadout = cleaned.join(",");
     this.applyCombatKit(client.sessionId, player);
 
-    const activeSlot = this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0;
-    this.upsertPresetInSession(client.sessionId, activeSlot, cleaned);
-    const identity = this.identities.get(client.sessionId);
-    if (identity && !identity.isGuest) {
-      await saveLoadoutPreset(identity.userId, activeSlot, cleaned);
-    }
+    const talentBuild = this.talentBuildBySession.get(client.sessionId) ?? {};
+    await this.persistActiveLoadoutPreset(client, cleaned, talentBuild);
     this.sendInventory(client, player);
     client.send("toast", { message: "Loadout saved" });
   }
@@ -1232,7 +1305,16 @@ export class BaseCityRoom extends Room<BaseCityState> {
     const cleaned = this.validateLoadoutAbilityIds(client, abilityIds);
     if (!cleaned) return;
 
-    const row = this.upsertPresetInSession(client.sessionId, slotIndex, cleaned, name);
+    const talentBuild =
+      slotIndex === (this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0)
+        ? (this.talentBuildBySession.get(client.sessionId) ?? {})
+        : (this.loadoutPresetsBySession.get(client.sessionId)?.find((p) => p.slotIndex === slotIndex)
+            ?.talentBuild ?? {});
+
+    const row = this.upsertPresetInSession(client.sessionId, slotIndex, cleaned, {
+      name,
+      talentBuild,
+    });
     const activeSlot = this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0;
     if (slotIndex === activeSlot) {
       player.loadout = cleaned.join(",");
@@ -1241,7 +1323,10 @@ export class BaseCityRoom extends Room<BaseCityState> {
 
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
-      await saveLoadoutPreset(identity.userId, slotIndex, cleaned, row.name);
+      await saveLoadoutPreset(identity.userId, slotIndex, cleaned, {
+        name: row.name,
+        talentBuild,
+      });
     }
     this.sendInventory(client, player);
     client.send("toast", { message: `Saved ${row.name}` });
@@ -1267,18 +1352,24 @@ export class BaseCityRoom extends Room<BaseCityState> {
       }
     }
 
+    const owned = this.talentPointsBySession.get(client.sessionId) ?? 0;
+    let talentBuild = normalizeTalentBuild(preset?.talentBuild ?? {});
+    talentBuild = clampBuildToOwned(talentBuild, owned);
+
     this.activeLoadoutSlotBySession.set(client.sessionId, slotIndex);
     player.loadout = abilityIds.join(",");
+    this.talentBuildBySession.set(client.sessionId, talentBuild);
     this.applyCombatKit(client.sessionId, player);
 
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
       await saveActiveLoadoutSlot(identity.userId, slotIndex);
       await saveLoadout(identity.userId, abilityIds);
+      await saveTalentBuild(identity.userId, talentBuild);
     }
     this.sendInventory(client, player);
     client.send("toast", {
-      message: `Loadout ${slotIndex + 1} selected`,
+      message: `${preset?.name ?? `Loadout ${slotIndex + 1}`} selected (spells + talents)`,
     });
   }
 
@@ -1396,11 +1487,232 @@ export class BaseCityRoom extends Room<BaseCityState> {
     targetClient.leave(WS_CLOSE_CONSENTED, "Kicked by hub owner");
   }
 
+  private async handleHubQuests(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest) {
+      client.send("hub_quests_state", { quests: [], chests: [] });
+      return;
+    }
+    const [progress, chests] = await Promise.all([
+      listQuestProgress(identity.userId),
+      listClosedChests(identity.userId),
+    ]);
+    const progressMap = new Map(
+      progress.map((p) => [`${p.quest_id}:${p.period_key}`, p] as const),
+    );
+    const quests = QUEST_CATALOG.map((q) => {
+      const period = questPeriodKey(q);
+      const row = progressMap.get(`${q.id}:${period}`);
+      return {
+        id: q.id,
+        label: q.label,
+        type: q.type,
+        target: q.target,
+        chest: q.chest,
+        progress: row?.progress ?? 0,
+        completed: Boolean(row?.completed_at),
+      };
+    });
+    client.send("hub_quests_state", { quests, chests });
+  }
+
+  private async handleHubOpenChest(client: Client, chestId: string | undefined) {
+    const identity = this.identities.get(client.sessionId);
+    const player = this.state.players.get(client.sessionId);
+    if (!identity || identity.isGuest || !player || !chestId) {
+      client.send("toast", { message: "Cannot open chest" });
+      return;
+    }
+    const unlocks = this.unlocksOf(client.sessionId);
+    const result = await openChest(identity.userId, chestId, {
+      cosmetics: unlocks.cosmetics,
+      colors: unlocks.colors,
+      patterns: unlocks.patterns,
+      patternColors: unlocks.patternColors,
+      emotes: unlocks.emotes,
+    });
+    if (!result.ok) {
+      client.send("toast", { message: result.error ?? "Open failed" });
+      return;
+    }
+
+    const coins = addCoins(this.walletOf(player), {
+      copper: result.copper ?? 0,
+      silver: 0,
+      gold: 0,
+    });
+    this.applyWallet(player, {
+      ...coins,
+      essence: player.essence + (result.essence ?? 0),
+      rubies: player.rubies,
+    });
+
+    if (result.grants?.length) {
+      const next = { ...unlocks };
+      next.cosmetics = [...unlocks.cosmetics];
+      next.colors = [...unlocks.colors];
+      next.patterns = [...unlocks.patterns];
+      next.patternColors = [...unlocks.patternColors];
+      next.emotes = [...unlocks.emotes];
+      next.emoteSlots = [...unlocks.emoteSlots];
+      for (const grant of result.grants) {
+        switch (grant.kind) {
+          case "color":
+            if (!next.colors.includes(grant.hex)) next.colors.push(grant.hex);
+            break;
+          case "pattern":
+            if (!next.patterns.includes(grant.patternId)) next.patterns.push(grant.patternId);
+            break;
+          case "pattern_color":
+            if (!next.patternColors.includes(grant.hex)) next.patternColors.push(grant.hex);
+            break;
+          case "cosmetic":
+            if (!next.cosmetics.includes(grant.itemId)) next.cosmetics.push(grant.itemId);
+            break;
+          case "emote":
+            if (!next.emotes.includes(grant.emoteId)) next.emotes.push(grant.emoteId);
+            next.emoteSlots = normalizeEmoteSlots(next.emoteSlots, next.emotes);
+            break;
+        }
+      }
+      await this.persistUnlocks(client.sessionId, next);
+    }
+
+    await this.persistInventory(client.sessionId, player);
+    this.sendInventory(client, player);
+    client.send("hub_chest_opened", {
+      ok: true,
+      quality: result.quality,
+      essence: result.essence ?? 0,
+      copper: result.copper ?? 0,
+      lines: result.lines ?? [],
+      grants: result.grants ?? [],
+    });
+    void this.handleHubQuests(client);
+  }
+
+  private async handleHubSpawnChest(client: Client, qualityRaw: string | undefined) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest || !isAdminEmail(identity.email)) {
+      client.send("toast", { message: "Not authorized" });
+      return;
+    }
+    const quality = (qualityRaw ?? "").toLowerCase();
+    if (!["green", "blue", "purple", "legendary"].includes(quality)) {
+      client.send("toast", { message: "Pick a chest rarity" });
+      return;
+    }
+    const result = await insertClosedChest(
+      identity.userId,
+      quality as "green" | "blue" | "purple" | "legendary",
+      "admin:spawn",
+    );
+    if (!result.ok) {
+      client.send("toast", { message: result.error ?? "Spawn failed" });
+      return;
+    }
+    client.send("toast", { message: `Spawned ${quality} chest` });
+    void this.handleHubQuests(client);
+  }
+
+  private async handleFriendCodeRedeemed(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest) return;
+    const inviterId = await findReferralForInvitee(identity.userId);
+    if (!inviterId) {
+      client.send("toast", { message: "No referral found" });
+      return;
+    }
+    void bumpQuest(identity.userId, { type: "friend_code_redeemed" });
+    void bumpQuest(inviterId, { type: "friend_referral_credited" });
+    client.send("toast", { message: "Friend code quest progress updated" });
+  }
+
+  private async handleHubGrantResources(
+    client: Client,
+    message: {
+      targetSessionId?: string;
+      essence?: number;
+      copper?: number;
+      silver?: number;
+      gold?: number;
+    },
+  ) {
+    const identity = this.identities.get(client.sessionId);
+    if (!isAdminEmail(identity?.email)) {
+      client.send("hub_grant_result", { ok: false, error: "Not authorized" });
+      return;
+    }
+    const targetSessionId = message?.targetSessionId;
+    if (!targetSessionId) {
+      client.send("hub_grant_result", { ok: false, error: "Missing target" });
+      return;
+    }
+    const targetPlayer = this.state.players.get(targetSessionId);
+    const targetClient = this.clients.find((c) => c.sessionId === targetSessionId);
+    if (!targetPlayer || !targetClient) {
+      client.send("hub_grant_result", { ok: false, error: "Player not in hub" });
+      return;
+    }
+
+    const clamp = (n: unknown) => {
+      const v = typeof n === "number" ? n : Number(n);
+      if (!Number.isFinite(v) || v < 0) return 0;
+      return Math.min(ADMIN_GRANT_MAX_PER_FIELD, Math.floor(v));
+    };
+    const grant = {
+      essence: clamp(message.essence),
+      copper: clamp(message.copper),
+      silver: clamp(message.silver),
+      gold: clamp(message.gold),
+    };
+    if (!(grant.essence || grant.copper || grant.silver || grant.gold)) {
+      client.send("hub_grant_result", { ok: false, error: "Enter at least one amount" });
+      return;
+    }
+
+    const coins = addCoins(this.walletOf(targetPlayer), grant);
+    this.applyWallet(targetPlayer, {
+      ...coins,
+      essence: targetPlayer.essence + grant.essence,
+      rubies: targetPlayer.rubies,
+    });
+    void this.persistInventory(targetSessionId, targetPlayer);
+    this.sendInventory(targetClient, targetPlayer);
+
+    const sourceKey = `admin:${Date.now()}:${client.sessionId}:${targetPlayer.id}`;
+    if (targetPlayer.id && !targetPlayer.id.startsWith("guest_")) {
+      void insertRewardGrant(
+        targetPlayer.id,
+        "admin_grant",
+        sourceKey,
+        {
+          ...grant,
+          meta: { from: identity?.userId, fromEmail: identity?.email },
+        },
+        "claimed",
+      );
+    }
+
+    const label = formatWallet({ ...grant, rubies: 0 });
+    client.send("hub_grant_result", {
+      ok: true,
+      targetSessionId,
+      displayName: targetPlayer.displayName,
+      grant,
+    });
+    client.send("toast", { message: `Granted ${label} to ${targetPlayer.displayName}` });
+    if (targetClient.sessionId !== client.sessionId) {
+      targetClient.send("toast", { message: `Admin granted you ${label}` });
+    }
+  }
+
   private broadcastHubRoster() {
     const players = [...this.state.players.entries()]
       .filter(([, p]) => !p.disconnected)
       .map(([sessionId, p]) => ({
         sessionId,
+        userId: p.id,
         displayName: p.displayName,
         isOwner: Boolean(this.ownerId && p.id === this.ownerId),
       }));
@@ -1497,12 +1809,118 @@ export class BaseCityRoom extends Room<BaseCityState> {
       { sessionId: client.sessionId, userId: identity.userId, displayName: identity.displayName },
       validModes,
     );
+
+    // Everyone already in this hub is pulled into the party lobby (no per-hunter invites).
+    for (const [sessionId, hubPlayer] of this.state.players.entries()) {
+      if (sessionId === client.sessionId || hubPlayer.disconnected) continue;
+      const otherParty = this.parties.getBySession(sessionId);
+      if (otherParty && otherParty.partyId !== party.partyId) {
+        this.removeFromAnyParty(sessionId, "Pulled into the hub party lobby");
+      }
+      if (this.parties.hasAnyParty(sessionId)) continue;
+      const memberId = this.identities.get(sessionId);
+      if (!memberId) continue;
+      this.parties.addMember(
+        party,
+        {
+          sessionId,
+          userId: memberId.userId,
+          displayName: memberId.displayName,
+        },
+        defaultSeatFor(party),
+      );
+    }
+
     this.broadcastPartyUpdate(party);
-    const suffix = rejectedModes.length > 0 ? ` (${rejectedModes.join(", ")} dropped — hub too small)` : "";
-    client.send("toast", {
-      message: `Party lobby — ${validModes.join(", ")}${suffix}. Invite hunters, set seats, then lock.`,
+    const suffix =
+      rejectedModes.length > 0 ? ` (${rejectedModes.join(", ")} dropped — hub too small)` : "";
+    this.broadcastToParty(party, "toast", {
+      message: `Party lobby — ${validModes.join(", ")}${suffix}. Set seats, invite friends, then lock.`,
     });
+    this.broadcastToParty(party, "ui", { ui: "party_lobby" });
+  }
+
+  /**
+   * Invite a friend by account id. If they are already in this hub, pull them into the party.
+   * Otherwise mark them pending — when they accept a hub invite and join, they auto-enter.
+   */
+  private handlePartyInviteFriend(client: Client, friendUserId: string | undefined) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party || party.leaderSessionId !== client.sessionId) {
+      client.send("toast", { message: "Only the party leader can invite" });
+      return;
+    }
+    if (!friendUserId || friendUserId === this.identities.get(client.sessionId)?.userId) return;
+    if (party.queued) {
+      client.send("toast", { message: "Party is already queued" });
+      return;
+    }
+
+    const alreadyMember = [...party.members.values()].some((m) => m.userId === friendUserId);
+    if (alreadyMember) {
+      client.send("toast", { message: "Already in your party" });
+      return;
+    }
+
+    const inHub = [...this.state.players.entries()].find(
+      ([, p]) => !p.disconnected && p.id === friendUserId,
+    );
+    if (inHub) {
+      const [sessionId] = inHub;
+      if (this.parties.hasAnyParty(sessionId)) {
+        client.send("toast", { message: "That hunter is already in a party" });
+        return;
+      }
+      const memberId = this.identities.get(sessionId);
+      if (!memberId) return;
+      this.parties.addMember(
+        party,
+        {
+          sessionId,
+          userId: memberId.userId,
+          displayName: memberId.displayName,
+        },
+        defaultSeatFor(party),
+      );
+      this.broadcastPartyUpdate(party);
+      this.sendToSession(sessionId, "ui", { ui: "party_lobby" });
+      this.broadcastToParty(party, "toast", {
+        message: `${memberId.displayName} joined the party`,
+      });
+      return;
+    }
+
+    party.pendingFriendInvites.add(friendUserId);
+    this.broadcastPartyUpdate(party);
+    client.send("toast", {
+      message: "Invite sent — they'll join the party lobby when they enter the hub",
+    });
+  }
+
+  /** After hub join: honor a pending friend invite into an open (non-queued) party. */
+  private tryJoinPendingParty(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest) return;
+    if (this.parties.hasAnyParty(client.sessionId)) return;
+
+    const party = this.parties.findByPendingFriend(identity.userId);
+    if (!party || party.queued) return;
+
+    party.pendingFriendInvites.delete(identity.userId);
+    this.parties.addMember(
+      party,
+      {
+        sessionId: client.sessionId,
+        userId: identity.userId,
+        displayName: identity.displayName,
+      },
+      defaultSeatFor(party),
+    );
+    this.broadcastPartyUpdate(party);
     client.send("ui", { ui: "party_lobby" });
+    this.broadcastToParty(party, "toast", {
+      message: `${identity.displayName} joined the party`,
+    });
   }
 
   private handlePartyInvite(client: Client, targetSessionId: string | undefined) {
@@ -1649,6 +2067,10 @@ export class BaseCityRoom extends Room<BaseCityState> {
     }
 
     const members: PvpPartyMember[] = [];
+    const partyLobbyHub =
+      this.ownerId ??
+      party.members.get(party.leaderSessionId)?.userId ??
+      null;
     for (const member of party.members.values()) {
       const memberClient = this.clients.find((c) => c.sessionId === member.sessionId);
       if (!memberClient) continue;
@@ -1657,7 +2079,9 @@ export class BaseCityRoom extends Room<BaseCityState> {
         client: memberClient,
         userId: member.userId,
         seat: member.seat,
-        hubOwnerId: this.ownerId,
+        // Party stays together in this lobby; solo always returns home after the match.
+        hubOwnerId:
+          party.members.size > 1 ? (partyLobbyHub ?? member.userId) : member.userId,
       });
     }
     if (members.length === 0) return;
@@ -1848,6 +2272,15 @@ export class BaseCityRoom extends Room<BaseCityState> {
         continue;
       }
 
+      // Stun / silence: drop windup and never release the bolt.
+      if (!this.combat.statuses.canCast(dummyId)) {
+        if (dummy.castAbilityId || aggro.pendingReleaseAt > 0) {
+          this.clearDummyCast(dummyId);
+          aggro.pendingReleaseAt = 0;
+        }
+        continue;
+      }
+
       // While cloaked, shoot the drifting decoy — never the invisible player.
       const aimAt = this.resolveDummyAimPoint(aggro.attackerId);
       if (!aimAt) {
@@ -1970,21 +2403,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
     if (dummy || interactId === INTERACT.PRACTICE_DUMMY) {
       const target = dummy ?? HUB_PRACTICE_DUMMIES[0]!;
       if (!pointInInteractZone(player.x, player.z, target)) return;
-
-      const until = this.dummyCooldownUntil.get(sessionId) ?? 0;
-      if (now < until) {
-        client.send("toast", { message: "Dummy recovering…" });
-        return;
-      }
-      this.dummyCooldownUntil.set(sessionId, now + DUMMY_COOLDOWN_MS);
-      this.applyWallet(player, {
-        ...addCoins(this.walletOf(player), { copper: DUMMY_COPPER_REWARD }),
-        essence: player.essence,
-        rubies: player.rubies,
-      });
-      void this.persistInventory(sessionId, player);
-      this.sendInventory(client, player);
-      client.send("toast", { message: `+${DUMMY_COPPER_REWARD}c` });
+      client.send("toast", { message: "Practice dummy — hit it with abilities to train" });
     }
   }
 }

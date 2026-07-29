@@ -8,14 +8,23 @@ import {
 
 type HubPlayer = {
   sessionId: string;
+  userId?: string;
   displayName: string;
+};
+
+export type PartyFriendInviteRow = {
+  id: string;
+  displayName: string;
+  online: boolean;
 };
 
 type Props = {
   party: PartySnapshot;
   localSessionId: string | null;
   hubPlayers: HubPlayer[];
-  onInvite: (sessionId: string) => void;
+  friends: PartyFriendInviteRow[];
+  /** Hub invite + mark pending party join (remote friends). */
+  onInviteFriend: (friendUserId: string) => void;
   onSetSeat: (sessionId: string, seat: PvpSeat) => void;
   onKick: (sessionId: string) => void;
   onLock: () => void;
@@ -119,7 +128,8 @@ export function PartyLobbyPanel({
   party,
   localSessionId,
   hubPlayers,
-  onInvite,
+  friends,
+  onInviteFriend,
   onSetSeat,
   onKick,
   onLock,
@@ -128,10 +138,19 @@ export function PartyLobbyPanel({
   onClose,
 }: Props) {
   const isLeader = party.leaderSessionId === localSessionId;
-  const memberIds = new Set(party.members.map((m) => m.sessionId));
-  const inviteable = hubPlayers.filter(
-    (p) => p.sessionId !== localSessionId && !memberIds.has(p.sessionId),
-  );
+  const memberUserIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of party.members) {
+      if (m.userId) ids.add(m.userId);
+    }
+    for (const h of hubPlayers) {
+      if (!h.userId) continue;
+      if (party.members.some((m) => m.sessionId === h.sessionId)) ids.add(h.userId);
+    }
+    return ids;
+  }, [party.members, hubPlayers]);
+  const pendingFriends = new Set(party.pendingFriendInvites ?? []);
+  const inviteableFriends = friends.filter((f) => !memberUserIds.has(f.id));
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
 
@@ -303,21 +322,28 @@ export function PartyLobbyPanel({
 
         {isLeader && !party.queued && inviteOpen ? (
           <div className="bb-lobby-invites">
-            {inviteable.length === 0 ? (
-              <p className="bb-lobby-invites__empty">No other hunters in this hub.</p>
+            {inviteableFriends.length === 0 ? (
+              <p className="bb-lobby-invites__empty">
+                No friends to invite. Everyone in this hub is already in the lobby.
+              </p>
             ) : (
               <ul className="bb-lobby-invites__list">
-                {inviteable.map((p) => {
-                  const pending = party.pendingInvites.includes(p.sessionId);
+                {inviteableFriends.map((f) => {
+                  const pending = pendingFriends.has(f.id);
+                  const inHub = hubPlayers.some((h) => h.userId === f.id);
                   return (
-                    <li key={p.sessionId}>
+                    <li key={f.id}>
                       <button
                         type="button"
                         className="bb-lobby-btn bb-lobby-btn--slot"
                         disabled={pending}
-                        onClick={() => onInvite(p.sessionId)}
+                        onClick={() => onInviteFriend(f.id)}
                       >
-                        {pending ? `Invited ${p.displayName}` : `Invite ${p.displayName}`}
+                        {pending
+                          ? `Invited ${f.displayName}`
+                          : inHub
+                            ? `Add ${f.displayName}`
+                            : `Invite ${f.displayName}${f.online ? "" : " (offline)"}`}
                       </button>
                     </li>
                   );

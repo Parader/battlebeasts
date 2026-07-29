@@ -1,6 +1,21 @@
-import { ABILITIES, type SpellTag } from "./abilities";
+import { ABILITIES, abilityHasTags, type SpellTag } from "./abilities";
 import { COMBAT } from "./combat";
 import { TALENTS, type TalentDef } from "./stands";
+import {
+  isCatalogTalentImplemented,
+  OPENING_SALVO_COOLDOWN_MS,
+  OPENING_SALVO_TALENT_ID,
+  openingSalvoBonusPercent,
+  TALENT_CATALOG,
+} from "./talentCatalog";
+import type { TalentBuild } from "./talentTrees";
+import { talentMaxRank, talentRank } from "./talentTrees";
+
+/**
+ * Leave-combat linger — same duration as Opening Salvo CD so the next
+ * initiate is available as soon as the HP bar drops out of combat.
+ */
+export const COMBAT_ENGAGE_LINGER_MS = OPENING_SALVO_COOLDOWN_MS;
 
 /** Baked once on loadout/talent change — never scanned in the tick loop. */
 export type CombatSessionKit = {
@@ -12,6 +27,11 @@ export type CombatSessionKit = {
   critChance: number;
   /** Per-ability cooldown multiplier (1 = unchanged). */
   cooldownMulByAbility: Map<string, number>;
+  /**
+   * Opening Salvo — flat outgoing damage bonus (0.027 / 0.053 / 0.08) when initiating combat.
+   * 0 = talent not invested / not implemented.
+   */
+  openingSalvoDmgBonus: number;
 };
 
 export function emptyCombatSessionKit(): CombatSessionKit {
@@ -22,6 +42,7 @@ export function emptyCombatSessionKit(): CombatSessionKit {
     maxHpBonus: 0,
     critChance: COMBAT.critChance,
     cooldownMulByAbility: new Map(),
+    openingSalvoDmgBonus: 0,
   };
 }
 
@@ -33,13 +54,23 @@ function talentMatchesAbility(modTags: readonly SpellTag[] | undefined, abilityI
   return modTags.every((t) => set.has(t));
 }
 
+function bakeOpeningSalvoBonus(talentBuild: TalentBuild | undefined): number {
+  const def = TALENT_CATALOG[OPENING_SALVO_TALENT_ID];
+  if (!isCatalogTalentImplemented(def)) return 0;
+  const rank = talentRank(talentBuild ?? {}, OPENING_SALVO_TALENT_ID);
+  if (rank <= 0) return 0;
+  const maxRank = talentMaxRank(def);
+  return openingSalvoBonusPercent(rank, maxRank) / 100;
+}
+
 /**
- * Bake player sheet + per-ability cooldown multipliers from live talents.
- * Catalog talents are ignored (not in TALENTS).
+ * Bake player sheet + per-ability cooldown multipliers from live stub talents
+ * plus implemented catalog ranks from `talentBuild`.
  */
 export function resolveKit(
   loadoutCsv: string,
   talentIds: readonly string[],
+  talentBuild?: TalentBuild,
 ): CombatSessionKit {
   const loadoutIds = new Set(loadoutCsv.split(",").filter(Boolean));
   const cleaned = talentIds.filter((id) => id in TALENTS);
@@ -73,6 +104,7 @@ export function resolveKit(
     maxHpBonus,
     critChance: COMBAT.critChance,
     cooldownMulByAbility,
+    openingSalvoDmgBonus: bakeOpeningSalvoBonus(talentBuild),
   };
 }
 
@@ -83,4 +115,11 @@ export function kitCooldownMs(
 ): number {
   const mul = kit?.cooldownMulByAbility.get(abilityId) ?? 1;
   return Math.max(0, Math.round(baseMs * mul));
+}
+
+/** True when this ability id is a damaging spell (not a status / DoT tick id). */
+export function abilityCanProcOpeningSalvo(abilityId: string): boolean {
+  const def = ABILITIES[abilityId];
+  if (!def || !(def.damage > 0)) return false;
+  return abilityHasTags(def, "Damage");
 }

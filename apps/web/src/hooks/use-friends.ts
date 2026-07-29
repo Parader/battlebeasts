@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     heartbeatPresence,
     inviteToHub,
@@ -10,6 +10,9 @@ import {
     respondHubInvite,
     sendFriendRequest,
     setPresenceOffline,
+    ensureFriendCode,
+    hasRedeemedFriendCode,
+    redeemFriendCode,
     type FriendRequestRow,
     type FriendRow,
     type HubInviteRow,
@@ -41,33 +44,70 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
     const [friends, setFriends] = useState<FriendRow[]>([]);
     const [requests, setRequests] = useState<FriendRequestRow[]>([]);
     const [invites, setInvites] = useState<HubInviteRow[]>([]);
+    const [friendCode, setFriendCode] = useState<string | null>(null);
+    const [hasRedeemedCode, setHasRedeemedCode] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [friendRequestToast, setFriendRequestToast] = useState<string | null>(null);
+    const seenRequestIds = useRef<Set<string>>(new Set());
+    const requestsBootstrapped = useRef(false);
 
     const refresh = useCallback(async () => {
         if (!userId) {
             setFriends([]);
             setRequests([]);
             setInvites([]);
+            setFriendCode(null);
+            setHasRedeemedCode(false);
+            seenRequestIds.current = new Set();
+            requestsBootstrapped.current = false;
             return;
         }
         setLoading(true);
         setError(null);
         try {
-            const [f, r, i] = await Promise.all([
+            const [f, r, i, code, redeemed] = await Promise.all([
                 listFriends(userId),
                 listIncomingFriendRequests(userId),
                 listIncomingHubInvites(userId),
+                ensureFriendCode().catch(() => ""),
+                hasRedeemedFriendCode(userId),
             ]);
             setFriends(f);
             setRequests(r);
             setInvites(i);
+            setFriendCode(code || null);
+            setHasRedeemedCode(redeemed);
+
+            const ids = new Set(r.map((req) => req.id));
+            if (!requestsBootstrapped.current) {
+                seenRequestIds.current = ids;
+                requestsBootstrapped.current = true;
+            } else {
+                const newcomers = r.filter((req) => !seenRequestIds.current.has(req.id));
+                if (newcomers.length > 0) {
+                    const first = newcomers[0]!;
+                    const name = first.from_name ?? "Hunter";
+                    setFriendRequestToast(
+                        newcomers.length === 1
+                            ? `${name} sent you a friend request`
+                            : `${newcomers.length} new friend requests`,
+                    );
+                }
+                seenRequestIds.current = ids;
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to load friends");
         } finally {
             setLoading(false);
         }
     }, [userId]);
+
+    useEffect(() => {
+        if (!friendRequestToast) return;
+        const id = window.setTimeout(() => setFriendRequestToast(null), 4500);
+        return () => window.clearTimeout(id);
+    }, [friendRequestToast]);
 
     useEffect(() => {
         void refresh();
@@ -150,10 +190,25 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
         [refresh],
     );
 
+    const redeemCode = useCallback(
+        async (code: string) => {
+            const result = await redeemFriendCode(code);
+            await refresh();
+            return result;
+        },
+        [refresh],
+    );
+
+    const clearFriendRequestToast = useCallback(() => setFriendRequestToast(null), []);
+
     return {
         friends,
         requests,
         invites,
+        friendCode,
+        hasRedeemedCode,
+        friendRequestToast,
+        clearFriendRequestToast,
         loading,
         error,
         refresh,
@@ -162,5 +217,6 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
         sendHubInvite,
         answerHubInvite,
         removeFriend: remove,
+        redeemCode,
     };
 }

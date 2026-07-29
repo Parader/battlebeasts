@@ -14,6 +14,21 @@ export type PatchNote = {
  */
 export const PATCH_NOTES: readonly PatchNote[] = [
   {
+    id: "2026-07-29-spirit-shield-rewards",
+    title: "Spirit Form, Hand Shield & rewards",
+    date: "2026-07-29",
+    highlights: [
+      "Hand Shield (RMB): channel a blue disc that shatters enemy projectiles — cancel anytime; blocks through the drop animation",
+      "Spirit Form (Space): leave a husk, rush forward with haste; the husk↔spirit link stuns enemies that cross it; recast or wait to snap back",
+      "Revenge (Q): red Counter stance — deny the next direct hit, vanish, and blink behind the attacker",
+      "Stun cancels in-progress casts (players and practice dummies)",
+      "Projectiles that hit walls fizzle with a downward spray",
+      "Spore Shrooms, Magma Orbs, Volcano, and Protection Bubble combat + VFX",
+      "Quests, chests, friend codes, and match reward payouts (see recap when activity-scaled)",
+      "Friends / party invites stacked in one prompt UI; hub roster and talent stand polish",
+    ],
+  },
+  {
     id: "2026-07-26-spells-counter-dart",
     title: "Counter, Poison Dart & combat polish",
     date: "2026-07-26",

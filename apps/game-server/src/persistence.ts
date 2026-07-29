@@ -28,6 +28,7 @@ export type LoadoutPresetRow = {
   slotIndex: number;
   name: string;
   abilityIds: string[];
+  talentBuild: TalentBuild;
 };
 
 export type EconomySnapshot = Wallet & {
@@ -63,7 +64,7 @@ const DEFAULT_ECO: EconomySnapshot = {
   talentBuild: {},
   cosmeticsEquipped: normalizeCosmeticsEquipped({}),
   unlocks: emptyPlayerUnlocks(),
-  loadoutPresets: [{ slotIndex: 0, name: "Loadout 1", abilityIds: [...DEFAULT_LOADOUT] }],
+  loadoutPresets: [{ slotIndex: 0, name: "Loadout 1", abilityIds: [...DEFAULT_LOADOUT], talentBuild: {} }],
   activeLoadoutSlot: 0,
 };
 
@@ -95,7 +96,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     supabase.from("player_unlocks").select("*").eq("user_id", userId).maybeSingle(),
     supabase
       .from("loadout_presets")
-      .select("slot_index, name, ability_ids")
+      .select("slot_index, name, ability_ids, talent_build")
       .eq("user_id", userId)
       .order("slot_index", { ascending: true }),
   ]);
@@ -200,16 +201,31 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     abilityIds,
   );
 
-  const loadoutPresets: LoadoutPresetRow[] = (presetsRes.data ?? []).map((row) => ({
-    slotIndex: row.slot_index as number,
-    name: (row.name as string) || `Loadout ${(row.slot_index as number) + 1}`,
-    abilityIds: normalizeLoadout(
-      Array.isArray(row.ability_ids) ? (row.ability_ids as string[]) : null,
-    ),
-  }));
+  const accountTalentBuild = normalizeTalentBuild(talents.data?.talent_build);
+
+  const loadoutPresets: LoadoutPresetRow[] = (presetsRes.data ?? []).map((row) => {
+    const fromPreset = normalizeTalentBuild(
+      row.talent_build && typeof row.talent_build === "object" ? row.talent_build : {},
+    );
+    return {
+      slotIndex: row.slot_index as number,
+      name: (row.name as string) || `Loadout ${(row.slot_index as number) + 1}`,
+      abilityIds: normalizeLoadout(
+        Array.isArray(row.ability_ids) ? (row.ability_ids as string[]) : null,
+      ),
+      // Empty preset builds inherit the account build so old rows stay playable.
+      talentBuild:
+        Object.keys(fromPreset).length > 0 ? fromPreset : accountTalentBuild,
+    };
+  });
 
   if (loadoutPresets.length === 0) {
-    loadoutPresets.push({ slotIndex: 0, name: "Loadout 1", abilityIds });
+    loadoutPresets.push({
+      slotIndex: 0,
+      name: "Loadout 1",
+      abilityIds,
+      talentBuild: accountTalentBuild,
+    });
   }
 
   const activeLoadoutSlot = Math.max(
@@ -224,6 +240,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   const resolvedAbilityIds = activePreset?.abilityIds?.length
     ? normalizeLoadout(activePreset.abilityIds)
     : abilityIds;
+  const resolvedTalentBuild = activePreset?.talentBuild ?? accountTalentBuild;
 
   // Persist sanitized unlocks once if table exists and row was empty-ish
   if (!unlocksError) {
@@ -237,7 +254,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     abilityIds: resolvedAbilityIds,
     talentIds: Array.isArray(talents.data?.talent_ids) ? talents.data.talent_ids : [],
     talentPoints,
-    talentBuild: normalizeTalentBuild(talents.data?.talent_build),
+    talentBuild: resolvedTalentBuild,
     color: profileRow?.color ?? undefined,
     pattern: profileRow?.pattern ?? undefined,
     patternColor: profileRow?.pattern_color ?? undefined,
@@ -308,19 +325,22 @@ export async function saveLoadoutPreset(
   userId: string,
   slotIndex: number,
   abilityIds: string[],
-  name?: string,
+  options?: { name?: string; talentBuild?: TalentBuild },
 ): Promise<void> {
   if (!supabase) return;
-  await supabase.from("loadout_presets").upsert(
-    {
-      user_id: userId,
-      slot_index: slotIndex,
-      name: name || `Loadout ${slotIndex + 1}`,
-      ability_ids: abilityIds,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id,slot_index" },
-  );
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    slot_index: slotIndex,
+    name: options?.name || `Loadout ${slotIndex + 1}`,
+    ability_ids: abilityIds,
+    updated_at: new Date().toISOString(),
+  };
+  if (options?.talentBuild !== undefined) {
+    payload.talent_build = normalizeTalentBuild(options.talentBuild);
+  }
+  await supabase.from("loadout_presets").upsert(payload, {
+    onConflict: "user_id,slot_index",
+  });
   // Keep legacy single-row loadout in sync when saving active kit
   await saveLoadout(userId, abilityIds);
 }
@@ -408,3 +428,85 @@ export async function saveProfileCosmeticsEquipped(
 ): Promise<boolean> {
   return saveProfileAppearance(userId, { cosmeticsEquipped });
 }
+
+export type RewardGrantPayload = {
+  copper?: number;
+  silver?: number;
+  gold?: number;
+  essence?: number;
+  rubies?: number;
+  activityMul?: number;
+  base?: number;
+  winBonus?: number;
+  meta?: Record<string, unknown>;
+};
+
+/** Insert grant. Returns false if duplicate (already exists). Guests / no DB → skipped. */
+export async function insertRewardGrant(
+  userId: string,
+  source: string,
+  sourceKey: string,
+  payload: RewardGrantPayload,
+  status: "pending" | "claimed" = "pending",
+): Promise<"inserted" | "duplicate" | "skipped"> {
+  if (!supabase || userId.startsWith("guest_")) return "skipped";
+  const { error } = await supabase.from("reward_grants").insert({
+    user_id: userId,
+    source,
+    source_key: sourceKey,
+    payload,
+    status,
+    claimed_at: status === "claimed" ? new Date().toISOString() : null,
+  });
+  if (!error) return "inserted";
+  if (/duplicate|unique/i.test(error.message)) return "duplicate";
+  console.warn("[persistence] insertRewardGrant", error.message);
+  return "skipped";
+}
+
+/** Claim all pending grants for a user; marks claimed and returns merged wallet delta. */
+export async function claimPendingRewardGrants(userId: string): Promise<RewardGrantPayload | null> {
+  if (!supabase || userId.startsWith("guest_")) return null;
+  const { data, error } = await supabase
+    .from("reward_grants")
+    .select("id, payload")
+    .eq("user_id", userId)
+    .eq("status", "pending");
+  if (error || !data?.length) {
+    if (error) console.warn("[persistence] claimPendingRewardGrants", error.message);
+    return null;
+  }
+  const ids = data.map((r) => r.id as string);
+  const { error: updErr } = await supabase
+    .from("reward_grants")
+    .update({ status: "claimed", claimed_at: new Date().toISOString() })
+    .in("id", ids)
+    .eq("status", "pending");
+  if (updErr) {
+    console.warn("[persistence] claimPendingRewardGrants update", updErr.message);
+    return null;
+  }
+
+  const merged: RewardGrantPayload = {
+    copper: 0,
+    silver: 0,
+    gold: 0,
+    essence: 0,
+    rubies: 0,
+  };
+  for (const row of data) {
+    const p = (row.payload ?? {}) as RewardGrantPayload;
+    merged.copper = (merged.copper ?? 0) + (p.copper ?? 0);
+    merged.silver = (merged.silver ?? 0) + (p.silver ?? 0);
+    merged.gold = (merged.gold ?? 0) + (p.gold ?? 0);
+    merged.essence = (merged.essence ?? 0) + (p.essence ?? 0);
+    merged.rubies = (merged.rubies ?? 0) + (p.rubies ?? 0);
+  }
+  if (
+    !(merged.copper || merged.silver || merged.gold || merged.essence || merged.rubies)
+  ) {
+    return null;
+  }
+  return merged;
+}
+

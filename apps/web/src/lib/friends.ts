@@ -158,3 +158,36 @@ export async function setPresenceOffline() {
         console.warn("[presence] offline failed", error.message);
     }
 }
+
+export async function ensureFriendCode(): Promise<string> {
+    if (!supabase) throw new Error("Supabase not configured");
+    const { data, error } = await supabase.rpc("ensure_friend_code");
+    if (error) throw error;
+    return String(data ?? "");
+}
+
+/** True once this account has redeemed someone else's code (one redeem ever). */
+export async function hasRedeemedFriendCode(userId: string): Promise<boolean> {
+    if (!supabase) return false;
+    const { data, error } = await supabase
+        .from("friend_referrals")
+        .select("invitee_id")
+        .eq("invitee_id", userId)
+        .maybeSingle();
+    if (error) return false;
+    return Boolean(data);
+}
+
+export async function redeemFriendCode(code: string): Promise<{ inviter_name?: string }> {
+    if (!supabase) throw new Error("Supabase not configured");
+    const { data, error } = await supabase.rpc("redeem_friend_code", { code });
+    if (error) {
+        const msg = error.message ?? "";
+        if (/already redeemed/i.test(msg)) {
+            throw new Error("You already redeemed a friend code. Share yours to invite others.");
+        }
+        throw error;
+    }
+    return (data as { inviter_name?: string }) ?? {};
+}
+

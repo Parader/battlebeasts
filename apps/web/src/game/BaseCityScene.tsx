@@ -16,7 +16,7 @@ import {
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, ProtectionBubbles, Shrooms } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, ProtectionBubbles, Shrooms, SpiritHusks } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
@@ -393,6 +393,11 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
             <Volcanoes room={room} />
             <ProtectionBubbles room={room} />
             <Shrooms room={room} localSessionId={localSessionId} />
+            <SpiritHusks
+                room={room}
+                localSessionId={localSessionId}
+                predictedRef={predictedRef}
+            />
 
             <LocalPlayerMesh
                 predictedRef={predictedRef}

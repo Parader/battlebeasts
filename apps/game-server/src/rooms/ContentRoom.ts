@@ -4,8 +4,8 @@ import {
   ARENA_ROUND_END_MS,
   ARENA_ROUNDS_TO_WIN,
   DEFAULT_LOADOUT,
-  MATCH_ESSENCE,
   MAX_TALENTS,
+  PLAYER_BASE_MAX_HP,
   PVE_RECONNECT_GRACE_MS,
   PVP_RECONNECT_GRACE_MS,
   RECONNECT_RESUME_GRACE_MS,
@@ -17,19 +17,24 @@ import {
   arenaSpawnForSlot,
   arenaSpawnsForTeam,
   arenaStaticColliders,
+  computeMatchReward,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   cosmeticsEquippedFromFields,
   cosmeticsEquippedToFields,
   normalizeCosmeticsEquipped,
   normalizeLoadout,
+  outcomeFromMatch,
+  rewardRollSalt,
   type MatchRecapRow,
+  type MatchRewardResult,
   type PlayerInput,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
 import { grantPendingLoot } from "../pendingLoot.js";
-import { loadEconomy } from "../persistence.js";
+import { insertRewardGrant, loadEconomy } from "../persistence.js";
+import { bumpQuest } from "../quests.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
 export type ContentJoinOptions = AuthJoinOptions & {
@@ -53,6 +58,8 @@ export class ContentRoom extends Room<BaseCityState> {
   private inputs = new Map<string, PlayerInput[]>();
   private mode = "stub";
   private returnHubOwnerId: string | null = null;
+  /** Per-player return lobby (stamped at match transfer / join). */
+  private returnHubBySession = new Map<string, string>();
   private kind: ContentKind = "pve";
   private identities = new Map<string, VerifiedIdentity>();
   private awaitingReconnect = new Set<string>();
@@ -65,14 +72,35 @@ export class ContentRoom extends Room<BaseCityState> {
   private nextTeam: "a" | "b" = "a";
   /** Set when a PvP match reaches a real conclusion (for essence payouts). */
   private lastMatchWinner: "a" | "b" | "draw" | null = null;
+  private matchId = "";
+  private rematchIndex = 0;
+  /** userIds already granted for the current matchGrantKey. */
+  private grantedUserIds = new Set<string>();
+  private activityBySession = new Map<string, { moveTicks: number; castCount: number }>();
+  /** Rewards computed at finishMatch for recap / leave idempotency. */
+  private recapRewardsBySession = new Map<string, MatchRewardResult>();
+
+  private matchGrantKey(): string {
+    return `${this.matchId || this.roomId}:r${this.rematchIndex}`;
+  }
+
+  private activityOf(sessionId: string) {
+    let a = this.activityBySession.get(sessionId);
+    if (!a) {
+      a = { moveTicks: 0, castCount: 0 };
+      this.activityBySession.set(sessionId, a);
+    }
+    return a;
+  }
 
   onCreate(options: ContentJoinOptions) {
     this.setState(new BaseCityState());
     this.mode = options.mode ?? "stub";
     this.returnHubOwnerId = options.hubOwnerId ?? options.userId ?? null;
     this.kind = kindFromRoomName(this.roomName);
+    this.matchId = options.matchId ?? `m_${Date.now().toString(36)}`;
     this.state.matchMode = this.mode;
-    this.setMetadata({ mode: this.mode, matchId: options.matchId ?? null, kind: this.kind });
+    this.setMetadata({ mode: this.mode, matchId: this.matchId, kind: this.kind });
     this.combat = new CombatSystem(this as never, {
       canHurtPlayers: true,
       onPlayerDamaged: (sessionId, damage, attackerId) => {
@@ -147,13 +175,16 @@ export class ContentRoom extends Room<BaseCityState> {
       this.awaitingReconnect.delete(client.sessionId);
       this.identities.set(client.sessionId, verified);
       if (!this.inputs.has(client.sessionId)) this.inputs.set(client.sessionId, []);
+      // Keep prior return hub; refresh if join options still carry one.
+      this.rememberReturnHub(client.sessionId, verified.userId, options);
       client.send("toast", { message: "Reconnected" });
       this.scheduleResumeGrace();
       return;
     }
 
+    this.rememberReturnHub(client.sessionId, verified.userId, options);
     if (!this.returnHubOwnerId) {
-      this.returnHubOwnerId = options.hubOwnerId ?? verified.userId;
+      this.returnHubOwnerId = this.returnHubBySession.get(client.sessionId) ?? verified.userId;
     }
 
     this.identities.set(client.sessionId, verified);
@@ -237,7 +268,7 @@ export class ContentRoom extends Room<BaseCityState> {
 
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, []);
-    this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents);
+    this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents, {});
 
     if (!verified.isGuest) {
       void loadEconomy(verified.userId).then((eco) => {
@@ -260,14 +291,14 @@ export class ContentRoom extends Room<BaseCityState> {
           p.cosmeticLegs = fields.cosmeticLegs;
           p.cosmeticShoes = fields.cosmeticShoes;
         }
-        this.combat.syncSessionKit(client.sessionId, p.loadout, p.talents);
+        this.combat.syncSessionKit(client.sessionId, p.loadout, p.talents, eco.talentBuild);
         const bonus = this.combat.getSessionKit(client.sessionId)?.maxHpBonus ?? 0;
-        p.maxHp = 100 + bonus;
+        p.maxHp = PLAYER_BASE_MAX_HP + bonus;
         p.hp = Math.min(p.hp, p.maxHp);
       });
     } else {
       player.loadout = DEFAULT_LOADOUT.join(",");
-      this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents);
+      this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents, {});
     }
 
     client.send("toast", {
@@ -521,6 +552,7 @@ export class ContentRoom extends Room<BaseCityState> {
     this.lastMatchWinner = winner;
     const rows: MatchRecapRow[] = [];
     this.state.players.forEach((p, sessionId) => {
+      const reward = this.computeAndGrantLoot(p, sessionId, false);
       rows.push({
         sessionId,
         displayName: p.displayName,
@@ -530,6 +562,15 @@ export class ContentRoom extends Room<BaseCityState> {
         damageTaken: p.statDamageTaken,
         healing: p.statHealing,
         shield: p.statShield,
+        rewards: reward
+          ? {
+              essence: reward.essence,
+              copper: reward.copper,
+              activityMul: reward.activityMul,
+              base: reward.breakdown.baseEssence,
+              winBonus: reward.breakdown.winBonusEssence,
+            }
+          : undefined,
       });
     });
     this.broadcast("match_recap", {
@@ -544,19 +585,90 @@ export class ContentRoom extends Room<BaseCityState> {
     });
   }
 
-  private essenceForPlayer(player: PlayerState, earlyLeave: boolean): number {
-    if (this.kind !== "pvp") return MATCH_ESSENCE.pveClear;
-    if (earlyLeave && !this.lastMatchWinner) return MATCH_ESSENCE.pvpLeaveEarly;
-    const winner = this.lastMatchWinner;
-    if (!winner || winner === "draw") return MATCH_ESSENCE.pvpDraw;
-    if (player.team === winner) return MATCH_ESSENCE.pvpWin;
-    return MATCH_ESSENCE.pvpLoss;
+  private computeRewardForPlayer(
+    player: PlayerState,
+    sessionId: string,
+    earlyLeave: boolean,
+  ): MatchRewardResult {
+    const outcome = outcomeFromMatch({
+      kind: this.kind,
+      earlyLeave,
+      winner: this.lastMatchWinner,
+      team: player.team,
+    });
+    const activity = this.activityOf(sessionId);
+    return computeMatchReward({
+      mode: this.mode,
+      outcome,
+      activity,
+      rollSalt: rewardRollSalt(this.matchGrantKey(), player.id || sessionId),
+    });
   }
 
-  private grantMatchLoot(player: PlayerState, earlyLeave: boolean) {
-    if (!player.id) return;
-    const essence = this.essenceForPlayer(player, earlyLeave);
-    grantPendingLoot(player.id, { copper: 25, silver: 1, essence });
+  /** Grant once per user per matchGrantKey. Returns reward used (for recap). */
+  private computeAndGrantLoot(
+    player: PlayerState,
+    sessionId: string,
+    earlyLeave: boolean,
+  ): MatchRewardResult | null {
+    if (!player.id) return null;
+    if (player.role === "spectator") return null;
+    if (this.grantedUserIds.has(player.id)) {
+      return this.recapRewardsBySession.get(sessionId) ?? null;
+    }
+    const reward = this.computeRewardForPlayer(player, sessionId, earlyLeave);
+    this.grantedUserIds.add(player.id);
+    this.recapRewardsBySession.set(sessionId, reward);
+
+    const outcome = outcomeFromMatch({
+      kind: this.kind,
+      earlyLeave,
+      winner: this.lastMatchWinner,
+      team: player.team,
+    });
+    const source = this.kind === "pvp" ? "pvp_match" : "pve_clear";
+    const sourceKey = `${this.matchGrantKey()}:${player.id}`;
+    const payload = {
+      copper: reward.copper,
+      silver: reward.silver,
+      gold: reward.gold,
+      essence: reward.essence,
+      activityMul: reward.activityMul,
+      base: reward.breakdown.baseEssence,
+      winBonus: reward.breakdown.winBonusEssence,
+      meta: {
+        mode: this.mode,
+        outcome,
+      },
+    };
+
+    void insertRewardGrant(player.id, source, sourceKey, payload);
+    grantPendingLoot(player.id, {
+      copper: reward.copper,
+      silver: reward.silver,
+      gold: reward.gold,
+      essence: reward.essence,
+    });
+
+    if (this.kind === "pvp") {
+      void bumpQuest(player.id, { type: "pvp_mode", mode: this.mode });
+      if (outcome === "win") void bumpQuest(player.id, { type: "pvp_win" });
+      if (outcome !== "leave_early") {
+        void bumpQuest(player.id, { type: "pvp_match_completed" });
+      }
+    }
+    if (reward.essence > 0) {
+      void bumpQuest(player.id, { type: "essence_earned", amount: reward.essence });
+    }
+    if (reward.copper > 0) {
+      void bumpQuest(player.id, { type: "copper_earned", amount: reward.copper });
+    }
+
+    return reward;
+  }
+
+  private grantMatchLoot(player: PlayerState, sessionId: string, earlyLeave: boolean) {
+    this.computeAndGrantLoot(player, sessionId, earlyLeave);
   }
 
   private tryStartRematch() {
@@ -568,6 +680,11 @@ export class ContentRoom extends Room<BaseCityState> {
       if (p.rematchReady) ready += 1;
     });
     if (total > 0 && ready >= total) {
+      this.rematchIndex += 1;
+      this.grantedUserIds.clear();
+      this.recapRewardsBySession.clear();
+      this.activityBySession.clear();
+      this.lastMatchWinner = null;
       this.startRound(1);
     }
   }
@@ -627,15 +744,29 @@ export class ContentRoom extends Room<BaseCityState> {
     this.forceResume();
   }
 
+  private rememberReturnHub(sessionId: string, userId: string, options: ContentJoinOptions) {
+    const hub = options.hubOwnerId || userId;
+    if (hub) this.returnHubBySession.set(sessionId, hub);
+  }
+
+  private hubForClient(client: Client): string {
+    return (
+      this.returnHubBySession.get(client.sessionId) ??
+      this.identities.get(client.sessionId)?.userId ??
+      this.returnHubOwnerId ??
+      client.sessionId
+    );
+  }
+
   private endMatch(message: string) {
     this.broadcast("toast", { message });
-    const hubOwnerId = this.returnHubOwnerId;
+    const earlyLeave = !this.lastMatchWinner;
     for (const client of this.clients) {
       const player = this.state.players.get(client.sessionId);
-      if (player) this.grantMatchLoot(player, false);
+      if (player) this.grantMatchLoot(player, client.sessionId, earlyLeave);
       client.send("transfer", {
         room: ROOM.BASE_CITY,
-        options: { hubOwnerId: hubOwnerId ?? client.sessionId },
+        options: { hubOwnerId: this.hubForClient(client) },
       });
     }
     this.clock.setTimeout(() => {
@@ -645,10 +776,10 @@ export class ContentRoom extends Room<BaseCityState> {
 
   private sendHome(client: Client) {
     const player = this.state.players.get(client.sessionId);
-    if (player) this.grantMatchLoot(player, true);
+    if (player) this.grantMatchLoot(player, client.sessionId, true);
     client.send("transfer", {
       room: ROOM.BASE_CITY,
-      options: { hubOwnerId: this.returnHubOwnerId ?? client.sessionId },
+      options: { hubOwnerId: this.hubForClient(client) },
     });
   }
 
@@ -688,6 +819,9 @@ export class ContentRoom extends Room<BaseCityState> {
           { moveX: input.moveX, moveZ: input.moveZ, dt: input.dt || dt },
           speed,
         );
+        if (Math.abs(input.moveX) + Math.abs(input.moveZ) > 0.05) {
+          this.activityOf(sessionId).moveTicks += 1;
+        }
         const next = this.combat.movePlayer(sessionId, from, desired);
         player.x = next.x;
         player.z = next.z;
@@ -698,12 +832,13 @@ export class ContentRoom extends Room<BaseCityState> {
         if (input.cancelCast) this.combat.tryCancelCast(sessionId, player, now);
         if (input.confirmCast) this.combat.tryConfirmCast(sessionId, player, now);
         if (input.castId) {
-          this.combat.tryBeginCast(sessionId, player, input.castId, now, {
+          const began = this.combat.tryBeginCast(sessionId, player, input.castId, now, {
             moveX: input.moveX,
             moveZ: input.moveZ,
             aimX: input.aimX,
             aimZ: input.aimZ,
           });
+          if (began) this.activityOf(sessionId).castCount += 1;
         }
       }
     }

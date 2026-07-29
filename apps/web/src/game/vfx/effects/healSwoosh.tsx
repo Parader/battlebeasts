@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { GROOVE_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
+import { AoeRimMarker } from "../components/AoeRimMarker";
 import { GroundDecal } from "../components/GroundDecal";
 import { groundPresets } from "../presets/ground";
 import { softEnvelope, smooth01 } from "../easing";
@@ -192,30 +193,31 @@ function HealArc({
   );
 }
 
-const healGroundPreset = {
+/** Soft mint fog inside the heal radius — rim carries the hard hit edge. */
+const healGroundFog = {
   ...groundPresets.frostBallAura,
   element: "poison" as const,
   shape: "circle" as const,
   colorCore: "#d1fae5",
   colorMid: "#6ee7b7",
   colorEdge: "#065f46",
-  opacity: 0.38,
+  opacity: 0.28,
   additive: true,
   radius: 7,
   lifeMs: GROOVE_CAST.channelMs,
   ringWidth: 0.1,
-  softness: 0.1,
-  innerRatio: 0.12,
-  spin: 0.35,
+  softness: 0.12,
+  innerRatio: 0.08,
+  spin: 0.28,
   appearEnd: 0.03,
   fadeStart: 0.82,
 };
 
-/** Snap ground disc open in ~125ms (not over the full channel). */
+/** Snap ground fog + rim open in ~125ms (not over the full channel). */
 const GROUND_APPEAR_MS = 125;
 
 /**
- * Groove heal aura — soft mint ground disc + staggered transparent swooshes.
+ * Groove heal aura — soft mint ground fog + green hit-radius rim + swooshes.
  */
 export function HealSwooshEffect({
   shot,
@@ -229,18 +231,20 @@ export function HealSwooshEffect({
   const groundPos = useRef({ x: shot.x, z: shot.z });
   const groundOpacity = useRef(1);
   const groundProgress = useRef(0);
+  const rimOpacity = useRef(1);
 
   useFrame(() => {
     const elapsed = performance.now() - shot.born;
     const age = elapsed / shot.life;
-    // Radius + opacity reach full in ~125ms, then hold until channel fade-out.
     const appear01 = Math.min(1, elapsed / GROUND_APPEAR_MS);
     groundProgress.current = appear01;
-    groundOpacity.current = softEnvelope(
+    const fade = softEnvelope(
       age,
       GROUND_APPEAR_MS / Math.max(1, shot.life),
       0.82,
     );
+    groundOpacity.current = appear01 * fade;
+    rimOpacity.current = appear01 * fade;
 
     if (shot.followOwnerId) {
       const local =
@@ -268,16 +272,16 @@ export function HealSwooshEffect({
     }
   });
 
-  const radius = shot.radius ?? healGroundPreset.radius;
+  const radius = shot.radius ?? 7;
 
   return (
     <group>
       <group ref={root}>
         <GroundDecal
-          preset={healGroundPreset}
+          preset={healGroundFog}
           shape="circle"
           x={0}
-          y={0.035}
+          y={0.03}
           z={0}
           radius={radius}
           born={shot.born}
@@ -285,6 +289,17 @@ export function HealSwooshEffect({
           opacityMulRef={groundOpacity}
           progressRef={groundProgress}
           growExpand
+        />
+        <AoeRimMarker
+          radius={radius}
+          color="#34d399"
+          hotColor="#ecfdf5"
+          fill={0.04}
+          noise={0.25}
+          glowWidth={0.05}
+          opacity={0.55}
+          opacityMulRef={rimOpacity}
+          y={0.038}
         />
       </group>
       {arcs.map((pose, i) => (

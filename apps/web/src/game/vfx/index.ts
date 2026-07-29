@@ -84,6 +84,11 @@ export {
   setGroundDecalOpacity,
   tickGroundDecal,
   applyGroundDecalPreset,
+  createAoeRimMarkerMaterial,
+  tintAoeRimMarkerMaterial,
+  tickAoeRimMarkerMaterial,
+  setAoeRimMarkerOpacity,
+  setAoeRimMarkerAspect,
   createEnergyBallMaterial,
   createEnergyRingMaterial,
   tintEnergyMaterial,
@@ -101,6 +106,9 @@ export {
 } from "./materials";
 
 export { ObjectPool, createVec3Pool } from "./pool";
+
+export { AoeRimMarker } from "./components/AoeRimMarker";
+export type { AoeRimMarkerProps } from "./components/AoeRimMarker";
 
 export {
   findBone,

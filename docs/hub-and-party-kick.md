@@ -12,6 +12,8 @@ Right-click a player name to open a parchment context menu; left-click does **no
 
 ## Arena party lobby
 
+- **Open party:** Opening the PvP party lobby pulls **everyone already in the hub** onto the party screen (auto-members). No in-hub invites required.
+- **Invite Friend:** Same as Friends → Invite to hub. Marks the friend pending on the party; when they accept and join the hub, they auto-enter the party lobby.
 - **UI:** `apps/web/src/game/ui/PartyLobbyPanel.tsx`
 - **Who can kick:** party leader only, while not queued, not self
 - **Client message:** `party_kick` `{ sessionId }` via `kickFromParty` in `useBaseCityRoom.ts`

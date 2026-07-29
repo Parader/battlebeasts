@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
+import { ABILITIES, COMBAT_ENGAGE_LINGER_MS, PLAYER_BASE_MAX_HP, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { DamagePopup } from "./CombatVfx";
@@ -13,6 +13,8 @@ import { dispatchCombatFxVfx } from "./vfx/combatFxDispatch";
 import { takePortalChannelBubbleScale } from "./vfx/portalChannelRuntime";
 import { setActiveEmote, clearActiveEmote, isEmoteActive } from "./emoteRuntime";
 import { getGroundAim } from "./groundAimRuntime";
+import { hasStatusId } from "./StatusOrnaments";
+import { beginRevengeVanish } from "./revengeVanishRuntime";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     aoe: "#c084fc",
@@ -77,6 +79,7 @@ export type MatchPauseInfo = {
 
 export type HubRosterPlayer = {
     sessionId: string;
+    userId?: string;
     displayName: string;
     isOwner: boolean;
 };
@@ -149,7 +152,7 @@ export function useBaseCityRoom(options: Options) {
     const [queueModes, setQueueModes] = useState<string[]>([]);
     const [contentMode, setContentMode] = useState<string | null>(null);
     const [matchPause, setMatchPause] = useState<MatchPauseInfo>(null);
-    const [localHp, setLocalHp] = useState({ hp: 100, maxHp: 100, shield: 0 });
+    const [localHp, setLocalHp] = useState({ hp: PLAYER_BASE_MAX_HP, maxHp: PLAYER_BASE_MAX_HP, shield: 0 });
     const [combatHudVisible, setCombatHudVisible] = useState(false);
     const combatHudLingerUntilRef = useRef(0);
     const prevLocalHpRef = useRef<number | null>(null);
@@ -157,6 +160,32 @@ export function useBaseCityRoom(options: Options) {
     const [deathAnimMs, setDeathAnimMs] = useState(3000);
     const diedAtRef = useRef<number | null>(null);
     const [hubRoster, setHubRoster] = useState<HubRosterPlayer[]>([]);
+    const [isHubAdmin, setIsHubAdmin] = useState(false);
+    const [hubQuests, setHubQuests] = useState<
+        Array<{
+            id: string;
+            label: string;
+            type: string;
+            target: number;
+            chest: string;
+            progress: number;
+            completed: boolean;
+        }>
+    >([]);
+    const [hubChests, setHubChests] = useState<
+        Array<{ id: string; quality: string; source: string; created_at?: string }>
+    >([]);
+    const [chestReveal, setChestReveal] = useState<{
+        quality: string;
+        essence: number;
+        copper: number;
+        lines: import("@battlebeasts/shared").ChestLootLine[];
+    } | null>(null);
+    /** Unseen quest completions (cleared when Quests panel opens). */
+    const [unseenQuestCompletions, setUnseenQuestCompletions] = useState(0);
+    const seenQuestCompletionsRef = useRef<Set<string>>(new Set());
+    const knownChestIdsRef = useRef<Set<string>>(new Set());
+    const questsHydratedRef = useRef(false);
     const [arenaHud, setArenaHud] = useState<ArenaHudState | null>(null);
     const [matchRecap, setMatchRecap] = useState<MatchRecapState | null>(null);
     const [party, setParty] = useState<PartySnapshot | null>(null);
@@ -179,7 +208,12 @@ export function useBaseCityRoom(options: Options) {
         loadout: [] as string[],
         talents: [] as string[],
         unlocks: null as import("@battlebeasts/shared").PlayerUnlocks | null,
-        loadoutPresets: [] as Array<{ slotIndex: number; name: string; abilityIds: string[] }>,
+        loadoutPresets: [] as Array<{
+            slotIndex: number;
+            name: string;
+            abilityIds: string[];
+            talentBuild?: Record<string, number>;
+        }>,
         activeLoadoutSlot: 0,
     });
     const fxKeyRef = useRef(0);
@@ -312,6 +346,7 @@ export function useBaseCityRoom(options: Options) {
             setPartyInvite(null);
             if (nextPhase !== "hub") {
                 setHubRoster([]);
+                setIsHubAdmin(false);
                 setParty(null);
             }
             if (nextPhase !== "content") setArenaHud(null);
@@ -373,6 +408,7 @@ export function useBaseCityRoom(options: Options) {
                         slotIndex: number;
                         name: string;
                         abilityIds: string[];
+                        talentBuild?: Record<string, number>;
                     }>;
                     activeLoadoutSlot?: number;
                 }) => {
@@ -415,6 +451,94 @@ export function useBaseCityRoom(options: Options) {
             joined.onMessage("hub_roster", (msg: { players?: HubRosterPlayer[] }) => {
                 setHubRoster(Array.isArray(msg.players) ? msg.players : []);
             });
+            joined.onMessage("hub_you_are_admin", (msg: { admin?: boolean }) => {
+                setIsHubAdmin(Boolean(msg?.admin));
+            });
+            joined.onMessage("hub_grant_result", (msg: { ok?: boolean; error?: string }) => {
+                if (msg?.ok === false && msg.error) {
+                    // toast already sent from server for success; surface auth errors
+                    console.warn("[hub_grant]", msg.error);
+                }
+            });
+            joined.onMessage(
+                "hub_quests_state",
+                (msg: {
+                    quests?: Array<{
+                        id: string;
+                        label: string;
+                        type: string;
+                        target: number;
+                        chest: string;
+                        progress: number;
+                        completed: boolean;
+                    }>;
+                    chests?: Array<{
+                        id: string;
+                        quality: string;
+                        source: string;
+                        created_at?: string;
+                    }>;
+                }) => {
+                    const nextQuests = Array.isArray(msg.quests) ? msg.quests : [];
+                    const nextChests = Array.isArray(msg.chests) ? msg.chests : [];
+                    const hydrated = questsHydratedRef.current;
+
+                    if (!hydrated) {
+                        for (const q of nextQuests) {
+                            if (q.completed) seenQuestCompletionsRef.current.add(q.id);
+                        }
+                        knownChestIdsRef.current = new Set(nextChests.map((c) => c.id));
+                        questsHydratedRef.current = true;
+                    } else {
+                        let newCompletions = 0;
+                        for (const q of nextQuests) {
+                            if (!q.completed) continue;
+                            if (seenQuestCompletionsRef.current.has(q.id)) continue;
+                            seenQuestCompletionsRef.current.add(q.id);
+                            newCompletions += 1;
+                            showToast(`Quest complete: ${q.label}`);
+                        }
+                        if (newCompletions > 0) {
+                            setUnseenQuestCompletions((n) => n + newCompletions);
+                        }
+
+                        let newChests = 0;
+                        const nextChestIds = new Set(nextChests.map((c) => c.id));
+                        for (const id of nextChestIds) {
+                            if (!knownChestIdsRef.current.has(id)) newChests += 1;
+                        }
+                        knownChestIdsRef.current = nextChestIds;
+                        if (newChests > 0) {
+                            showToast(
+                                newChests === 1
+                                    ? "You received a chest"
+                                    : `You received ${newChests} chests`,
+                            );
+                        }
+                    }
+
+                    setHubQuests(nextQuests);
+                    setHubChests(nextChests);
+                },
+            );
+            joined.onMessage(
+                "hub_chest_opened",
+                (msg: {
+                    ok?: boolean;
+                    quality?: string;
+                    essence?: number;
+                    copper?: number;
+                    lines?: import("@battlebeasts/shared").ChestLootLine[];
+                }) => {
+                    if (!msg?.ok) return;
+                    setChestReveal({
+                        quality: msg.quality ?? "green",
+                        essence: msg.essence ?? 0,
+                        copper: msg.copper ?? 0,
+                        lines: Array.isArray(msg.lines) ? msg.lines : [],
+                    });
+                },
+            );
 
             joined.onMessage(
                 "emote_fx",
@@ -515,6 +639,30 @@ export function useBaseCityRoom(options: Options) {
                             abilityHudRuntime.setCooldownUntil(cooldownUntilRef.current);
                         }
                         return;
+                    }
+
+                    if (msg.kind === "dash" && msg.abilityId === "spiritForm" && isLocal) {
+                        const landX = msg.x2 ?? msg.x;
+                        const landZ = msg.z2 ?? msg.z;
+                        const dur =
+                            typeof msg.phaseEndsAt === "number"
+                                ? Math.max(16, msg.phaseEndsAt - Date.now())
+                                : 280;
+                        predictorRef.current.beginPointTravel(landX, landZ, dur);
+                        predictedRef.current = { ...predictorRef.current.state };
+                        awaitingCastAckRef.current = false;
+                        pendingCastRef.current = undefined;
+                        castPhaseRef.current = "";
+                        castingAbilityRef.current = null;
+                        predictorRef.current.clearMoveMul();
+                    }
+
+                    if (
+                        msg.abilityId === "revenge" &&
+                        msg.ownerId &&
+                        (msg.kind === "dash" || msg.kind === "hit")
+                    ) {
+                        beginRevengeVanish(msg.ownerId);
                     }
 
                     if (msg.kind === "cast_phase") {
@@ -816,6 +964,14 @@ export function useBaseCityRoom(options: Options) {
                     setMatchRecap(null);
                     setArenaHud(null);
                     clearContentRejoin();
+                    const ownId = opts.userId;
+                    if (hubOwnerId && ownId && hubOwnerId !== ownId) {
+                        savePreferredHub(ownId, hubOwnerId);
+                        optionsRef.current.onActiveHubOwnerId?.(hubOwnerId);
+                    } else {
+                        clearPreferredHub();
+                        optionsRef.current.onActiveHubOwnerId?.(null);
+                    }
                     showToast("Returned to base city");
                 } else {
                     showToast(`Transferred to ${mode ?? msg.room}`);
@@ -877,8 +1033,25 @@ export function useBaseCityRoom(options: Options) {
         const def = ABILITIES[abilityId];
         if (!def) return;
         const now = Date.now();
-        if ((cooldownUntilRef.current[abilityId] ?? 0) > now) return;
+        const room = roomRef.current;
+        const me = room?.state?.players?.get(room.sessionId) as
+            | { statuses?: Parameters<typeof hasStatusId>[0] }
+            | undefined;
+        const spiritRecast =
+            abilityId === "spiritForm" && hasStatusId(me?.statuses, "spiritFormed");
+        // Spirit Form recast ends the form while CD is already ticking — don't block.
+        if (!spiritRecast && (cooldownUntilRef.current[abilityId] ?? 0) > now) return;
         if (pendingCastRef.current) return;
+
+        if (spiritRecast) {
+            pendingCastRef.current = abilityId;
+            awaitingCastAckRef.current = true;
+            localCastCancelledRef.current = false;
+            abilityHudRuntime.setFlashId(abilityId);
+            window.clearTimeout(castFlashTimerRef.current);
+            castFlashTimerRef.current = window.setTimeout(() => abilityHudRuntime.setFlashId(null), 120);
+            return;
+        }
 
         const currentId = castingAbilityRef.current;
         const current = currentId ? ABILITIES[currentId] : null;
@@ -1424,12 +1597,19 @@ export function useBaseCityRoom(options: Options) {
                 }
 
                 // Soft-respawn / teleport: hard snap when server moved far from prediction.
+                // Revenge blink is instant — snap even on short hops while phased.
                 if (serverMe && predictor.isSeeded) {
                     const jump = Math.hypot(
                         serverMe.x - predictor.state.x,
                         serverMe.z - predictor.state.z,
                     );
-                    if (jump > 6) {
+                    const revengePhased = hasStatusId(serverMe.statuses, "revengePhased");
+                    if (jump > 6 || (revengePhased && jump > 0.25)) {
+                        // Latch vanish before the predicted pose jumps so we never
+                        // paint the mesh at the landing spot for a frame.
+                        if (revengePhased && sessionIdRef.current) {
+                            beginRevengeVanish(sessionIdRef.current);
+                        }
                         predictor.seed(serverMe.x, serverMe.z, serverMe.yaw);
                         predictedRef.current = { ...predictor.state };
                         lastAckRef.current = serverMe.lastInputSeq;
@@ -1663,7 +1843,7 @@ export function useBaseCityRoom(options: Options) {
                             shieldRows.push({ statusId: row.statusId, stacks: row.stacks });
                         });
                         const shield = totalShieldAbsorb(shieldRows);
-                        const maxHp = me.maxHp ?? 100;
+                        const maxHp = me.maxHp ?? PLAYER_BASE_MAX_HP;
                         setLocalHp({
                             hp: me.hp,
                             maxHp,
@@ -1673,11 +1853,11 @@ export function useBaseCityRoom(options: Options) {
                         const damaged = me.hp < maxHp - 0.05;
                         const now = performance.now();
                         if (prevLocalHpRef.current != null && me.hp < prevLocalHpRef.current - 0.05) {
-                            combatHudLingerUntilRef.current = now + 3500;
+                            combatHudLingerUntilRef.current = now + COMBAT_ENGAGE_LINGER_MS;
                         }
                         prevLocalHpRef.current = me.hp;
                         if (damaged || shield > 0 || casting || me.hp <= 0) {
-                            combatHudLingerUntilRef.current = now + 3500;
+                            combatHudLingerUntilRef.current = now + COMBAT_ENGAGE_LINGER_MS;
                         }
                         const showHud =
                             damaged || shield > 0 || casting || me.hp <= 0 || now < combatHudLingerUntilRef.current;
@@ -1765,6 +1945,43 @@ export function useBaseCityRoom(options: Options) {
         roomRef.current?.send("hub_kick", { sessionId });
     }, []);
 
+    const grantHubResources = useCallback(
+        (
+            sessionId: string,
+            amounts: { essence: number; copper: number; silver: number; gold: number },
+        ) => {
+            roomRef.current?.send("hub_grant_resources", {
+                targetSessionId: sessionId,
+                ...amounts,
+            });
+        },
+        [],
+    );
+
+    const refreshHubQuests = useCallback(() => {
+        roomRef.current?.send("hub_quests");
+    }, []);
+
+    const openHubChest = useCallback((chestId: string) => {
+        roomRef.current?.send("hub_open_chest", { chestId });
+    }, []);
+
+    const spawnHubChest = useCallback((quality: "green" | "blue" | "purple" | "legendary") => {
+        roomRef.current?.send("hub_spawn_chest", { quality });
+    }, []);
+
+    const clearChestReveal = useCallback(() => {
+        setChestReveal(null);
+    }, []);
+
+    const acknowledgeQuestAlerts = useCallback(() => {
+        setUnseenQuestCompletions(0);
+    }, []);
+
+    const notifyFriendCodeRedeemed = useCallback(() => {
+        roomRef.current?.send("hub_friend_code_redeemed");
+    }, []);
+
     const kickFromParty = useCallback((sessionId: string) => {
         roomRef.current?.send("party_kick", { sessionId });
     }, []);
@@ -1775,6 +1992,10 @@ export function useBaseCityRoom(options: Options) {
 
     const inviteToParty = useCallback((sessionId: string) => {
         roomRef.current?.send("party_invite", { sessionId });
+    }, []);
+
+    const inviteFriendToParty = useCallback((userId: string) => {
+        roomRef.current?.send("party_invite_friend", { userId });
     }, []);
 
     const setPartySeat = useCallback((sessionId: string, seat: PvpSeat) => {
@@ -1834,7 +2055,19 @@ export function useBaseCityRoom(options: Options) {
         deathAnimMs,
         requestRespawn,
         hubRoster,
+        isHubAdmin,
         kickFromHub,
+        grantHubResources,
+        hubQuests,
+        hubChests,
+        unseenQuestCompletions,
+        chestReveal,
+        refreshHubQuests,
+        openHubChest,
+        spawnHubChest,
+        clearChestReveal,
+        acknowledgeQuestAlerts,
+        notifyFriendCodeRedeemed,
         kickFromParty,
         arenaHud,
         matchRecap,
@@ -1843,6 +2076,7 @@ export function useBaseCityRoom(options: Options) {
         partyInvite,
         nearInteract,
         inviteToParty,
+        inviteFriendToParty,
         setPartySeat,
         lockParty,
         cancelParty,

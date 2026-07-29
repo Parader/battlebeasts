@@ -1,18 +1,13 @@
 import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
+import { ABILITIES } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import { softEnvelope } from "../easing";
 import { FireParticleField } from "../components/FireParticleField";
 import { LavaGroundStrip } from "../components/LavaGroundStrip";
+import { AoeRimMarker } from "../components/AoeRimMarker";
 
 const GROW_MS = 620;
-/** Matches ability `radius` — corridor half-width for hits. */
-const HIT_HALF_WIDTH = 0.9;
-/**
- * VFX is wider than the hit half-width so side-fade + lava heat-mask still
- * read as covering the full scorched corridor.
- */
-const VISUAL_WIDTH_MUL = 1.85;
 
 type CrackVent = {
   along: number;
@@ -30,25 +25,25 @@ function mulberry32(seed: number) {
   };
 }
 
-/** Spine vents for particle fire — matches old crack midline zigzag. */
-function buildFireVents(halfLen: number, thickness: number, seed: number): CrackVent[] {
+/** Spine vents for particle fire — kept inside the hit corridor. */
+function buildFireVents(halfSeg: number, hitRadius: number, seed: number): CrackVent[] {
   const rnd = mulberry32(seed | 1);
   const vents: CrackVent[] = [];
   const steps = 18;
-  let prevX = -halfLen;
-  let prevZ = (rnd() - 0.5) * thickness * 0.12;
+  let prevX = -halfSeg;
+  let prevZ = (rnd() - 0.5) * hitRadius * 0.2;
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
-    const x = -halfLen + t * halfLen * 2;
+    const x = -halfSeg + t * halfSeg * 2;
     const z =
-      (rnd() - 0.5) * thickness * 0.35 +
-      Math.sin(t * Math.PI * 2.4) * thickness * 0.08;
+      (rnd() - 0.5) * hitRadius * 0.55 +
+      Math.sin(t * Math.PI * 2.4) * hitRadius * 0.12;
     const midX = (prevX + x) * 0.5;
     const midZ = (prevZ + z) * 0.5;
     vents.push({
       along: midX,
       side: midZ,
-      reveal: Math.abs(midX) / Math.max(halfLen, 0.001),
+      reveal: Math.abs(midX) / Math.max(halfSeg, 0.001),
     });
     prevX = x;
     prevZ = z;
@@ -57,14 +52,19 @@ function buildFireVents(halfLen: number, thickness: number, seed: number): Crack
 }
 
 /**
- * Firewall — lava.png ground strip (side-faded) + particle fire from vents.
+ * Firewall — rim marker matches the real hit stadium (sample centers + tick radius).
+ * Lava/fire sit inside that footprint so the outline is the truth.
  */
 export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
-  const halfLen = Math.max(2, shot.radius ?? 6.5);
-  const hitWidth = HIT_HALF_WIDTH * 2;
-  const visualWidth = hitWidth * VISUAL_WIDTH_MUL;
-  const thickness = visualWidth * 0.95;
-  const fullLen = halfLen * 2;
+  const def = ABILITIES.firewall;
+  /** Server sends wall.halfLength as `radius` on the aoe FX. */
+  const halfLength = Math.max(1.5, shot.radius ?? (def.range > 0 ? def.range * 0.5 : 6.5));
+  const hitRadius = Math.max(0.4, def.radius ?? 0.9);
+  /** Same inset as `firewallWallPoints` — sample centers stay inside the wall. */
+  const hitHalf = Math.max(1.2, halfLength - hitRadius * 0.7);
+  /** True hit envelope: stadium around the sample segment. */
+  const capsuleLen = hitHalf * 2 + hitRadius * 2;
+  const hitWidth = hitRadius * 2;
   const lifeMs = Math.max(1200, shot.life);
   const yaw = Number.isFinite(shot.yaw) ? (shot.yaw as number) : 0;
 
@@ -72,8 +72,8 @@ export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
   const auraOpacity = useRef(0);
 
   const vents = useMemo(
-    () => buildFireVents(halfLen, thickness, shot.key * 9973),
-    [halfLen, thickness, shot.key],
+    () => buildFireVents(hitHalf, hitRadius, shot.key * 9973),
+    [hitHalf, hitRadius, shot.key],
   );
 
   const fireEmitters = useMemo(
@@ -100,12 +100,26 @@ export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
 
   return (
     <group position={[x, 0, z]} rotation={[0, yaw, 0]}>
+      <AoeRimMarker
+        radius={hitRadius}
+        length={capsuleLen}
+        shape="capsule"
+        color="#ef4444"
+        hotColor="#fecaca"
+        fill={0.06}
+        noise={0.25}
+        glowWidth={0.05}
+        y={0.04}
+        opacity={0.55}
+        opacityMulRef={auraOpacity}
+      />
+
       <LavaGroundStrip
-        length={fullLen}
-        width={visualWidth}
+        length={capsuleLen}
+        width={hitWidth}
         y={0.036}
-        sideFade={0.22}
-        endFade={0.07}
+        sideFade={0.18}
+        endFade={0.1}
         progressRef={auraProgress}
         opacityMulRef={auraOpacity}
       />
@@ -116,9 +130,9 @@ export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
         maxParticles={320}
         textureUrl="/assets/vfx/fire.png"
         maxLife={1.25}
-        maxSize={0.55}
+        maxSize={0.5}
         rise={2.15}
-        spread={0.34}
+        spread={0.28}
         progressRef={auraProgress}
         opacityMulRef={auraOpacity}
       />

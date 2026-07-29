@@ -126,7 +126,7 @@ export class StatusSystem {
         row.nextTickAt = def.tickMs ? now + def.tickMs : 0;
         host.statuses.set(statusId, row);
       }
-      if (def.mechanic === "stun" || def.blocksCast) {
+      if (def.mechanic === "stun" || def.mechanic === "silence" || def.blocksCast) {
         this.hooks.onInterruptCast?.(targetId);
       }
       return true;
@@ -158,7 +158,7 @@ export class StatusSystem {
       host.statuses.set(statusId, row);
     }
 
-    if (def.mechanic === "stun" || def.blocksCast) {
+    if (def.mechanic === "stun" || def.mechanic === "silence" || def.blocksCast) {
       this.hooks.onInterruptCast?.(targetId);
     }
     return true;

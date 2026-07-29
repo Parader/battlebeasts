@@ -1,4 +1,5 @@
 import type { SpellTag } from "./abilities";
+import { combatMag } from "./combatMagnitude";
 
 export type StandKind = "customization" | "build" | "talent" | "shop";
 
@@ -148,9 +149,9 @@ export const TALENTS: Record<string, TalentDef> = {
   tough: {
     id: "tough",
     name: "Tough",
-    description: "+10 max HP",
+    description: `+${combatMag(10)} max HP`,
     status: "live",
-    mods: [{ kind: "maxHp", amount: 10 }],
+    mods: [{ kind: "maxHp", amount: combatMag(10) }],
   },
   swift: {
     id: "swift",

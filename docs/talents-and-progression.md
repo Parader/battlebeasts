@@ -23,9 +23,8 @@ Defined in [`packages/shared/src/talentTrees.ts`](../packages/shared/src/talentT
 | --- | --- | --- |
 | `TALENT_POINT_BUDGET` | **31** | Max points that can be invested in a build |
 | `TALENT_TREE_CAP` | **18** | Max points in one tree |
-| `ESSENCE_PER_TALENT_POINT` | **4** | Essence → 1 owned talent point |
-| `ESSENCE_RESET_TREE` | **3** | Cost to wipe one tree |
-| `ESSENCE_RESET_ALL` | **8** | Cost to wipe entire build |
+| `ESSENCE_PER_TALENT_POINT` | **40** | Essence → 1 owned talent point |
+| `ESSENCE_PER_TALENT_REFUND` | **10** | Essence per invested point removed / reshaped / tree reset |
 | `STARTER_TALENT_POINTS` | **10** | New / guest starting owned points |
 
 Tier gates (points already in that tree):
@@ -39,19 +38,9 @@ Tier gates (points already in that tree):
 
 Keystone unlock helper: effective need is `min(requiredPoints, treeCap − rankCost)` so cost-3 keystones remain reachable under the tree cap.
 
-### Match essence payouts (`MATCH_ESSENCE`)
+### Match essence payouts
 
-Granted as pending loot when leaving content (`ContentRoom` → hub):
-
-| Outcome | Essence |
-| --- | --- |
-| PvP win | 8 |
-| PvP loss | 4 |
-| PvP draw / unresolved end | 5 |
-| PvP leave early (no finished match) | 2 |
-| PvE return | 5 |
-
-Plus coins (`copper` / `silver`) on the same grant.
+See [`docs/loot-and-rewards.md`](./loot-and-rewards.md) and `computeMatchReward` in `packages/shared/src/rewards.ts`. Win ≈ base + win-bonus essence (mode-scaled); copper bands replace fixed silver grants.
 
 ---
 
@@ -60,21 +49,21 @@ Plus coins (`copper` / `silver`) on the same grant.
 ```mermaid
 flowchart LR
   Match[Play match] -->|win more| Essence[Essence wallet]
-  Essence -->|4 essence each| Owned[Owned talent points]
+  Essence -->|40 essence each| Owned[Owned talent points]
   Owned --> Invest[Invest ranks in trees]
   Invest --> Build[Saved talent_build]
   Build -.->|preview only today| Combat[Combat kit]
   LiveStubs[Live TALENTS stubs] --> Combat
-  Invest -->|3 or 8 essence| Reset[Reset tree / all]
+  Invest -->|10 essence per pt removed| Respec[Refund / reshape / reset tree]
 ```
 
 1. Play matches → earn essence (more on wins).
 2. Talent stand → **Buy 1 / Buy 5** points (`buy_talent_points`). Owned points cannot exceed `TALENT_POINT_BUDGET`.
 3. Left-click nodes to invest ranks (up to `maxRank`); right-click refunds one rank (WoW-style order: cannot break remaining tier requirements).
-4. **Save build** → `set_talent_build` persists `talent_build` JSON.
-5. **Reset tree** / **Clear all** charge essence server-side and persist empty / partial build.
+4. **Save build** → `set_talent_build` persists `talent_build` JSON. Removing or reshaping points costs `pointsRemoved × ESSENCE_PER_TALENT_REFUND` (adds alone are free); UI confirms when a respec fee applies.
+5. **Reset tree** clears that tree after confirm; same proportional rate for every point wiped.
 
-Owned points are **not** consumed when investing — they are a ceiling. Resetting frees the build slots but does **not** refund essence spent on buying points (only the reset fee).
+Owned points are **not** consumed when investing — they are a ceiling. Respec frees build slots but does **not** refund essence spent on buying points (only the per-point respec fee). Helper: `talentPointsRemoved` / `talentRefundEssenceCost`.
 
 ---
 
@@ -115,9 +104,8 @@ Mutual exclusives called out in workbook balance notes (e.g. Heavy Projectiles v
 | Message | Payload | Effect |
 | --- | --- | --- |
 | `buy_talent_points` | `{ count?: number }` | Spend essence, increase owned `talent_points` (clamped to budget) |
-| `set_talent_build` | `{ build: Record<id, rank> }` | Validate / clamp / save catalog build |
-| `reset_talent_tree` | `{ tree: TalentTreeId }` | Cost `ESSENCE_RESET_TREE`, clear that tree |
-| `reset_talent_build` | — | Cost `ESSENCE_RESET_ALL`, clear all ranks |
+| `set_talent_build` | `{ build: Record<id, rank> }` | Validate / clamp / save; charge `talentRefundEssenceCost` for points removed vs previous build |
+| `reset_talent_tree` | `{ tree: TalentTreeId }` | Clear that tree; cost = tree points × `ESSENCE_PER_TALENT_REFUND` |
 | `set_talents` | `{ talentIds: string[] }` | **Live stubs only** (`tough` / `swift` / `focused`), max 2 — still drives combat kit HP/speed/CD |
 
 Inventory push (`inventory`) includes:
@@ -135,11 +123,14 @@ talentBuild: TalentBuild    // catalog ranks
 
 Migration: [`supabase/migrations/20260725000004_talent_progression.sql`](../supabase/migrations/20260725000004_talent_progression.sql)
 
-- `talents.talent_build` — `jsonb` map `talentId → rank`
+- `talents.talent_build` — `jsonb` map `talentId → rank` (active/account mirror)
+- `loadout_presets.talent_build` — per-preset talent ranks ([`20260729000000_loadout_preset_talent_build.sql`](../supabase/migrations/20260729000000_loadout_preset_talent_build.sql)); each loadout is spells + talents
 - `inventory` row `resource_id = 'talent_points'`
 - Seeds existing users with 10 talent points if missing
 
-Load/save: [`apps/game-server/src/persistence.ts`](../apps/game-server/src/persistence.ts) (`loadEconomy`, `saveInventory(..., talentPoints)`, `saveTalentBuild`).
+Selecting a loadout preset applies that slot’s `ability_ids` **and** `talent_build`. Saving talents writes to the **active** preset (and mirrors `talents.talent_build`).
+
+Load/save: [`apps/game-server/src/persistence.ts`](../apps/game-server/src/persistence.ts) (`loadEconomy`, `saveInventory(..., talentPoints)`, `saveTalentBuild`, `saveLoadoutPreset`).
 
 Guests keep progression in room memory only (not Supabase).
 
@@ -189,7 +180,7 @@ Live stub mods today:
 
 | Id | Mod |
 | --- | --- |
-| `tough` | `maxHp +10` |
+| `tough` | `maxHp +100` (×10 combat magnitude) |
 | `swift` | `moveSpeedMul × 1.08` |
 | `focused` | `cooldownMul × 0.9` (all loadout abilities) |
 
@@ -205,35 +196,43 @@ Live stub mods today:
 | Feature | Status |
 | --- | --- |
 | Tree UI, buy points, save/reset build | Live (hub) |
-| Catalog talent combat effects | **Not live** until `implemented: true` on the catalog entry + `resolveKit` wiring |
+| Catalog talent combat effects | **Not live** until `implemented: true` + bake in `resolveKit` from `talentBuild` |
+| **Opening Salvo (`DES_08`)** | **Live** — initiate-combat damage bonus (2.7 / 5.3 / 8%), **8s** CD (= leave-combat linger), disarmed if hit first |
 | WIP marker in tree UI | Nodes without `implemented: true` show **WIP** + tooltip note |
-| `tough` / `swift` / `focused` | Live via `resolveKit` |
+| `tough` / `swift` / `focused` | Live via stub `TALENTS` + `resolveKit` |
 | Authored talent prerequisite links | Visual nearest-parent only |
 | Essence / point economy | Live |
+
+### Opening Salvo rules
+
+- First node in Destruction (`layoutOrder: 0`).
+- Bonus applies only when **initiating combat** (deal a Damage-tagged ability hit while out of combat).
+- Being **hit first** or attacking while **already in combat** withholds the bonus until **leave combat** (**8s** linger — same as Opening Salvo CD / HP bar combat tint).
+- Kit field: `CombatSessionKit.openingSalvoDmgBonus`; gate: `CombatSystem.applyRawDamage`.
 
 ### Marking a talent implemented
 
 On the catalog entry in `talentCatalog.ts`:
 
 ```ts
-DES_01: {
+DES_08: {
   // ...
   implemented: true, // combat-ready
 },
 ```
 
-Omit or set `false` = design preview (default for all 100 today). Also add live `TalentMod` bake in `resolveKit` / `TALENTS` when shipping combat behavior.
+Omit or set `false` = design preview. Bake magnitude from `talentBuild` ranks in `resolveKit` (preferred for catalog talents) and/or add a live `TalentDef` in `stands.ts` for stub-style mods.
 
 ---
 
 ## Promoting a catalog talent (checklist)
 
-1. Add or extend a live `TalentDef` in `stands.ts` with typed `TalentMod`(s); set `status: "live"`.
-2. Implement bake logic in `resolveKit` (player sheet and/or per-ability, tag-filtered).
-3. Optionally remove/keep the catalog entry (`status: "catalog"` stays for reference).
-4. Wire build → combat: map saved `talent_build` ranks into kit on sync (replace or complement stub `talent_ids`).
+1. Set `implemented: true` and final `exactEffect` text on the catalog entry.
+2. Bake ranks into `CombatSessionKit` inside `resolveKit` (pass `talentBuild` from hub/match sync).
+3. Apply behavior in the combat hot path (e.g. `applyRawDamage` / CD / status).
+4. Call `syncSessionKit(..., talentBuild)` on save build, loadout select, and match join.
 5. Restart game-server after shared changes.
-6. Smoke-test: invest ranks, save, rejoin hub, confirm HP/speed/CD/combat feel.
+6. Smoke-test: invest ranks, save, rejoin hub/match, confirm combat feel.
 
 ---
 

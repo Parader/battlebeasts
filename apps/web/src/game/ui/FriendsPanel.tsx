@@ -1,21 +1,20 @@
 import { useState } from "react";
-import type { FriendRequestRow, FriendRow, HubInviteRow } from "@/lib/friends";
+import type { FriendRow } from "@/lib/friends";
 import { GamePanelShell } from "./GamePanelShell";
 
 type Props = {
   open: boolean;
   onClose: () => void;
   friends: FriendRow[];
-  requests: FriendRequestRow[];
-  invites: HubInviteRow[];
   loading: boolean;
   error: string | null;
   onAddFriend: (name: string) => Promise<void>;
-  onAnswerRequest: (id: string, accept: boolean) => Promise<void>;
+  onRedeemFriendCode: (code: string) => Promise<void>;
+  friendCode: string | null;
+  /** After one redeem, the input is hidden permanently. */
+  hasRedeemedCode?: boolean;
   onInviteToHub: (friendId: string) => Promise<void>;
   onRemoveFriend: (friendId: string) => Promise<void>;
-  onAnswerHubInvite: (id: string, accept: boolean) => Promise<string | null>;
-  onVisitHub: (hubOwnerId: string) => void;
   onReturnHome: () => void;
   currentHubOwnerId: string;
   myUserId: string;
@@ -25,21 +24,20 @@ export function FriendsPanel({
   open,
   onClose,
   friends,
-  requests,
-  invites,
   loading,
   error,
   onAddFriend,
-  onAnswerRequest,
+  onRedeemFriendCode,
+  friendCode,
+  hasRedeemedCode = false,
   onInviteToHub,
   onRemoveFriend,
-  onAnswerHubInvite,
-  onVisitHub,
   onReturnHome,
   currentHubOwnerId,
   myUserId,
 }: Props) {
   const [name, setName] = useState("");
+  const [codeInput, setCodeInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -76,6 +74,53 @@ export function FriendsPanel({
           </div>
         ) : null}
 
+        <section className="space-y-2">
+          <h3 className="bb-section-label">Your friend code</h3>
+          <p className="bb-muted text-sm">
+            Share this code so friends can redeem it once and link you for quests.
+          </p>
+          <div className="bb-list-row flex items-center justify-between gap-2">
+            <code className="tabular-nums tracking-wider">{friendCode ?? "…"}</code>
+            {friendCode ? (
+              <button
+                type="button"
+                className="bb-btn-ink"
+                onClick={() => void navigator.clipboard?.writeText(friendCode)}
+              >
+                Copy
+              </button>
+            ) : null}
+          </div>
+          {hasRedeemedCode ? (
+            <p className="bb-muted text-sm">
+              You already redeemed a friend code. Keep sharing yours to invite people.
+            </p>
+          ) : (
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!codeInput.trim()) return;
+                void run(async () => {
+                  await onRedeemFriendCode(codeInput.trim());
+                  setCodeInput("");
+                });
+              }}
+            >
+              <input
+                aria-label="Redeem friend code"
+                placeholder="Redeem a code (once)"
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value)}
+                className="bb-input flex-1"
+              />
+              <button type="submit" className="bb-btn-brass" disabled={busy || !codeInput.trim()}>
+                Redeem
+              </button>
+            </form>
+          )}
+        </section>
+
         <form
           className="flex gap-2"
           onSubmit={(e) => {
@@ -103,77 +148,6 @@ export function FriendsPanel({
         {(error || localError) && (
           <p className="text-sm text-[var(--bb-danger)]">{localError ?? error}</p>
         )}
-
-        {invites.length > 0 ? (
-          <section>
-            <h3 className="bb-section-label">Hub invites</h3>
-            <ul className="space-y-2">
-              {invites.map((inv) => (
-                <li key={inv.id} className="bb-list-row bb-list-row--stack">
-                  <p>
-                    {inv.from_name ?? "Hunter"} invited you to their city
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className="bb-btn-brass"
-                      disabled={busy}
-                      onClick={() =>
-                        void run(async () => {
-                          const hub = await onAnswerHubInvite(inv.id, true);
-                          if (hub) onVisitHub(hub);
-                        })
-                      }
-                    >
-                      Join
-                    </button>
-                    <button
-                      type="button"
-                      className="bb-btn-ink"
-                      disabled={busy}
-                      onClick={() =>
-                        void run(() => onAnswerHubInvite(inv.id, false).then(() => undefined))
-                      }
-                    >
-                      Decline
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-
-        {requests.length > 0 ? (
-          <section>
-            <h3 className="bb-section-label">Friend requests</h3>
-            <ul className="space-y-2">
-              {requests.map((req) => (
-                <li key={req.id} className="bb-list-row justify-between">
-                  <span className="font-semibold">{req.from_name ?? "Hunter"}</span>
-                  <div className="flex shrink-0 gap-2">
-                    <button
-                      type="button"
-                      className="bb-btn-brass"
-                      disabled={busy}
-                      onClick={() => void run(() => onAnswerRequest(req.id, true))}
-                    >
-                      Accept
-                    </button>
-                    <button
-                      type="button"
-                      className="bb-btn-ink"
-                      disabled={busy}
-                      onClick={() => void run(() => onAnswerRequest(req.id, false))}
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
 
         <section>
           <h3 className="bb-section-label">

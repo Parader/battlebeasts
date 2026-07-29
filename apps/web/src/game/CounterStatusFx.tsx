@@ -4,6 +4,10 @@ import * as THREE from "three";
 
 const COUNTER_HOT = "#f5c542";
 const COUNTER_SOFT = "#ffe08a";
+const REVENGE_HOT = "#ef4444";
+const REVENGE_SOFT = "#fca5a5";
+const SPIRIT_HOT = "#818cf8";
+const SPIRIT_SOFT = "#c7d2fe";
 
 type StatusRow = { statusId: string; stacks?: number };
 
@@ -27,15 +31,16 @@ function isGlowSurface(mesh: THREE.Mesh): boolean {
 }
 
 /**
- * Counter armed = bright second-skin gold glow.
- * After trigger = same gold skin (much softer) + ground glow until buffs end.
+ * Counter armed = bright second-skin gold glow; after trigger = soft gold + ground.
+ * Revenge armed = bright second-skin red glow (no post-buff phase yet).
+ * Spirit Form = soft blue second-skin wrapper (character stays fully opaque).
  */
 export function CounterStatusFx({ characterRoot, getStatuses }: Props) {
   const ground = useRef<THREE.Group>(null);
   const glowActive = useRef(false);
   const matOrig = useRef(new WeakMap<THREE.Material, MatOrig>());
   const overlays = useRef<THREE.SkinnedMesh[]>([]);
-  /** 0 = off, 1 = full armed, ~0.28 = buffed soft. */
+  /** 0 = off, 1 = full armed, ~0.28 = buffed soft, ~0.72 = spirit form. */
   const glowAmt = useRef(0);
   const groundAmt = useRef(0);
 
@@ -137,39 +142,62 @@ export function CounterStatusFx({ characterRoot, getStatuses }: Props) {
     const t = clock.elapsedTime;
     const safeDt = Math.min(0.05, dt);
     const has = (id: string) => rows.some((r) => r.statusId === id);
-    const armed = has("counterArmed");
+    const revengeArmed = has("revengeArmed");
+    const counterArmed = has("counterArmed");
+    const spiritFormed = has("spiritFormed");
+    const armed = revengeArmed || counterArmed;
     const buffed =
-      has("counterEmpowered") || has("counterHaste");
+      !revengeArmed && (has("counterEmpowered") || has("counterHaste"));
+    const mode: "counter" | "revenge" | "spirit" = revengeArmed
+      ? "revenge"
+      : counterArmed || buffed
+        ? "counter"
+        : spiritFormed
+          ? "spirit"
+          : "counter";
+    const hot =
+      mode === "revenge" ? REVENGE_HOT : mode === "spirit" ? SPIRIT_HOT : COUNTER_HOT;
+    const soft =
+      mode === "revenge" ? REVENGE_SOFT : mode === "spirit" ? SPIRIT_SOFT : COUNTER_SOFT;
 
-    const pulse = 0.55 + 0.45 * Math.sin(t * 9);
+    const pulse = 0.55 + 0.45 * Math.sin(t * (mode === "spirit" ? 5.5 : 9));
     const softPulse = 0.7 + 0.3 * Math.sin(t * 3.2);
     const root = characterRoot ?? null;
 
-    // Armed = full gold skin; buffed = soft gold skin (continuity); else fade out.
-    const glowTarget = armed ? 1 : buffed ? 0.28 : 0;
+    // Armed = full glow; buffed = soft + ground; spirit = blue wrapper; else fade.
+    const glowTarget = armed ? 1 : buffed ? 0.28 : spiritFormed ? 0.72 : 0;
     const groundTarget = buffed ? 1 : 0;
-    const glowLerp = 1 - Math.exp(-(armed || buffed ? 10 : 7) * safeDt);
+    const glowOn = armed || buffed || spiritFormed;
+    const glowLerp = 1 - Math.exp(-(glowOn ? 10 : 7) * safeDt);
     const groundLerp = 1 - Math.exp(-(buffed ? 8 : 5) * safeDt);
     glowAmt.current += (glowTarget - glowAmt.current) * glowLerp;
     groundAmt.current += (groundTarget - groundAmt.current) * groundLerp;
 
     const g = glowAmt.current;
     if (g > 0.01 && root) {
-      // Soft buff emissive stays clearly weaker than armed.
       const emissiveStrength = armed
         ? 0.95 + 0.55 * pulse
-        : (0.18 + 0.08 * softPulse) * (g / 0.28);
-      applyEmissive(root, matOrig.current, Math.max(0, emissiveStrength));
+        : spiritFormed
+          ? (0.35 + 0.2 * softPulse) * (g / 0.72)
+          : (0.18 + 0.08 * softPulse) * (g / 0.28);
+      applyEmissive(root, matOrig.current, Math.max(0, emissiveStrength), hot);
       glowActive.current = true;
 
       const skinOp = armed
         ? (0.28 + 0.16 * pulse) * g
-        : (0.08 + 0.04 * softPulse) * (g / 0.28);
+        : spiritFormed
+          ? (0.2 + 0.1 * softPulse) * (g / 0.72)
+          : (0.08 + 0.04 * softPulse) * (g / 0.28);
       skinMat.opacity = Math.max(0, skinOp);
-      skinMat.color.set(armed && pulse > 0.7 ? COUNTER_HOT : COUNTER_SOFT);
+      skinMat.color.set(
+        armed && pulse > 0.7 ? hot : spiritFormed ? (pulse > 0.65 ? hot : soft) : soft,
+      );
       for (const m of overlays.current) {
         m.visible = skinMat.opacity > 0.01;
-        m.scale.setScalar(1.03 + 0.02 * g * (armed ? pulse : softPulse));
+        m.scale.setScalar(
+          1.03 +
+            0.02 * g * (armed ? pulse : spiritFormed ? softPulse : softPulse),
+        );
       }
     } else if (glowActive.current && root) {
       clearEmissive(root, matOrig.current);
@@ -188,6 +216,9 @@ export function CounterStatusFx({ characterRoot, getStatuses }: Props) {
         const breathe = 0.85 + 0.15 * Math.sin(t * 4.5);
         ground.current.rotation.y += safeDt * 0.55;
         ground.current.scale.setScalar(0.92 + 0.08 * breathe);
+        groundCoreMat.color.set(hot);
+        groundRingMat.color.set(soft);
+        groundHaloMat.color.set(soft);
         groundCoreMat.opacity = ga * (0.38 + 0.12 * softPulse);
         groundRingMat.opacity = ga * (0.32 + 0.1 * softPulse);
         groundHaloMat.opacity = ga * (0.18 + 0.08 * softPulse);
@@ -221,6 +252,7 @@ function applyEmissive(
   scene: THREE.Object3D,
   orig: WeakMap<THREE.Material, MatOrig>,
   intensity: number,
+  color: string,
 ) {
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
@@ -236,7 +268,7 @@ function applyEmissive(
           intensity: std.emissiveIntensity ?? 0,
         });
       }
-      std.emissive.set(COUNTER_HOT);
+      std.emissive.set(color);
       std.emissiveIntensity = intensity;
     }
   });

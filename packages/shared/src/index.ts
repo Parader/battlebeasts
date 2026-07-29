@@ -1,4 +1,5 @@
 export * from "./constants";
+export * from "./combatMagnitude";
 export * from "./abilities";
 export * from "./statuses";
 export * from "./resources";
@@ -8,6 +9,7 @@ export * from "./emotes";
 export * from "./talentKit";
 export * from "./talentCatalog";
 export * from "./talentTrees";
+export * from "./rewards";
 export * from "./stands";
 export * from "./cosmetics";
 export * from "./hubVillage";

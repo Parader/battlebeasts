@@ -3,7 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import { Billboard } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
-import { totalShieldAbsorb } from "@battlebeasts/shared";
+import { COMBAT_ENGAGE_LINGER_MS, PLAYER_BASE_MAX_HP, totalShieldAbsorb } from "@battlebeasts/shared";
 import {
   StatusHpBadgeStack,
   readBleedingStacks,
@@ -15,6 +15,7 @@ import {
   syncPoisonBadge,
   syncRejuvenationBadge,
 } from "./StatusHpBadgeStack";
+import { isRevengeVanished } from "./revengeVanishRuntime";
 
 type Props = {
   room: Room | null;
@@ -23,11 +24,9 @@ type Props = {
   y?: number;
 };
 
-const COMBAT_LINGER_MS = 3500;
-
 /**
  * Camera-facing HP (+ optional shield) bar above a player.
- * Hidden when dead, disconnected, or out of combat (full HP, no shield/cast, after linger).
+ * Visible while in combat (damaged / casting / DoT / linger); hidden out of combat.
  */
 export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
   const root = useRef<THREE.Group>(null);
@@ -86,7 +85,20 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       return;
     }
 
-    const maxHp = Math.max(1, p.maxHp ?? 100);
+    let revengePhased = false;
+    p.statuses?.forEach((row) => {
+      if (row?.statusId === "revengePhased") revengePhased = true;
+    });
+    if (isRevengeVanished(sessionId) || revengePhased) {
+      g.visible = false;
+      if (badge) badge.style.display = "none";
+      if (burnBadge) burnBadge.style.display = "none";
+      if (bleedBadge) bleedBadge.style.display = "none";
+      if (rejBadge) rejBadge.style.display = "none";
+      return;
+    }
+
+    const maxHp = Math.max(1, p.maxHp ?? PLAYER_BASE_MAX_HP);
     const ratio = Math.max(0, Math.min(1, p.hp / maxHp));
     const rows: { statusId?: string; stacks?: number }[] = [];
     p.statuses?.forEach((row) => {
@@ -107,15 +119,15 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
     const rejuvenating = rejuvenationStacks > 0;
 
     if (prevHp.current != null && p.hp < prevHp.current - 0.05) {
-      lingerUntil.current = now + COMBAT_LINGER_MS;
+      lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
     }
     prevHp.current = p.hp;
 
     if (damaged || shieldRatio > 0 || casting || poisoned || burning || bleeding || rejuvenating) {
-      lingerUntil.current = now + COMBAT_LINGER_MS;
+      lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
     }
 
-    const inCombat =
+    const show =
       damaged ||
       shieldRatio > 0 ||
       casting ||
@@ -124,8 +136,9 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       bleeding ||
       rejuvenating ||
       now < lingerUntil.current;
-    if (!inCombat) {
-      g.visible = false;
+
+    g.visible = show;
+    if (!show) {
       if (badge) badge.style.display = "none";
       if (burnBadge) burnBadge.style.display = "none";
       if (bleedBadge) bleedBadge.style.display = "none";
@@ -136,7 +149,6 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       return;
     }
 
-    g.visible = true;
     m.scale.x = Math.max(0.001, ratio);
     m.position.x = -0.5 * (1 - ratio);
 

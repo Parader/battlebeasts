@@ -3,7 +3,8 @@
  * `"parchments"` reserved for future PvE run modifiers (no items in v1).
  */
 
-import type { ShopCost } from "./resources";
+import { COPPER_PER_SILVER, type ShopCost } from "./resources";
+import { HEALTH_TONIC_HEAL } from "./combatMagnitude";
 import { COSMETIC_CATALOG } from "./cosmetics";
 import { EMOTES } from "./emotes";
 import {
@@ -51,9 +52,9 @@ export const SHOP_ITEMS: Record<string, ShopItemDef> = {
     id: "health_tonic",
     name: "Health Tonic",
     category: "consumables",
-    cost: coins(50),
+    cost: coins(35),
     grant: { kind: "consumable", effect: "health_tonic" },
-    description: "+25 HP",
+    description: `+${HEALTH_TONIC_HEAL} HP`,
   },
   copper_pouch: {
     id: "copper_pouch",
@@ -67,7 +68,7 @@ export const SHOP_ITEMS: Record<string, ShopItemDef> = {
     id: "loadout_slot_2",
     name: "Loadout Preset Slot",
     category: "loadouts",
-    cost: coins(500), // 5 silver
+    cost: coins(80 * COPPER_PER_SILVER),
     grant: { kind: "loadout_slot", toCount: 2 },
     description: "Unlock a second saved spell loadout",
   },
@@ -81,7 +82,7 @@ for (const hex of COSMETIC_COLORS) {
     id,
     name: `Body Color ${hex}`,
     category: "cosmetics",
-    cost: coins(120),
+    cost: coins(90),
     grant: { kind: "color", hex },
   };
 }
@@ -93,7 +94,7 @@ for (const hex of COSMETIC_PATTERN_COLORS) {
     id,
     name: `Pattern Ink ${hex}`,
     category: "cosmetics",
-    cost: coins(100),
+    cost: coins(70),
     grant: { kind: "pattern_color", hex },
   };
 }
@@ -105,7 +106,7 @@ for (const pattern of COSMETIC_PATTERNS) {
     id,
     name: `${pattern.name} Pattern`,
     category: "cosmetics",
-    cost: coins(250),
+    cost: coins(160),
     grant: { kind: "pattern", patternId: pattern.id },
     description: pattern.description,
   };
@@ -117,7 +118,7 @@ for (const item of Object.values(COSMETIC_CATALOG)) {
     id,
     name: item.name,
     category: "cosmetics",
-    cost: coins(400),
+    cost: coins(280),
     grant: { kind: "cosmetic", itemId: item.id },
     description: item.slot,
   };
@@ -130,7 +131,7 @@ for (const emote of Object.values(EMOTES)) {
     id,
     name: emote.name,
     category: "emotes",
-    cost: coins(300),
+    cost: coins(200),
     grant: { kind: "emote", emoteId: emote.id },
   };
 }

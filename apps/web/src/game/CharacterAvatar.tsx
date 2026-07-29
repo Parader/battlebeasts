@@ -29,6 +29,7 @@ import { InteractPromptBillboard } from "./InteractPromptBillboard";
 import { resetFootsteps, tickFootsteps } from "./gameSfx";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
 import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
+import { isRevengeVanished } from "./revengeVanishRuntime";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -72,7 +73,7 @@ export function CharacterAvatar({
   const seededMove = useRef(false);
   const visualYaw = useRef(0);
   const yawLocked = useRef(false);
-  const cloakedRef = useRef(false);
+  const ghostOpacityRef = useRef(1);
   const [cloakOpacity, setCloakOpacity] = useState(1);
   const appearanceKey = useRef("");
   const cosmeticsKeyRef = useRef("");
@@ -206,6 +207,12 @@ export function CharacterAvatar({
     g.position.set(p.x, smashHopOffsetY(me) + deathSinkOffsetY(deathSinkRef.current), p.z);
     if (aim) aim.rotation.y = p.yaw;
 
+    const revengeVanishedEarly =
+      hasStatusId(me?.statuses, "revengePhased") || isRevengeVanished(localSessionId);
+    // Hide before any further work this frame so a late latch still covers this paint.
+    if (bodyRef.current) bodyRef.current.visible = !revengeVanishedEarly;
+    if (aim) aim.visible = !revengeVanishedEarly;
+
     if (!seededMove.current) {
       prevPos.current.set(p.x, 0, p.z);
       visualYaw.current = p.yaw;
@@ -257,10 +264,15 @@ export function CharacterAvatar({
     prevPos.current.set(p.x, 0, p.z);
 
     const cloaked = hasStatusId(me?.statuses, "cloaked");
+    const revengePhased = hasStatusId(me?.statuses, "revengePhased");
+    const revengeVanished =
+      revengePhased || isRevengeVanished(localSessionId);
+    const spiritFormed = hasStatusId(me?.statuses, "spiritFormed");
+    const ghosted = cloaked || revengeVanished;
     const castingDecoy = me?.castAbilityId === "decoy";
     const speed = Math.hypot(velocity.current.x, velocity.current.z);
     const hopY = smashHopOffsetY(me);
-    tickFootsteps(speed, safeDt, { muted: cloaked || hopY > 0.08 });
+    tickFootsteps(speed, safeDt, { muted: ghosted || spiritFormed || hopY > 0.08 });
     const movingCloak = cloaked && !castingDecoy && speed > CLOAK_MOVE_SPEED_EPS;
 
     syncPlayerCast(controller, room, localSessionId, lastCastId, comboAnimHoldUntil);
@@ -336,11 +348,15 @@ export function CharacterAvatar({
 
     body.rotation.y = visualYaw.current;
 
-    if (cloaked !== cloakedRef.current) {
-      cloakedRef.current = cloaked;
-      const nextOpacity = cloaked ? 0.32 : 1;
-      setCharacterOpacity(scene, nextOpacity);
-      setCloakOpacity(nextOpacity);
+    // Fully hide mesh, ornaments, and aim during Revenge blink — no pre-appear flash.
+    if (bodyRef.current) bodyRef.current.visible = !revengeVanished;
+    if (aimRef.current) aimRef.current.visible = !revengeVanished;
+
+    const ghostOpacity = revengeVanished ? 0 : cloaked ? 0.32 : 1;
+    if (ghostOpacity !== ghostOpacityRef.current) {
+      ghostOpacityRef.current = ghostOpacity;
+      setCharacterOpacity(scene, ghostOpacity);
+      setCloakOpacity(ghostOpacity);
       if (!cloaked) {
         controller.setCrouchLoco(false);
       }
@@ -354,7 +370,11 @@ export function CharacterAvatar({
     }
 
     controller.setStunned(hasStatusId(me?.statuses, "stunned"));
-    const speedMul = hasStatusId(me?.statuses, "surged") ? 1.6 : 1;
+    const speedMul = hasStatusId(me?.statuses, "surged")
+      ? 1.6
+      : spiritFormed
+        ? 1.35
+        : 1;
     controller.setMovement({
       worldVelocity: velocity.current,
       facingYaw: visualYaw.current,

@@ -11,7 +11,12 @@ import {
   playEmoteAnimation,
 } from "./animation";
 import { getActiveEmote } from "./emoteRuntime";
-import { CHARACTER_URL, prepareCharacterScene, tintCharacterSurface } from "./characterVisual";
+import {
+  CHARACTER_URL,
+  prepareCharacterScene,
+  setCharacterOpacity,
+  tintCharacterSurface,
+} from "./characterVisual";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
 import { syncPlayerCast } from "./syncPlayerCast";
@@ -25,6 +30,7 @@ import { PlayerNameBillboard } from "./PlayerNameBillboard";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
 import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
 import { registerCharacterRoot } from "./characterRoots";
+import { isRevengeVanished } from "./revengeVanishRuntime";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -81,6 +87,7 @@ function RemotePlayerAvatar({
   const yawLocked = useRef(false);
   const wasDeadRef = useRef(false);
   const deathSinkRef = useRef<DeathSinkState | null>(null);
+  const ghostOpacityRef = useRef(1);
 
   const gltf = useGLTF(CHARACTER_URL);
   const scene = useMemo(() => {
@@ -126,13 +133,20 @@ function RemotePlayerAvatar({
       return;
     }
 
-    // Cloaked players are fully invisible to others (still hittable server-side).
-    // Keep dead-reckoning so uncloak doesn't teleport the mesh.
+    // Cloaked / Revenge phase: fully invisible to others (still hittable only if not invuln).
+    // Spirit Form is ghosted but still visible. Keep dead-reckoning either way.
     const cloaked = hasStatusId(p.statuses, "cloaked");
-    if (cloaked) {
+    const revengePhased = hasStatusId(p.statuses, "revengePhased");
+    const revengeVanished = revengePhased || isRevengeVanished(sessionId);
+    const spiritFormed = hasStatusId(p.statuses, "spiritFormed");
+    if (cloaked || revengeVanished) {
       g.visible = false;
     } else {
       g.visible = true;
+      if (ghostOpacityRef.current !== 1) {
+        ghostOpacityRef.current = 1;
+        setCharacterOpacity(scene, 1);
+      }
     }
 
     const now = performance.now();
@@ -308,7 +322,11 @@ function RemotePlayerAvatar({
 
     const speed = Math.hypot(vel.current.x, vel.current.z);
     controller.setStunned(hasStatusId(p.statuses, "stunned"));
-    const speedMul = hasStatusId(p.statuses, "surged") ? 1.6 : 1;
+    const speedMul = hasStatusId(p.statuses, "surged")
+      ? 1.6
+      : spiritFormed
+        ? 1.35
+        : 1;
     controller.setMovement({
       worldVelocity: speed > 0.12 ? vel.current : zeroVel.current,
       facingYaw: renderYaw.current,

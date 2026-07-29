@@ -1,4 +1,4 @@
-import { ABILITIES, abilityEffectKind } from "@battlebeasts/shared";
+import { ABILITIES, abilityEffectKind, COMBAT_FX_VARIANT_WALL_HIT } from "@battlebeasts/shared";
 import type { MutableRefObject, ReactNode } from "react";
 import { Room } from "colyseus.js";
 import type { OneShotEffect } from "./types";
@@ -25,8 +25,10 @@ import { FirewallGroundEffect } from "./effects/firewallGround";
 import { PortalBlinkEffect } from "./effects/portalBlink";
 import { VolcanoRockEffect } from "./effects/volcanoRock";
 import { BloodRushTrailEffect } from "./effects/bloodRushTrail";
+import { SpiritReturnTrailEffect } from "./effects/spiritReturnTrail";
 import { MagmaOrbsCastEffect } from "./effects/magmaOrbsCast";
 import { ShroomBurstEffect } from "./effects/shroomBurst";
+import { WallFizzleEffect } from "./effects/wallFizzle";
 import {
   getAbilityVfxProfile,
   profileAoeCrackIds,
@@ -56,6 +58,7 @@ export type ImpactVfxId =
   | "iceLance"
   | "volcano"
   | "bloodRush"
+  | "spiritForm"
   | "magmaOrbs";
 
 export type VfxFollowContext = {
@@ -180,6 +183,7 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   bolt: (shot) => <BoltImpactEffect key={shot.key} shot={shot} />,
   volcano: (shot) => <VolcanoRockEffect key={shot.key} shot={shot} />,
   bloodRush: (shot, ctx) => <BloodRushTrailEffect key={shot.key} shot={shot} follow={ctx} />,
+  spiritForm: (shot, ctx) => <SpiritReturnTrailEffect key={shot.key} shot={shot} follow={ctx} />,
   magmaOrbs: (shot, ctx) => <MagmaOrbsCastEffect key={shot.key} shot={shot} follow={ctx} />,
   shrooms: (shot) => <ShroomBurstEffect key={shot.key} shot={shot} />,
 };
@@ -214,6 +218,10 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
       console.warn(`[vfx] missing cast renderer for abilityId=${shot.abilityId}; using bolt muzzle`);
     }
     return CAST_RENDERERS.bolt!(shot, ctx);
+  }
+
+  if (shot.variant === COMBAT_FX_VARIANT_WALL_HIT) {
+    return <WallFizzleEffect key={shot.key} shot={shot} />;
   }
 
   const impact = IMPACT_RENDERERS[shot.abilityId];

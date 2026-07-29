@@ -92,19 +92,23 @@ export function syncAbilityCast(
     return;
   }
 
-  if (castKey === lastCastId.current) {
+  if (
+    lastCastId.current === castKey ||
+    lastCastId.current.startsWith(`${castKey}:`)
+  ) {
     // Local cancel already faded this cast — don't re-drive hold/air scales from
     // stale schema; wait until cast fields clear and the idle branch runs.
     if (controller.getState().upperBody === "idle" && controller.getState().fullBody === "none") {
       return;
     }
     // Blood Rush: crouch hold → swap to Crouched To Sprinting on impact.
+    // Hand Shield: Start → Idle loop on impact → End on recovery.
     if (
       player.castPhase === "impact" &&
       binding.impactFullBody &&
-      !lastCastId.current.endsWith(":sprint")
+      !lastCastId.current.endsWith(":impact")
     ) {
-      lastCastId.current = `${castKey}:sprint`;
+      lastCastId.current = `${castKey}:impact`;
       const logical = String(binding.impactFullBody);
       const mapped =
         logical in heroAnimationConfig
@@ -112,8 +116,33 @@ export function syncAbilityCast(
           : undefined;
       const clipName = mapped != null ? String(mapped) : logical;
       const opts = {
-        desiredDuration: binding.impactFullBodyAnimDurationSec,
+        desiredDuration: binding.impactFullBodyLoop
+          ? undefined
+          : binding.impactFullBodyAnimDurationSec,
         timeScale: binding.impactFullBodyTimeScale,
+        loop: binding.impactFullBodyLoop,
+        restoreLayers: true,
+      };
+      const ok =
+        controller.playFullBodyAction(logical, opts) ||
+        controller.playFullBodyAction(clipName, opts);
+      if (!ok) lastCastId.current = castKey;
+      return;
+    }
+    if (
+      player.castPhase === "recovery" &&
+      binding.recoveryFullBody &&
+      !lastCastId.current.endsWith(":end")
+    ) {
+      lastCastId.current = `${castKey}:end`;
+      const logical = String(binding.recoveryFullBody);
+      const mapped =
+        logical in heroAnimationConfig
+          ? heroAnimationConfig[logical as keyof typeof heroAnimationConfig]
+          : undefined;
+      const clipName = mapped != null ? String(mapped) : logical;
+      const opts = {
+        desiredDuration: binding.recoveryFullBodyAnimDurationSec,
         restoreLayers: true,
       };
       const ok =
@@ -148,7 +177,8 @@ export function syncAbilityCast(
     if (
       player.castPhase === "recovery" &&
       !comboOnce &&
-      !binding.comboFullBody
+      !binding.comboFullBody &&
+      !binding.recoveryFullBody
     ) {
       controller.cancelFullBodyAction();
     }

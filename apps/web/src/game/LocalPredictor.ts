@@ -35,6 +35,8 @@ type LocalTravel = {
   distance: number;
   startMs: number;
   durationMs: number;
+  /** Spirit Form return — ignore walls. */
+  ignoreCollision?: boolean;
 };
 
 function isActiveCastPhase(phase: string | undefined): phase is CastPhaseId {
@@ -214,6 +216,29 @@ export class LocalPredictor {
     this.travel = null;
   }
 
+  /** Dash toward a world point (Spirit Form return) — no wall collision. */
+  beginPointTravel(toX: number, toZ: number, durationMs: number) {
+    const from = { x: this.state.x, z: this.state.z };
+    const dx = toX - from.x;
+    const dz = toZ - from.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 0.05) {
+      this.state = { ...this.state, x: toX, z: toZ };
+      this.travel = null;
+      return;
+    }
+    this.travel = {
+      abilityId: "spiritForm",
+      fromX: from.x,
+      fromZ: from.z,
+      yaw: Math.atan2(dx, dz),
+      distance: dist,
+      startMs: performance.now(),
+      durationMs: Math.max(16, durationMs),
+      ignoreCollision: true,
+    };
+  }
+
   clearTravel() {
     this.travel = null;
   }
@@ -234,13 +259,15 @@ export class LocalPredictor {
         this.travel.distance,
         1,
       );
-      const clamped = sweepTravel(
-        { x: this.travel.fromX, z: this.travel.fromZ },
-        ideal,
-        COLLISION.playerRadius,
-        this.staticColliders,
-      );
-      this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw: input.yaw };
+      const landed = this.travel.ignoreCollision
+        ? ideal
+        : sweepTravel(
+            { x: this.travel.fromX, z: this.travel.fromZ },
+            ideal,
+            COLLISION.playerRadius,
+            this.staticColliders,
+          );
+      this.state = { ...this.state, x: landed.x, z: landed.z, yaw: input.yaw };
       this.travel = null;
     }
 
@@ -250,14 +277,16 @@ export class LocalPredictor {
       const def = ABILITIES[t.abilityId];
       const p = def ? travelProgress01(def, linear) : linear;
       const ideal = sampleTravel({ x: t.fromX, z: t.fromZ }, t.yaw, t.distance, p);
-      const clamped = sweepTravel(
-        { x: t.fromX, z: t.fromZ },
-        ideal,
-        COLLISION.playerRadius,
-        this.staticColliders,
-      );
+      const next = t.ignoreCollision
+        ? ideal
+        : sweepTravel(
+            { x: t.fromX, z: t.fromZ },
+            ideal,
+            COLLISION.playerRadius,
+            this.staticColliders,
+          );
       // Path stays on travel.yaw; facing still follows mouse (Leap Slam aim).
-      this.state = { x: clamped.x, z: clamped.z, yaw: input.yaw };
+      this.state = { x: next.x, z: next.z, yaw: input.yaw };
       return this.state;
     }
 

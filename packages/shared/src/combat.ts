@@ -128,6 +128,7 @@ export type CombatFxEvent = {
   /**
    * Style / sub-event index.
    * Volcano rocks: 1 = telegraph (red circle + arc), 2 = impact shatter.
+   * Projectiles: COMBAT_FX_VARIANT_WALL_HIT = wall / shield disc fizzle.
    */
   variant?: number;
 };
@@ -715,12 +716,28 @@ export type ProjectileExplodeEvent = {
   mode: "stuck" | "grounded";
 };
 
+/** Projectile died to a wall / protection disc (no body hit). */
+export type ProjectileWallHitEvent = {
+  projectileId: string;
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+};
+
 export type ProjectileTickResult = {
   removedIds: string[];
   hits: ProjectileHitEvent[];
   slows: ProjectileSlowEvent[];
   explodes: ProjectileExplodeEvent[];
+  wallHits: ProjectileWallHitEvent[];
 };
+
+/**
+ * Combat FX `variant` for projectile vs wall / block disc (downward fizzle VFX).
+ * Volcano rocks use 1 (telegraph) / 2 (impact).
+ */
+export const COMBAT_FX_VARIANT_WALL_HIT = 3;
 
 function armDetonate(p: ProjectileSim, delaySec: number, mode: "stuck" | "grounded", targetId: string | null) {
   p.mode = mode;
@@ -732,8 +749,9 @@ function armDetonate(p: ProjectileSim, delaySec: number, mode: "stuck" | "ground
 }
 
 /** Advance projectiles; mutates projectile positions and hitIds.
- *  Wall collisions despawn without a damage hit (no hit VFX), unless the
- *  projectile has a detonate fuse — then it plants and explodes.
+ *  Wall / block-disc collisions despawn without a damage hit and report
+ *  `wallHits` for client fizzle VFX, unless the projectile has a detonate fuse
+ *  — then it plants and explodes.
  */
 export function tickProjectiles(
   projectiles: ProjectileSim[],
@@ -748,6 +766,7 @@ export function tickProjectiles(
   const hits: ProjectileHitEvent[] = [];
   const slows: ProjectileSlowEvent[] = [];
   const explodes: ProjectileExplodeEvent[] = [];
+  const wallHits: ProjectileWallHitEvent[] = [];
 
   const bodyById = new Map<string, CombatBody>();
   for (const b of bodies) bodyById.set(b.id, b);
@@ -814,6 +833,13 @@ export function tickProjectiles(
         armDetonate(p, fuseSec, "grounded", null);
       } else {
         removedIds.push(p.id);
+        wallHits.push({
+          projectileId: p.id,
+          ownerId: p.ownerId,
+          abilityId: p.abilityId,
+          x: fromX,
+          z: fromZ,
+        });
       }
       continue;
     }
@@ -902,7 +928,7 @@ export function tickProjectiles(
     }
   }
 
-  return { removedIds: [...new Set(removedIds)], hits, slows, explodes };
+  return { removedIds: [...new Set(removedIds)], hits, slows, explodes, wallHits };
 }
 
 export function abilityOrThrow(id: string): AbilityDef {

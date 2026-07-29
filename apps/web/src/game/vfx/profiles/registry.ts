@@ -228,6 +228,11 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
   grasp: GRASP,
   chainJump: CHAIN_JUMP,
   portal: PORTAL,
+  spiritForm: {
+    castEngine: "none",
+    projectile: "none",
+    combatFx: { skipLegacyBurst: true },
+  },
 };
 
 const DEFAULT_PROFILE: AbilityVfxProfile = {

@@ -1,5 +1,6 @@
 import {
   ABILITIES,
+  COMBAT_FX_VARIANT_WALL_HIT,
   FIREWALL_CAST,
   FROST_MIST_CAST,
   GROOVE_CAST,
@@ -82,6 +83,11 @@ function shouldSkipLegacyBurst(msg: CombatFxMessage): boolean {
     (msg.abilityId === "protectionBubble" && msg.kind === "aoe") ||
     (msg.abilityId === "shrooms" && msg.kind === "aoe") ||
     (msg.abilityId === "bloodRush" && msg.kind === "dash") ||
+    (msg.abilityId === "spiritForm" && msg.kind === "dash") ||
+    // Hit lands at the teleport spot during the invisible window — skip so we
+    // don't flash a "reappear" burst before the vanish ends. Dash puff stays.
+    (msg.abilityId === "revenge" && msg.kind === "hit") ||
+    (msg.kind === "hit" && msg.variant === COMBAT_FX_VARIANT_WALL_HIT) ||
     Boolean(getAbilityVfxProfile(msg.abilityId).combatFx?.skipLegacyBurst && msg.kind === "dash")
   );
 }
@@ -98,6 +104,22 @@ export function dispatchCombatFxVfx(
     return { handledPortal: false };
   }
   if (msg.kind === "cast_phase") {
+    return { handledPortal: false };
+  }
+
+  if (msg.kind === "hit" && msg.variant === COMBAT_FX_VARIANT_WALL_HIT) {
+    spawnImpactEffect(
+      msg.abilityId,
+      {
+        x: msg.x,
+        z: msg.z,
+        y: typeof msg.y === "number" ? msg.y : 0.55,
+      },
+      {
+        lifeMs: 420,
+        variant: COMBAT_FX_VARIANT_WALL_HIT,
+      },
+    );
     return { handledPortal: false };
   }
 
@@ -125,6 +147,21 @@ export function dispatchCombatFxVfx(
       { x: msg.x, z: msg.z, y: 0.04, yaw: resolveOwnerYaw(msg, ctx) },
       {
         lifeMs: 700,
+        followOwnerId: msg.ownerId,
+      },
+    );
+  }
+
+  if (msg.kind === "dash" && msg.abilityId === "spiritForm") {
+    const dur =
+      typeof msg.phaseEndsAt === "number"
+        ? Math.max(200, msg.phaseEndsAt - Date.now() + 180)
+        : 650;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.5, yaw: resolveOwnerYaw(msg, ctx) },
+      {
+        lifeMs: dur,
         followOwnerId: msg.ownerId,
       },
     );

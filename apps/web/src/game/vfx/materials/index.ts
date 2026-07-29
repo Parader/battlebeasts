@@ -17,3 +17,11 @@ export {
   tickGroundDecal,
   applyGroundDecalPreset,
 } from "./groundDecal";
+export {
+  createAoeRimMarkerMaterial,
+  tintAoeRimMarkerMaterial,
+  tickAoeRimMarkerMaterial,
+  setAoeRimMarkerOpacity,
+  setAoeRimMarkerAspect,
+} from "./aoeRimMarker";
+export type { AoeRimMarkerMaterialOpts, AoeRimShape } from "./aoeRimMarker";

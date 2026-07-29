@@ -1,5 +1,5 @@
 import { MapSchema, Schema, type } from "@colyseus/schema";
-import { DEFAULT_LOADOUT } from "@battlebeasts/shared";
+import { DEFAULT_LOADOUT, PLAYER_BASE_MAX_HP, PRACTICE_DUMMY_MAX_HP } from "@battlebeasts/shared";
 
 export class StatusInstanceState extends Schema {
   /** Same as statusId for map key stability (one row per status id). */
@@ -17,8 +17,8 @@ export class PlayerState extends Schema {
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") yaw = 0;
-  @type("number") hp = 100;
-  @type("number") maxHp = 100;
+  @type("number") hp = PLAYER_BASE_MAX_HP;
+  @type("number") maxHp = PLAYER_BASE_MAX_HP;
   @type("string") color = "#4ade80";
   /** Creature hide pattern id (`plain` | `scales` | …). */
   @type("string") pattern = "plain";
@@ -97,8 +97,8 @@ export class WorldTargetState extends Schema {
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") yaw = 0;
-  @type("number") hp = 200;
-  @type("number") maxHp = 200;
+  @type("number") hp = PRACTICE_DUMMY_MAX_HP;
+  @type("number") maxHp = PRACTICE_DUMMY_MAX_HP;
   /** Mirror of player cast fields for attack anim sync. */
   @type("string") castAbilityId = "";
   @type("string") castPhase = "";
@@ -119,6 +119,22 @@ export class DecoyState extends Schema {
   @type("string") pattern = "plain";
   @type("string") patternColor = "#f8fafc";
   /** Server epoch ms when this decoy despawns. */
+  @type("number") expiresAt = 0;
+}
+
+/** Spirit Form husk — body left behind while the caster is unbound. */
+export class SpiritHuskState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") yaw = 0;
+  @type("string") color = "#4ade80";
+  @type("string") pattern = "plain";
+  @type("string") patternColor = "#f8fafc";
+  /** Server epoch ms when the form started (timer ring clock). */
+  @type("number") startedAt = 0;
+  /** Server epoch ms when the form expires / snap back. */
   @type("number") expiresAt = 0;
 }
 
@@ -195,6 +211,7 @@ export class BaseCityState extends Schema {
   @type({ map: ProjectileState }) projectiles = new MapSchema<ProjectileState>();
   @type({ map: WorldTargetState }) targets = new MapSchema<WorldTargetState>();
   @type({ map: DecoyState }) decoys = new MapSchema<DecoyState>();
+  @type({ map: SpiritHuskState }) spiritHusks = new MapSchema<SpiritHuskState>();
   @type({ map: VolcanoState }) volcanoes = new MapSchema<VolcanoState>();
   @type({ map: ProtectionBubbleState }) protectionBubbles = new MapSchema<ProtectionBubbleState>();
   @type({ map: ShroomState }) shrooms = new MapSchema<ShroomState>();

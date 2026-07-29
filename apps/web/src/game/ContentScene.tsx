@@ -13,7 +13,7 @@ import {
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, Decoys, Volcanoes, ProtectionBubbles, Shrooms } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, Decoys, Volcanoes, ProtectionBubbles, Shrooms, SpiritHusks } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
@@ -175,6 +175,11 @@ export function ContentScene({ room, localSessionId, predictedRef }: Props) {
       <Volcanoes room={room} />
       <ProtectionBubbles room={room} />
       <Shrooms room={room} localSessionId={localSessionId} />
+      <SpiritHusks
+        room={room}
+        localSessionId={localSessionId}
+        predictedRef={predictedRef}
+      />
       <Projectiles room={room} />
       <CombatFxMeshes />
       <DamagePopups />

@@ -26,6 +26,10 @@ export type CatalogTalentDef = {
    * Max ranks. Omit to use defaults (tier-1 / cost-1 → 3, else 1).
    */
   maxRank?: number;
+  /**
+   * Lower = earlier in the tree grid within a tier (default: id order).
+   */
+  layoutOrder?: number;
   affectedTags: readonly SpellTag[];
   exactEffect: string;
   balanceNote: string;
@@ -40,6 +44,22 @@ export type CatalogTalentDef = {
 /** True only when explicitly marked combat-ready. */
 export function isCatalogTalentImplemented(def: CatalogTalentDef | undefined): boolean {
   return def?.implemented === true;
+}
+
+/** Opening Salvo catalog id — first live Destruction foundation. */
+export const OPENING_SALVO_TALENT_ID = "DES_08";
+
+/** Max total damage bonus at full ranks (percent). Rank N → (this * N / maxRank). */
+export const OPENING_SALVO_BONUS_PERCENT_AT_MAX = 8;
+/** Matches leave-combat linger (`COMBAT_ENGAGE_LINGER_MS`) so the next initiate is ready when you drop combat. */
+export const OPENING_SALVO_COOLDOWN_MS = 8_000;
+
+/** Bonus percent for invested ranks (matches talent tooltip rounding: 2.7 / 5.3 / 8). */
+export function openingSalvoBonusPercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  const raw = (OPENING_SALVO_BONUS_PERCENT_AT_MAX * r) / maxRank;
+  return Math.round(raw * 10) / 10;
 }
 
 export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
@@ -132,12 +152,15 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     tree: "Destruction",
     tier: 1,
     requiredPoints: 0,
+    layoutOrder: 0,
     name: "Opening Salvo",
     pointCost: 1,
     affectedTags: ["Damage"] as const,
-    exactEffect: "Your first damaging hit against an enemy deals +8% damage; 10s per-target cooldown.",
-    balanceNote: "Encourages target switching.",
+    exactEffect:
+      "When you initiate combat, damaging spells deal +8% damage (8s cooldown). Being hit first or while already in combat withholds the bonus until you leave combat.",
+    balanceNote: "Engagement opener — CD matches leave-combat linger (8s).",
     status: "catalog",
+    implemented: true,
   },
   "DES_09": {
     id: "DES_09",
@@ -867,7 +890,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     name: "Afterimage",
     pointCost: 2,
     affectedTags: ["Movement", "Explosion"] as const,
-    exactEffect: "Movement spells leave an afterimage that explodes after 0.65s for 45 base damage in 2.25m.",
+    exactEffect: "Movement spells leave an afterimage that explodes after 0.65s for 450 base damage in 2.25m.",
     balanceNote: "8s cooldown; scale with standard power.",
     status: "catalog",
   },

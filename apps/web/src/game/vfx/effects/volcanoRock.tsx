@@ -6,6 +6,7 @@ import { VOLCANO_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import { softEnvelope } from "../easing";
 import { GroundDecal } from "../components/GroundDecal";
+import { AoeRimMarker } from "../components/AoeRimMarker";
 import { getSharedFireMaterial } from "../components/FireParticleField";
 import { groundPresets } from "../presets/ground";
 import {
@@ -13,18 +14,6 @@ import {
   VOLCANO_GLB_URL,
   instantiateBoulder,
 } from "../volcanoAsset";
-
-/** Shared mat — avoid per-rock ShaderMaterial compile. */
-const telegraphMat = new THREE.MeshBasicMaterial({
-  color: "#ef4444",
-  transparent: true,
-  opacity: 0.34,
-  depthWrite: false,
-  depthTest: true,
-  toneMapped: false,
-});
-
-const telegraphGeo = new THREE.CircleGeometry(1, 28);
 
 const SHARD_COUNT = 9;
 const FIRE_COUNT = 22;
@@ -44,7 +33,7 @@ export function VolcanoRockEffect({ shot }: { shot: OneShotEffect }) {
 function VolcanoRockTelegraph({ shot }: { shot: OneShotEffect }) {
   const gltf = useGLTF(VOLCANO_GLB_URL);
   const group = useRef<THREE.Group>(null);
-  const circle = useRef<THREE.Mesh>(null);
+  const opacityMul = useRef(1);
   const lifeMs = Math.max(200, shot.life || VOLCANO_CAST.telegraphMs);
   // Match damage radius exactly — no visual overshoot.
   const blastR = Math.max(0.8, shot.radius ?? VOLCANO_CAST.rockBlastRadius);
@@ -52,23 +41,12 @@ function VolcanoRockTelegraph({ shot }: { shot: OneShotEffect }) {
   const originZ = Number.isFinite(shot.originZ) ? shot.originZ! : shot.z;
 
   const boulder = useMemo(() => instantiateBoulder(gltf.scene, shot.key), [gltf.scene, shot.key]);
-  const circleMat = useMemo(() => telegraphMat.clone(), []);
-
-  useEffect(() => {
-    return () => {
-      circleMat.dispose();
-    };
-  }, [circleMat]);
 
   useFrame(() => {
     const age = performance.now() - shot.born;
     const u = Math.max(0, Math.min(1, age / lifeMs));
     // Soft in, hold, then fade out before the one-shot unmounts.
-    const fade = softEnvelope(u, 0.08, 0.62);
-    if (circle.current) {
-      circleMat.opacity = 0.34 * fade;
-      circle.current.visible = fade > 0.02;
-    }
+    opacityMul.current = softEnvelope(u, 0.08, 0.62);
 
     const g = group.current;
     if (!g) return;
@@ -90,15 +68,17 @@ function VolcanoRockTelegraph({ shot }: { shot: OneShotEffect }) {
 
   return (
     <group>
-      <mesh
-        ref={circle}
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[shot.x, 0.03, shot.z]}
-        scale={[blastR, blastR, 1]}
-        geometry={telegraphGeo}
-        material={circleMat}
-        renderOrder={2}
-        frustumCulled={false}
+      <AoeRimMarker
+        x={shot.x}
+        z={shot.z}
+        radius={blastR}
+        color="#ea580c"
+        hotColor="#fef08a"
+        fill={0.06}
+        noise={0.25}
+        glowWidth={0.05}
+        opacity={0.55}
+        opacityMulRef={opacityMul}
       />
       <group ref={group} position={[originX, 1.35, originZ]}>
         {boulder && <primitive object={boulder} />}

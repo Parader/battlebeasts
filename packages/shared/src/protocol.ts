@@ -87,6 +87,8 @@ export type ClientMessage =
   | { type: "respawn" }
   | { type: "hub_kick"; sessionId: string }
   | { type: "party_invite"; sessionId: string }
+  /** Leader invites a friend (by user id) into the open party — often paired with a hub invite. */
+  | { type: "party_invite_friend"; userId: string }
   | { type: "party_respond"; accept: boolean; partyId: string }
   | { type: "party_kick"; sessionId: string }
   | { type: "party_set_seat"; sessionId: string; seat: "teamA" | "teamB" | "spectator" }
@@ -99,6 +101,7 @@ export type ClientMessage =
 
 export type PartyMemberSnapshot = {
   sessionId: string;
+  userId?: string;
   displayName: string;
   seat: "teamA" | "teamB" | "spectator";
 };
@@ -108,9 +111,20 @@ export type PartySnapshot = {
   leaderSessionId: string;
   modes: string[];
   members: PartyMemberSnapshot[];
+  /** Outstanding in-hub session invites (legacy / rare). */
   pendingInvites: string[];
+  /** Friend user ids invited via hub invite — auto-join party on hub entry. */
+  pendingFriendInvites?: string[];
   /** True once the party has been locked into matchmaking. */
   queued?: boolean;
+};
+
+export type MatchRecapRewards = {
+  essence: number;
+  copper: number;
+  activityMul: number;
+  base: number;
+  winBonus: number;
 };
 
 export type MatchRecapRow = {
@@ -122,6 +136,7 @@ export type MatchRecapRow = {
   damageTaken: number;
   healing: number;
   shield: number;
+  rewards?: MatchRecapRewards;
 };
 
 export type ServerMessage =

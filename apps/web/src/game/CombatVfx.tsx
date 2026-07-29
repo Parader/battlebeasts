@@ -29,6 +29,7 @@ import { EquippedCosmetics } from "./EquippedCosmetics";
 export { Volcanoes } from "./vfx/Volcanoes";
 export { ProtectionBubbles } from "./vfx/ProtectionBubbles";
 export { Shrooms } from "./vfx/Shrooms";
+export { SpiritHusks } from "./vfx/SpiritHusks";
 
 useGLTF.preload(CHARACTER_URL);
 

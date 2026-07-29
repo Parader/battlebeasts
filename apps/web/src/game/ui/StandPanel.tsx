@@ -47,11 +47,17 @@ import { GamePanelShell } from "./GamePanelShell";
 import { appearanceFromPlayer, MerchantPanel } from "./MerchantShop";
 import { WalletDisplay } from "./CoinDisplay";
 import { TalentTreePanel } from "./TalentTreePanel";
+import { loadStandMenuMemory, saveStandMenuMemory } from "../standMenuMemory";
 import { getCreaturePatternTexture } from "../creaturePatterns";
 
 type Kind = "customization" | "build" | "talent" | "shop";
 
-type LoadoutPreset = { slotIndex: number; name: string; abilityIds: string[] };
+type LoadoutPreset = {
+  slotIndex: number;
+  name: string;
+  abilityIds: string[];
+  talentBuild?: TalentBuild;
+};
 
 type Economy = {
   copper: number;
@@ -536,7 +542,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
   };
 
   const [draftLoadout, setDraftLoadout] = useState(() => normalizeLoadout(economy.loadout));
-  const [selectedSlot, setSelectedSlot] = useState(0);
+  const [selectedSlot, setSelectedSlot] = useState(() => loadStandMenuMemory().spellSlot);
   const [hideOwnedShopItems, setHideOwnedShopItems] = useState(false);
 
   const serverLoadoutKey = normalizeLoadout(economy.loadout).join(",");
@@ -619,7 +625,10 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
                     type="button"
                     role="option"
                     aria-selected={active}
-                    onClick={() => setSelectedSlot(i)}
+                    onClick={() => {
+                      setSelectedSlot(i);
+                      saveStandMenuMemory({ spellSlot: i });
+                    }}
                     className={[
                       "bb-loadout-slot",
                       active ? "bb-loadout-slot--on" : "",
@@ -759,6 +768,10 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
         essence={economy.essence}
         talentPoints={economy.talentPoints}
         talentBuild={economy.talentBuild}
+        loadoutPresets={economy.loadoutPresets}
+        activeLoadoutSlot={economy.activeLoadoutSlot}
+        loadoutSlotCount={unlocks.loadoutSlotCount}
+        onSelectPreset={selectPreset}
       />
     );
   } else if (kind === "shop") {
@@ -799,16 +812,20 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
         kind === "customization" || kind === "talent" || kind === "build" || kind === "shop"
       }
       maxWidthClass={
-        kind === "build" || kind === "talent" || kind === "customization"
-          ? "max-w-5xl"
-          : kind === "shop"
+        kind === "talent"
+          ? "max-w-6xl"
+          : kind === "build" || kind === "customization"
             ? "max-w-5xl"
-            : undefined
+            : kind === "shop"
+              ? "max-w-5xl"
+              : undefined
       }
       maxHeightClass={
-        kind === "talent" || kind === "customization"
-          ? "h-[min(94dvh,58rem)] max-h-[min(94dvh,58rem)]"
-          : "max-h-[min(92dvh,54rem)]"
+        kind === "talent"
+          ? "h-[min(96dvh,62rem)] max-h-[min(96dvh,62rem)]"
+          : kind === "customization"
+            ? "h-[min(94dvh,58rem)] max-h-[min(94dvh,58rem)]"
+            : "max-h-[min(92dvh,54rem)]"
       }
       footer={footer}
     >

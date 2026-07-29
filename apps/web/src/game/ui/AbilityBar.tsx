@@ -1,10 +1,19 @@
 import { useEffect, useState } from "react";
-import { ABILITIES, SPELL_SLOTS, normalizeLoadout, type AbilityDef, type SpellSlot } from "@battlebeasts/shared";
+import {
+  ABILITIES,
+  SPELL_SLOTS,
+  normalizeLoadout,
+  type AbilityDef,
+  type SpellSlot,
+  type Wallet,
+} from "@battlebeasts/shared";
 import { SpellSlotGlyph } from "./InputGlyph";
 import { abilityHudRuntime } from "../abilityHudRuntime";
+import { WalletDisplay } from "./CoinDisplay";
 
 type Props = {
   loadout: string[];
+  wallet?: Pick<Wallet, "copper" | "silver" | "gold" | "essence" | "rubies">;
 };
 
 const SHAPE_TINT: Record<string, string> = {
@@ -80,7 +89,7 @@ function SlotIcon({
   );
 }
 
-export function AbilityBar({ loadout }: Props) {
+export function AbilityBar({ loadout, wallet }: Props) {
   const slots = normalizeLoadout(loadout);
   const [cooldownUntil, setCooldownUntil] = useState(() => abilityHudRuntime.cooldownUntil);
   const [flashId, setFlashId] = useState(() => abilityHudRuntime.flashId);
@@ -96,7 +105,7 @@ export function AbilityBar({ loadout }: Props) {
   const now = useNow(needsTick);
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center">
+    <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex items-end justify-center gap-2 px-3">
       <div className="bb-ability-tray">
         {SPELL_SLOTS.map((slot, i) => {
           const id = slots[i];
@@ -113,6 +122,11 @@ export function AbilityBar({ loadout }: Props) {
           );
         })}
       </div>
+      {wallet ? (
+        <div className="bb-hud-wallet" aria-label="Currency">
+          <WalletDisplay wallet={wallet} neutralText />
+        </div>
+      ) : null}
     </div>
   );
 }

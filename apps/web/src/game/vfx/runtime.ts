@@ -31,6 +31,7 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   portal: 320,
   volcano: 900,
   bloodRush: 700,
+  spiritForm: 650,
 };
 
 /**

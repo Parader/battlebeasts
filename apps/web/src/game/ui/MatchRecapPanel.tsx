@@ -5,6 +5,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 type Props = {
   recap: MatchRecapState;
   rematchReady: boolean;
+  localSessionId: string | null;
   onRematch: () => void;
   onReturnHub: () => void;
 };
@@ -14,10 +15,20 @@ function winnerLabel(winner: MatchRecapState["winner"]): string {
   return `Team ${winner.toUpperCase()} wins`;
 }
 
-/** Post-match stats + rematch vote. */
-export function MatchRecapPanel({ recap, rematchReady, onRematch, onReturnHub }: Props) {
+/** Post-match stats, reward reveal, rematch vote. */
+export function MatchRecapPanel({
+  recap,
+  rematchReady,
+  localSessionId,
+  onRematch,
+  onReturnHub,
+}: Props) {
   const [confirmReturn, setConfirmReturn] = useState(false);
   const rows = [...recap.rows].sort((a, b) => b.damageDealt - a.damageDealt);
+  const localRow = localSessionId
+    ? rows.find((r) => r.sessionId === localSessionId)
+    : undefined;
+  const localRewards = localRow?.rewards;
 
   return (
     <div
@@ -34,6 +45,24 @@ export function MatchRecapPanel({ recap, rematchReady, onRematch, onReturnHub }:
           </div>
         </header>
 
+        {localRewards ? (
+          <div className="mb-3 rounded border border-[var(--bb-panel-line)] px-3 py-2 text-sm text-[var(--bb-ink)]">
+            <p className="bb-section-label mb-1">Your rewards</p>
+            <p className="tabular-nums">
+              +{localRewards.essence} essence
+              {localRewards.copper > 0 ? ` · +${localRewards.copper} copper` : ""}
+            </p>
+            {localRewards.winBonus > 0 ? (
+              <p className="bb-meta mt-0.5">Includes +{localRewards.winBonus} win bonus essence</p>
+            ) : null}
+            {localRewards.activityMul < 1 ? (
+              <p className="bb-meta mt-0.5">
+                Reduced for low activity ({Math.round(localRewards.activityMul * 100)}%)
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="max-h-56 overflow-auto">
           <table className="w-full text-left text-sm text-[var(--bb-ink)]">
             <thead className="bb-section-label">
@@ -43,18 +72,33 @@ export function MatchRecapPanel({ recap, rematchReady, onRematch, onReturnHub }:
                 <th className="pb-2 font-normal">K</th>
                 <th className="pb-2 font-normal">Dmg</th>
                 <th className="pb-2 font-normal">Taken</th>
+                <th className="pb-2 font-normal">Loot</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.sessionId} className="border-t border-[var(--bb-panel-line)]">
-                  <td className="max-w-[8rem] truncate py-2 pr-2">{row.displayName}</td>
-                  <td className="py-2 pr-2 uppercase">{row.team || "—"}</td>
-                  <td className="py-2 pr-2 tabular-nums">{row.kills}</td>
-                  <td className="py-2 pr-2 tabular-nums">{Math.round(row.damageDealt)}</td>
-                  <td className="py-2 tabular-nums">{Math.round(row.damageTaken)}</td>
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const isLocal = row.sessionId === localSessionId;
+                return (
+                  <tr
+                    key={row.sessionId}
+                    className={[
+                      "border-t border-[var(--bb-panel-line)]",
+                      isLocal ? "bg-[color-mix(in_srgb,var(--bb-brass)_12%,transparent)]" : "",
+                    ].join(" ")}
+                  >
+                    <td className="max-w-[8rem] truncate py-2 pr-2">{row.displayName}</td>
+                    <td className="py-2 pr-2 uppercase">{row.team || "—"}</td>
+                    <td className="py-2 pr-2 tabular-nums">{row.kills}</td>
+                    <td className="py-2 pr-2 tabular-nums">{Math.round(row.damageDealt)}</td>
+                    <td className="py-2 pr-2 tabular-nums">{Math.round(row.damageTaken)}</td>
+                    <td className="py-2 tabular-nums text-[var(--bb-ink-soft)]">
+                      {row.rewards
+                        ? `${row.rewards.essence}e${row.rewards.copper ? ` ${row.rewards.copper}c` : ""}`
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

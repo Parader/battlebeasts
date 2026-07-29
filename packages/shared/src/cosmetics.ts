@@ -53,20 +53,13 @@ export const COSMETIC_CATALOG: Record<string, CosmeticItemDef> = {
     meshNames: ["Shoulder set 1 - 1", "Shoulder set 1 - 2"],
   },
   /**
-   * Boots → Set 1: left boot + right boot (3 skinned pieces each).
+   * Boots → Set 1: one skinned mesh per foot.
    */
   shoes_set_1: {
     id: "shoes_set_1",
     slot: "shoes",
     name: "Boot Set 1",
-    meshNames: [
-      "Bottomboot",
-      "Middleboot",
-      "Upperboot",
-      "Bottomboot2",
-      "Middleboot2",
-      "Upperboot2",
-    ],
+    meshNames: ["Boot1", "Boot2"],
   },
 };
 

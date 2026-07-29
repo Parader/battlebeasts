@@ -3,6 +3,8 @@
  * Applied by abilities (on-hit / on-self); ticked server-side; synced for HUD/VFX.
  */
 
+import { combatMag } from "./combatMagnitude";
+
 export type StatusPolarity = "buff" | "debuff";
 
 /** Mechanical category — drives rules in the status system. */
@@ -165,6 +167,19 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#67e8f9",
     tag: "SRG",
   },
+  /** Spirit Form — +35% move while unbound from husk. */
+  spiritFormed: {
+    id: "spiritFormed",
+    name: "Spirit Form",
+    polarity: "buff",
+    mechanic: "haste",
+    durationMs: 3500,
+    moveMul: 1.35,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#a5b4fc",
+    tag: "SPF",
+  },
   /** Decoy cloak — invisible to enemies, ghost to self; still takes hits. */
   cloaked: {
     id: "cloaked",
@@ -184,7 +199,7 @@ export const STATUSES: Record<string, StatusDef> = {
     mechanic: "dot",
     durationMs: 3000,
     tickMs: 500,
-    damagePerTick: 4,
+    damagePerTick: combatMag(4),
     maxStacks: 1,
     stackRule: "refresh",
     color: "#fb923c",
@@ -192,7 +207,7 @@ export const STATUSES: Record<string, StatusDef> = {
   },
   /**
    * Shared poison DoT — every poison spell applies this (like burning / bleeding).
-   * 2 dmg × 7 ticks over 5s per stack; stacks up to 3×.
+   * combatMag(2) dmg × 7 ticks over 5s per stack; stacks up to 3×.
    */
   poisoned: {
     id: "poisoned",
@@ -201,14 +216,14 @@ export const STATUSES: Record<string, StatusDef> = {
     mechanic: "dot",
     durationMs: 5000,
     tickMs: 700,
-    damagePerTick: 2,
+    damagePerTick: combatMag(2),
     maxStacks: 3,
     stackRule: "stack",
     color: "#3f6212",
     tag: "PSN",
   },
   /**
-   * Ally shroom burst — HoT. 2 heal/tick × stacks (max 3); longer, slower ticks.
+   * Ally shroom burst — HoT. combatMag(2) heal/tick × stacks (max 3); longer, slower ticks.
    */
   rejuvenated: {
     id: "rejuvenated",
@@ -217,7 +232,7 @@ export const STATUSES: Record<string, StatusDef> = {
     mechanic: "hot",
     durationMs: 8000,
     tickMs: 1000,
-    healPerTick: 2,
+    healPerTick: combatMag(2),
     maxStacks: 3,
     stackRule: "stack",
     color: "#86efac",
@@ -230,7 +245,7 @@ export const STATUSES: Record<string, StatusDef> = {
     mechanic: "dot",
     durationMs: 3500,
     tickMs: 600,
-    damagePerTick: 5,
+    damagePerTick: combatMag(5),
     maxStacks: 3,
     stackRule: "stack",
     color: "#f87171",
@@ -269,7 +284,7 @@ export const STATUSES: Record<string, StatusDef> = {
   },
   /**
    * Groove solo pulse — absorb shield. `stacks` = remaining shield HP.
-   * Lonely heal ticks grant +4 stacks and refresh duration to 8s.
+   * Lonely heal ticks grant combatMag(4) stacks and refresh duration to 8s.
    */
   grooveShield: {
     id: "grooveShield",
@@ -277,10 +292,26 @@ export const STATUSES: Record<string, StatusDef> = {
     polarity: "buff",
     mechanic: "shield",
     durationMs: 8000,
-    maxStacks: 48,
+    maxStacks: combatMag(48),
     stackRule: "stack",
     color: "#a7f3d0",
     tag: "SHD",
+  },
+  /**
+   * Hand Shield — frontal projectile block channel. VFX + collider sync flag.
+   * Cleared on cancel / cast end (not an absorb shield).
+   * Default duration matches channel+recovery; server always passes HAND_SHIELD_ARMED_MS.
+   */
+  handShielding: {
+    id: "handShielding",
+    name: "Hand Shield",
+    polarity: "buff",
+    mechanic: "resist",
+    durationMs: 3950,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#60a5fa",
+    tag: "HSH",
   },
   /**
    * Barrier — self absorb bubble. `stacks` = remaining shield HP.
@@ -291,7 +322,7 @@ export const STATUSES: Record<string, StatusDef> = {
     polarity: "buff",
     mechanic: "shield",
     durationMs: 3000,
-    maxStacks: 40,
+    maxStacks: combatMag(40),
     stackRule: "refresh",
     color: "#60a5fa",
     tag: "BAR",
@@ -312,6 +343,40 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#f5c542",
     tag: "CTR",
+  },
+  /**
+   * Revenge — rooted stance window (red). Next counterable hit is denied → blink behind attacker.
+   * Cleared on successful revenge or player cancel. No riposte buffs yet.
+   */
+  revengeArmed: {
+    id: "revengeArmed",
+    name: "Revenge",
+    polarity: "buff",
+    mechanic: "root",
+    durationMs: 1200,
+    blocksMove: true,
+    moveMul: 0,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#ef4444",
+    tag: "REV",
+  },
+  /**
+   * Revenge blink — fully invisible + invulnerable until reappear.
+   * Position already snapped; this is only the vanish window.
+   */
+  revengePhased: {
+    id: "revengePhased",
+    name: "Revenge",
+    polarity: "buff",
+    mechanic: "stealth",
+    /** Overridden by REVENGE_CAST.vanishMs on apply. */
+    durationMs: 500,
+    grantsInvulnerable: true,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#ef4444",
+    tag: "PHS",
   },
   /** After a successful Counter — move speed burst (matches empower duration). */
   counterHaste: {

@@ -5,6 +5,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   crescent: "#f8fafc",
   smash: "#a16207",
   barrier: "#60a5fa",
+  handShield: "#60a5fa",
   surge: "#67e8f9",
   gust: "#e2e8f0",
   dash: "#a3e635",
@@ -19,12 +20,14 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   poisonDart: "#4d7c0f",
   iceLance: "#7dd3fc",
   counter: "#f5c542",
+  revenge: "#ef4444",
   firewall: "#f97316",
   volcano: "#ea580c",
   magmaOrbs: "#f97316",
   protectionBubble: "#7dd3fc",
   shrooms: "#4ade80",
   bloodRush: "#f87171",
+  spiritForm: "#a5b4fc",
 };
 
 export function abilityVfxColor(abilityId: string, fallback = "#38bdf8"): string {

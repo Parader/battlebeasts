@@ -16,22 +16,15 @@ export const TALENT_POINT_BUDGET = 31;
 export const TALENT_TREE_CAP = 18;
 
 /** Essence spent to purchase one owned talent point. */
-export const ESSENCE_PER_TALENT_POINT = 4;
-/** Essence to wipe one tree's invested ranks. */
-export const ESSENCE_RESET_TREE = 3;
-/** Essence to wipe the entire talent build. */
-export const ESSENCE_RESET_ALL = 8;
+export const ESSENCE_PER_TALENT_POINT = 40;
+/**
+ * Essence charged per talent point removed from a build (refund rank, reshape, reset).
+ */
+export const ESSENCE_PER_TALENT_REFUND = 10;
 /** Free points for new hunters so the tree is playable immediately. */
 export const STARTER_TALENT_POINTS = 10;
 
-/** Match essence payouts (pending loot → hub inventory). */
-export const MATCH_ESSENCE = {
-  pvpWin: 8,
-  pvpLoss: 4,
-  pvpDraw: 5,
-  pvpLeaveEarly: 2,
-  pveClear: 5,
-} as const;
+// Match payouts: see ./rewards (MATCH_REWARDS / computeMatchReward).
 
 export const TALENT_TREE_IDS: readonly TalentTreeId[] = [
   "Destruction",
@@ -55,7 +48,12 @@ export type TalentBuild = Record<string, number>;
 export function catalogTalentsInTree(tree: TalentTreeId): CatalogTalentDef[] {
   return Object.values(TALENT_CATALOG)
     .filter((t) => t.tree === tree)
-    .sort((a, b) => a.id.localeCompare(b.id));
+    .sort((a, b) => {
+      const ao = a.layoutOrder ?? Number.MAX_SAFE_INTEGER;
+      const bo = b.layoutOrder ?? Number.MAX_SAFE_INTEGER;
+      if (ao !== bo) return ao - bo;
+      return a.id.localeCompare(b.id);
+    });
 }
 
 /** Ranks a node can take. Tier-1 / 1-cost foundations default to 3 ranks. */
@@ -114,6 +112,29 @@ export function treePointsSpent(build: TalentBuild, tree: TalentTreeId): number 
     sum += talentRankCost(def) * rank;
   }
   return sum;
+}
+
+/**
+ * Talent points dropped when reshaping `from` → `to` (adds elsewhere do not cancel).
+ * e.g. remove 3 from A and put 3 in B → 3 points removed (respec fee).
+ */
+export function talentPointsRemoved(from: TalentBuild, to: TalentBuild): number {
+  let removed = 0;
+  const ids = new Set([...Object.keys(from), ...Object.keys(to)]);
+  for (const id of ids) {
+    const def = TALENT_CATALOG[id];
+    if (!def) continue;
+    const cost = talentRankCost(def);
+    const before = talentRank(from, id) * cost;
+    const after = talentRank(to, id) * cost;
+    if (before > after) removed += before - after;
+  }
+  return removed;
+}
+
+/** Essence to charge for removing / reshaping `pointsRemoved` invested points. */
+export function talentRefundEssenceCost(pointsRemoved: number): number {
+  return Math.max(0, Math.floor(pointsRemoved)) * ESSENCE_PER_TALENT_REFUND;
 }
 
 export function isTalentTaken(build: TalentBuild, talentId: string): boolean {

@@ -5,6 +5,7 @@ import { STATUSES } from "@battlebeasts/shared";
 import { createLightningBoltMaterial, tickLightningBolt } from "./vfx/materials/lightningBolt";
 import { createCirclePointMaterial } from "./vfx/materials/circlePoint";
 import { CounterStatusFx } from "./CounterStatusFx";
+import { HandShieldFx } from "./HandShieldFx";
 
 export type StatusRowLite = {
   statusId: string;
@@ -658,6 +659,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       </group>
 
       <CounterStatusFx characterRoot={characterRoot} getStatuses={getStatuses} />
+      <HandShieldFx characterRoot={characterRoot} getStatuses={getStatuses} />
     </group>
   );
 }

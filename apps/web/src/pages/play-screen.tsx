@@ -8,6 +8,8 @@ import { useGameAmbiance } from "@/game/useGameAmbiance";
 import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
+import { QuestsPanel } from "@/game/ui/QuestsPanel";
+import { ChestRevealPanel } from "@/game/ui/ChestRevealPanel";
 import { SettingsPanel } from "@/game/ui/SettingsPanel";
 import { PatchNotesPanel } from "@/game/ui/PatchNotesPanel";
 import { hasUnseenPatchNotes } from "@/game/patchNotes";
@@ -16,7 +18,8 @@ import { HubRoster } from "@/game/ui/HubRoster";
 import { ArenaMatchHud } from "@/game/ui/ArenaMatchHud";
 import { MatchRecapPanel } from "@/game/ui/MatchRecapPanel";
 import { PartyLobbyPanel } from "@/game/ui/PartyLobbyPanel";
-import { PartyInviteToast } from "@/game/ui/PartyInviteToast";
+import { InvitePromptStack } from "@/game/ui/InvitePromptStack";
+import { HudIconButton } from "@/game/ui/HudIconButton";
 import { AbilityBar } from "@/game/ui/AbilityBar";
 import { EmotePieHud } from "@/game/ui/EmotePieHud";
 import { StatusBar } from "@/game/ui/StatusBar";
@@ -26,7 +29,6 @@ import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
 import { emptyEmoteSlots } from "@battlebeasts/shared";
-import { WalletDisplay } from "../game/ui/CoinDisplay";
 import { clearPreferredHub, loadPreferredHub, savePreferredHub } from "@/game/contentRejoin";
 
 const WS_URL =
@@ -79,6 +81,8 @@ export const PlayScreen = () => {
     const friendsApi = useFriends(user?.id ?? null, user ? effectiveHubOwnerId : null);
     const [helpOpen, setHelpOpen] = useState(false);
     const [friendsOpen, setFriendsOpen] = useState(false);
+    const [questsOpen, setQuestsOpen] = useState(false);
+    const [chestLocksInput, setChestLocksInput] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [updatesOpen, setUpdatesOpen] = useState(false);
     const [confirmReturnHub, setConfirmReturnHub] = useState(false);
@@ -113,12 +117,24 @@ export const PlayScreen = () => {
         hubRoster,
         kickFromHub,
         kickFromParty,
+        isHubAdmin,
+        grantHubResources,
+        hubQuests,
+        hubChests,
+        unseenQuestCompletions,
+        chestReveal,
+        refreshHubQuests,
+        openHubChest,
+        spawnHubChest,
+        clearChestReveal,
+        acknowledgeQuestAlerts,
+        notifyFriendCodeRedeemed,
         arenaHud,
         matchRecap,
         voteRematch,
         party,
         partyInvite,
-        inviteToParty,
+        inviteFriendToParty,
         setPartySeat,
         lockParty,
         cancelParty,
@@ -134,11 +150,22 @@ export const PlayScreen = () => {
         accessToken,
         hubOwnerId: effectiveHubOwnerId,
         enabled: canJoinRoom,
-        inputLocked: friendsOpen || settingsOpen || updatesOpen || loadingGate,
+        inputLocked:
+            friendsOpen ||
+            questsOpen ||
+            settingsOpen ||
+            updatesOpen ||
+            loadingGate ||
+            chestLocksInput,
         onActiveHubOwnerId: (id) => setHubOwnerId(id),
     });
 
     const inContent = phase === "content";
+    useEffect(() => {
+        setChestLocksInput(Boolean(chestReveal));
+        if (chestReveal) setQuestsOpen(false);
+    }, [chestReveal]);
+
     useEffect(() => {
         setAssetBundle(inContent ? "arena" : "hub");
     }, [inContent]);
@@ -149,6 +176,10 @@ export const PlayScreen = () => {
         setLoadingGate(!playReady);
     }, [playReady]);
 
+    useEffect(() => {
+        if (!playReady || inContent || !user) return;
+        refreshHubQuests();
+    }, [playReady, inContent, user?.id, refreshHubQuests]);
     useGameMusic(playReady ? (inContent ? "arena" : "village") : null);
     useGameAmbiance(playReady ? (inContent ? "arena" : "village") : null);
 
@@ -183,10 +214,10 @@ export const PlayScreen = () => {
     const shieldPct = Math.max(0, Math.min(100, (localHp.shield / hpMax) * 100));
     const shieldLeft = Math.min(hpPct, Math.max(0, 100 - shieldPct));
     const isHubOwner = effectiveHubOwnerId === userId;
-    // Appearance + Merchant each spin up a second WebGL Canvas; pause the game
+    // Appearance + Merchant + chest reveal each spin up a second WebGL Canvas; pause the game
     // view so dual contexts don't fight (gear mesh compile was crashing the tab).
     const suspendGameGl =
-        activeUi === "customization" || activeUi === "shop";
+        activeUi === "customization" || activeUi === "shop" || Boolean(chestReveal);
 
     return (
         <div className="relative h-dvh w-full overflow-hidden bg-black">
@@ -246,6 +277,7 @@ export const PlayScreen = () => {
                 <MatchRecapPanel
                     recap={matchRecap}
                     rematchReady={Boolean(arenaHud?.rematchReady)}
+                    localSessionId={room?.sessionId ?? null}
                     onRematch={voteRematch}
                     onReturnHub={returnToHub}
                 />
@@ -257,15 +289,14 @@ export const PlayScreen = () => {
                     className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4"
                 >
                     <div className="pointer-events-auto flex flex-col gap-2">
-                        <span className="bb-chip text-[0.75rem]">BattleBeasts</span>
                         <span
                             className={[
                                 "bb-chip",
                                 status === "connected"
                                     ? "bb-chip--ok"
-                                    : status === "error"
+                                    : status === "error" || status === "disconnected"
                                       ? "bb-chip--err"
-                                      : "",
+                                      : "bb-chip--warn",
                             ].join(" ")}
                         >
                             {status}
@@ -275,90 +306,98 @@ export const PlayScreen = () => {
                                   ? " · queued"
                                   : ""}
                         </span>
-                        {configured && user ? (
-                            <span className="bb-chip">
-                                {displayName}
-                                {effectiveHubOwnerId !== userId ? " · visiting" : ""}
-                            </span>
-                        ) : (
+                        {!configured || !user ? (
                             <span className="bb-chip bb-chip--warn">Guest</span>
-                        )}
-                        {(friendsApi.requests.length > 0 || friendsApi.invites.length > 0) && (
-                            <span className="bb-chip bb-chip--warn">
-                                {friendsApi.requests.length + friendsApi.invites.length} pending
-                            </span>
-                        )}
-                        {!inContent && (
-                            <span className="bb-chip">
-                                <WalletDisplay wallet={economy} />
-                            </span>
-                        )}
+                        ) : effectiveHubOwnerId !== userId && !inContent ? (
+                            <span className="bb-chip bb-chip--warn">Visiting</span>
+                        ) : null}
                         {!inContent && (
                             <HubRoster
                                 players={hubRoster}
                                 localSessionId={room?.sessionId ?? null}
                                 isHubOwner={isHubOwner}
+                                isAdmin={isHubAdmin}
                                 onKick={kickFromHub}
+                                onGrantResources={grantHubResources}
                             />
                         )}
                     </div>
-                    <div className="pointer-events-auto flex flex-wrap justify-end gap-2">
+                    <div className="pointer-events-auto bb-hud-icon-rail">
                         {party && !inContent && activeUi !== "party_lobby" && (
-                            <button
-                                type="button"
-                                className="bb-btn-brass"
+                            <HudIconButton
+                                label="Party lobby"
+                                icon="party-flags"
+                                accent
                                 onClick={() => setActiveUi("party_lobby")}
-                            >
-                                Party lobby
-                            </button>
+                            />
                         )}
                         {inContent && (
-                            <button
-                                type="button"
-                                className="bb-btn-brass"
+                            <HudIconButton
+                                label="Return to city"
+                                icon="return-arrow"
+                                accent
                                 onClick={() => setConfirmReturnHub(true)}
-                            >
-                                Return to city
-                            </button>
+                            />
                         )}
                         {user && !inContent && (
-                            <button
-                                type="button"
-                                className="bb-btn-ink"
+                            <HudIconButton
+                                label="Friends"
+                                icon="three-friends"
                                 onClick={() => setFriendsOpen(true)}
-                            >
-                                Friends
-                            </button>
+                                badge={
+                                    friendsApi.requests.length > 0
+                                        ? friendsApi.requests.length > 9
+                                            ? "9+"
+                                            : friendsApi.requests.length
+                                        : null
+                                }
+                            />
                         )}
-                        <button
-                            type="button"
-                            className="bb-btn-ink"
+                        {user && !inContent && (
+                            <HudIconButton
+                                label="Quests"
+                                icon="locked-chest"
+                                onClick={() => {
+                                    setQuestsOpen(true);
+                                    acknowledgeQuestAlerts();
+                                    refreshHubQuests();
+                                }}
+                                badge={
+                                    hubChests.length + unseenQuestCompletions > 0
+                                        ? hubChests.length + unseenQuestCompletions > 9
+                                            ? "9+"
+                                            : hubChests.length + unseenQuestCompletions
+                                        : null
+                                }
+                            />
+                        )}
+                        <HudIconButton
+                            label={hasUnseenPatchNotes() ? "Updates · New" : "Updates"}
+                            icon="scroll-unfurled"
                             onClick={() => setUpdatesOpen(true)}
-                        >
-                            {hasUnseenPatchNotes() ? "Updates · New" : "Updates"}
-                        </button>
-                        <button
-                            type="button"
-                            className="bb-btn-ink"
+                            badge={hasUnseenPatchNotes() ? "!" : null}
+                        />
+                        <HudIconButton
+                            label="Settings"
+                            icon="cog"
                             onClick={() => setSettingsOpen(true)}
-                        >
-                            Settings
-                        </button>
-                        <button
-                            type="button"
-                            className="bb-btn-ink"
+                        />
+                        <HudIconButton
+                            label="Controls"
+                            icon="help"
+                            active={helpOpen}
                             onClick={() => setHelpOpen((v) => !v)}
-                        >
-                            Controls
-                        </button>
-                        {user && (
-                            <button type="button" className="bb-btn-ink" onClick={() => void signOut()}>
-                                Sign out
-                            </button>
-                        )}
-                        <a className="bb-btn-ink inline-block no-underline" href="/">
-                            Leave
-                        </a>
+                        />
+                        <HudIconButton
+                            label="Leave"
+                            icon="exit-door"
+                            onClick={() => {
+                                void (async () => {
+                                    if (user) await signOut();
+                                    window.location.assign("/");
+                                })();
+                            }}
+                        />
                     </div>
                 </div>
             ) : null}
@@ -403,7 +442,7 @@ export const PlayScreen = () => {
 
             {playReady && <StatusBar room={room} sessionId={room?.sessionId ?? null} />}
 
-            {playReady && <AbilityBar loadout={economy.loadout} />}
+            {playReady && <AbilityBar loadout={economy.loadout} wallet={economy} />}
 
             {playReady && !inContent && (
                 <EmotePieHud
@@ -433,7 +472,7 @@ export const PlayScreen = () => {
                         {!inContent && (
                             <li>Hold V — emote wheel (aim with mouse, release to dance; WASD cancels)</li>
                         )}
-                        {!inContent && <li>Practice dummy — damage it with abilities for copper</li>}
+                        {!inContent && <li>Practice dummy — train abilities (no coin rewards)</li>}
                     </ul>
                     {localPlayer && (
                         <p className="bb-meta mt-3">
@@ -450,6 +489,43 @@ export const PlayScreen = () => {
                 >
                     {toast}
                 </div>
+            )}
+
+            {playReady && friendsApi.friendRequestToast && (
+                <div
+                    data-ui-overlay
+                    className="bb-parchment bb-toast pointer-events-auto absolute bottom-36 right-4 z-35 max-w-xs px-4 py-2.5 text-sm"
+                    role="status"
+                >
+                    {friendsApi.friendRequestToast}
+                </div>
+            )}
+
+            {playReady && (
+                <InvitePromptStack
+                    partyInvite={partyInvite}
+                    onPartyAccept={() => respondPartyInvite(true)}
+                    onPartyDecline={() => respondPartyInvite(false)}
+                    hubInvites={user && !inContent ? friendsApi.invites : []}
+                    onHubAccept={(id) => {
+                        void friendsApi.answerHubInvite(id, true).then((hub) => {
+                            if (hub && user?.id) {
+                                savePreferredHub(user.id, hub);
+                                setHubOwnerId(hub);
+                            }
+                        });
+                    }}
+                    onHubDecline={(id) => {
+                        void friendsApi.answerHubInvite(id, false);
+                    }}
+                    friendRequests={user && !inContent ? friendsApi.requests : []}
+                    onFriendAccept={(id) => {
+                        void friendsApi.answerRequest(id, true);
+                    }}
+                    onFriendDecline={(id) => {
+                        void friendsApi.answerRequest(id, false);
+                    }}
+                />
             )}
 
             {playReady &&
@@ -478,21 +554,24 @@ export const PlayScreen = () => {
                     party={party}
                     localSessionId={room?.sessionId ?? null}
                     hubPlayers={hubRoster}
-                    onInvite={inviteToParty}
+                    friends={friendsApi.friends.map((f) => ({
+                        id: f.id,
+                        displayName: f.display_name,
+                        online: f.online,
+                    }))}
+                    onInviteFriend={(friendUserId) => {
+                        inviteFriendToParty(friendUserId);
+                        const alreadyInHub = hubRoster.some((h) => h.userId === friendUserId);
+                        if (!alreadyInHub) {
+                            void friendsApi.sendHubInvite(friendUserId);
+                        }
+                    }}
                     onSetSeat={setPartySeat}
                     onKick={kickFromParty}
                     onLock={lockParty}
                     onCancel={cancelParty}
                     onLeave={leaveParty}
                     onClose={() => setActiveUi(null)}
-                />
-            )}
-
-            {playReady && partyInvite && (
-                <PartyInviteToast
-                    invite={partyInvite}
-                    onAccept={() => respondPartyInvite(true)}
-                    onDecline={() => respondPartyInvite(false)}
                 />
             )}
 
@@ -509,20 +588,17 @@ export const PlayScreen = () => {
                     open={friendsOpen}
                     onClose={() => setFriendsOpen(false)}
                     friends={friendsApi.friends}
-                    requests={friendsApi.requests}
-                    invites={friendsApi.invites}
+                    friendCode={friendsApi.friendCode}
+                    hasRedeemedCode={friendsApi.hasRedeemedCode}
                     loading={friendsApi.loading}
                     error={friendsApi.error}
                     onAddFriend={friendsApi.addFriend}
-                    onAnswerRequest={friendsApi.answerRequest}
+                    onRedeemFriendCode={async (code) => {
+                        await friendsApi.redeemCode(code);
+                        notifyFriendCodeRedeemed();
+                    }}
                     onInviteToHub={friendsApi.sendHubInvite}
                     onRemoveFriend={friendsApi.removeFriend}
-                    onAnswerHubInvite={friendsApi.answerHubInvite}
-                    onVisitHub={(id) => {
-                        if (user?.id) savePreferredHub(user.id, id);
-                        setHubOwnerId(id);
-                        setFriendsOpen(false);
-                    }}
                     onReturnHome={() => {
                         clearPreferredHub();
                         setHubOwnerId(null);
@@ -530,6 +606,22 @@ export const PlayScreen = () => {
                     currentHubOwnerId={effectiveHubOwnerId}
                     myUserId={userId}
                 />
+            )}
+
+            {playReady && user && (
+                <QuestsPanel
+                    open={questsOpen}
+                    onClose={() => setQuestsOpen(false)}
+                    quests={hubQuests}
+                    chests={hubChests}
+                    isAdmin={isHubAdmin}
+                    onOpenChest={openHubChest}
+                    onSpawnChest={spawnHubChest}
+                />
+            )}
+
+            {playReady && chestReveal && (
+                <ChestRevealPanel reveal={chestReveal} onClose={clearChestReveal} />
             )}
 
             <ConfirmDialog

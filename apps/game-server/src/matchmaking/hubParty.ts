@@ -21,6 +21,8 @@ export type HubParty = {
   members: Map<string, HubPartyMember>;
   /** sessionIds with an outstanding invite. */
   pendingInvites: Set<string>;
+  /** Friend user ids invited from party lobby — join hub then auto-enter party. */
+  pendingFriendInvites: Set<string>;
   /** True once the party has been locked into the PvP queue. */
   queued: boolean;
 };
@@ -68,6 +70,7 @@ export function defaultSeatFor(party: HubParty): PvpSeat {
 export function toPartySnapshot(party: HubParty): PartySnapshot {
   const members: PartyMemberSnapshot[] = [...party.members.values()].map((m) => ({
     sessionId: m.sessionId,
+    userId: m.userId,
     displayName: m.displayName,
     seat: m.seat,
   }));
@@ -77,6 +80,7 @@ export function toPartySnapshot(party: HubParty): PartySnapshot {
     modes: [...party.modes],
     members,
     pendingInvites: [...party.pendingInvites],
+    pendingFriendInvites: [...party.pendingFriendInvites],
     queued: party.queued,
   };
 }
@@ -109,6 +113,7 @@ export class HubPartyRegistry {
       modes: [...modes],
       members: new Map(),
       pendingInvites: new Set(),
+      pendingFriendInvites: new Set(),
       queued: false,
     };
     party.members.set(leader.sessionId, { ...leader, seat: "teamA" });
@@ -118,6 +123,7 @@ export class HubPartyRegistry {
   }
 
   addMember(party: HubParty, member: { sessionId: string; userId: string; displayName: string }, seat: PvpSeat): void {
+    party.pendingFriendInvites.delete(member.userId);
     party.members.set(member.sessionId, { ...member, seat });
     this.partyBySession.set(member.sessionId, party.partyId);
   }
@@ -129,6 +135,14 @@ export class HubPartyRegistry {
     return true;
   }
 
+  /** Party waiting for this friend user id to enter the hub. */
+  findByPendingFriend(userId: string): HubParty | undefined {
+    for (const party of this.parties.values()) {
+      if (party.pendingFriendInvites.has(userId)) return party;
+    }
+    return undefined;
+  }
+
   /** Tears the party down entirely — clears all bookkeeping for every current member. */
   dissolve(party: HubParty): void {
     for (const sessionId of party.members.keys()) {
@@ -136,6 +150,7 @@ export class HubPartyRegistry {
     }
     party.members.clear();
     party.pendingInvites.clear();
+    party.pendingFriendInvites.clear();
     this.parties.delete(party.partyId);
   }
 }
