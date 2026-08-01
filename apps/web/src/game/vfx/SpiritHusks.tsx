@@ -3,7 +3,12 @@ import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
-import { MOVE_SPEED, SPIRIT_FORM_CAST, type CosmeticsEquipped } from "@battlebeasts/shared";
+import {
+  MOVE_SPEED,
+  SPIRIT_FORM_CAST,
+  STARTER_COLORS,
+  type CosmeticsEquipped,
+} from "@battlebeasts/shared";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "../characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "../animation";
 import { cosmeticsKey, equippedFromPlayer } from "../cosmeticAttach";
@@ -212,7 +217,7 @@ function SpiritTetherFollow({
 function SpiritHuskAvatar({ room, huskId }: { room: Room; huskId: string }) {
   const group = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
-  const colorRef = useRef("#4ade80");
+  const colorRef = useRef(STARTER_COLORS[0]!);
   const patternRef = useRef("plain");
   const patternColorRef = useRef("#1f2937");
   const cosmeticsKeyRef = useRef("");
@@ -256,7 +261,7 @@ function SpiritHuskAvatar({ room, huskId }: { room: Room; huskId: string }) {
       ? (room.state?.players?.get(h.ownerSessionId) as PlayerPose | undefined)
       : undefined;
 
-    const color = h.color ?? "#4ade80";
+    const color = h.color ?? STARTER_COLORS[0]!;
     const pattern = h.pattern ?? "plain";
     const patternColor = h.patternColor ?? "#1f2937";
     if (

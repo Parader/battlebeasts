@@ -5,7 +5,6 @@ const serverKey =
   process.env.SUPABASE_SECRET_KEY ??
   process.env.SUPABASE_ANON_KEY ??
   process.env.SUPABASE_PUBLISHABLE_KEY;
-const allowGuests = process.env.ALLOW_GUESTS !== "false";
 
 const supabase = url && serverKey ? createClient(url, serverKey) : null;
 
@@ -22,33 +21,24 @@ export type VerifiedIdentity = {
   userId: string;
   displayName: string;
   color?: string;
+  /** Always false for accepted joins; retained for legacy call sites. */
   isGuest: boolean;
   email?: string;
 };
 
 export async function verifyJoinOptions(options: AuthJoinOptions): Promise<VerifiedIdentity> {
-  if (options.accessToken && supabase) {
-    const { data, error } = await supabase.auth.getUser(options.accessToken);
-    if (error || !data.user) {
-      throw new Error("Invalid auth token");
-    }
-    return identityFromUser(data.user, options);
-  }
-
-  if (supabase && !allowGuests) {
+  if (!options.accessToken) {
     throw new Error("Authentication required");
   }
+  if (!supabase) {
+    throw new Error("Authentication is not configured on the game server");
+  }
 
-  const userId = options.userId?.startsWith("guest_")
-    ? options.userId
-    : `guest_${options.userId ?? Math.random().toString(36).slice(2, 9)}`;
-
-  return {
-    userId,
-    displayName: options.displayName ?? "Hunter",
-    color: options.color,
-    isGuest: true,
-  };
+  const { data, error } = await supabase.auth.getUser(options.accessToken);
+  if (error || !data.user) {
+    throw new Error("Invalid auth token");
+  }
+  return identityFromUser(data.user, options);
 }
 
 function identityFromUser(user: User, options: AuthJoinOptions): VerifiedIdentity {

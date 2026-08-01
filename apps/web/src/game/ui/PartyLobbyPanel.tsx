@@ -27,7 +27,7 @@ type Props = {
   onInviteFriend: (friendUserId: string) => void;
   onSetSeat: (sessionId: string, seat: PvpSeat) => void;
   onKick: (sessionId: string) => void;
-  onLock: () => void;
+  onLock: (matchKind?: "ranked" | "unranked") => void;
   onCancel: () => void;
   onLeave: () => void;
   onClose: () => void;
@@ -155,6 +155,9 @@ export function PartyLobbyPanel({
   const [inviteOpen, setInviteOpen] = useState(false);
 
   const { teamSize, maxSpectators } = useMemo(() => modeMeta(party.modes), [party.modes]);
+  const teamAFilled = party.members.filter((m) => m.seat === "teamA").length >= teamSize;
+  const teamBFilled = party.members.filter((m) => m.seat === "teamB").length >= teamSize;
+  const fullPremade = teamAFilled && teamBFilled;
   const teamA = useMemo(
     () => padSlots(
       party.members.filter((m) => m.seat === "teamA"),
@@ -376,16 +379,41 @@ export function PartyLobbyPanel({
               </button>
             ) : null}
             {canStart ? (
-              <button
-                type="button"
-                className="bb-lobby-btn bb-lobby-btn--start"
-                onClick={() => {
-                  onLock();
-                  onClose();
-                }}
-              >
-                Start Match
-              </button>
+              fullPremade ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="bb-lobby-btn bb-lobby-btn--start"
+                    onClick={() => {
+                      onLock("ranked");
+                      onClose();
+                    }}
+                  >
+                    Start Ranked
+                  </button>
+                  <button
+                    type="button"
+                    className="bb-lobby-btn bb-lobby-btn--slot"
+                    onClick={() => {
+                      onLock("unranked");
+                      onClose();
+                    }}
+                  >
+                    Start Unranked
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="bb-lobby-btn bb-lobby-btn--start"
+                  onClick={() => {
+                    onLock("ranked");
+                    onClose();
+                  }}
+                >
+                  Queue Ranked
+                </button>
+              )
             ) : party.queued ? (
               <span className="bb-lobby-queued">Queued</span>
             ) : null}

@@ -2,7 +2,8 @@
 export const TICK_RATE = 30;
 export const TICK_MS = 1000 / TICK_RATE;
 
-export const MOVE_SPEED = 5;
+/** World units / second (base; talents multiply via kit). */
+export const MOVE_SPEED = 3.5;
 
 /** Client respawn button unlock delay after death (ms). */
 export const RESPAWN_LOCK_MS = 5000;

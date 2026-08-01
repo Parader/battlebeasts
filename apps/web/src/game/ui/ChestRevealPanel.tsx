@@ -3,11 +3,11 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { ChestLootLine, ChestQuality } from "@battlebeasts/shared";
-import { assetUrl } from "../assetUrl";
 import { CoinIcon, GemIcon } from "./CoinDisplay";
 import { ShopGrantThumb, grantDisplayLabel } from "./ShopGrantThumb";
+import { CHEST_GLB_URL } from "../vfx/vfxUrls";
 
-export const CHEST_GLB_URL = assetUrl("assets/vfx/chest.glb");
+export { CHEST_GLB_URL };
 useGLTF.preload(CHEST_GLB_URL);
 
 export type ChestRevealState = {

@@ -18,7 +18,7 @@ export type StatusMechanic =
   | "dot" // periodic damage (fire, poison, bleed…)
   | "hot" // periodic heal (rejuvenation…)
   | "shield" // absorb (stub for later)
-  | "resist" // damageTakenMul < 1 while active
+  | "resist" // damageTakenMul while active (<1 resist, >1 vulnerability)
   | "empower"; // damageDealtMul > 1 while active
 
 export type StatusStackRule = "refresh" | "stack" | "ignore";
@@ -142,6 +142,23 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#93c5fd",
     tag: "SLW",
   },
+  /**
+   * Poison Cloud aura — 20% slow while standing in the cloud (refreshed each tick).
+   * Separate from generic `slowed` (45%) so the cloud stays readable/light.
+   */
+  poisonMiasma: {
+    id: "poisonMiasma",
+    name: "Miasma",
+    polarity: "debuff",
+    mechanic: "slow",
+    /** Slightly longer than cloud tick so slow doesn't flicker between pulses. */
+    durationMs: 1800,
+    moveMul: 0.8,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#84cc16",
+    tag: "MIA",
+  },
   hasted: {
     id: "hasted",
     name: "Hasted",
@@ -191,6 +208,22 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#c4b5fd",
     tag: "CLK",
+  },
+  /**
+   * Smoke Bomb weaken — take 20% more damage. Refreshed while standing in the cloud.
+   */
+  weakened: {
+    id: "weakened",
+    name: "Weakened",
+    polarity: "debuff",
+    mechanic: "resist",
+    durationMs: 3500,
+    maxStacks: 1,
+    stackRule: "refresh",
+    /** +20% incoming damage. */
+    damageTakenMul: 1.2,
+    color: "#94a3b8",
+    tag: "WKN",
   },
   burning: {
     id: "burning",
@@ -314,6 +347,36 @@ export const STATUSES: Record<string, StatusDef> = {
     tag: "HSH",
   },
   /**
+   * Protective Instinct — talent ally DR. `stacks` = reduction percent (2 / 4 / 6).
+   * Applied via combineStatusDamageTakenMul (not a fixed damageTakenMul).
+   */
+  protectiveInstinct: {
+    id: "protectiveInstinct",
+    name: "Protective Instinct",
+    polarity: "buff",
+    mechanic: "resist",
+    durationMs: 3000,
+    maxStacks: 6,
+    stackRule: "refresh",
+    color: "#a8a29e",
+    tag: "PI",
+  },
+  /**
+   * Overflow — overheal → absorb. `stacks` = remaining shield HP.
+   * Server clamps total to talent cap % of target max HP; duration refreshed on grant.
+   */
+  overflowShield: {
+    id: "overflowShield",
+    name: "Overflow",
+    polarity: "buff",
+    mechanic: "shield",
+    durationMs: 5000,
+    maxStacks: combatMag(120),
+    stackRule: "refresh",
+    color: "#fde68a",
+    tag: "OVF",
+  },
+  /**
    * Barrier — self absorb bubble. `stacks` = remaining shield HP.
    */
   barrier: {
@@ -326,6 +389,21 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#60a5fa",
     tag: "BAR",
+  },
+  /**
+   * Protection Bubble absorb ticks. `stacks` = remaining shield HP.
+   * Cap is enforced per-bubble on the server (shieldCap).
+   */
+  bubbleShield: {
+    id: "bubbleShield",
+    name: "Bubble Shield",
+    polarity: "buff",
+    mechanic: "shield",
+    durationMs: 8000,
+    maxStacks: combatMag(30),
+    stackRule: "refresh",
+    color: "#93c5fd",
+    tag: "BSH",
   },
   /**
    * Counter — rooted stance window. Next counterable hit is denied and converts into riposte buffs.
@@ -443,6 +521,14 @@ export function getStatus(id: string): StatusDef | undefined {
   return STATUSES[id];
 }
 
+/** Stun / root / silence — Opportunist hard CC (not slows or soft debuffs). */
+export function isHardCrowdControlStatus(def: StatusDef | undefined): boolean {
+  if (!def) return false;
+  return (
+    def.mechanic === "stun" || def.mechanic === "root" || def.mechanic === "silence"
+  );
+}
+
 /** Remaining absorb HP from shield statuses (`stacks` = absorb points). */
 export function totalShieldAbsorb(
   rows: { statusId?: string; stacks?: number }[] | null | undefined,
@@ -505,7 +591,12 @@ export function combineStatusDamageTakenMul(
   entries: { def: StatusDef; stacks: number }[],
 ): number {
   let mul = 1;
-  for (const { def } of entries) {
+  for (const { def, stacks } of entries) {
+    if (def.id === "protectiveInstinct") {
+      const pct = Math.max(0, Math.min(100, stacks));
+      mul *= Math.max(0, 1 - pct / 100);
+      continue;
+    }
     if (typeof def.damageTakenMul === "number" && def.damageTakenMul >= 0) {
       mul *= def.damageTakenMul;
     }

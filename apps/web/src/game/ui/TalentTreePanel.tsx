@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
@@ -375,6 +376,8 @@ type Props = {
   activeLoadoutSlot: number;
   loadoutSlotCount: number;
   onSelectPreset: (slotIndex: number) => void;
+  /** Points + Buy controls for the stand panel header. */
+  onHeaderActions?: (node: ReactNode | null) => void;
 };
 
 export function TalentTreePanel({
@@ -386,6 +389,7 @@ export function TalentTreePanel({
   activeLoadoutSlot,
   loadoutSlotCount,
   onSelectPreset,
+  onHeaderActions,
 }: Props) {
   const [tree, setTree] = useState<TalentTreeId>(() => loadStandMenuMemory().talentTree);
   const [build, setBuild] = useState<TalentBuild>(() => normalizeTalentBuild(talentBuild));
@@ -393,6 +397,7 @@ export function TalentTreePanel({
   const [hoverTip, setHoverTip] = useState<TipState | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmSaveRespec, setConfirmSaveRespec] = useState(false);
+  const [confirmBuyPoints, setConfirmBuyPoints] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -418,10 +423,44 @@ export function TalentTreePanel({
   const respecCost = talentRefundEssenceCost(respecPoints);
   const resetTreeCost = talentRefundEssenceCost(savedTreeSpent);
   const owned = talentPoints;
-  const remainingOwned = Math.max(0, owned - spent);
-  const canBuy = owned < TALENT_POINT_BUDGET && essence >= ESSENCE_PER_TALENT_POINT;
+  const spendable = Math.max(0, owned - spent);
+  const atPointCap = owned >= TALENT_POINT_BUDGET;
+  const canBuy = !atPointCap && essence >= ESSENCE_PER_TALENT_POINT;
   const canSave = dirty && (respecCost <= 0 || essence >= respecCost);
   const canResetTree = savedTreeSpent > 0 && essence >= resetTreeCost;
+
+  const roomRef = useRef(room);
+  roomRef.current = room;
+
+  useLayoutEffect(() => {
+    if (!onHeaderActions) return;
+    onHeaderActions(
+      <div className="bb-talent-header-pts">
+        <span className="bb-talent-header-pts__label">Points</span>
+        <span className="bb-talent-header-pts__value">{spendable}</span>
+        {!atPointCap ? (
+          <button
+            type="button"
+            className="bb-btn-brass bb-talent-header-pts__buy disabled:opacity-40"
+            disabled={!canBuy}
+            title={
+              essence < ESSENCE_PER_TALENT_POINT
+                ? `Need ${ESSENCE_PER_TALENT_POINT} essence`
+                : `Buy 1 point (−${ESSENCE_PER_TALENT_POINT} essence)`
+            }
+            onClick={() => setConfirmBuyPoints(true)}
+          >
+            Buy
+          </button>
+        ) : null}
+      </div>,
+    );
+  }, [onHeaderActions, spendable, atPointCap, canBuy, essence]);
+
+  useEffect(() => {
+    return () => onHeaderActions?.(null);
+  }, [onHeaderActions]);
+
   const implementedCount = useMemo(
     () => Object.values(TALENT_CATALOG).filter((t) => isCatalogTalentImplemented(t)).length,
     [],
@@ -450,6 +489,21 @@ export function TalentTreePanel({
 
   return (
     <div className="bb-talent-panel">
+      <ConfirmDialog
+        open={confirmBuyPoints}
+        title="Buy talent point?"
+        message={
+          <>
+            Spend <strong>{ESSENCE_PER_TALENT_POINT} essence</strong> to buy 1 talent point?
+          </>
+        }
+        confirmLabel={`Buy (−${ESSENCE_PER_TALENT_POINT})`}
+        onConfirm={() => {
+          roomRef.current?.send("buy_talent_points", { count: 1 });
+          setConfirmBuyPoints(false);
+        }}
+        onCancel={() => setConfirmBuyPoints(false)}
+      />
       <ConfirmDialog
         open={confirmReset}
         title={`Reset ${tree}?`}
@@ -481,7 +535,12 @@ export function TalentTreePanel({
       />
       <TalentFloatingTip tip={hoverTip} />
       <aside className="bb-talent-rail">
-        <p className="bb-section-label">Trees</p>
+        <p className="bb-section-label bb-talent-rail__trees-label">
+          <span>Trees</span>
+          <span className="bb-talent-rail__budget tabular-nums">
+            {spent}/{TALENT_POINT_BUDGET}
+          </span>
+        </p>
         <div className="bb-talent-rail__tabs" role="tablist" aria-label="Talent trees">
           {TALENT_TREE_IDS.map((id) => {
             const pts = treePointsSpent(build, id);
@@ -536,43 +595,6 @@ export function TalentTreePanel({
             );
           })}
         </div>
-
-        <header className="bb-talent-bar">
-          <div className="bb-talent-bar__info">
-            <span className="bb-talent-bar__stat">
-              <span className="bb-talent-bar__k">Points</span>
-              <span className="bb-talent-bar__v">
-                {owned}/{TALENT_POINT_BUDGET}
-              </span>
-              <span className="bb-meta">
-                · {remainingOwned} free · {spent} spent
-              </span>
-            </span>
-            <span className="bb-talent-bar__stat">
-              <span className="bb-talent-bar__k">Essence</span>
-              <span className="bb-talent-bar__v">{essence}</span>
-              <span className="bb-meta">· {ESSENCE_PER_TALENT_POINT}/pt</span>
-            </span>
-          </div>
-          <div className="bb-talent-bar__buy">
-            <button
-              type="button"
-              className="bb-btn-brass disabled:opacity-40"
-              disabled={!canBuy}
-              onClick={() => room?.send("buy_talent_points", { count: 1 })}
-            >
-              Buy 1
-            </button>
-            <button
-              type="button"
-              className="bb-btn-ink disabled:opacity-40"
-              disabled={owned >= TALENT_POINT_BUDGET || essence < ESSENCE_PER_TALENT_POINT * 5}
-              onClick={() => room?.send("buy_talent_points", { count: 5 })}
-            >
-              Buy 5
-            </button>
-          </div>
-        </header>
 
         <section
           className="bb-talent-stage"

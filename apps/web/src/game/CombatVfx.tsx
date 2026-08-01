@@ -3,21 +3,22 @@ import { Html, useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
-import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, totalShieldAbsorb, type CosmeticsEquipped } from "@battlebeasts/shared";
+import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, STARTER_COLORS, totalShieldAbsorb, type CosmeticsEquipped } from "@battlebeasts/shared";
 import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, ChainJumpProjectileEffect, PoisonDartProjectileEffect, hasCatalogProjectile, isOwnedByCastProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import {
   StatusHpBadgeStack,
-  readBurningStacks,
-  readBleedingStacks,
-  readPoisonStacks,
-  readRejuvenationStacks,
-  syncBurningBadge,
+  readBleedingBadge,
+  readBurningBadge,
+  readPoisonBadge,
+  readRejuvenationBadge,
   syncBleedingBadge,
+  syncBurningBadge,
   syncPoisonBadge,
   syncRejuvenationBadge,
+  type StatusRowLite,
 } from "./StatusHpBadgeStack";
 import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
@@ -25,6 +26,7 @@ import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { playBoltCastSfx } from "./gameSfx";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
+import { PlayerHpBillboard } from "./PlayerHpBillboard";
 
 export { Volcanoes } from "./vfx/Volcanoes";
 export { ProtectionBubbles } from "./vfx/ProtectionBubbles";
@@ -382,11 +384,12 @@ type DecoyNet = {
 
 function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
     const group = useRef<THREE.Group>(null);
+    const bodyRef = useRef<THREE.Group>(null);
     const controllerRef = useRef<CharacterAnimationController | null>(null);
     const renderPos = useRef(new THREE.Vector3());
     const renderYaw = useRef(0);
     const vel = useRef(new THREE.Vector3());
-    const colorRef = useRef("#4ade80");
+    const colorRef = useRef(STARTER_COLORS[0]!);
     const patternRef = useRef("plain");
     const patternColorRef = useRef("#1f2937");
     const cosmeticsKeyRef = useRef("");
@@ -488,7 +491,7 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
         renderYaw.current = THREE.MathUtils.lerp(renderYaw.current, d.yaw, blend);
 
         g.position.set(renderPos.current.x, 0, renderPos.current.z);
-        g.rotation.y = renderYaw.current;
+        if (bodyRef.current) bodyRef.current.rotation.y = renderYaw.current;
 
         vel.current.set(d.vx, 0, d.vz);
         const speed = Math.hypot(d.vx, d.vz);
@@ -500,10 +503,17 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
         controller.update(safeDt);
     });
 
+    const d0 = room.state?.decoys?.get(decoyId) as { ownerSessionId?: string } | undefined;
+    const ownerId = d0?.ownerSessionId ?? null;
+
     return (
         <group ref={group}>
-            <primitive object={scene} />
-            <EquippedCosmetics characterRoot={scene} equipped={equipped} />
+            <group ref={bodyRef}>
+                <primitive object={scene} />
+                <EquippedCosmetics characterRoot={scene} equipped={equipped} />
+            </group>
+            {/* Owner combat HP on the decoy — shows when owner is engaged. */}
+            <PlayerHpBillboard room={room} sessionId={ownerId} />
         </group>
     );
 }
@@ -740,11 +750,15 @@ function HpBillboard({
     const shield = useRef<THREE.Mesh>(null);
     const poisonBadge = useRef<HTMLDivElement>(null);
     const poisonStacksEl = useRef<HTMLSpanElement>(null);
+    const poisonRing = useRef<SVGCircleElement>(null);
     const burningBadge = useRef<HTMLDivElement>(null);
+    const burningRing = useRef<SVGCircleElement>(null);
     const bleedingBadge = useRef<HTMLDivElement>(null);
     const bleedingStacksEl = useRef<HTMLSpanElement>(null);
+    const bleedingRing = useRef<SVGCircleElement>(null);
     const rejuvenationBadge = useRef<HTMLDivElement>(null);
     const rejuvenationStacksEl = useRef<HTMLSpanElement>(null);
+    const rejuvenationRing = useRef<SVGCircleElement>(null);
     const lastPoisonStacks = useRef(0);
     const lastBleedingStacks = useRef(0);
     const lastRejuvenationStacks = useRef(0);
@@ -753,19 +767,35 @@ function HpBillboard({
             | {
                   hp: number;
                   maxHp: number;
-                  statuses?: { forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void };
+                  statuses?: { forEach: (cb: (row: StatusRowLite) => void) => void };
               }
             | undefined;
         const m = fill.current;
         const s = shield.current;
         if (!m || !t) {
-            syncPoisonBadge(poisonBadge.current, poisonStacksEl.current, 0, lastPoisonStacks);
-            syncBurningBadge(burningBadge.current, 0);
-            syncBleedingBadge(bleedingBadge.current, bleedingStacksEl.current, 0, lastBleedingStacks);
+            syncPoisonBadge(
+                poisonBadge.current,
+                poisonStacksEl.current,
+                poisonRing.current,
+                { stacks: 0, expiresAt: 0 },
+                lastPoisonStacks,
+            );
+            syncBurningBadge(burningBadge.current, burningRing.current, {
+                stacks: 0,
+                expiresAt: 0,
+            });
+            syncBleedingBadge(
+                bleedingBadge.current,
+                bleedingStacksEl.current,
+                bleedingRing.current,
+                { stacks: 0, expiresAt: 0 },
+                lastBleedingStacks,
+            );
             syncRejuvenationBadge(
                 rejuvenationBadge.current,
                 rejuvenationStacksEl.current,
-                0,
+                rejuvenationRing.current,
+                { stacks: 0, expiresAt: 0 },
                 lastRejuvenationStacks,
             );
             return;
@@ -775,7 +805,7 @@ function HpBillboard({
         m.scale.x = Math.max(0.001, ratio);
         m.position.x = -0.5 * (1 - ratio);
 
-        const rows: { statusId?: string; stacks?: number }[] = [];
+        const rows: StatusRowLite[] = [];
         t.statuses?.forEach((row) => {
             if (row?.statusId) rows.push(row);
         });
@@ -793,20 +823,23 @@ function HpBillboard({
         syncPoisonBadge(
             poisonBadge.current,
             poisonStacksEl.current,
-            readPoisonStacks(rows),
+            poisonRing.current,
+            readPoisonBadge(rows),
             lastPoisonStacks,
         );
-        syncBurningBadge(burningBadge.current, readBurningStacks(rows));
+        syncBurningBadge(burningBadge.current, burningRing.current, readBurningBadge(rows));
         syncBleedingBadge(
             bleedingBadge.current,
             bleedingStacksEl.current,
-            readBleedingStacks(rows),
+            bleedingRing.current,
+            readBleedingBadge(rows),
             lastBleedingStacks,
         );
         syncRejuvenationBadge(
             rejuvenationBadge.current,
             rejuvenationStacksEl.current,
-            readRejuvenationStacks(rows),
+            rejuvenationRing.current,
+            readRejuvenationBadge(rows),
             lastRejuvenationStacks,
         );
     });
@@ -827,11 +860,15 @@ function HpBillboard({
             <StatusHpBadgeStack
                 poisonBadgeRef={poisonBadge}
                 poisonStacksRef={poisonStacksEl}
+                poisonRingRef={poisonRing}
                 burningBadgeRef={burningBadge}
+                burningRingRef={burningRing}
                 bleedingBadgeRef={bleedingBadge}
                 bleedingStacksRef={bleedingStacksEl}
+                bleedingRingRef={bleedingRing}
                 rejuvenationBadgeRef={rejuvenationBadge}
                 rejuvenationStacksRef={rejuvenationStacksEl}
+                rejuvenationRingRef={rejuvenationRing}
             />
         </group>
     );

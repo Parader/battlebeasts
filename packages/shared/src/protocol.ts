@@ -93,9 +93,11 @@ export type ClientMessage =
   | { type: "party_kick"; sessionId: string }
   | { type: "party_set_seat"; sessionId: string; seat: "teamA" | "teamB" | "spectator" }
   | { type: "party_set_modes"; modes: string[] }
-  | { type: "party_lock" }
+  | { type: "party_lock"; matchKind?: "ranked" | "unranked" }
   | { type: "party_leave" }
   | { type: "party_cancel" }
+  | { type: "hub_ranked_request" }
+  | { type: "hub_ranked_leaderboard" }
   | { type: "rematch_vote" }
   | { type: "return_hub" };
 
@@ -127,6 +129,20 @@ export type MatchRecapRewards = {
   winBonus: number;
 };
 
+export type MatchRecapRanked = {
+  label: string;
+  mmrDelta: number;
+  lpDelta: number;
+  lpAfter: number;
+  tierBefore: string;
+  tierAfter: string;
+  divisionBefore: number;
+  divisionAfter: number;
+  promoted: boolean;
+  demoted: boolean;
+  placementRemaining: number;
+};
+
 export type MatchRecapRow = {
   sessionId: string;
   displayName: string;
@@ -137,6 +153,7 @@ export type MatchRecapRow = {
   healing: number;
   shield: number;
   rewards?: MatchRecapRewards;
+  ranked?: MatchRecapRanked;
 };
 
 export type ServerMessage =
@@ -164,7 +181,42 @@ export type ServerMessage =
   | { type: "party_update"; party: PartySnapshot | null }
   | { type: "party_invite"; partyId: string; fromName: string; modes: string[] }
   | { type: "hub_roster"; players: { sessionId: string; displayName: string; isOwner: boolean }[] }
-  | { type: "match_recap"; winner: "a" | "b" | "draw"; scoreA: number; scoreB: number; rows: MatchRecapRow[] }
+  | {
+      type: "match_recap";
+      winner: "a" | "b" | "draw";
+      scoreA: number;
+      scoreB: number;
+      matchKind?: "ranked" | "custom";
+      rows: MatchRecapRow[];
+    }
+  | {
+      type: "hub_ranked_state";
+      season: { id: string; slug: string; starts_at: string; ends_at: string | null; status: string } | null;
+      rating: {
+        mmr: number;
+        lp: number;
+        tier: string;
+        division: number;
+        wins: number;
+        losses: number;
+        placementRemaining: number;
+        peakTier: string;
+        gmRank: number | null;
+      } | null;
+      label: string | null;
+    }
+  | {
+      type: "hub_ranked_leaderboard";
+      rows: Array<{
+        userId: string;
+        displayName: string;
+        mmr: number;
+        lp: number;
+        tier: string;
+        division: number;
+        rank: number;
+      }>;
+    }
   | {
       type: "combat_fx";
       kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase" | "portal";

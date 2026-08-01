@@ -5,6 +5,7 @@ export const UPPER_BODY_BONE_TOKENS = [
   "spine",
   "spine1",
   "spine2",
+  "chestproxy",
   "neck",
   "head",
   "jaw",
@@ -137,35 +138,28 @@ export function createUpperBodyClip(clip: THREE.AnimationClip): THREE.AnimationC
   return filterClipTracks(clip, (t) => isUpperBodyTrack(t.name), "::upper");
 }
 
+/** Normalized name is exactly `spine1` (not spine / spine2). */
+export function isExactSpine1Bone(normalizedBone: string): boolean {
+  return normalizedBone === "spine1";
+}
+
+/** Normalized name is exactly `spine` (not spine1 / spine2). */
+export function isExactSpineBone(normalizedBone: string): boolean {
+  return normalizedBone === "spine";
+}
+
+/**
+ * Upper loco for twin-stick. Keeps full upper (incl. Spine / Spine1) so clips
+ * drive lean and body-turn; Spine1 gets a relative aim offset after the mixer.
+ */
+export function createUpperLocoClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  return filterClipTracks(clip, (t) => isUpperBodyTrack(t.name), "::upperLoco");
+}
+
 export function createLowerBodyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
   return filterClipTracks(clip, (t) => isLowerBodyTrack(t.name), "::lower");
 }
 
-/**
- * Legs only (no hips) — used while a cast owns hips so Mixamo torso twist
- * isn't fighting locomotion hip keys.
- */
-export function createLegsOnlyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
-  return filterClipTracks(
-    clip,
-    (t) => isLowerBodyTrack(t.name) && !isHipsTrack(t.name),
-    "::legs",
-  );
-}
-
-/**
- * Upper body + hips for casts. Mixamo attacks bake aim into hip yaw; without
- * hips the spell reads as sideways relative to gameplay facing.
- * Prefer upper-only (`createUpperBodyClip`) so loco keeps feet planted —
- * only use this when a clip truly needs hip aim twist (`ownHips: true`).
- */
-export function createCastBodyClip(clip: THREE.AnimationClip): THREE.AnimationClip {
-  return filterClipTracks(
-    clip,
-    (t) => isUpperBodyTrack(t.name) || isHipsTrack(t.name),
-    "::cast",
-  );
-}
 
 /** First-frame hips Y from a clip (prefer Hips over Root), or null if missing. */
 export function getHipsStartY(clip: THREE.AnimationClip): number | null {
@@ -242,6 +236,29 @@ export function normalizeClipKey(name: string): string {
 }
 
 /**
+ * Known export renames — Mixamo title ↔ short Blender export name.
+ * Tried only after exact/fuzzy miss so ambiguous packs stay strict.
+ */
+const CLIP_ALIASES: Record<string, readonly string[]> = {
+  "standing 1h magic attack 01": ["magic_1h"],
+  magic_1h: ["Standing 1H Magic Attack 01"],
+};
+
+function matchClipExactOrFuzzy(
+  clips: readonly THREE.AnimationClip[],
+  configuredName: string,
+): THREE.AnimationClip | null {
+  const exact = clips.filter((c) => c.name.toLowerCase() === configuredName.toLowerCase());
+  if (exact.length === 1) return exact[0]!;
+  if (exact.length > 1) return null;
+
+  const key = normalizeClipKey(configuredName);
+  const fuzzy = clips.filter((c) => normalizeClipKey(c.name) === key);
+  if (fuzzy.length === 1) return fuzzy[0]!;
+  return null;
+}
+
+/**
  * Resolve a configured name against loaded clips.
  * Exact (case-insensitive) first, then normalized key equality.
  * Never picks a loosely related name — returns null if ambiguous or missing.
@@ -252,13 +269,13 @@ export function resolveClip(
 ): THREE.AnimationClip | null {
   if (!configuredName) return null;
 
-  const exact = clips.filter((c) => c.name.toLowerCase() === configuredName.toLowerCase());
-  if (exact.length === 1) return exact[0]!;
-  if (exact.length > 1) return null;
+  const direct = matchClipExactOrFuzzy(clips, configuredName);
+  if (direct) return direct;
 
-  const key = normalizeClipKey(configuredName);
-  const fuzzy = clips.filter((c) => normalizeClipKey(c.name) === key);
-  if (fuzzy.length === 1) return fuzzy[0]!;
+  for (const alias of CLIP_ALIASES[configuredName.toLowerCase()] ?? []) {
+    const hit = matchClipExactOrFuzzy(clips, alias);
+    if (hit) return hit;
+  }
   return null;
 }
 

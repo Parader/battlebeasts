@@ -1,7 +1,7 @@
 import * as THREE from "three";
+import { VFX_CIRCLE_URL } from "../vfxUrls";
 
-/** Soft disc from bobbyroe Simple-Particle-Effects (MIT). */
-export const VFX_CIRCLE_URL = "/assets/vfx/circle.png";
+export { VFX_CIRCLE_URL };
 
 let circleTex: THREE.Texture | null = null;
 
@@ -13,6 +13,13 @@ export function getVfxCircleTexture(): THREE.Texture {
     circleTex.needsUpdate = true;
   }
   return circleTex;
+}
+
+/** Install a fully-decoded texture from the loading gate. */
+export function setCircleTexture(tex: THREE.Texture): void {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  circleTex = tex;
 }
 
 /**

@@ -14,6 +14,8 @@ type Props = {
     followLambda: number;
     cursorLambda: number;
     cursorInfluence: number;
+    /** When false, skips writing the camera (intro cinematic owns it). */
+    enabled?: boolean;
 };
 
 /**
@@ -32,6 +34,7 @@ export function FixedFollowCamera({
     followLambda,
     cursorLambda,
     cursorInfluence,
+    enabled = true,
 }: Props) {
     const { gl } = useThree();
     const softPlayer = useRef(new THREE.Vector3());
@@ -42,6 +45,7 @@ export function FixedFollowCamera({
     const liveDist = useRef(distance);
     const zoomMin = minDistance ?? distance * 0.55;
     const zoomMax = distance;
+    const wasEnabled = useRef(enabled);
 
     useEffect(() => {
         liveDist.current = THREE.MathUtils.clamp(liveDist.current, zoomMin, zoomMax);
@@ -50,6 +54,7 @@ export function FixedFollowCamera({
     useEffect(() => {
         const el = gl.domElement;
         const onWheel = (e: WheelEvent) => {
+            if (!enabled) return;
             e.preventDefault();
             // Scroll up → closer; scroll down → farther (capped at max).
             const step = Math.sign(e.deltaY) * Math.min(1.8, 0.55 + Math.abs(e.deltaY) * 0.012);
@@ -61,9 +66,25 @@ export function FixedFollowCamera({
         };
         el.addEventListener("wheel", onWheel, { passive: false });
         return () => el.removeEventListener("wheel", onWheel);
-    }, [gl, zoomMin, zoomMax]);
+    }, [gl, zoomMin, zoomMax, enabled]);
 
     useFrame((state, dt) => {
+        // Re-seed soft state when re-enabled after cinematic so we don't snap-jump.
+        if (enabled && !wasEnabled.current) {
+            const t = target.current;
+            if (t) {
+                softPlayer.current.set(t.x, t.y, t.z);
+                softCursor.current.set(0, 0);
+                seeded.current = true;
+                // Match intro handoff end distance so first frame stays put.
+                liveDist.current = distance;
+            } else {
+                seeded.current = false;
+            }
+        }
+        wasEnabled.current = enabled;
+        if (!enabled) return;
+
         const { camera, size, pointer } = state;
         const t = target.current;
         if (!t) return;

@@ -5,6 +5,7 @@ import {
   combineStatusMoveMul,
   combineStatusSlowPercent,
   getStatus,
+  isHardCrowdControlStatus,
   rollStatusChance,
   statusesBlockCast,
   statusesBlockMove,
@@ -52,6 +53,23 @@ export class StatusSystem {
   has(targetId: string, statusId: string): boolean {
     const host = this.getHost(targetId);
     return Boolean(host?.statuses.get(statusId));
+  }
+
+  /**
+   * True when `targetId` has an active hard CC (stun / root / silence)
+   * whose `sourceId` is `attackerId` (Opportunist).
+   */
+  hasHardCcFrom(targetId: string, attackerId: string): boolean {
+    if (!attackerId) return false;
+    const host = this.getHost(targetId);
+    if (!host) return false;
+    let found = false;
+    host.statuses.forEach((row) => {
+      if (found) return;
+      if (row.sourceId !== attackerId) return;
+      if (isHardCrowdControlStatus(STATUSES[row.statusId])) found = true;
+    });
+    return found;
   }
 
   getStacks(targetId: string, statusId: string): number {

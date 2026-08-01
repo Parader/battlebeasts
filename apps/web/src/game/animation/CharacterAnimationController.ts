@@ -4,10 +4,9 @@ import {
   heroAnimationConfig,
 } from "./animationConfig";
 import {
-  createCastBodyClip,
-  createLegsOnlyClip,
   createLowerBodyClip,
   createUpperBodyClip,
+  createUpperLocoClip,
   getHipsStartY,
   plantHipsRootMotion,
   reportMissingClips,
@@ -22,6 +21,26 @@ import {
   type LocoWeights,
   type MovementParams,
 } from "./locomotionBlend";
+import {
+  applySpineCursorYaw,
+  findSpineAimBones,
+  type SpineAimBones,
+} from "./spineCursorAim";
+import {
+  applyChestProxySnap,
+  findChestProxyBones,
+  type ChestProxyBones,
+} from "./chestProxySnap";
+
+/** Production strategy knobs for upper-body Mixamo casting. */
+export type CharacterAnimOptions = {
+  /**
+   * After mixer, snap Spine1 world rotation toward root-level ChestProxy
+   * (Blender-baked from full cast). V Rising–style.
+   * Default true.
+   */
+  chestProxySnap?: boolean;
+};
 
 export type UpperBodyActionOptions = {
   desiredDuration?: number;
@@ -29,6 +48,8 @@ export type UpperBodyActionOptions = {
   timeScale?: number;
   /** Pause and hold the clip at this time (seconds) once reached. */
   holdAtSec?: number;
+  /** Loop until cancel (e.g. Fireball charge). */
+  loop?: boolean;
   fadeIn?: number;
   fadeOut?: number;
   onComplete?: () => void;
@@ -95,24 +116,21 @@ export class CharacterAnimationController {
   readonly mixer: THREE.AnimationMixer;
 
   private readonly config: CharacterAnimationConfig;
-  private readonly sourceClips: readonly THREE.AnimationClip[];
+  private readonly sourceClips: THREE.AnimationClip[];
+  private readonly chestProxySnapEnabled: boolean;
 
   private readonly lowerActions = new Map<LocoSlot, THREE.AnimationAction>();
-  /** Legs without hips — active while a cast owns Mixamo hip aim twist. */
-  private readonly legsOnlyActions = new Map<LocoSlot, THREE.AnimationAction>();
   private readonly upperLocoActions = new Map<LocoSlot, THREE.AnimationAction>();
   private readonly upperCastByName = new Map<string, THREE.AnimationAction>();
-  /**
-   * True when a cast drives Mixamo hips for aim twist.
-   * Default is false — loco keeps feet planted for all upper casts.
-   * Opt in per clip with `ownHips: true` only when hip yaw is required.
-   */
-  private readonly upperCastOwnsHips = new WeakMap<THREE.AnimationAction, boolean>();
   private readonly fullBodyClips = new Map<string, THREE.AnimationClip>();
 
   private locoCurrent: LocoWeights = { ...ZERO_LOCO_WEIGHTS };
   private locoTarget: LocoWeights = { ...ZERO_LOCO_WEIGHTS };
   private normalizedSpeed = 0;
+  /** Planar speed from last setMovement (world units / sec). */
+  private planarSpeed = 0;
+  /** Unbuffed MOVE_SPEED basis for loco timeScale. */
+  private baseMoveSpeed = 1;
 
   private layerMulLower = 1;
   private layerMulUpper = 1;
@@ -124,8 +142,6 @@ export class CharacterAnimationController {
   private castWeightTarget = 0;
   private activeCast: THREE.AnimationAction | null = null;
   private activeCastName: string | null = null;
-  /** Whether the active (or fading) upper cast drives hips for aim twist. */
-  private castOwnsHips = false;
   private upperGen = 0;
   private castOnComplete: (() => void) | null = null;
   /** When set, freeze the active upper cast once clip time reaches this. */
@@ -160,19 +176,62 @@ export class CharacterAnimationController {
   private stunned = false;
   private stunBlend = 0;
   private stunIdleLower: THREE.AnimationAction | null = null;
-  private stunIdleLegs: THREE.AnimationAction | null = null;
   private stunIdleUpper: THREE.AnimationAction | null = null;
+
+  /** Cursor yaw (radians). Spine1 offset vs bodyYaw. */
+  private aimYaw = 0;
+  /** Aim-forward basis for loco blend (strafe/back relative to cursor). */
+  private facingYaw = 0;
+  /** Mesh/body yaw — Spine1 additive uses (aimYaw − bodyYaw). */
+  private bodyYaw = 0;
+  private readonly spineAim: SpineAimBones | null;
+  private readonly chestProxy: ChestProxyBones | null;
+  /**
+   * Loco facing = aim; Spine1 additive = aim − body.
+   * Cast torso restored via ChestProxy snap.
+   */
+  spineCursorAim = true;
 
   constructor(
     character: THREE.Object3D,
     clips: THREE.AnimationClip[],
     config: CharacterAnimationConfig = heroAnimationConfig,
+    options: CharacterAnimOptions = {},
   ) {
     this.mixer = new THREE.AnimationMixer(character);
     this.config = config;
-    this.sourceClips = clips;
+    this.sourceClips = clips.slice();
+    this.chestProxySnapEnabled = options.chestProxySnap !== false;
+    this.spineAim = findSpineAimBones(character);
+    this.chestProxy = findChestProxyBones(character);
+    if (!this.spineAim) {
+      console.warn(
+        "[CharacterAnimation] Hips/Spine1 not found — spine cursor aim disabled",
+      );
+    } else if (import.meta.env.DEV) {
+      console.info(
+        "[CharacterAnimation] spine1 cursor aim OK:",
+        this.spineAim.spine.name,
+        "+",
+        this.spineAim.hips.name,
+      );
+    }
+    if (this.chestProxySnapEnabled) {
+      if (!this.chestProxy) {
+        console.warn(
+          "[CharacterAnimation] chestProxySnap on but ChestProxy bone missing — bake with tools/blender_add_chest_proxy.py",
+        );
+      } else if (import.meta.env.DEV) {
+        console.info(
+          "[CharacterAnimation] ChestProxy snap OK:",
+          this.chestProxy.proxy.name,
+          "→",
+          this.chestProxy.chest.name,
+        );
+      }
+    }
 
-    reportMissingClips(clips, {
+    reportMissingClips(this.sourceClips, {
       idle: config.idle,
       runForward: config.runForward,
       runBackward: config.runBackward,
@@ -182,6 +241,7 @@ export class CharacterAnimationController {
       castFrost: config.castFrost,
       castBarrier: config.castBarrier,
       castSpikes: config.castSpikes,
+      castPoisonCloud: config.castPoisonCloud,
       castFrostMist: config.castFrostMist,
       castHealBeam: config.castHealBeam,
       castFirewall: config.castFirewall,
@@ -236,23 +296,8 @@ export class CharacterAnimationController {
         this.lowerActions.set(slot, lower);
       }
 
-      const legsClip = createLegsOnlyClip(noRoot);
-      legsClip.name = `${src.name}::legs::${slot}`;
-      if (legsClip.tracks.length === 0) {
-        console.warn(`[CharacterAnimation] legs-only clip empty after mask: ${name}`);
-      } else {
-        const legs = this.mixer.clipAction(legsClip);
-        legs.enabled = true;
-        legs.setEffectiveWeight(0);
-        legs.setLoop(THREE.LoopRepeat, Infinity);
-        legs.timeScale = slot === "idle" ? 1 : refDur / Math.max(1e-4, src.duration);
-        legs.time = 0;
-        legs.play();
-        this.legsOnlyActions.set(slot, legs);
-      }
-
-      const upperClip = createUpperBodyClip(noRoot);
-      upperClip.name = `${src.name}::upper::${slot}`;
+      const upperClip = createUpperLocoClip(noRoot);
+      upperClip.name = `${src.name}::upperLoco::${slot}`;
       if (upperClip.tracks.length === 0) {
         console.warn(`[CharacterAnimation] upper loco clip empty after mask: ${name}`);
       } else {
@@ -282,17 +327,6 @@ export class CharacterAnimationController {
           lower.play();
           this.stunIdleLower = lower;
         }
-        const legsClip = createLegsOnlyClip(noRoot);
-        legsClip.name = `${stunSrc.name}::legs::stunnedIdle`;
-        if (legsClip.tracks.length > 0) {
-          const legs = this.mixer.clipAction(legsClip);
-          legs.enabled = true;
-          legs.setEffectiveWeight(0);
-          legs.setLoop(THREE.LoopRepeat, Infinity);
-          legs.timeScale = 1;
-          legs.play();
-          this.stunIdleLegs = legs;
-        }
         const upperClip = createUpperBodyClip(noRoot);
         upperClip.name = `${stunSrc.name}::upper::stunnedIdle`;
         if (upperClip.tracks.length > 0) {
@@ -307,10 +341,23 @@ export class CharacterAnimationController {
       }
     }
 
-    this.registerUpperCast("castPrimary", config.castPrimary);
+    {
+      // Prefer configured name; fall back to Mixamo / legacy export aliases.
+      const preferred = config.castPrimary;
+      const aliases = ["magic_1h", "Standing 1H Magic Attack 01"];
+      const clipName =
+        (resolveClip(this.sourceClips, preferred) && preferred) ||
+        aliases.find((n) => resolveClip(this.sourceClips, n)) ||
+        preferred;
+      this.registerUpperCast("castPrimary", clipName);
+    }
     if (config.castFrost) this.registerUpperCast("castFrost", config.castFrost);
     if (config.castBarrier) this.registerUpperCast("castBarrier", config.castBarrier);
     if (config.castSpikes) this.registerUpperCast("castSpikes", config.castSpikes);
+    if (config.castPoisonCloud) this.registerUpperCast("castPoisonCloud", config.castPoisonCloud);
+    if (config.castFireballCharge) {
+      this.registerUpperCast("castFireballCharge", config.castFireballCharge);
+    }
     if (config.castFrostMist) this.registerUpperCast("castFrostMist", config.castFrostMist);
     if (config.castHealBeam) this.registerUpperCast("castHealBeam", config.castHealBeam);
     if (config.castFirewall) this.registerUpperCast("castFirewall", config.castFirewall);
@@ -348,25 +395,15 @@ export class CharacterAnimationController {
 
   /**
    * Register an upper-body cast clip.
-   * @param options.ownHips — default false: upper-only so loco keeps feet planted.
-   *   Pass true only when a Mixamo clip needs hip yaw for aim twist.
+   * Base Mixamo clip masked to upper body + ChestProxy snap (feet stay on loco).
    */
-  registerUpperCast(
-    logicalName: string,
-    clipName: string,
-    options: { ownHips?: boolean } = {},
-  ): void {
+  registerUpperCast(logicalName: string, clipName: string): void {
     const src = resolveClip(this.sourceClips, clipName);
     if (!src) {
       console.warn(`[CharacterAnimation] cannot register upper cast "${logicalName}" → "${clipName}"`);
       return;
     }
-    const ownHips = options.ownHips === true;
-    // Default: upper-only — feet stay with locomotion for every spell (incl. future).
-    // Opt-in hips for clips that bake aim twist into the pelvis.
-    const castClip = ownHips
-      ? createCastBodyClip(plantHipsRootMotion(src, this.plantHipsY))
-      : createUpperBodyClip(src);
+    const castClip = createUpperBodyClip(src);
     if (castClip.tracks.length === 0) {
       console.warn(`[CharacterAnimation] cast clip has no tracks after mask: ${clipName}`);
       return;
@@ -377,17 +414,26 @@ export class CharacterAnimationController {
     action.setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = true;
     action.stop();
-    this.upperCastOwnsHips.set(action, ownHips);
     this.upperCastByName.set(logicalName, action);
     this.upperCastByName.set(src.name, action);
     this.upperCastByName.set(clipName, action);
   }
 
-  setMovement(params: MovementParams): void {
+  setMovement(params: MovementParams & { aimYaw?: number; bodyYaw?: number }): void {
     if (this.disposed) return;
-    const { targets, normalizedSpeed } = computeLocoTargets(params);
+    // Loco blend is always aim-relative (facingYaw). Spine uses bodyYaw when set
+    // so the mesh can face move while legs still strafe/back vs cursor.
+    this.facingYaw = params.facingYaw;
+    this.aimYaw = params.aimYaw ?? params.facingYaw;
+    this.bodyYaw = params.bodyYaw ?? this.facingYaw;
+    const { targets, normalizedSpeed, speed } = computeLocoTargets(params);
     this.locoTarget = targets;
     this.normalizedSpeed = normalizedSpeed;
+    this.planarSpeed = speed;
+    this.baseMoveSpeed = Math.max(
+      1e-4,
+      params.baseMoveSpeed ?? params.maximumSpeed,
+    );
   }
 
   setMovementFromYaw(
@@ -424,19 +470,17 @@ export class CharacterAnimationController {
     if (!this.casting && this.castWeight < 0.01) this.castWeight = 0;
 
     const tMin = this.config.locoTimeScaleMin ?? 0.75;
-    const tMax = this.config.locoTimeScaleMax ?? 1.35;
+    const tMax = this.config.locoTimeScaleMax ?? 2;
+    // Rate tracks absolute speed vs unbuffed base (MOVE_SPEED), so a +6% move
+    // buff at full stick plays the run clip ~6% faster. Blend weights still use
+    // normalizedSpeed vs the buffed maximumSpeed.
     const speedScale = THREE.MathUtils.clamp(
-      this.normalizedSpeed < 1e-3 ? 1 : this.normalizedSpeed,
+      this.planarSpeed < 1e-3 ? 1 : this.planarSpeed / this.baseMoveSpeed,
       tMin,
       tMax,
     );
 
     const locoUpperMul = this.layerMulUpper * (1 - this.castWeight);
-    // While casting with hip-owning clips, legs-only loco so cast hips own Mixamo aim twist.
-    // Upper-only casts (athletic pitches) leave full lower loco so feet stay planted.
-    const useCastHips = this.castOwnsHips && this.castWeight > 0.01;
-    const hipsLocoMul = this.layerMulLower * (useCastHips ? 1 - this.castWeight : 1);
-    const legsLocoMul = this.layerMulLower * (useCastHips ? this.castWeight : 0);
 
     this.stunBlend +=
       ((this.stunned && this.stunIdleLower ? 1 : 0) - this.stunBlend) *
@@ -445,7 +489,7 @@ export class CharacterAnimationController {
     const idleStunMul = this.stunBlend;
 
     for (const [slot, action] of this.lowerActions) {
-      const base = this.locoCurrent[slot] * hipsLocoMul;
+      const base = this.locoCurrent[slot] * this.layerMulLower;
       const w = slot === "idle" ? base * idleNormalMul : base;
       action.setEffectiveWeight(w);
       if (slot === "idle") action.timeScale = 1;
@@ -456,37 +500,13 @@ export class CharacterAnimationController {
     }
     if (this.stunIdleLower) {
       this.stunIdleLower.setEffectiveWeight(
-        this.locoCurrent.idle * hipsLocoMul * idleStunMul,
+        this.locoCurrent.idle * this.layerMulLower * idleStunMul,
       );
       this.stunIdleLower.timeScale = 1;
     }
 
-    for (const [slot, action] of this.legsOnlyActions) {
-      const base = this.locoCurrent[slot] * legsLocoMul;
-      const w = slot === "idle" ? base * idleNormalMul : base;
-      action.setEffectiveWeight(w);
-      if (slot === "idle") action.timeScale = 1;
-      else {
-        action.timeScale =
-          (this.refClipDuration / Math.max(1e-4, action.getClip().duration)) * speedScale;
-      }
-      // Keep legs in phase with the hips+legs loco clip
-      const withHips = this.lowerActions.get(slot);
-      if (withHips && this.locoCurrent[slot] > 0.05) {
-        action.time = withHips.time;
-      }
-    }
-    if (this.stunIdleLegs) {
-      this.stunIdleLegs.setEffectiveWeight(
-        this.locoCurrent.idle * legsLocoMul * idleStunMul,
-      );
-      this.stunIdleLegs.timeScale = 1;
-      if (this.stunIdleLower && this.locoCurrent.idle > 0.05) {
-        this.stunIdleLegs.time = this.stunIdleLower.time;
-      }
-    }
-
     for (const [slot, action] of this.upperLocoActions) {
+      // Full upper loco (Spine/Spine1 included). Relative aim layered after mixer.
       const base = this.locoCurrent[slot] * locoUpperMul;
       const w = slot === "idle" ? base * idleNormalMul : base;
       action.setEffectiveWeight(w);
@@ -588,6 +608,26 @@ export class CharacterAnimationController {
     }
 
     this.mixer.update(dt);
+
+    // V Rising–style: restore authored chest from root-level ChestProxy (before aim).
+    if (
+      this.chestProxySnapEnabled &&
+      this.chestProxy &&
+      this.castWeight > 0.01 &&
+      this.overrideWeight < 0.5
+    ) {
+      applyChestProxySnap(this.chestProxy, this.castWeight);
+    }
+
+    // Additive Spine1 aim (aimYaw − bodyYaw).
+    if (this.spineCursorAim && this.spineAim && this.overrideWeight < 0.5) {
+      applySpineCursorYaw(this.spineAim, this.aimYaw, this.bodyYaw);
+    }
+  }
+
+  /** True when ChestProxy bone exists on the character (regardless of snap option). */
+  hasChestProxy(): boolean {
+    return this.chestProxy != null;
   }
 
   playUpperBodyAction(animationName: string, options: UpperBodyActionOptions = {}): boolean {
@@ -600,6 +640,19 @@ export class CharacterAnimationController {
     }
 
     if (this.casting && this.activeCast === action && (action.isRunning() || action.paused)) {
+      // Re-assert loop mode (charge may have started before loop opts were applied).
+      if (options.loop) {
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.clampWhenFinished = false;
+        action.paused = false;
+        if (!action.isRunning()) action.play();
+        this.upperHoldAtSec = null;
+        if (typeof options.timeScale === "number" && options.timeScale > 0) {
+          action.timeScale = options.timeScale;
+        } else if (!options.desiredDuration) {
+          action.timeScale = 1;
+        }
+      }
       return true;
     }
 
@@ -626,19 +679,26 @@ export class CharacterAnimationController {
         ? Math.min(clip.duration, options.holdAtSec)
         : null;
 
+    const looping = Boolean(options.loop) && this.upperHoldAtSec == null;
     action.reset();
     action.enabled = true;
     action.paused = false;
+    action.setLoop(looping ? THREE.LoopRepeat : THREE.LoopOnce, looping ? Infinity : 1);
+    action.clampWhenFinished = !looping;
     action.setEffectiveWeight(0);
     action.play();
 
     this.casting = true;
     this.activeCast = action;
     this.activeCastName = animationName;
-    this.castOwnsHips = this.upperCastOwnsHips.get(action) ?? false;
     this.castWeightTarget = 1;
     // Small kick so the first frame isn't fully loco-upper
     this.castWeight = Math.max(this.castWeight, 0.15);
+
+    if (looping) {
+      this.castOnComplete = null;
+      return true;
+    }
 
     const onFinished = (e: unknown) => {
       const evt = e as { action?: THREE.AnimationAction };
@@ -656,6 +716,42 @@ export class CharacterAnimationController {
 
   playUpperBodyCast(animationName: string, desiredDuration?: number): void {
     this.playUpperBodyAction(animationName, { desiredDuration });
+  }
+
+  releaseUpperHold(opts: { seekToHold?: boolean } = {}): void {
+    if (this.disposed || !this.activeCast) return;
+    if (opts.seekToHold && this.upperHoldAtSec != null) {
+      if (this.activeCast.time < this.upperHoldAtSec) {
+        this.activeCast.time = this.upperHoldAtSec;
+      }
+    }
+    this.upperHoldAtSec = null;
+    this.activeCast.paused = false;
+    if (!this.activeCast.isRunning()) this.activeCast.play();
+  }
+
+  /** Seek upper cast forward to `sec` (no rewind). Used for Fireball early throw. */
+  seekUpperBodyTime(sec: number): void {
+    if (this.disposed || !this.activeCast) return;
+    if (this.activeCast.time < sec) {
+      this.activeCast.time = sec;
+    }
+    this.upperHoldAtSec = null;
+    this.activeCast.paused = false;
+    if (!this.activeCast.isRunning()) this.activeCast.play();
+  }
+
+  /** Current upper-cast clip time (seconds), or 0. */
+  getUpperBodyTime(): number {
+    if (this.disposed || !this.activeCast) return 0;
+    return this.activeCast.time;
+  }
+
+  setUpperBodyTimeScale(timeScale: number): void {
+    if (this.disposed || !this.activeCast || !(timeScale > 0)) return;
+    this.activeCast.timeScale = timeScale;
+    this.activeCast.paused = false;
+    if (!this.activeCast.isRunning()) this.activeCast.play();
   }
 
   cancelUpperBodyAction(_fadeDuration = UPPER_CAST_FADE_OUT): void {
@@ -727,10 +823,8 @@ export class CharacterAnimationController {
     this.layerMulLowerTarget = 0;
     this.layerMulUpperTarget = 0;
     for (const action of this.lowerActions.values()) action.setEffectiveWeight(0);
-    for (const action of this.legsOnlyActions.values()) action.setEffectiveWeight(0);
     for (const action of this.upperLocoActions.values()) action.setEffectiveWeight(0);
     if (this.stunIdleLower) this.stunIdleLower.setEffectiveWeight(0);
-    if (this.stunIdleLegs) this.stunIdleLegs.setEffectiveWeight(0);
     if (this.stunIdleUpper) this.stunIdleUpper.setEffectiveWeight(0);
 
     if (this.overrideAction) {
@@ -909,7 +1003,6 @@ export class CharacterAnimationController {
     this.layerMulLowerTarget = 0;
     this.layerMulUpperTarget = 0;
     for (const a of this.lowerActions.values()) a.setEffectiveWeight(0);
-    for (const a of this.legsOnlyActions.values()) a.setEffectiveWeight(0);
     for (const a of this.upperLocoActions.values()) a.setEffectiveWeight(0);
 
     if (this.overrideAction) {

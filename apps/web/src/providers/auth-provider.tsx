@@ -29,6 +29,9 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/** Dedicated desktop loopback (must match Electron main + Supabase redirect allowlist). */
+const DESKTOP_OAUTH_WEB_REDIRECT = "http://127.0.0.1:3847/auth/callback";
+
 async function fetchProfile(userId: string): Promise<Profile | null> {
     if (!supabase) return null;
     const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
@@ -37,6 +40,19 @@ async function fetchProfile(userId: string): Promise<Profile | null> {
         return null;
     }
     return data;
+}
+
+function parseAuthCallbackUrl(url: string): URL | null {
+    try {
+        return new URL(url);
+    } catch {
+        // Some Windows protocol deliveries omit a proper host.
+        try {
+            return new URL(url.replace(/^battlebeasts:\/*/i, "https://callback/"));
+        } catch {
+            return null;
+        }
+    }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -78,6 +94,93 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
+        if (!supabase) return;
+
+        let cancelled = false;
+        let inFlightCode: string | null = null;
+        let finishedCode: string | null = null;
+
+        const fail = (err: unknown) => {
+            console.error("Desktop OAuth callback failed", err);
+            window.dispatchEvent(
+                new CustomEvent("bb-desktop-oauth-error", {
+                    detail: err instanceof Error ? err.message : "Desktop Google sign-in failed",
+                }),
+            );
+            void window.battlebeasts?.cancelDesktopOAuth?.();
+        };
+
+        const consumeAuthUrl = async (url: string) => {
+            if (cancelled || !supabase) return;
+            // Focus-only deep links carry no session payload.
+            if (/^battlebeasts:\/\/focus\/?/i.test(url) && !/[?&]code=/.test(url)) return;
+
+            const parsed = parseAuthCallbackUrl(url);
+            if (!parsed) {
+                fail(new Error("Invalid auth callback URL"));
+                return;
+            }
+
+            const oauthError =
+                parsed.searchParams.get("error_description") ?? parsed.searchParams.get("error");
+            if (oauthError) {
+                fail(new Error(oauthError));
+                return;
+            }
+
+            const code = parsed.searchParams.get("code");
+            if (!code) return;
+            if (code === finishedCode || code === inFlightCode) return;
+
+            inFlightCode = code;
+            try {
+                const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+                if (error) throw error;
+                const nextSession =
+                    data.session ?? (await supabase.auth.getSession()).data.session ?? null;
+                if (!nextSession) {
+                    throw new Error(
+                        "Browser signed in, but the app could not create a session (PKCE). Try Google again.",
+                    );
+                }
+                finishedCode = code;
+                setSession(nextSession);
+                void window.battlebeasts?.clearPendingOAuthCallback?.();
+                void window.battlebeasts?.cancelDesktopOAuth?.();
+            } catch (err) {
+                // A duplicate "already used" code after success is harmless.
+                if (finishedCode === code) return;
+                const message =
+                    err && typeof err === "object" && "message" in err && typeof (err as Error).message === "string"
+                        ? (err as Error).message
+                        : err instanceof Error
+                          ? err.message
+                          : "Desktop Google sign-in failed";
+                fail(new Error(message));
+            } finally {
+                if (inFlightCode === code) inFlightCode = null;
+            }
+        };
+
+        const unsub = window.battlebeasts?.onAuthCallback?.((url) => {
+            void consumeAuthUrl(url);
+        });
+
+        const pollId = window.setInterval(() => {
+            void (async () => {
+                const pending = await window.battlebeasts?.takePendingOAuthCallback?.();
+                if (pending) await consumeAuthUrl(pending);
+            })();
+        }, 500);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(pollId);
+            unsub?.();
+        };
+    }, []);
+
+    useEffect(() => {
         if (!session?.user) {
             setProfile(null);
             return;
@@ -89,6 +192,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!supabase) {
             throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
         }
+
+        const desktop = window.battlebeasts?.isElectron === true;
+        if (desktop) {
+            const desktopOAuth = await window.battlebeasts?.beginDesktopOAuth?.();
+            if (desktopOAuth && !desktopOAuth.ok) {
+                throw new Error(desktopOAuth.error ?? "Could not start desktop OAuth listener");
+            }
+            const redirectTo =
+                desktopOAuth?.ok && desktopOAuth.redirectTo
+                    ? desktopOAuth.redirectTo
+                    : DESKTOP_OAUTH_WEB_REDIRECT;
+
+            const { data, error } = await supabase.auth.signInWithOAuth({
+                provider: "google",
+                options: {
+                    redirectTo,
+                    skipBrowserRedirect: true,
+                },
+            });
+            if (error) {
+                void window.battlebeasts?.cancelDesktopOAuth?.();
+                throw error;
+            }
+            if (!data.url) {
+                void window.battlebeasts?.cancelDesktopOAuth?.();
+                throw new Error("No OAuth URL returned");
+            }
+
+            const opened = await window.battlebeasts?.openExternal?.(data.url);
+            if (opened === false) {
+                void window.battlebeasts?.cancelDesktopOAuth?.();
+                throw new Error("Could not open system browser");
+            }
+            return;
+        }
+
         const redirectTo = `${window.location.origin}/auth/callback`;
         const { error } = await supabase.auth.signInWithOAuth({
             provider: "google",
@@ -109,8 +248,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!supabase) {
             throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
         }
-        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password });
-        if (error) throw error;
+        const trimmed = email.trim();
+        const { data, error } = await supabase.auth.signUp({ email: trimmed, password });
+        if (error) {
+            const already =
+                error.code === "user_already_exists" ||
+                /already registered|already been registered|user already exists/i.test(error.message);
+            if (already) {
+                const err = new Error(
+                    "That email is already registered. Sign in instead — if you used Google before, tap Continue with Google.",
+                );
+                (err as Error & { code?: string }).code = "user_already_exists";
+                throw err;
+            }
+            throw error;
+        }
         return { needsEmailConfirmation: Boolean(data.user) && !data.session };
     }, []);
 

@@ -28,6 +28,34 @@ export function applyMovement(
   };
 }
 
-export function applyYaw(_currentYaw: number, inputYaw: number): number {
-  return inputYaw;
+/** Signed shortest yaw delta in (-π, π]. */
+export function shortestYawDelta(from: number, to: number): number {
+  return Math.atan2(Math.sin(to - from), Math.cos(to - from));
+}
+
+/** Step current yaw toward target, capped at `maxRadPerSec`. */
+export function stepYawToward(
+  currentYaw: number,
+  targetYaw: number,
+  maxRadPerSec: number,
+  dt: number,
+): number {
+  const delta = shortestYawDelta(currentYaw, targetYaw);
+  const maxStep = Math.max(0, maxRadPerSec) * Math.max(0, dt);
+  if (Math.abs(delta) <= maxStep) return targetYaw;
+  return currentYaw + Math.sign(delta) * maxStep;
+}
+
+/**
+ * Apply aim yaw. When `maxRadPerSec` + `dt` are set, turn rate is capped
+ * (e.g. Hand Shield slow rotate); otherwise snaps to input.
+ */
+export function applyYaw(
+  currentYaw: number,
+  inputYaw: number,
+  dt = 0,
+  maxRadPerSec?: number,
+): number {
+  if (maxRadPerSec == null || !(maxRadPerSec > 0) || !(dt > 0)) return inputYaw;
+  return stepYawToward(currentYaw, inputYaw, maxRadPerSec, dt);
 }

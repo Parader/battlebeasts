@@ -1,5 +1,6 @@
 import { type CSSProperties, type RefObject } from "react";
 import { Html } from "@react-three/drei";
+import { STATUSES } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
 
 /** Status ids that show the poison badge above HP bars. */
@@ -14,70 +15,82 @@ export const BLEEDING_BADGE_IDS = new Set(["bleeding"]);
 /** Status ids that show the rejuvenation badge above HP bars. */
 export const REJUVENATION_BADGE_IDS = new Set(["rejuvenated"]);
 
-export function readPoisonStacks(
-  rows: { statusId?: string; stacks?: number }[],
-): number {
+export type StatusRowLite = {
+  statusId?: string;
+  stacks?: number;
+  expiresAt?: number;
+};
+
+export type BadgeRead = {
+  stacks: number;
+  expiresAt: number;
+};
+
+function readBadge(rows: StatusRowLite[], ids: Set<string>): BadgeRead {
   let stacks = 0;
+  let expiresAt = 0;
   for (const row of rows) {
-    if (row.statusId && POISON_BADGE_IDS.has(row.statusId)) {
-      stacks = Math.max(stacks, row.stacks ?? 1);
-    }
+    if (!row.statusId || !ids.has(row.statusId)) continue;
+    stacks = Math.max(stacks, row.stacks ?? 1);
+    expiresAt = Math.max(expiresAt, row.expiresAt ?? 0);
   }
-  return stacks;
+  return { stacks, expiresAt };
 }
 
-export function readBurningStacks(
-  rows: { statusId?: string; stacks?: number }[],
-): number {
-  let stacks = 0;
-  for (const row of rows) {
-    if (row.statusId && BURNING_BADGE_IDS.has(row.statusId)) {
-      stacks = Math.max(stacks, row.stacks ?? 1);
-    }
-  }
-  return stacks;
+export function readPoisonStacks(rows: StatusRowLite[]): number {
+  return readBadge(rows, POISON_BADGE_IDS).stacks;
 }
 
-export function readBleedingStacks(
-  rows: { statusId?: string; stacks?: number }[],
-): number {
-  let stacks = 0;
-  for (const row of rows) {
-    if (row.statusId && BLEEDING_BADGE_IDS.has(row.statusId)) {
-      stacks = Math.max(stacks, row.stacks ?? 1);
-    }
-  }
-  return stacks;
+export function readBurningStacks(rows: StatusRowLite[]): number {
+  return readBadge(rows, BURNING_BADGE_IDS).stacks;
 }
 
-export function readRejuvenationStacks(
-  rows: { statusId?: string; stacks?: number }[],
-): number {
-  let stacks = 0;
-  for (const row of rows) {
-    if (row.statusId && REJUVENATION_BADGE_IDS.has(row.statusId)) {
-      stacks = Math.max(stacks, row.stacks ?? 1);
-    }
-  }
-  return stacks;
+export function readBleedingStacks(rows: StatusRowLite[]): number {
+  return readBadge(rows, BLEEDING_BADGE_IDS).stacks;
 }
+
+export function readRejuvenationStacks(rows: StatusRowLite[]): number {
+  return readBadge(rows, REJUVENATION_BADGE_IDS).stacks;
+}
+
+export function readPoisonBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, POISON_BADGE_IDS);
+}
+
+export function readBurningBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, BURNING_BADGE_IDS);
+}
+
+export function readBleedingBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, BLEEDING_BADGE_IDS);
+}
+
+export function readRejuvenationBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, REJUVENATION_BADGE_IDS);
+}
+
+const BADGE_SIZE = 20;
+const RING_R = 8.25;
+const RING_C = 2 * Math.PI * RING_R;
 
 const BADGE_BOX: CSSProperties = {
   display: "none",
   position: "relative",
-  width: 18,
-  height: 18,
-  borderRadius: 3,
-  boxShadow: "0 0 0 1px rgba(0,0,0,0.45)",
+  width: BADGE_SIZE,
+  height: BADGE_SIZE,
+  borderRadius: 4,
+  boxShadow: "0 1px 2px rgba(0,0,0,0.55)",
   alignItems: "center",
   justifyContent: "center",
   flexShrink: 0,
+  overflow: "visible",
 };
 
 const STACK_PILL: CSSProperties = {
   position: "absolute",
-  right: -4,
+  right: -5,
   top: -5,
+  zIndex: 2,
   minWidth: 11,
   height: 11,
   padding: "0 2px",
@@ -89,30 +102,84 @@ const STACK_PILL: CSSProperties = {
   fontFamily: "ui-sans-serif, system-ui, sans-serif",
 };
 
+const RING_STYLE: CSSProperties = {
+  position: "absolute",
+  inset: -3,
+  width: BADGE_SIZE + 6,
+  height: BADGE_SIZE + 6,
+  pointerEvents: "none",
+  overflow: "visible",
+};
+
 type StackProps = {
   poisonBadgeRef: RefObject<HTMLDivElement | null>;
   poisonStacksRef: RefObject<HTMLSpanElement | null>;
+  poisonRingRef: RefObject<SVGCircleElement | null>;
   burningBadgeRef: RefObject<HTMLDivElement | null>;
+  burningRingRef: RefObject<SVGCircleElement | null>;
   bleedingBadgeRef: RefObject<HTMLDivElement | null>;
   bleedingStacksRef: RefObject<HTMLSpanElement | null>;
+  bleedingRingRef: RefObject<SVGCircleElement | null>;
   rejuvenationBadgeRef: RefObject<HTMLDivElement | null>;
   rejuvenationStacksRef: RefObject<HTMLSpanElement | null>;
+  rejuvenationRingRef: RefObject<SVGCircleElement | null>;
   /** Anchor for the left edge of the icon row (above HP bar). */
   position?: [number, number, number];
 };
 
+function DurationRing({
+  ringRef,
+  accent,
+  track = "rgba(0,0,0,0.45)",
+}: {
+  ringRef: RefObject<SVGCircleElement | null>;
+  accent: string;
+  track?: string;
+}) {
+  const c = BADGE_SIZE / 2 + 3;
+  return (
+    <svg style={RING_STYLE} viewBox={`0 0 ${BADGE_SIZE + 6} ${BADGE_SIZE + 6}`} aria-hidden>
+      <circle
+        cx={c}
+        cy={c}
+        r={RING_R}
+        fill="none"
+        stroke={track}
+        strokeWidth={2.25}
+      />
+      <circle
+        ref={ringRef}
+        cx={c}
+        cy={c}
+        r={RING_R}
+        fill="none"
+        stroke={accent}
+        strokeWidth={2.25}
+        strokeLinecap="butt"
+        strokeDasharray={RING_C}
+        strokeDashoffset={0}
+        transform={`rotate(-90 ${c} ${c})`}
+      />
+    </svg>
+  );
+}
+
 /**
  * World HP status icons — pack left-to-right from the bar’s left side.
- * Hidden badges use display:none so active icons stay stacked left.
+ * Outline ring drains with remaining duration (buffs + debuffs).
  */
 export function StatusHpBadgeStack({
   poisonBadgeRef,
   poisonStacksRef,
+  poisonRingRef,
   burningBadgeRef,
+  burningRingRef,
   bleedingBadgeRef,
   bleedingStacksRef,
+  bleedingRingRef,
   rejuvenationBadgeRef,
   rejuvenationStacksRef,
+  rejuvenationRingRef,
   position = [-0.55, 0.22, 0],
 }: StackProps) {
   return (
@@ -122,7 +189,7 @@ export function StatusHpBadgeStack({
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
-          gap: 4,
+          gap: 5,
           transform: "translate(0, -50%)",
         }}
       >
@@ -130,12 +197,12 @@ export function StatusHpBadgeStack({
           ref={rejuvenationBadgeRef}
           style={{
             ...BADGE_BOX,
-            background: "rgba(20, 83, 45, 0.92)",
-            border: "1px solid #4ade80",
+            background: "rgba(20, 83, 45, 0.94)",
+            border: "1px solid rgba(74, 222, 128, 0.35)",
           }}
           title="Rejuvenation"
         >
-          {/* heart-plus — clear heal/HoT (distinct from poison droplet). */}
+          <DurationRing ringRef={rejuvenationRingRef} accent="#4ade80" />
           <img
             src={assetUrl("icons/game/heart-plus.svg")}
             alt=""
@@ -143,7 +210,7 @@ export function StatusHpBadgeStack({
             height={12}
             draggable={false}
             aria-hidden
-            style={{ display: "block" }}
+            style={{ display: "block", position: "relative", zIndex: 1 }}
           />
           <span
             ref={rejuvenationStacksRef}
@@ -162,12 +229,19 @@ export function StatusHpBadgeStack({
           ref={poisonBadgeRef}
           style={{
             ...BADGE_BOX,
-            background: "rgba(63, 98, 18, 0.92)",
-            border: "1px solid #a3e635",
+            background: "rgba(63, 98, 18, 0.94)",
+            border: "1px solid rgba(163, 230, 53, 0.35)",
           }}
           title="Poison"
         >
-          <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
+          <DurationRing ringRef={poisonRingRef} accent="#a3e635" />
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            aria-hidden
+            style={{ position: "relative", zIndex: 1 }}
+          >
             <path
               fill="#bef264"
               d="M8 1c-.4 1.6-2.2 3.2-3.4 5.1C3.4 8 3 9.4 3 10.6 3 13 5.2 15 8 15s5-2 5-4.4c0-1.2-.4-2.6-1.6-4.5C10.2 4.2 8.4 2.6 8 1z"
@@ -193,12 +267,19 @@ export function StatusHpBadgeStack({
           ref={burningBadgeRef}
           style={{
             ...BADGE_BOX,
-            background: "rgba(124, 45, 18, 0.92)",
-            border: "1px solid #fb923c",
+            background: "rgba(124, 45, 18, 0.94)",
+            border: "1px solid rgba(251, 146, 60, 0.35)",
           }}
           title="Burning"
         >
-          <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
+          <DurationRing ringRef={burningRingRef} accent="#fb923c" />
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            aria-hidden
+            style={{ position: "relative", zIndex: 1 }}
+          >
             <path
               fill="#fdba74"
               d="M8 1.2c.2 1.8 1.6 2.9 2.4 4.2.9 1.4 1.2 2.6 1.2 3.6 0 2.2-1.8 3.8-3.6 3.8S4.4 11.2 4.4 9c0-1 .3-2.2 1.2-3.6C6.4 4.1 7.8 3 8 1.2z"
@@ -218,12 +299,19 @@ export function StatusHpBadgeStack({
           ref={bleedingBadgeRef}
           style={{
             ...BADGE_BOX,
-            background: "rgba(127, 29, 29, 0.92)",
-            border: "1px solid #f87171",
+            background: "rgba(127, 29, 29, 0.94)",
+            border: "1px solid rgba(248, 113, 113, 0.35)",
           }}
           title="Bleeding"
         >
-          <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
+          <DurationRing ringRef={bleedingRingRef} accent="#f87171" />
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            aria-hidden
+            style={{ position: "relative", zIndex: 1 }}
+          >
             <path
               fill="#fecaca"
               d="M8 1.4c.15 1.5 1.55 2.7 2.35 4 .85 1.35 1.15 2.55 1.15 3.55 0 2.05-1.7 3.55-3.5 3.55S4.5 10.95 4.5 8.95c0-1 .3-2.2 1.15-3.55C6.45 4.1 7.85 2.9 8 1.4z"
@@ -254,64 +342,95 @@ export function StatusHpBadgeStack({
   );
 }
 
+function durationMsFor(statusId: string): number {
+  return Math.max(1, STATUSES[statusId]?.durationMs ?? 3000);
+}
+
+/** Remaining fraction 1 → 0 based on server expiresAt (epoch ms). */
+export function badgeRemainFrac(expiresAt: number, durationMs: number, now = Date.now()): number {
+  if (!(expiresAt > 0)) return 0;
+  const left = Math.max(0, expiresAt - now);
+  return Math.max(0, Math.min(1, left / Math.max(1, durationMs)));
+}
+
+function setRingRemain(ring: SVGCircleElement | null, remain: number) {
+  if (!ring) return;
+  ring.style.strokeDashoffset = String(RING_C * (1 - remain));
+}
+
 export function syncPoisonBadge(
   badge: HTMLDivElement | null,
   stacksEl: HTMLSpanElement | null,
-  poisonStacks: number,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
   lastStacks: { current: number },
 ) {
   if (!badge) return;
-  if (poisonStacks <= 0) {
+  if (read.stacks <= 0) {
     badge.style.display = "none";
     lastStacks.current = 0;
     return;
   }
   badge.style.display = "flex";
-  if (poisonStacks !== lastStacks.current) {
-    lastStacks.current = poisonStacks;
-    if (stacksEl) stacksEl.textContent = String(poisonStacks);
+  if (read.stacks !== lastStacks.current) {
+    lastStacks.current = read.stacks;
+    if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("poisoned")));
 }
 
-export function syncBurningBadge(badge: HTMLDivElement | null, burningStacks: number) {
+export function syncBurningBadge(
+  badge: HTMLDivElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+) {
   if (!badge) return;
-  badge.style.display = burningStacks > 0 ? "flex" : "none";
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    return;
+  }
+  badge.style.display = "flex";
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("burning")));
 }
 
 export function syncBleedingBadge(
   badge: HTMLDivElement | null,
   stacksEl: HTMLSpanElement | null,
-  bleedingStacks: number,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
   lastStacks: { current: number },
 ) {
   if (!badge) return;
-  if (bleedingStacks <= 0) {
+  if (read.stacks <= 0) {
     badge.style.display = "none";
     lastStacks.current = 0;
     return;
   }
   badge.style.display = "flex";
-  if (bleedingStacks !== lastStacks.current) {
-    lastStacks.current = bleedingStacks;
-    if (stacksEl) stacksEl.textContent = String(bleedingStacks);
+  if (read.stacks !== lastStacks.current) {
+    lastStacks.current = read.stacks;
+    if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("bleeding")));
 }
 
 export function syncRejuvenationBadge(
   badge: HTMLDivElement | null,
   stacksEl: HTMLSpanElement | null,
-  stacks: number,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
   lastStacks: { current: number },
 ) {
   if (!badge) return;
-  if (stacks <= 0) {
+  if (read.stacks <= 0) {
     badge.style.display = "none";
     lastStacks.current = 0;
     return;
   }
   badge.style.display = "flex";
-  if (stacks !== lastStacks.current) {
-    lastStacks.current = stacks;
-    if (stacksEl) stacksEl.textContent = String(stacks);
+  if (read.stacks !== lastStacks.current) {
+    lastStacks.current = read.stacks;
+    if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("rejuvenated")));
 }

@@ -1,20 +1,30 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { VFX_LAVA_URL } from "../vfxUrls";
 
-export const VFX_LAVA_URL = "/assets/vfx/lava.png";
+export { VFX_LAVA_URL };
 
 let lavaTex: THREE.Texture | null = null;
 
-function getLavaTexture(): THREE.Texture {
+function configureLavaTex(tex: THREE.Texture): THREE.Texture {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+export function getLavaTexture(): THREE.Texture {
   if (!lavaTex) {
-    lavaTex = new THREE.TextureLoader().load(VFX_LAVA_URL);
-    lavaTex.colorSpace = THREE.SRGBColorSpace;
-    lavaTex.wrapS = THREE.RepeatWrapping;
-    lavaTex.wrapT = THREE.ClampToEdgeWrapping;
-    lavaTex.needsUpdate = true;
+    lavaTex = configureLavaTex(new THREE.TextureLoader().load(VFX_LAVA_URL));
   }
   return lavaTex;
+}
+
+/** Install a fully-decoded texture from the loading gate. */
+export function setLavaTexture(tex: THREE.Texture): void {
+  lavaTex = configureLavaTex(tex);
 }
 
 const VS = /* glsl */ `

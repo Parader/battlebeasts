@@ -18,6 +18,8 @@ import {
   ownsEmote,
   ownsPattern,
   ownsPatternColor,
+  STARTER_COLORS,
+  formatShopCost,
   shopItemsForCategory,
   type CosmeticSlot,
   type CosmeticsEquipped,
@@ -27,6 +29,7 @@ import {
 } from "@battlebeasts/shared";
 import { AppearancePreview } from "./AppearancePreview";
 import { ShopCostDisplay } from "./CoinDisplay";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ShopItemThumb } from "./ShopGrantThumb";
 import { GameIcon } from "./GameIcon";
 import {
@@ -101,7 +104,7 @@ export function appearanceFromPlayer(me: {
   cosmeticShoes?: string;
 } | null | undefined): AppearanceLooks {
   return {
-    color: me?.color ?? "#4ade80",
+    color: me?.color ?? STARTER_COLORS[0]!,
     pattern: normalizeCosmeticPattern(me?.pattern ?? DEFAULT_COSMETIC_PATTERN),
     patternColor: normalizeCosmeticPatternColor(
       me?.patternColor ?? DEFAULT_COSMETIC_PATTERN_COLOR,
@@ -165,6 +168,7 @@ export function MerchantPanel({
   const [category, setCategory] = useState<ShopCategory>(SHOP_UI_CATEGORIES[0]!);
   const [cosmeticSub, setCosmeticSub] = useState<CosmeticSub>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [buyConfirm, setBuyConfirm] = useState<ShopItemDef | null>(null);
 
   useEffect(() => {
     setCosmeticSub(null);
@@ -252,6 +256,26 @@ export function MerchantPanel({
       : null;
 
   return (
+    <>
+      <ConfirmDialog
+        open={Boolean(buyConfirm)}
+        title="Buy item?"
+        message={
+          buyConfirm ? (
+            <>
+              Buy <strong>{buyConfirm.name}</strong> for{" "}
+              <strong>{formatShopCost(buyConfirm.cost)}</strong>?
+            </>
+          ) : null
+        }
+        confirmLabel={buyConfirm ? `Buy (−${formatShopCost(buyConfirm.cost)})` : "Buy"}
+        onConfirm={() => {
+          if (!buyConfirm) return;
+          room?.send("shop_buy", { itemId: buyConfirm.id });
+          setBuyConfirm(null);
+        }}
+        onCancel={() => setBuyConfirm(null)}
+      />
     <div className={["bb-shop", showCharacterPreview ? "bb-shop--preview" : ""].join(" ")}>
       <div className="bb-appearance-tabs" role="tablist" aria-label="Merchant categories">
         {SHOP_UI_CATEGORIES.map((cat) => {
@@ -444,7 +468,7 @@ export function MerchantPanel({
                     type="button"
                     className="bb-btn-brass w-full disabled:opacity-40"
                     disabled={!selectedAfford}
-                    onClick={() => room?.send("shop_buy", { itemId: selectedItem.id })}
+                    onClick={() => setBuyConfirm(selectedItem)}
                   >
                     Buy · <ShopCostDisplay cost={selectedItem.cost} />
                   </button>
@@ -460,7 +484,7 @@ export function MerchantPanel({
               type="button"
               className="bb-btn-brass w-full disabled:opacity-40"
               disabled={!selectedAfford}
-              onClick={() => room?.send("shop_buy", { itemId: selectedItem.id })}
+              onClick={() => setBuyConfirm(selectedItem)}
             >
               Buy {selectedItem.name} · <ShopCostDisplay cost={selectedItem.cost} />
             </button>
@@ -468,5 +492,6 @@ export function MerchantPanel({
         ) : null}
       </div>
     </div>
+    </>
   );
 }

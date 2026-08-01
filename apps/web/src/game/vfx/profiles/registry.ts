@@ -1,9 +1,13 @@
 import {
   BARRIER_CAST,
+  BOLT_CAST,
   FROST_BALL_CAST,
+  FIREBALL_CAST,
+  fireballChargeWindowWallMs,
   FROST_MIST_CAST,
   GROOVE_CAST,
   HEAL_BEAM_CAST,
+  LIFE_LEECH_CAST,
   ICE_LANCE_CAST,
   POISON_DART_CAST,
 } from "@battlebeasts/shared";
@@ -11,8 +15,6 @@ import type { AbilityVfxProfile } from "./types";
 import {
   BARRIER_CHARGE_PAD_MS,
   BARRIER_DISSOLVE_MS,
-  BOLT_MUZZLE_FORWARD,
-  BOLT_MUZZLE_Y,
   BRIDGED_AOE_LIFE_PAD_MS,
   CHARGE_PAD_MS,
   DETONATE_COAST_MS,
@@ -23,8 +25,8 @@ import {
 const MUZZLE_BOLT: AbilityVfxProfile = {
   castEngine: "muzzleLead",
   muzzleLead: {
-    forward: BOLT_MUZZLE_FORWARD,
-    handY: BOLT_MUZZLE_Y,
+    forward: BOLT_CAST.spawnOffset,
+    handY: BOLT_CAST.handY,
     leadMs: MUZZLE_LEAD_MS,
   },
   projectile: "catalog",
@@ -59,6 +61,26 @@ const CHARGE_FROST: AbilityVfxProfile = {
     flightCoastMs: FLIGHT_COAST_MS,
   },
   projectile: "ownedByCast",
+};
+
+const CHARGE_FIREBALL: AbilityVfxProfile = {
+  castEngine: "chargeHand",
+  chargeHand: {
+    forward: FIREBALL_CAST.spawnOffset,
+    handY: FIREBALL_CAST.handY,
+    chargePadMs: 80,
+    fallbackChargeMs: fireballChargeWindowWallMs(),
+    fallbackRange: FIREBALL_CAST.range,
+    fallbackSpeed: FIREBALL_CAST.speed,
+    fallbackFlightMs: 6500,
+    flightCoastMs: FLIGHT_COAST_MS,
+    includeDetonateFuse: true,
+  },
+  projectile: "ownedByCast",
+  combatFx: {
+    onAoe: "fireballBurn",
+    skipLegacyBurst: true,
+  },
 };
 
 const CHARGE_ICE_LANCE: AbilityVfxProfile = {
@@ -130,6 +152,18 @@ const FIREWALL: AbilityVfxProfile = {
   combatFx: { onAoe: "firewall", skipLegacyBurst: true },
 };
 
+const POISON_CLOUD: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "poisonCloud", skipLegacyBurst: true },
+};
+
+const SMOKE_BOMB: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "smokeBomb", skipLegacyBurst: true },
+};
+
 const VOLCANO: AbilityVfxProfile = {
   castEngine: "combatFxOnly",
   projectile: "none",
@@ -178,6 +212,12 @@ const HEAL_BEAM: AbilityVfxProfile = {
   combatFx: { onAoe: "healBeam", skipLegacyBurst: true },
 };
 
+const LIFE_LEECH: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "lifeLeech", skipLegacyBurst: true },
+};
+
 const GRASP: AbilityVfxProfile = {
   castEngine: "none",
   projectile: "catalog",
@@ -205,6 +245,7 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
   },
   poisonDart: MUZZLE_POISON,
   frostBall: CHARGE_FROST,
+  fireball: CHARGE_FIREBALL,
   iceLance: CHARGE_ICE_LANCE,
   barrier: CHARGE_BARRIER,
   gust: BRIDGED_GUST,
@@ -212,6 +253,8 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
   smash: SMASH,
   spikes: SPIKES,
   firewall: FIREWALL,
+  poisonCloud: POISON_CLOUD,
+  smokeBomb: SMOKE_BOMB,
   volcano: VOLCANO,
   protectionBubble: PROTECTION_BUBBLE,
   shrooms: SHROOMS,
@@ -225,6 +268,7 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
   frostMist: FROST_MIST,
   groove: GROOVE,
   healBeam: HEAL_BEAM,
+  lifeLeech: LIFE_LEECH,
   grasp: GRASP,
   chainJump: CHAIN_JUMP,
   portal: PORTAL,
@@ -313,5 +357,12 @@ export const CHANNEL_VFX = {
     tickMs: HEAL_BEAM_CAST.healTickMs,
     growMs: 140,
     fallbackRange: HEAL_BEAM_CAST.range,
+  },
+  lifeLeech: {
+    lifePadMs: 280,
+    ticks: LIFE_LEECH_CAST.damageTicks,
+    tickMs: LIFE_LEECH_CAST.tickMs,
+    growMs: 140,
+    fallbackRange: LIFE_LEECH_CAST.range,
   },
 } as const;

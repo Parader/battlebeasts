@@ -13,6 +13,7 @@ import {
   type ChestUnlockGrant,
 } from "@battlebeasts/shared";
 import { createClient } from "@supabase/supabase-js";
+import { getActiveSeason } from "./ranked.js";
 
 const url = process.env.SUPABASE_URL;
 const serverKey =
@@ -26,6 +27,10 @@ export type QuestEvent =
   | { type: "pvp_win" }
   | { type: "pvp_mode"; mode: string }
   | { type: "pvp_match_completed" }
+  | { type: "ranked_match_completed" }
+  | { type: "ranked_win" }
+  | { type: "ranked_tier_reached"; tier: string }
+  | { type: "ranked_placement_done" }
   | { type: "essence_earned"; amount: number }
   | { type: "copper_earned"; amount: number }
   | { type: "spell_unlocked"; totalOwned: number }
@@ -62,6 +67,8 @@ export async function insertClosedChest(
   return { ok: true };
 }
 
+const DISTINCT_PVP_MODES = new Set(["arena_1v1", "arena_2v2", "arena_3v3"]);
+
 async function bumpOne(
   userId: string,
   questId: string,
@@ -71,10 +78,11 @@ async function bumpOne(
   if (!supabase || userId.startsWith("guest_")) return;
   const def = getQuestDef(questId);
   if (!def) return;
-  const period = questPeriodKey(def);
+  const seasonId = def.type === "season" ? (await getActiveSeason())?.id ?? null : null;
+  const period = questPeriodKey(def, new Date(), seasonId);
   const { data: row } = await supabase
     .from("quest_progress")
-    .select("progress, completed_at")
+    .select("progress, completed_at, meta")
     .eq("user_id", userId)
     .eq("quest_id", questId)
     .eq("period_key", period)
@@ -92,6 +100,58 @@ async function bumpOne(
       period_key: period,
       progress: Math.min(next, def.target),
       completed_at: completed ? new Date().toISOString() : null,
+      meta: row?.meta ?? {},
+    },
+    { onConflict: "user_id,quest_id,period_key" },
+  );
+
+  if (completed && !row?.completed_at) {
+    const quality = rollQuestChestQuality(
+      def.chest,
+      rewardRollSalt(userId, questId, period),
+    );
+    await grantChest(userId, quality, `quest:${questId}:${period}`);
+  }
+}
+
+/** Count distinct arena modes once each toward daily_modes_3. */
+async function bumpDistinctPvpMode(userId: string, mode: string): Promise<void> {
+  if (!supabase || userId.startsWith("guest_")) return;
+  if (!DISTINCT_PVP_MODES.has(mode)) return;
+  const questId = "daily_modes_3";
+  const def = getQuestDef(questId);
+  if (!def) return;
+  const period = questPeriodKey(def, new Date(), null);
+  const { data: row } = await supabase
+    .from("quest_progress")
+    .select("progress, completed_at, meta")
+    .eq("user_id", userId)
+    .eq("quest_id", questId)
+    .eq("period_key", period)
+    .maybeSingle();
+
+  if (row?.completed_at) return;
+
+  const meta =
+    row?.meta && typeof row.meta === "object" && !Array.isArray(row.meta)
+      ? (row.meta as Record<string, unknown>)
+      : {};
+  const prevModes = Array.isArray(meta.modes)
+    ? meta.modes.filter((m): m is string => typeof m === "string")
+    : [];
+  if (prevModes.includes(mode)) return;
+
+  const modes = [...prevModes, mode];
+  const next = Math.min(modes.length, def.target);
+  const completed = next >= def.target;
+  await supabase.from("quest_progress").upsert(
+    {
+      user_id: userId,
+      quest_id: questId,
+      period_key: period,
+      progress: next,
+      completed_at: completed ? new Date().toISOString() : null,
+      meta: { ...meta, modes },
     },
     { onConflict: "user_id,quest_id,period_key" },
   );
@@ -125,11 +185,44 @@ export async function bumpQuest(userId: string, event: QuestEvent): Promise<void
         await bumpOne(userId, "daily_win_3", 1);
         break;
       case "pvp_mode":
-        await bumpOne(userId, "daily_modes_3", 1);
+        await bumpDistinctPvpMode(userId, event.mode);
         break;
       case "pvp_match_completed":
         await bumpOne(userId, "once_first_pvp", 1);
         break;
+      case "ranked_match_completed":
+        await bumpOne(userId, "daily_ranked_play_2", 1);
+        break;
+      case "ranked_win":
+        await bumpOne(userId, "daily_ranked_win_2", 1);
+        await bumpOne(userId, "daily_win_3", 1);
+        await bumpPrefix(userId, "season_ranked_wins_", 1);
+        await bumpPrefix(userId, "life_ranked_wins_", 1);
+        break;
+      case "ranked_placement_done":
+        await bumpOne(userId, "season_placement_done", 1);
+        break;
+      case "ranked_tier_reached": {
+        const map: Record<string, string> = {
+          silver: "season_reach_silver",
+          gold: "season_reach_gold",
+          diamond: "season_reach_diamond",
+          champion: "season_reach_champion",
+          master: "season_reach_master",
+        };
+        const seasonQuest = map[event.tier];
+        if (seasonQuest) await bumpOne(userId, seasonQuest, 1);
+        const peakMap: Record<string, string> = {
+          gold: "life_peak_gold",
+          diamond: "life_peak_diamond",
+          champion: "life_peak_champion",
+          master: "life_peak_master",
+          grandmaster: "life_peak_gm",
+        };
+        const peakQuest = peakMap[event.tier];
+        if (peakQuest) await bumpOne(userId, peakQuest, 1);
+        break;
+      }
       case "essence_earned":
         if (event.amount <= 0) break;
         await bumpPrefix(userId, "life_essence_", event.amount);
@@ -161,7 +254,8 @@ export async function bumpQuest(userId: string, event: QuestEvent): Promise<void
 
 export async function listQuestProgress(userId: string) {
   if (!supabase || userId.startsWith("guest_")) return [];
-  const periods = new Set(QUEST_CATALOG.map((q) => questPeriodKey(q)));
+  const seasonId = (await getActiveSeason())?.id ?? null;
+  const periods = new Set(QUEST_CATALOG.map((q) => questPeriodKey(q, new Date(), seasonId)));
   const { data } = await supabase
     .from("quest_progress")
     .select("quest_id, period_key, progress, completed_at")

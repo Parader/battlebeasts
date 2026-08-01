@@ -39,16 +39,9 @@ export const HomeScreen = () => {
                             </Button>
                         </>
                     ) : (
-                        <>
-                            {configured && (
-                                <Button size="xl" color="primary" href="/login" isDisabled={!ready}>
-                                    Sign in
-                                </Button>
-                            )}
-                            <Button size="xl" color="secondary" href="/play" isDisabled={!ready}>
-                                Play as guest
-                            </Button>
-                        </>
+                        <Button size="xl" color="primary" href="/login" isDisabled={!ready || !configured}>
+                            Sign in to play
+                        </Button>
                     )}
                     <Button size="xl" color="tertiary" onClick={() => setUpdatesOpen(true)}>
                         {unseen ? "Updates · New" : "Updates"}
@@ -57,12 +50,12 @@ export const HomeScreen = () => {
 
                 {configured && !user && (
                     <p className="mt-6 max-w-md text-sm text-quaternary">
-                        Sign in with email to add friends and visit each other&apos;s hubs. Guests play alone in a private hub.
+                        Sign in with email or Google to play, add friends, and visit each other&apos;s hubs.
                     </p>
                 )}
                 {!configured && (
                     <p className="mt-6 max-w-md text-sm text-quaternary">
-                        Auth needs Supabase env vars. Guest play works for local combat testing.
+                        Auth needs Supabase env vars in <code className="text-xs">apps/web/.env</code>.
                     </p>
                 )}
             </div>

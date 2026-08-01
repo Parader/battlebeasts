@@ -165,7 +165,7 @@ export const DUPLICATE_COPPER: Record<ChestQuality, number> = {
   legendary: 150,
 };
 
-export type QuestType = "daily" | "lifetime";
+export type QuestType = "daily" | "lifetime" | "season";
 
 export type QuestDef = {
   id: string;
@@ -177,11 +177,25 @@ export type QuestDef = {
 
 export const QUEST_CATALOG: readonly QuestDef[] = [
   {
+    id: "daily_ranked_play_2",
+    type: "daily",
+    target: 2,
+    chest: "any",
+    label: "Play 2 ranked matches today",
+  },
+  {
+    id: "daily_ranked_win_2",
+    type: "daily",
+    target: 2,
+    chest: "any",
+    label: "Win 2 ranked matches today",
+  },
+  {
     id: "daily_win_3",
     type: "daily",
     target: 3,
     chest: "any",
-    label: "Win 3 matches today",
+    label: "Win 3 ranked matches today",
   },
   {
     id: "daily_modes_3",
@@ -189,6 +203,153 @@ export const QUEST_CATALOG: readonly QuestDef[] = [
     target: 3,
     chest: "any",
     label: "Play 3 distinct PvP modes today",
+  },
+  {
+    id: "season_ranked_wins_5",
+    type: "season",
+    target: 5,
+    chest: "green",
+    label: "Win 5 ranked matches this season",
+  },
+  {
+    id: "season_ranked_wins_15",
+    type: "season",
+    target: 15,
+    chest: "blue",
+    label: "Win 15 ranked matches this season",
+  },
+  {
+    id: "season_ranked_wins_30",
+    type: "season",
+    target: 30,
+    chest: "blue",
+    label: "Win 30 ranked matches this season",
+  },
+  {
+    id: "season_ranked_wins_50",
+    type: "season",
+    target: 50,
+    chest: "purple",
+    label: "Win 50 ranked matches this season",
+  },
+  {
+    id: "season_ranked_wins_100",
+    type: "season",
+    target: 100,
+    chest: "purple",
+    label: "Win 100 ranked matches this season",
+  },
+  {
+    id: "season_placement_done",
+    type: "season",
+    target: 1,
+    chest: "blue",
+    label: "Finish ranked placement this season",
+  },
+  {
+    id: "season_reach_silver",
+    type: "season",
+    target: 1,
+    chest: "blue",
+    label: "Reach Silver this season",
+  },
+  {
+    id: "season_reach_gold",
+    type: "season",
+    target: 1,
+    chest: "blue",
+    label: "Reach Gold this season",
+  },
+  {
+    id: "season_reach_diamond",
+    type: "season",
+    target: 1,
+    chest: "purple",
+    label: "Reach Diamond this season",
+  },
+  {
+    id: "season_reach_champion",
+    type: "season",
+    target: 1,
+    chest: "purple",
+    label: "Reach Champion this season",
+  },
+  {
+    id: "season_reach_master",
+    type: "season",
+    target: 1,
+    chest: "legendary",
+    label: "Reach Master this season",
+  },
+  {
+    id: "life_ranked_wins_10",
+    type: "lifetime",
+    target: 10,
+    chest: "green",
+    label: "Win 10 ranked matches",
+  },
+  {
+    id: "life_ranked_wins_50",
+    type: "lifetime",
+    target: 50,
+    chest: "blue",
+    label: "Win 50 ranked matches",
+  },
+  {
+    id: "life_ranked_wins_100",
+    type: "lifetime",
+    target: 100,
+    chest: "purple",
+    label: "Win 100 ranked matches",
+  },
+  {
+    id: "life_ranked_wins_250",
+    type: "lifetime",
+    target: 250,
+    chest: "purple",
+    label: "Win 250 ranked matches",
+  },
+  {
+    id: "life_ranked_wins_500",
+    type: "lifetime",
+    target: 500,
+    chest: "legendary",
+    label: "Win 500 ranked matches",
+  },
+  {
+    id: "life_peak_gold",
+    type: "lifetime",
+    target: 1,
+    chest: "purple",
+    label: "Peak Gold (career)",
+  },
+  {
+    id: "life_peak_diamond",
+    type: "lifetime",
+    target: 1,
+    chest: "purple",
+    label: "Peak Diamond (career)",
+  },
+  {
+    id: "life_peak_champion",
+    type: "lifetime",
+    target: 1,
+    chest: "legendary",
+    label: "Peak Champion (career)",
+  },
+  {
+    id: "life_peak_master",
+    type: "lifetime",
+    target: 1,
+    chest: "legendary",
+    label: "Peak Master (career)",
+  },
+  {
+    id: "life_peak_gm",
+    type: "lifetime",
+    target: 1,
+    chest: "legendary",
+    label: "Peak Grandmaster (career)",
   },
   {
     id: "once_friend_code",
@@ -352,6 +513,20 @@ export const QUEST_CATALOG: readonly QuestDef[] = [
 
 /** Stepped lifetime chains — UI shows only the next incomplete step. */
 export const QUEST_CHAINS: readonly (readonly string[])[] = [
+  [
+    "season_ranked_wins_5",
+    "season_ranked_wins_15",
+    "season_ranked_wins_30",
+    "season_ranked_wins_50",
+    "season_ranked_wins_100",
+  ],
+  [
+    "life_ranked_wins_10",
+    "life_ranked_wins_50",
+    "life_ranked_wins_100",
+    "life_ranked_wins_250",
+    "life_ranked_wins_500",
+  ],
   [
     "life_essence_150",
     "life_essence_300",
@@ -530,8 +705,9 @@ export function isPvpModeId(id: string): id is PvpModeId {
   );
 }
 
-export function questPeriodKey(quest: QuestDef, now = new Date()): string {
+export function questPeriodKey(quest: QuestDef, now = new Date(), seasonId?: string | null): string {
   if (quest.type === "lifetime") return "lifetime";
+  if (quest.type === "season") return seasonId ? `season:${seasonId}` : "season:none";
   return now.toISOString().slice(0, 10);
 }
 

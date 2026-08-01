@@ -27,6 +27,15 @@ export type Wallet = CoinPurse & {
   rubies: number;
 };
 
+/** Starting wallet for new accounts, guests, and soft reset. */
+export const STARTER_WALLET: Wallet = {
+  copper: 0,
+  silver: 1,
+  gold: 0,
+  essence: 100,
+  rubies: 0,
+};
+
 export function coinsToCopper(purse: CoinPurse): number {
   return (
     Math.max(0, purse.copper) +

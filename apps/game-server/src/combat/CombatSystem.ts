@@ -6,25 +6,44 @@ import {
   COMBAT,
   GROOVE_CAST,
   HEAL_BEAM_CAST,
+  LIFE_LEECH_CAST,
   MOVE_SPEED,
   PRACTICE_DUMMY_MAX_HP,
+  POISON_CLOUD_CAST,
+  SMOKE_BOMB_CAST,
   VOLCANO_CAST,
   MAGMA_ORBS_CAST,
+  FIREBALL_CAST,
+  fireballCharge01,
+  fireballConfirmRecoveryWallMs,
+  fireballLaunchDelayWallMs,
+  fireballLerp,
   PROTECTION_BUBBLE_CAST,
   SHROOM_CAST,
   SPIRIT_FORM_CAST,
+  STARTER_COLORS,
+  DEFAULT_COSMETIC_PATTERN,
+  DEFAULT_COSMETIC_PATTERN_COLOR,
   REVENGE_CAST,
   HAND_SHIELD_CAST,
   HAND_SHIELD_ARMED_MS,
   abilityEffectKind,
   abilityTriggersCounter,
   abilityCanProcOpeningSalvo,
+  abilityCanProcOpportunist,
+  abilityCanProcOverflow,
+  abilityCanProcProtectiveInstinct,
   canInterruptOtherCast,
   canPlayerCancelCast,
   channelChargeDistance,
+  abilityComboHitDamage,
   clampGroundAim,
+  clampTargetBeforeWalls,
   COMBAT_ENGAGE_LINGER_MS,
   OPENING_SALVO_COOLDOWN_MS,
+  OVERFLOW_DURATION_MS,
+  PROTECTIVE_INSTINCT_COOLDOWN_MS,
+  PROTECTIVE_INSTINCT_DURATION_MS,
   COMBAT_FX_VARIANT_WALL_HIT,
   createProjectile,
   dashOffset,
@@ -126,6 +145,20 @@ type ActiveCast = {
   /** Feet pose frozen at cast start (Protection Bubble place). */
   originX?: number;
   originZ?: number;
+  /** Fireball: 0..1 charge at confirm; launch after release anim. */
+  fireballCharge01?: number;
+  fireballLaunchAt?: number;
+};
+
+type PendingFireballBurn = {
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  radius: number;
+  nextTickAt: number;
+  expiresAt: number;
+  tickMs: number;
 };
 
 export type CastBeginOpts = {
@@ -203,6 +236,18 @@ type PendingFirewall = {
   tickMs: number;
 };
 
+/** Lingering circular poison cloud — status ticks only (no direct damage). */
+type PendingPoisonCloud = {
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  radius: number;
+  nextTickAt: number;
+  expiresAt: number;
+  tickMs: number;
+};
+
 type PendingVolcanoRock = {
   x: number;
   z: number;
@@ -274,6 +319,10 @@ type PendingProtectionBubble = {
   activeEndsAt: number;
   despawnAt: number;
   phase: "forming" | "active" | "fading";
+  /** Next absorb tick while fully formed. */
+  nextShieldAt: number;
+  /** Absorb granted from this bubble (capped). */
+  shieldGranted: number;
 };
 
 type PendingShroom = {
@@ -339,6 +388,22 @@ type PendingHealBeam = {
   halfAngle: number;
 };
 
+/** Short-range drain laser (Life Leech). */
+type PendingLifeLeech = {
+  ownerId: string;
+  abilityId: string;
+  nextTickAt: number;
+  tickIndex: number;
+  /** When true, keep ticking until the cast is cleared. */
+  hold: boolean;
+  ticksTotal: number;
+  tickMs: number;
+  damage: number;
+  healFrac: number;
+  range: number;
+  halfAngle: number;
+};
+
 /** Barrier absorb ramps 0→target during windup; mid-cast hits only eat built stacks. */
 type PendingBarrier = {
   ownerId: string;
@@ -370,6 +435,8 @@ export class CombatSystem {
   private combos = new Map<string, ActiveCombo>();
   private pendingSpikes: PendingSpike[] = [];
   private pendingFirewalls: PendingFirewall[] = [];
+  private pendingPoisonClouds: PendingPoisonCloud[] = [];
+  private pendingFireballBurns: PendingFireballBurn[] = [];
   private pendingVolcanoes: PendingVolcano[] = [];
   private pendingMagmaOrbs: PendingMagmaOrbs[] = [];
   private pendingProtectionBubbles: PendingProtectionBubble[] = [];
@@ -377,6 +444,7 @@ export class CombatSystem {
   private pendingFrostMist: PendingFrostMist[] = [];
   private pendingGrooveHeal: PendingGrooveHeal[] = [];
   private pendingHealBeam: PendingHealBeam[] = [];
+  private pendingLifeLeech: PendingLifeLeech[] = [];
   private pendingBarrier = new Map<string, PendingBarrier>();
   /** Active Spirit Form sessions (husk id + end time + link stun tracking). */
   private spiritForms = new Map<
@@ -405,6 +473,10 @@ export class CombatSystem {
     string,
     { inCombatUntil: number; disarmed: boolean; salvoReadyAt: number }
   >();
+  /** Protective Instinct internal CD (ready-at epoch ms). */
+  private protectiveInstinctReadyAt = new Map<string, number>();
+  /** Admin testing — ability CDs skipped while set. */
+  private noCooldownSessions = new Set<string>();
   readonly statuses: StatusSystem;
 
   constructor(
@@ -498,10 +570,96 @@ export class CombatSystem {
     state.inCombatUntil = now + COMBAT_ENGAGE_LINGER_MS;
   }
 
+  /**
+   * Opportunist — bonus damage vs targets you have hard-CC'd (stun / root / silence).
+   */
+  private peekOpportunistMul(
+    attackerSessionId: string,
+    targetId: string,
+    abilityId: string,
+    damage: number,
+  ): number {
+    if (!(damage > 0) || !attackerSessionId) return 1;
+    const bonus = this.kits.get(attackerSessionId)?.opportunistDmgBonus ?? 0;
+    if (bonus <= 0 || !abilityCanProcOpportunist(abilityId)) return 1;
+    if (!this.statuses.hasHardCcFrom(targetId, attackerSessionId)) return 1;
+    return 1 + bonus;
+  }
+
   private noteDealtDamage(attackerSessionId: string, now: number) {
     if (!attackerSessionId || !this.room.state.players.has(attackerSessionId)) return;
     const state = this.engageState(attackerSessionId, now);
     state.inCombatUntil = now + COMBAT_ENGAGE_LINGER_MS;
+  }
+
+  /**
+   * Protective Instinct — Defense cast grants nearest ally (else self) DR.
+   * Internal CD; magnitude from kit (`protectiveInstinctReducePct`).
+   */
+  private tryProcProtectiveInstinct(
+    sessionId: string,
+    player: PlayerState,
+    abilityId: string,
+    now: number,
+  ) {
+    const reducePct = this.kits.get(sessionId)?.protectiveInstinctReducePct ?? 0;
+    if (!(reducePct > 0) || !abilityCanProcProtectiveInstinct(abilityId)) return;
+    if ((this.protectiveInstinctReadyAt.get(sessionId) ?? 0) > now) return;
+
+    let bestId: string | null = null;
+    let bestDist = Infinity;
+    this.room.state.players.forEach((other, otherId) => {
+      if (otherId === sessionId) return;
+      if (other.disconnected || other.hp <= 0 || other.roundDead || other.role === "spectator") {
+        return;
+      }
+      // Friendly = cannot hurt (same team / hub PvP off).
+      if (this.canHurt(sessionId, otherId)) return;
+      const dist = Math.hypot(other.x - player.x, other.z - player.z);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestId = otherId;
+      }
+    });
+    const targetId = bestId ?? sessionId;
+    this.statuses.apply(targetId, "protectiveInstinct", sessionId, now, {
+      durationMs: PROTECTIVE_INSTINCT_DURATION_MS,
+      stacks: reducePct,
+      setStacks: true,
+    });
+    this.protectiveInstinctReadyAt.set(sessionId, now + PROTECTIVE_INSTINCT_COOLDOWN_MS);
+  }
+
+  /**
+   * Overflow — convert wasted heal into a short absorb on the target.
+   * Healing spells and HoT ticks; works on self and allies.
+   */
+  private tryProcOverflow(
+    healerId: string,
+    targetId: string,
+    overheal: number,
+    maxHp: number,
+    abilityId: string,
+    now: number,
+  ) {
+    if (!(overheal > 0) || !(maxHp > 0) || !healerId) return;
+    const kit = this.kits.get(healerId);
+    const convertFrac = kit?.overflowConvertFrac ?? 0;
+    const capFrac = kit?.overflowCapFrac ?? 0;
+    if (!(convertFrac > 0) || !(capFrac > 0) || !abilityCanProcOverflow(abilityId)) return;
+
+    const converted = Math.floor(overheal * convertFrac);
+    if (converted <= 0) return;
+    const cap = Math.max(1, Math.floor(maxHp * capFrac));
+    const current = this.statuses.getStacks(targetId, "overflowShield");
+    const next = Math.min(cap, current + converted);
+    if (!(next > 0)) return;
+
+    this.statuses.apply(targetId, "overflowShield", healerId, now, {
+      durationMs: OVERFLOW_DURATION_MS,
+      stacks: next,
+      setStacks: true,
+    });
   }
 
   /** Authoritative move with player/static/volcano collision. */
@@ -557,10 +715,15 @@ export class CombatSystem {
       const abilityId = cast.abilityId;
       const now = Date.now();
       this.travels.delete(targetId);
-      const cooldownMs = this.endComboEarly(targetId, abilityId, cast.effectFired, now);
+      let cooldownMs = this.endComboEarly(targetId, abilityId, cast.effectFired, now);
+      const def = ABILITIES[abilityId];
+      if (def?.holdChannel && cast.effectFired) {
+        cooldownMs = this.startCooldown(targetId, abilityId, now);
+      }
       this.clearPendingFrostMist(targetId);
       this.clearPendingGrooveHeal(targetId);
       this.clearPendingHealBeam(targetId);
+      this.clearPendingLifeLeech(targetId);
       this.clearUnarmedShrooms(targetId);
       this.clearCastState(targetId, player);
       this.phaseFx(targetId, player, abilityId, "cancel", now, { cooldownMs });
@@ -584,10 +747,15 @@ export class CombatSystem {
     const cast = this.casts.get(sessionId);
     if (!cast) return;
     const abilityId = cast.abilityId;
-    const cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
+    let cooldownMs = this.endComboEarly(sessionId, abilityId, cast.effectFired, now);
+    const def = ABILITIES[abilityId];
+    if (def?.holdChannel && cast.effectFired) {
+      cooldownMs = this.startCooldown(sessionId, abilityId, now);
+    }
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
     this.clearPendingHealBeam(sessionId);
+    this.clearPendingLifeLeech(sessionId);
     this.clearUnarmedShrooms(sessionId);
     this.clearCastState(sessionId, player);
     this.phaseFx(sessionId, player, abilityId, "interrupt", now, { cooldownMs });
@@ -650,12 +818,18 @@ export class CombatSystem {
       this.phaseFx(sessionId, player, cast.abilityId, "cancel", Date.now());
     }
     this.cds.delete(sessionId);
+    this.noCooldownSessions.delete(sessionId);
     this.casts.delete(sessionId);
     this.travels.delete(sessionId);
     this.combos.delete(sessionId);
     this.kits.delete(sessionId);
     this.engageBySession.delete(sessionId);
+    this.protectiveInstinctReadyAt.delete(sessionId);
     this.statuses.clearTarget(sessionId);
+    this.clearPendingFrostMist(sessionId);
+    this.clearPendingGrooveHeal(sessionId);
+    this.clearPendingHealBeam(sessionId);
+    this.clearPendingLifeLeech(sessionId);
     this.clearOwnedDecoys(sessionId);
     this.clearSpiritForm(sessionId, Date.now(), false);
     this.clearSpiritReturn(sessionId);
@@ -814,9 +988,9 @@ export class CombatSystem {
     husk.x = huskIdeal.x;
     husk.z = huskIdeal.z;
     husk.yaw = yaw;
-    husk.color = player.color || "#4ade80";
-    husk.pattern = player.pattern || "plain";
-    husk.patternColor = player.patternColor || "#1f2937";
+    husk.color = player.color || STARTER_COLORS[0]!;
+    husk.pattern = player.pattern || DEFAULT_COSMETIC_PATTERN;
+    husk.patternColor = player.patternColor || DEFAULT_COSMETIC_PATTERN_COLOR;
     husk.startedAt = now;
     husk.expiresAt = now + SPIRIT_FORM_CAST.formMs;
     this.room.state.spiritHusks.set(huskId, husk);
@@ -937,13 +1111,19 @@ export class CombatSystem {
     now: number,
     opts?: CastBeginOpts,
   ): boolean {
+    /** Client sets awaitingCastAck optimistically — silent reject leaves casting stuck. */
+    const reject = (): false => {
+      this.phaseFx(sessionId, player, castId, "cancel", now);
+      return false;
+    };
+
     const kit = this.kits.get(sessionId);
     const inLoadout = kit ? kit.loadoutIds.has(castId) : player.loadout.split(",").includes(castId);
-    if (!inLoadout) return false;
+    if (!inLoadout) return reject();
     const def = ABILITIES[castId];
-    if (!def) return false;
-    if (player.disconnected || player.hp <= 0) return false;
-    if (!this.statuses.canCast(sessionId)) return false;
+    if (!def) return reject();
+    if (player.disconnected || player.hp <= 0) return reject();
+    if (!this.statuses.canCast(sessionId)) return reject();
 
     // Spirit Form recast: snap back without needing CD ready.
     if (castId === "spiritForm" && this.spiritForms.has(sessionId)) {
@@ -961,19 +1141,21 @@ export class CombatSystem {
         // Fired missiles keep living; only caster phases/anim are cleared
         this.softInterruptCast(sessionId, player, now);
       } else if (cur?.timing.blocksOtherCasts !== false) {
-        return false;
+        return reject();
       }
     }
 
     // After soft-interrupt, travel from the old cast may be gone; still block if mid-travel of same/other
-    if (this.travels.has(sessionId)) return false;
+    if (this.travels.has(sessionId)) return reject();
 
-    let bag = this.cds.get(sessionId);
-    if (!bag) {
-      bag = new Map();
-      this.cds.set(sessionId, bag);
+    if (!this.noCooldownSessions.has(sessionId)) {
+      let bag = this.cds.get(sessionId);
+      if (!bag) {
+        bag = new Map();
+        this.cds.set(sessionId, bag);
+      }
+      if ((bag.get(castId) ?? 0) > now) return reject();
     }
-    if ((bag.get(castId) ?? 0) > now) return false;
 
     // Switching abilities ends an open combo continue window (stop LMB chain when casting RMB, etc.)
     const openCombo = this.combos.get(sessionId);
@@ -986,7 +1168,7 @@ export class CombatSystem {
     }
 
     const first = nextCastPhase(def, null);
-    if (!first) return false;
+    if (!first) return reject();
 
     // Any successful new cast breaks cloak (including re-casting Decoy).
     this.revealCloak(sessionId);
@@ -1071,10 +1253,15 @@ export class CombatSystem {
     if (!canPlayerCancelCast(def, cast.phase)) return false;
 
     this.revealCloak(sessionId);
-    const cooldownMs = this.endComboEarly(sessionId, def.id, cast.effectFired, now);
+    let cooldownMs = this.endComboEarly(sessionId, def.id, cast.effectFired, now);
+    // Hold channels stamp CD on release / cancel once the drain has started.
+    if (def.holdChannel && cast.effectFired) {
+      cooldownMs = this.startCooldown(sessionId, def.id, now);
+    }
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
     this.clearPendingHealBeam(sessionId);
+    this.clearPendingLifeLeech(sessionId);
     this.clearUnarmedShrooms(sessionId);
     if (def.id === "counter") {
       this.statuses.remove(sessionId, "counterArmed");
@@ -1091,7 +1278,7 @@ export class CombatSystem {
   }
 
   /**
-   * Confirm hold-to-release channel (Portal). Teleports + stamps CD.
+   * Confirm hold-to-release channel (Portal blink / Fireball throw).
    * Returns false if not channeling a confirm-on-release ability.
    */
   tryConfirmCast(sessionId: string, player: PlayerState, now: number): boolean {
@@ -1106,12 +1293,20 @@ export class CombatSystem {
     const chargeMs = def.channelChargeMs ?? 1000;
     const graceMs = def.channelCapGraceMs ?? 1000;
     if (elapsed > chargeMs + graceMs) {
+      if (abilityEffectKind(def) === "fireball") {
+        return this.confirmFireball(sessionId, player, def, cast, elapsed, now);
+      }
       this.tryCancelCast(sessionId, player, now);
       return false;
     }
 
-    const dist = channelChargeDistance(def, elapsed);
     cast.yaw = player.yaw;
+
+    if (abilityEffectKind(def) === "fireball") {
+      return this.confirmFireball(sessionId, player, def, cast, elapsed, now);
+    }
+
+    const dist = channelChargeDistance(def, elapsed);
     const cooldownMs = this.onEffectResolved(sessionId, def, now);
     this.applyInstantBlink(sessionId, player, def, now, dist, cooldownMs);
     cast.effectFired = true;
@@ -1122,6 +1317,182 @@ export class CombatSystem {
     });
     this.syncInvulnerable(sessionId, player, now);
     return true;
+  }
+
+  /** Launch fireball at current charge (0..1). Rejects before chargeMinMs.
+   * Early confirm locks charge and schedules spawn at the release frame
+   * (anim seeks to throw, then projectile leaves ~frame 160). */
+  private confirmFireball(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    cast: ActiveCast,
+    elapsedMs: number,
+    now: number,
+  ): boolean {
+    if (elapsedMs < FIREBALL_CAST.chargeMinMs) return false;
+    if (cast.fireballLaunchAt != null) return false;
+
+    const charge01 = fireballCharge01(elapsedMs);
+    cast.fireballCharge01 = charge01;
+    cast.yaw = player.yaw;
+    cast.effectFired = true;
+
+    const delayMs = fireballLaunchDelayWallMs(elapsedMs);
+    cast.fireballLaunchAt = now + delayMs;
+
+    const cooldownMs = this.onEffectResolved(sessionId, def, now);
+    const recoveryMs = fireballConfirmRecoveryWallMs(elapsedMs);
+    this.enterPhase(sessionId, player, def, "recovery", now, cast.castStartedAt, {
+      cooldownMs,
+      comboHit: this.comboHitFor(sessionId, def.id),
+      durationMs: recoveryMs,
+    });
+
+    // Full / late charge: spawn immediately (anim already near release).
+    if (delayMs <= 16) {
+      this.launchFireballProjectile(sessionId, player, def, now);
+    }
+    return true;
+  }
+
+  /** Spawn the fireball projectile after the release-frame delay. */
+  private launchFireballProjectile(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    if (!cast || cast.abilityId !== def.id) return;
+    if (cast.fireballLaunchAt == null) return;
+    cast.fireballLaunchAt = undefined;
+
+    const yawBefore = player.yaw;
+    player.yaw = cast.yaw;
+    this.fireEffect(sessionId, player, def, now);
+    player.yaw = yawBefore;
+  }
+
+  /** Scale fireball blast from charge; flight collision stays compact.
+   * Repositions spawn to the caster's right (matches charge VFX). */
+  private stampFireballProjectile(
+    sim: {
+      damage: number;
+      hitRadius: number;
+      wallRadius: number;
+      explodeDamage: number;
+      explodeRadius: number;
+      armingIn: number;
+      x: number;
+      z: number;
+      vx: number;
+      vz: number;
+    },
+    charge01 = 1,
+  ) {
+    const t = Math.max(0, Math.min(1, charge01));
+    // Contact damage off — blast carries the hit.
+    sim.damage = 0;
+    // Match the charged ball size (radiusMin→Max). Explode/burn size is larger
+    // and must not be used here — it spawn-detonated on walls / melee.
+    sim.hitRadius = fireballLerp(
+      FIREBALL_CAST.radiusMin,
+      FIREBALL_CAST.radiusMax,
+      t,
+    );
+    sim.wallRadius = Math.max(
+      FIREBALL_CAST.flightWallRadius,
+      sim.hitRadius * 0.85,
+    );
+    sim.explodeDamage = fireballLerp(
+      FIREBALL_CAST.damageMin,
+      FIREBALL_CAST.damageMax,
+      t,
+    );
+    sim.explodeRadius = fireballLerp(
+      FIREBALL_CAST.burnRadiusMin,
+      FIREBALL_CAST.burnRadiusMax,
+      t,
+    );
+    sim.armingIn = FIREBALL_CAST.spawnArmingMs / 1000;
+
+    // createProjectile placed us forward by spawnOffset — rewrite to casting-hand side.
+    const speed = Math.hypot(sim.vx, sim.vz) || 1;
+    const fx = sim.vx / speed;
+    const fz = sim.vz / speed;
+    const rx = fz;
+    const rz = -fx;
+    const ox = sim.x - fx * FIREBALL_CAST.spawnOffset;
+    const oz = sim.z - fz * FIREBALL_CAST.spawnOffset;
+    sim.x = ox + fx * FIREBALL_CAST.handPush + rx * FIREBALL_CAST.handSide;
+    sim.z = oz + fz * FIREBALL_CAST.handPush + rz * FIREBALL_CAST.handSide;
+  }
+
+  private scheduleFireballBurn(
+    ownerId: string,
+    abilityId: string,
+    x: number,
+    z: number,
+    radius: number,
+    now: number,
+  ) {
+    const durationMs = Math.max(
+      800,
+      ABILITIES[abilityId]?.zoneDurationMs ?? FIREBALL_CAST.burnDurationMs,
+    );
+    const tickMs = Math.max(
+      120,
+      ABILITIES[abilityId]?.tickMs ?? FIREBALL_CAST.burnTickMs,
+    );
+    this.pendingFireballBurns.push({
+      ownerId,
+      abilityId,
+      x,
+      z,
+      radius,
+      nextTickAt: now,
+      expiresAt: now + durationMs,
+      tickMs,
+    });
+  }
+
+  private advancePendingFireballBurns(now: number) {
+    if (this.pendingFireballBurns.length === 0) return;
+    const remain: PendingFireballBurn[] = [];
+    const bodies = this.collectBodies();
+    for (const zone of this.pendingFireballBurns) {
+      if (now >= zone.expiresAt) continue;
+      const def = ABILITIES[zone.abilityId];
+      while (zone.nextTickAt <= now && zone.nextTickAt < zone.expiresAt) {
+        for (const body of bodies) {
+          if (!this.canHurt(zone.ownerId, body.id)) continue;
+          if (body.vulnerable === false) continue;
+          if (body.hp <= 0) continue;
+          if (
+            !circlesOverlap(
+              zone.x,
+              zone.z,
+              zone.radius,
+              body.x,
+              body.z,
+              COMBAT.playerHitRadius,
+            )
+          ) {
+            continue;
+          }
+          this.statuses.applyApplications(
+            body.id,
+            def?.applyOnHit ?? [{ statusId: "burning", chance: 1 }],
+            zone.ownerId,
+            now,
+          );
+        }
+        zone.nextTickAt += zone.tickMs;
+      }
+      if (now < zone.expiresAt) remain.push(zone);
+    }
+    this.pendingFireballBurns = remain;
   }
 
   /** Instant travel + portal FX at from/to. */
@@ -1165,6 +1536,8 @@ export class CombatSystem {
     this.advanceCombos(now);
     this.advancePendingSpikes(now);
     this.advancePendingFirewalls(now);
+    this.advancePendingPoisonClouds(now);
+    this.advancePendingFireballBurns(now);
     this.advancePendingVolcanoes(now);
     this.advancePendingMagmaOrbs(now);
     this.advancePendingProtectionBubbles(now);
@@ -1172,6 +1545,7 @@ export class CombatSystem {
     this.advancePendingFrostMist(now);
     this.advancePendingGrooveHeal(now);
     this.advancePendingHealBeam(now);
+    this.advancePendingLifeLeech(now);
     this.advancePendingBarrier(now);
     this.advanceDecoys(dt, now);
     this.advanceSpiritForms(now);
@@ -1262,6 +1636,25 @@ export class CombatSystem {
         this.applyRawDamage(hit.targetId, hit.damage, blast.ownerId, blast.abilityId, {
           triggersCounter: false,
         });
+        const blastDef = ABILITIES[blast.abilityId];
+        if (blastDef?.applyOnHit?.length) {
+          this.statuses.applyApplications(
+            hit.targetId,
+            blastDef.applyOnHit,
+            blast.ownerId,
+            now,
+          );
+        }
+      }
+      if (abilityEffectKind(ABILITIES[blast.abilityId]) === "fireball") {
+        this.scheduleFireballBurn(
+          blast.ownerId,
+          blast.abilityId,
+          blast.x,
+          blast.z,
+          blast.radius,
+          now,
+        );
       }
     }
     for (const id of removedIds) {
@@ -1458,12 +1851,23 @@ export class CombatSystem {
         this.clearPendingFrostMist(sessionId);
         this.clearPendingGrooveHeal(sessionId);
         this.clearPendingHealBeam(sessionId);
+        this.clearPendingLifeLeech(sessionId);
         if (player) this.clearCastState(sessionId, player);
         else {
           this.casts.delete(sessionId);
           this.travels.delete(sessionId);
         }
         continue;
+      }
+
+      // Fireball: deferred spawn until release-frame after early confirm.
+      if (
+        cast.fireballLaunchAt != null &&
+        now >= cast.fireballLaunchAt &&
+        abilityEffectKind(ABILITIES[cast.abilityId]) === "fireball"
+      ) {
+        const def = ABILITIES[cast.abilityId];
+        if (def) this.launchFireballProjectile(sessionId, player, def, now);
       }
 
       // Stun / silence: hard-cancel even interruptible:false channels.
@@ -1477,7 +1881,7 @@ export class CombatSystem {
         cast.yaw = player.yaw;
       }
 
-      // Portal: grace timeout while channeling (before phase ends).
+      // Confirm-on-release timeout while channeling (before phase ends).
       if (cast.phase === "impact" && !cast.effectFired) {
         const defEarly = ABILITIES[cast.abilityId];
         if (defEarly?.confirmOnRelease) {
@@ -1485,7 +1889,18 @@ export class CombatSystem {
           const chargeMs = defEarly.channelChargeMs ?? 1000;
           const graceMs = defEarly.channelCapGraceMs ?? 1000;
           if (now - anchor >= chargeMs + graceMs) {
-            this.tryCancelCast(sessionId, player, now);
+            if (abilityEffectKind(defEarly) === "fireball") {
+              this.confirmFireball(
+                sessionId,
+                player,
+                defEarly,
+                cast,
+                now - anchor,
+                now,
+              );
+            } else {
+              this.tryCancelCast(sessionId, player, now);
+            }
             continue;
           }
         }
@@ -1507,20 +1922,48 @@ export class CombatSystem {
         continue;
       }
 
-      // Confirm-on-release: impact ended without confirm → cancel (no CD).
-      if (def.confirmOnRelease && cast.phase === "impact" && !cast.effectFired) {
-        this.tryCancelCast(sessionId, player, now);
+      // Confirm-on-release: impact ended without confirm.
+      // Portal cancels (no CD); fireball auto-launches at full charge.
+      if (
+        def.confirmOnRelease &&
+        cast.phase === "impact" &&
+        !cast.effectFired
+      ) {
+        if (abilityEffectKind(def) === "fireball") {
+          const anchor = cast.channelAnchorAt ?? cast.castStartedAt;
+          this.confirmFireball(
+            sessionId,
+            player,
+            def,
+            cast,
+            Math.max(0, now - anchor),
+            now,
+          );
+        } else {
+          this.tryCancelCast(sessionId, player, now);
+        }
         continue;
       }
 
       if (next === "impact" && !cast.effectFired) {
         if (def.confirmOnRelease) {
-          // Enter channel — wait for confirmCast / grace cancel.
+          // Enter channel — wait for confirmCast / grace (auto-fire for fireball).
           this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
             comboHit: this.comboHitFor(sessionId, def.id),
           });
           const live = this.casts.get(sessionId);
           if (live) live.channelAnchorAt = now;
+        } else if (def.holdChannel) {
+          // Start the hold effect; CD waits until release / interrupt.
+          const yawBefore = player.yaw;
+          player.yaw = cast.yaw;
+          this.fireEffect(sessionId, player, def, now);
+          player.yaw = yawBefore;
+          this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
+            comboHit: this.comboHitFor(sessionId, def.id),
+          });
+          const live = this.casts.get(sessionId);
+          if (live) live.effectFired = true;
         } else {
           const yawBefore = player.yaw;
           player.yaw = cast.yaw;
@@ -1535,7 +1978,16 @@ export class CombatSystem {
           if (live) live.effectFired = true;
         }
       } else {
-        this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt);
+        // Hold-channel safety timeout: stamp CD when the max hold expires.
+        if (def.holdChannel && cast.effectFired && cast.phase === "impact") {
+          const cooldownMs = this.startCooldown(sessionId, def.id, now);
+          this.clearPendingLifeLeech(sessionId);
+          this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
+            cooldownMs,
+          });
+        } else {
+          this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt);
+        }
         // Spore Shrooms: mesh pops at cast start (spawn frame); arms at impact.
         if (next === "cast" && abilityEffectKind(def) === "shrooms") {
           this.scheduleShroom(
@@ -1587,9 +2039,14 @@ export class CombatSystem {
       moveZ?: number;
       aimX?: number;
       aimZ?: number;
+      /** Override phase length (Fireball early-throw recovery). */
+      durationMs?: number;
     },
   ) {
-    const duration = Math.max(16, phaseDurationMs(def, phase));
+    const duration = Math.max(
+      16,
+      fxExtra?.durationMs ?? phaseDurationMs(def, phase),
+    );
 
     const prev = this.casts.get(sessionId);
     const cast: ActiveCast = {
@@ -1606,6 +2063,8 @@ export class CombatSystem {
       aimZ: fxExtra?.aimZ ?? prev?.aimZ,
       originX: prev?.originX ?? player.x,
       originZ: prev?.originZ ?? player.z,
+      fireballCharge01: prev?.fireballCharge01,
+      fireballLaunchAt: prev?.fireballLaunchAt,
     };
     this.casts.set(sessionId, cast);
 
@@ -1724,6 +2183,10 @@ export class CombatSystem {
       this.scheduleSpikeWave(sessionId, ownerBody, def, now);
     } else if (kind === "firewall" && !deferHit) {
       this.scheduleFirewall(sessionId, ownerBody, def, now);
+    } else if (kind === "poisonCloud" && !deferHit) {
+      this.schedulePoisonCloud(sessionId, ownerBody, def, now);
+    } else if (kind === "smokeBomb" && !deferHit) {
+      this.scheduleSmokeBomb(sessionId, ownerBody, def, now);
     } else if (kind === "volcano" && !deferHit) {
       this.scheduleVolcano(sessionId, ownerBody, def, now);
     } else if (kind === "protectionBubble" && !deferHit) {
@@ -1738,6 +2201,8 @@ export class CombatSystem {
       this.scheduleFrostMist(sessionId, def, now);
     } else if (kind === "healBeam" && !deferHit) {
       this.scheduleHealBeam(sessionId, def, now);
+    } else if (kind === "lifeLeech" && !deferHit) {
+      this.scheduleLifeLeech(sessionId, def, now);
     } else if (kind === "pulseHeal" && !deferHit) {
       const center = { x: player.x, z: player.z };
       const radius = def.radius ?? 7;
@@ -1755,6 +2220,10 @@ export class CombatSystem {
         const id = `p_${this.nextId++}`;
         const sim = createProjectile(id, ownerBody, def);
         if (sim) {
+          if (abilityEffectKind(def) === "fireball") {
+            const live = this.casts.get(sessionId);
+            this.stampFireballProjectile(sim, live?.fireballCharge01 ?? 1);
+          }
           this.stampProjectileBubblePass(sim, now);
           this.sims.set(id, sim);
           const st = new ProjectileState();
@@ -1789,7 +2258,9 @@ export class CombatSystem {
         ownerId: sessionId,
         comboHit,
       });
-      this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+      const meleeDmg =
+        comboHit != null ? abilityComboHitDamage(def, comboHit) : def.damage;
+      this.applyInstant(center, radius, meleeDmg, sessionId, def.id, now);
     } else if (def.shape === "aoe" && !deferHit) {
       const center = travelLanding ?? { x: player.x, z: player.z };
       const radius = def.radius ?? 3;
@@ -1814,6 +2285,8 @@ export class CombatSystem {
     } else {
       this.statuses.applyApplications(sessionId, def.applyOnSelf, sessionId, now);
     }
+
+    this.tryProcProtectiveInstinct(sessionId, player, def.id, now);
   }
 
   /**
@@ -1940,9 +2413,9 @@ export class CombatSystem {
     d.yaw = player.yaw;
     d.vx = drifting ? dir.x * DECOY_SPEED : 0;
     d.vz = drifting ? dir.z * DECOY_SPEED : 0;
-    d.color = player.color || "#4ade80";
-    d.pattern = player.pattern || "plain";
-    d.patternColor = player.patternColor || "#1f2937";
+    d.color = player.color || STARTER_COLORS[0]!;
+    d.pattern = player.pattern || DEFAULT_COSMETIC_PATTERN;
+    d.patternColor = player.patternColor || DEFAULT_COSMETIC_PATTERN_COLOR;
     d.expiresAt = now + DECOY_LIFE_MS;
     this.room.state.decoys.set(id, d);
   }
@@ -1996,11 +2469,13 @@ export class CombatSystem {
         ownerId: sessionId,
         comboHit,
       });
-      this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+      const meleeDmg =
+        comboHit != null ? abilityComboHitDamage(def, comboHit) : def.damage;
+      this.applyInstant(center, radius, meleeDmg, sessionId, def.id, now);
       return;
     }
     if (def.shape === "aoe") {
-      // Leap Slam: hands hit the ground in front of the caster.
+      // Jump Slam: hands hit the ground in front of the caster.
       const slamReach = def.id === "smash" ? 1.05 : 0;
       const yaw = this.casts.get(sessionId)?.yaw ?? player.yaw;
       const center =
@@ -2103,6 +2578,170 @@ export class CombatSystem {
       if (now < zone.expiresAt) remain.push(zone);
     }
     this.pendingFirewalls = remain;
+  }
+
+  private schedulePoisonCloud(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const aim =
+      cast?.aimX != null && cast?.aimZ != null
+        ? { x: cast.aimX, z: cast.aimZ }
+        : undefined;
+    const range = def.range > 0 ? def.range : POISON_CLOUD_CAST.range;
+    const aimed = clampGroundAim(ownerBody, aim, range);
+    const pos = clampTargetBeforeWalls(
+      { x: ownerBody.x, z: ownerBody.z },
+      aimed,
+      0.35,
+      this.wallColliders,
+    );
+    const radius = Math.max(0.8, def.radius ?? POISON_CLOUD_CAST.radius);
+    const durationMs = Math.max(800, def.zoneDurationMs ?? POISON_CLOUD_CAST.zoneDurationMs);
+    const tickMs = Math.max(120, def.tickMs ?? POISON_CLOUD_CAST.tickMs);
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      x2: ownerBody.x,
+      z2: ownerBody.z,
+      radius,
+      yaw: cast?.yaw ?? ownerBody.yaw,
+      ownerId: sessionId,
+    });
+
+    this.pendingPoisonClouds.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      radius,
+      nextTickAt: now,
+      expiresAt: now + durationMs,
+      tickMs,
+    });
+  }
+
+  /** Self-centered grey smoke + cloak at release (frame 28). Reuses poison-cloud tick loop. */
+  private scheduleSmokeBomb(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const pos = { x: ownerBody.x, z: ownerBody.z };
+    const radius = Math.max(1.2, def.radius ?? SMOKE_BOMB_CAST.radius);
+    const durationMs = Math.max(800, def.zoneDurationMs ?? SMOKE_BOMB_CAST.zoneDurationMs);
+    const tickMs = Math.max(120, def.tickMs ?? SMOKE_BOMB_CAST.tickMs);
+
+    this.statuses.applyApplications(
+      sessionId,
+      [{ statusId: "cloaked", durationMs, chance: 1 }],
+      sessionId,
+      now,
+    );
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      x2: pos.x,
+      z2: pos.z,
+      radius,
+      yaw: cast?.yaw ?? ownerBody.yaw,
+      ownerId: sessionId,
+    });
+
+    this.pendingPoisonClouds.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      radius,
+      nextTickAt: now,
+      expiresAt: now + durationMs,
+      tickMs,
+    });
+  }
+
+  private advancePendingPoisonClouds(now: number) {
+    if (this.pendingPoisonClouds.length === 0) return;
+    const remain: PendingPoisonCloud[] = [];
+    const bodies = this.collectBodies();
+    for (const zone of this.pendingPoisonClouds) {
+      const isSmoke = abilityEffectKind(ABILITIES[zone.abilityId]) === "smokeBomb";
+      if (now >= zone.expiresAt) {
+        if (isSmoke) this.revealCloak(zone.ownerId);
+        continue;
+      }
+      const def = ABILITIES[zone.abilityId];
+      while (zone.nextTickAt <= now && zone.nextTickAt < zone.expiresAt) {
+        for (const body of bodies) {
+          if (!this.canHurt(zone.ownerId, body.id)) continue;
+          if (body.vulnerable === false) continue;
+          if (body.hp <= 0) continue;
+          if (
+            !circlesOverlap(
+              zone.x,
+              zone.z,
+              zone.radius,
+              body.x,
+              body.z,
+              COMBAT.playerHitRadius,
+            )
+          ) {
+            continue;
+          }
+          this.statuses.applyApplications(
+            body.id,
+            def?.applyOnHit ?? [
+              { statusId: "poisoned", chance: 1 },
+              { statusId: "poisonMiasma", chance: 1 },
+            ],
+            zone.ownerId,
+            now,
+          );
+        }
+        zone.nextTickAt += zone.tickMs;
+      }
+
+      // Smoke Bomb: cloak lasts only while the caster stays inside the live cloud.
+      if (isSmoke) {
+        const owner = bodies.find((b) => b.id === zone.ownerId);
+        const inCloud =
+          owner != null &&
+          owner.hp > 0 &&
+          circlesOverlap(
+            zone.x,
+            zone.z,
+            zone.radius,
+            owner.x,
+            owner.z,
+            COMBAT.playerHitRadius,
+          );
+        if (inCloud) {
+          const remainMs = Math.max(120, zone.expiresAt - now);
+          this.statuses.applyApplications(
+            zone.ownerId,
+            [{ statusId: "cloaked", durationMs: remainMs, chance: 1 }],
+            zone.ownerId,
+            now,
+          );
+        } else {
+          this.revealCloak(zone.ownerId);
+        }
+      }
+
+      if (now < zone.expiresAt) remain.push(zone);
+    }
+    this.pendingPoisonClouds = remain;
   }
 
   /**
@@ -2340,6 +2979,8 @@ export class CombatSystem {
       activeEndsAt,
       despawnAt,
       phase: "forming",
+      nextShieldAt: formEndsAt,
+      shieldGranted: 0,
     });
   }
 
@@ -2428,6 +3069,9 @@ export class CombatSystem {
   private advancePendingProtectionBubbles(now: number) {
     if (this.pendingProtectionBubbles.length === 0) return;
     const remain: PendingProtectionBubble[] = [];
+    const tickMs = PROTECTION_BUBBLE_CAST.shieldTickMs;
+    const perTick = PROTECTION_BUBBLE_CAST.shieldPerTick;
+    const cap = PROTECTION_BUBBLE_CAST.shieldCap;
     for (const zone of this.pendingProtectionBubbles) {
       const st = this.room.state.protectionBubbles.get(zone.id);
       if (now >= zone.despawnAt) {
@@ -2437,10 +3081,24 @@ export class CombatSystem {
       if (zone.phase === "forming" && now >= zone.formEndsAt) {
         zone.phase = "active";
         if (st) st.phase = "active";
+        if (zone.nextShieldAt < zone.formEndsAt) zone.nextShieldAt = zone.formEndsAt;
       }
       if (zone.phase === "active" && now >= zone.activeEndsAt) {
         zone.phase = "fading";
         if (st) st.phase = "fading";
+      }
+      if (zone.phase === "active" && zone.shieldGranted < cap) {
+        while (zone.nextShieldAt <= now && zone.shieldGranted < cap) {
+          const add = Math.min(perTick, cap - zone.shieldGranted);
+          const current = this.statuses.getStacks(zone.ownerId, "bubbleShield");
+          this.statuses.apply(zone.ownerId, "bubbleShield", zone.ownerId, now, {
+            durationMs: Math.max(500, zone.activeEndsAt - now + 500),
+            stacks: current + add,
+            setStacks: true,
+          });
+          zone.shieldGranted += add;
+          zone.nextShieldAt += tickMs;
+        }
       }
       remain.push(zone);
     }
@@ -2588,14 +3246,7 @@ export class CombatSystem {
 
   /** Allies (same team / hub), self, and practice dummies for shroom heal burst. */
   private canShroomHealTarget(casterId: string, targetId: string): boolean {
-    if (this.room.state.targets.has(targetId)) return true;
-    const player = this.room.state.players.get(targetId);
-    if (!player || player.disconnected || player.hp <= 0) return false;
-    if (player.role === "spectator" || player.roundDead) return false;
-    if (casterId === targetId) return true;
-    const caster = this.room.state.players.get(casterId);
-    if (caster?.team && player.team && caster.team !== player.team) return false;
-    return true;
+    return this.canHealTarget(casterId, targetId, { allowSelf: true });
   }
 
   private triggerShroom(
@@ -2738,7 +3389,13 @@ export class CombatSystem {
       cast?.aimX != null && cast?.aimZ != null
         ? { x: cast.aimX, z: cast.aimZ }
         : undefined;
-    const pos = clampGroundAim(ownerBody, aim, def.range > 0 ? def.range : 10);
+    const aimed = clampGroundAim(ownerBody, aim, def.range > 0 ? def.range : 10);
+    const pos = clampTargetBeforeWalls(
+      { x: ownerBody.x, z: ownerBody.z },
+      aimed,
+      0.35,
+      this.wallColliders,
+    );
     const collideRadius = Math.max(0.5, def.radius ?? VOLCANO_CAST.collideRadius);
     const blastRadius = VOLCANO_CAST.rockBlastRadius;
     const durationMs = Math.max(1000, def.zoneDurationMs ?? VOLCANO_CAST.zoneDurationMs);
@@ -3047,6 +3704,130 @@ export class CombatSystem {
     this.pendingHealBeam = this.pendingHealBeam.filter((b) => b.ownerId !== ownerId);
   }
 
+  private scheduleLifeLeech(sessionId: string, def: AbilityDef, now: number) {
+    this.clearPendingLifeLeech(sessionId);
+    const hold = def.holdChannel === true;
+    const ticks = hold
+      ? Number.MAX_SAFE_INTEGER
+      : Math.max(1, Math.floor(def.healTicks ?? LIFE_LEECH_CAST.damageTicks));
+    const tickMs = Math.max(80, def.tickMs ?? LIFE_LEECH_CAST.tickMs);
+    this.pendingLifeLeech.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      nextTickAt: now,
+      tickIndex: 0,
+      hold,
+      ticksTotal: ticks,
+      tickMs,
+      damage: def.damage ?? LIFE_LEECH_CAST.damagePerTick,
+      healFrac: LIFE_LEECH_CAST.healFrac,
+      range: Math.max(2, def.range),
+      halfAngle: def.coneHalfAngle ?? LIFE_LEECH_CAST.beamHalfAngle,
+    });
+  }
+
+  private clearPendingLifeLeech(ownerId: string) {
+    if (this.pendingLifeLeech.length === 0) return;
+    this.pendingLifeLeech = this.pendingLifeLeech.filter((b) => b.ownerId !== ownerId);
+  }
+
+  private advancePendingLifeLeech(now: number) {
+    if (this.pendingLifeLeech.length === 0) return;
+    const remain: PendingLifeLeech[] = [];
+    for (const beam of this.pendingLifeLeech) {
+      if (now < beam.nextTickAt) {
+        remain.push(beam);
+        continue;
+      }
+      const owner = this.room.state.players.get(beam.ownerId);
+      if (!owner || owner.disconnected || owner.hp <= 0) continue;
+
+      this.fx({
+        kind: "aoe",
+        abilityId: beam.abilityId,
+        x: owner.x,
+        z: owner.z,
+        radius: beam.range,
+        yaw: owner.yaw,
+        ownerId: beam.ownerId,
+        /** 1 = channel start (client spawns the continuous beam once). */
+        comboHit: beam.tickIndex + 1,
+      });
+
+      this.applyLifeLeechTick(
+        { x: owner.x, z: owner.z },
+        owner.yaw,
+        beam.range,
+        beam.halfAngle,
+        beam.damage,
+        beam.healFrac,
+        beam.ownerId,
+        beam.abilityId,
+      );
+
+      beam.tickIndex += 1;
+      if (beam.hold || beam.tickIndex < beam.ticksTotal) {
+        beam.nextTickAt = now + beam.tickMs;
+        remain.push(beam);
+      }
+    }
+    this.pendingLifeLeech = remain;
+  }
+
+  /**
+   * Damage enemies in a narrow facing cone; heal caster for a fraction of
+   * post-resist damage (including shield absorb). Soft-occludes like Heal Beam.
+   */
+  private applyLifeLeechTick(
+    origin: { x: number; z: number },
+    yaw: number,
+    range: number,
+    halfAngle: number,
+    damage: number,
+    healFrac: number,
+    casterId: string,
+    abilityId: string,
+  ) {
+    if (!(damage > 0) || !(range > 0)) return;
+    const hits = resolveConeHits(
+      origin,
+      yaw,
+      range,
+      halfAngle,
+      damage,
+      casterId,
+      this.collectBodies(),
+      (o, tid) => this.canHurt(o, tid),
+      { walls: this.wallColliders, softOcclude: true },
+    );
+    let totalDealt = 0;
+    for (const hit of hits) {
+      totalDealt += this.applyRawDamage(hit.targetId, hit.damage, casterId, abilityId);
+    }
+    if (!(totalDealt > 0) || !(healFrac > 0)) return;
+    const heal = Math.max(0, Math.floor(totalDealt * healFrac));
+    if (!(heal > 0)) return;
+    // Derived from damage already rolled — no second crit.
+    const caster = this.room.state.players.get(casterId);
+    if (!caster || caster.disconnected || caster.hp <= 0) return;
+    const before = caster.hp;
+    caster.hp = Math.min(caster.maxHp, caster.hp + heal);
+    const restored = caster.hp - before;
+    const now = Date.now();
+    this.tryProcOverflow(casterId, casterId, heal - restored, caster.maxHp, abilityId, now);
+    if (restored > 0) {
+      this.fx({
+        kind: "hit",
+        abilityId,
+        x: caster.x,
+        z: caster.z,
+        damage: restored,
+        ownerId: casterId,
+        targetId: casterId,
+      });
+    }
+  }
+
   private advancePendingHealBeam(now: number) {
     if (this.pendingHealBeam.length === 0) return;
     const remain: PendingHealBeam[] = [];
@@ -3119,9 +3900,12 @@ export class CombatSystem {
     }
   }
 
-  /** Allies (same team / hub) and practice dummies — never enemies. */
-  private canHealBeamTarget(casterId: string, targetId: string): boolean {
-    if (casterId === targetId) return false;
+  /**
+   * Allies (same team / hub) and practice dummies — never enemies.
+   * Hub unteamed players remain healable.
+   */
+  private canHealTarget(casterId: string, targetId: string, opts?: { allowSelf?: boolean }): boolean {
+    if (casterId === targetId) return Boolean(opts?.allowSelf);
     if (this.room.state.targets.has(targetId)) return true;
     const player = this.room.state.players.get(targetId);
     if (!player || player.disconnected || player.hp <= 0) return false;
@@ -3129,6 +3913,10 @@ export class CombatSystem {
     const caster = this.room.state.players.get(casterId);
     if (caster?.team && player.team && caster.team !== player.team) return false;
     return true;
+  }
+
+  private canHealBeamTarget(casterId: string, targetId: string): boolean {
+    return this.canHealTarget(casterId, targetId);
   }
 
   private advancePendingGrooveHeal(now: number) {
@@ -3280,10 +4068,60 @@ export class CombatSystem {
     const def = ABILITIES[abilityId];
     const knock = def?.knockback ?? 0;
     const knockMs = def?.knockbackMs ?? 220;
+    const owner = this.room.state.players.get(ownerId);
+    const from = owner ? { x: owner.x, z: owner.z } : center;
     for (const hit of hits) {
+      if (
+        def?.shape === "melee" &&
+        this.meleeBlockedByHandShield(from, center, hit.targetId)
+      ) {
+        continue;
+      }
       this.applyDamage(hit.targetId, hit.damage, ownerId, abilityId, now);
       if (knock > 0) this.applyKnockback(center, hit.targetId, knock, knockMs, now);
     }
+  }
+
+  /** Front disc blocks melee the same way it shatters projectiles. */
+  private meleeBlockedByHandShield(
+    attackerPos: Vec2,
+    hitCenter: Vec2,
+    targetId: string,
+  ): boolean {
+    const target = this.room.state.players.get(targetId);
+    if (!target || target.hp <= 0 || target.disconnected) return false;
+    if (!this.statuses.has(targetId, "handShielding")) return false;
+    const shieldCenter = pointInFront(
+      { x: target.x, z: target.z },
+      target.yaw,
+      HAND_SHIELD_CAST.shieldForward,
+    );
+    const bubble: ProtectionBubbleCollider = {
+      id: `handShield_${targetId}`,
+      x: shieldCenter.x,
+      z: shieldCenter.z,
+      radius: HAND_SHIELD_CAST.shieldRadius,
+    };
+    if (
+      projectileEntersProtectionBubble(
+        attackerPos.x,
+        attackerPos.z,
+        target.x,
+        target.z,
+        COMBAT.playerHitRadius * 0.35,
+        bubble,
+      )
+    ) {
+      return true;
+    }
+    return projectileEntersProtectionBubble(
+      hitCenter.x,
+      hitCenter.z,
+      target.x,
+      target.z,
+      0.05,
+      bubble,
+    );
   }
 
   /**
@@ -3305,7 +4143,7 @@ export class CombatSystem {
     let healedOthers = 0;
 
     for (const [id, player] of this.room.state.players) {
-      if (id === casterId) continue;
+      if (!this.canHealTarget(casterId, id)) continue;
       if (player.disconnected || player.hp <= 0) continue;
       const dist = Math.hypot(player.x - center.x, player.z - center.z);
       if (dist > radius + soft) continue;
@@ -3346,6 +4184,7 @@ export class CombatSystem {
     const before = caster.hp;
     caster.hp = Math.min(caster.maxHp, caster.hp + selfHeal);
     const healed = caster.hp - before;
+    this.tryProcOverflow(casterId, casterId, selfHeal - healed, caster.maxHp, abilityId, now);
     if (healed > 0) {
       this.fx({
         kind: "hit",
@@ -3567,19 +4406,20 @@ export class CombatSystem {
     }
   }
 
-  /** HP change + hit FX. Returns false if blocked (missing / invuln / countered). */
+  /** HP change + hit FX. Returns post-resist damage applied (0 if blocked / invuln / countered). */
   private applyRawDamage(
     targetId: string,
     damage: number,
     attackerSessionId: string,
     abilityId: string,
     opts?: { /** Default true — set false for fuse blasts / aura-like ticks. */ triggersCounter?: boolean },
-  ): boolean {
+  ): number {
     const now = Date.now();
     const atkDef = ABILITIES[abilityId];
     const dealtMul = this.statuses.getDamageDealtMul(attackerSessionId);
     const salvoMul = this.peekOpeningSalvoMul(attackerSessionId, abilityId, damage, now);
-    const scaledIn = damage > 0 ? damage * dealtMul * salvoMul : damage;
+    const oppMul = this.peekOpportunistMul(attackerSessionId, targetId, abilityId, damage);
+    const scaledIn = damage > 0 ? damage * dealtMul * salvoMul * oppMul : damage;
     const allowCounter = opts?.triggersCounter !== false;
 
     // Armed Counter / Revenge: deny the next melee / direct projectile.
@@ -3603,7 +4443,7 @@ export class CombatSystem {
             damage: 0,
           });
         }
-        return false;
+        return 0;
       }
       if (this.statuses.has(targetId, "revengeArmed")) {
         this.procRevenge(targetId, attackerSessionId, now);
@@ -3619,7 +4459,7 @@ export class CombatSystem {
             damage: 0,
           });
         }
-        return false;
+        return 0;
       }
     }
 
@@ -3629,11 +4469,12 @@ export class CombatSystem {
       rollCrit(this.kits.get(attackerSessionId)?.critChance ?? COMBAT.critChance);
     const resistMul = this.statuses.getDamageTakenMul(targetId);
     let dealt = Math.max(0, Math.round(scaleForCrit(scaledIn, crit) * resistMul));
+    const damageForLeech = dealt;
     dealt = this.statuses.absorbWithShields(targetId, dealt);
 
     const player = this.room.state.players.get(targetId);
     if (player) {
-      if (player.invulnerable) return false;
+      if (player.invulnerable) return 0;
       if (scaledIn > 0) {
         this.noteDealtDamage(attackerSessionId, now);
         if (salvoMul > 1) this.commitOpeningSalvo(attackerSessionId, now);
@@ -3653,7 +4494,7 @@ export class CombatSystem {
         damage: dealt,
         crit: crit && dealt > 0 ? true : undefined,
       });
-      return true;
+      return damageForLeech;
     }
 
     const decoy = this.room.state.decoys.get(targetId);
@@ -3673,7 +4514,7 @@ export class CombatSystem {
         crit: crit && dealt > 0 ? true : undefined,
       });
       this.room.state.decoys.delete(targetId);
-      return true;
+      return damageForLeech;
     }
 
     const target = this.room.state.targets.get(targetId);
@@ -3710,14 +4551,14 @@ export class CombatSystem {
         target.castPhase = "";
         target.castLockUntil = 0;
       }
-      return true;
+      return damageForLeech;
     }
-    return false;
+    return 0;
   }
 
   /**
    * Restore HP on a player or practice dummy. Crit rolls once here for all heals.
-   * Returns HP actually restored (0 if none).
+   * Returns HP actually restored (0 if none). Overflow converts wasted heal when applicable.
    */
   private applyHealAmount(
     targetId: string,
@@ -3728,6 +4569,7 @@ export class CombatSystem {
     if (!(amount > 0)) return 0;
     const crit = rollCrit(this.kits.get(healerId)?.critChance ?? COMBAT.critChance);
     const healFor = Math.max(0, Math.round(scaleForCrit(amount, crit)));
+    const now = Date.now();
 
     const emit = (x: number, z: number, healed: number) => {
       if (!(healed > 0)) return;
@@ -3750,6 +4592,7 @@ export class CombatSystem {
       player.hp = Math.min(player.maxHp, player.hp + healFor);
       const healed = player.hp - before;
       emit(player.x, player.z, healed);
+      this.tryProcOverflow(healerId, targetId, healFor - healed, player.maxHp, abilityId, now);
       return healed;
     }
 
@@ -3760,6 +4603,7 @@ export class CombatSystem {
       target.hp = Math.min(target.maxHp, target.hp + healFor);
       const healed = target.hp - before;
       emit(target.x, target.z, healed);
+      this.tryProcOverflow(healerId, targetId, healFor - healed, target.maxHp, abilityId, now);
       return healed;
     }
     return 0;
@@ -3789,6 +4633,7 @@ export class CombatSystem {
 
   /**
    * Consume Revenge window → instant blink behind attacker, vanish briefly, then reappear.
+   * If full behind is blocked, land closer along the behind line (never through walls).
    */
   private procRevenge(targetId: string, attackerId: string, now: number) {
     this.statuses.remove(targetId, "revengeArmed");
@@ -3800,13 +4645,43 @@ export class CombatSystem {
     if (attacker && attackerId !== targetId) {
       const behindDist = REVENGE_CAST.behindDist;
       const forward = { x: Math.sin(attacker.yaw), z: Math.cos(attacker.yaw) };
-      const ideal = {
-        x: attacker.x - forward.x * behindDist,
-        z: attacker.z - forward.z * behindDist,
-      };
+      const right = { x: forward.z, z: -forward.x };
       const from = { x: player.x, z: player.z };
-      const landed = this.sweepPlayerPos(targetId, from, ideal);
-      const clamped = this.clampPlayerPos(targetId, landed);
+      const atk = { x: attacker.x, z: attacker.z };
+
+      const candidates: Vec2[] = [];
+      // Prefer full behind, then step closer toward the attacker.
+      for (let i = 0; i <= 6; i++) {
+        const d = behindDist * (1 - i / 6);
+        if (d < COLLISION.playerRadius * 0.85) break;
+        candidates.push({
+          x: atk.x - forward.x * d,
+          z: atk.z - forward.z * d,
+        });
+      }
+      // Slight side offsets at mid/close range if center line is jammed.
+      for (const d of [behindDist * 0.55, behindDist * 0.35]) {
+        for (const side of [-1, 1]) {
+          candidates.push({
+            x: atk.x - forward.x * d + right.x * side * COLLISION.playerRadius * 1.1,
+            z: atk.z - forward.z * d + right.z * side * COLLISION.playerRadius * 1.1,
+          });
+        }
+      }
+      candidates.push({ ...atk });
+
+      let clamped = this.clampPlayerPos(targetId, from);
+      for (const ideal of candidates) {
+        const landed = this.sweepPlayerPos(targetId, from, ideal);
+        const next = this.clampPlayerPos(targetId, landed);
+        // Accept if we made progress toward the ideal (not stuck at origin feet).
+        const toIdeal = Math.hypot(ideal.x - next.x, ideal.z - next.z);
+        const fromIdeal = Math.hypot(ideal.x - from.x, ideal.z - from.z);
+        if (toIdeal + 0.05 < fromIdeal || Math.hypot(next.x - from.x, next.z - from.z) > 0.15) {
+          clamped = next;
+          break;
+        }
+      }
 
       this.travels.delete(targetId);
       this.knockbacks.delete(targetId);
@@ -3968,6 +4843,7 @@ export class CombatSystem {
 
   /** Apply ability cooldown; returns ms for client sync. */
   private startCooldown(sessionId: string, abilityId: string, now: number): number {
+    if (this.noCooldownSessions.has(sessionId)) return 0;
     const def = ABILITIES[abilityId];
     const baseMs = def?.cooldownMs ?? 0;
     const cooldownMs = kitCooldownMs(this.kits.get(sessionId), abilityId, baseMs);
@@ -3978,6 +4854,21 @@ export class CombatSystem {
     }
     bag.set(abilityId, now + cooldownMs);
     return cooldownMs;
+  }
+
+  /** Admin: skip ability cooldowns for this session (hub practice). */
+  setNoCooldowns(sessionId: string, enabled: boolean): boolean {
+    if (enabled) {
+      this.noCooldownSessions.add(sessionId);
+      this.cds.delete(sessionId);
+    } else {
+      this.noCooldownSessions.delete(sessionId);
+    }
+    return this.noCooldownSessions.has(sessionId);
+  }
+
+  hasNoCooldowns(sessionId: string): boolean {
+    return this.noCooldownSessions.has(sessionId);
   }
 
   /**

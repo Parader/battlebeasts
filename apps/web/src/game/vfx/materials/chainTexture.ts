@@ -1,17 +1,25 @@
 import * as THREE from "three";
-
-const CHAIN_URL = "/assets/vfx/chain-strip.png";
+import { VFX_CHAIN_URL } from "../vfxUrls";
 
 let chainTex: THREE.Texture | null = null;
+
+function configureChainTex(tex: THREE.Texture): THREE.Texture {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
 
 /** Shared tiled chain-strip texture for projectile + chained VFX. */
 export function getChainTexture(): THREE.Texture {
   if (!chainTex) {
-    chainTex = new THREE.TextureLoader().load(CHAIN_URL);
-    chainTex.colorSpace = THREE.SRGBColorSpace;
-    chainTex.wrapS = THREE.ClampToEdgeWrapping;
-    chainTex.wrapT = THREE.RepeatWrapping;
-    chainTex.needsUpdate = true;
+    chainTex = configureChainTex(new THREE.TextureLoader().load(VFX_CHAIN_URL));
   }
   return chainTex;
+}
+
+/** Install a fully-decoded texture from the loading gate. */
+export function setChainTexture(tex: THREE.Texture): void {
+  chainTex = configureChainTex(tex);
 }

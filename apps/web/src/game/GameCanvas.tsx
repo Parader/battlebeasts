@@ -6,6 +6,7 @@ import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import { CAMERA } from "@battlebeasts/shared";
 import { BaseCityScene } from "./BaseCityScene";
 import { ContentScene } from "./ContentScene";
+import { VfxWarmup } from "./vfx";
 import type { PredictedPose, SessionPhase } from "./useBaseCityRoom";
 
 type Props = {
@@ -37,9 +38,9 @@ function PostFX() {
     return (
         <EffectComposer ref={composerRef} multisampling={0} enableNormalPass={false}>
             <Bloom
-                luminanceThreshold={0.85}
-                luminanceSmoothing={0.25}
-                intensity={0.55}
+                luminanceThreshold={0.92}
+                luminanceSmoothing={0.35}
+                intensity={0.4}
                 mipmapBlur
             />
         </EffectComposer>
@@ -81,6 +82,8 @@ export const GameCanvas = memo(function GameCanvas({
                     inContent ? 55 : 160,
                 ]}
             />
+            {/* Outside Suspense so GPU warmup isn't blocked by hub/arena GLB parse. */}
+            <VfxWarmup />
             <Suspense fallback={null}>
                 {inContent ? (
                     <ContentScene

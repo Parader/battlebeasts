@@ -6,6 +6,8 @@ type Props = {
   onClose?: () => void;
   /** When false, overlay click / Escape still use onClose but no Close control is shown. */
   showCloseButton?: boolean;
+  /** Extra content inline with the title (e.g. talent points). */
+  titleAside?: ReactNode;
   /** Extra controls in the header, rendered left of the close button. */
   headerActions?: ReactNode;
   wide?: boolean;
@@ -25,6 +27,7 @@ export function GamePanelShell({
   subtitle,
   onClose,
   showCloseButton = true,
+  titleAside,
   headerActions,
   wide,
   maxWidthClass,
@@ -63,8 +66,11 @@ export function GamePanelShell({
         onClick={(e) => e.stopPropagation()}
       >
         <header className="bb-panel-header shrink-0">
-          <div>
-            <h2 className="bb-panel-title">{title}</h2>
+          <div className="bb-panel-header__lead">
+            <div className="bb-panel-title-row">
+              <h2 className="bb-panel-title">{title}</h2>
+              {titleAside}
+            </div>
             {subtitle ? <div className="bb-panel-sub">{subtitle}</div> : null}
           </div>
           {headerActions || (onClose && showCloseButton) ? (

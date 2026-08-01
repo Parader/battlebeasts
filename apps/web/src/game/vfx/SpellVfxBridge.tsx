@@ -5,6 +5,7 @@ import { castEngines, type PlayerCastPose } from "./engines";
 import {
   cancelPlayerCastHandles,
   cleanupPlayerVfx,
+  clearHandle,
   forEachPlayerVfxRuntime,
   getPlayerVfxRuntime,
 } from "./runtime/playerVfxRuntime";
@@ -43,14 +44,29 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
       engine.onPhaseChange(ctx);
       engine.tick?.(ctx);
 
-      // Abort / leave cast window — cancel all cast handles for this player.
+      // Abort / leave cast window.
       if (
         phase === "cancel" ||
         phase === "interrupt" ||
         phase === "idle" ||
         phase === ""
       ) {
-        cancelPlayerCastHandles(sessionId);
+        if (phase === "cancel" || phase === "interrupt") {
+          cancelPlayerCastHandles(sessionId);
+        } else {
+          // Idle: detach ownedByCast shots (fireball) without cancel so they
+          // keep flying; cancel everything else.
+          const rt = getPlayerVfxRuntime(sessionId);
+          for (const [key, handle] of [...rt.handles.entries()]) {
+            const p = getAbilityVfxProfile(key);
+            if (p.projectile === "ownedByCast") {
+              clearHandle(sessionId, key, false);
+            } else {
+              handle.cancel();
+              clearHandle(sessionId, key, false);
+            }
+          }
+        }
       }
 
       runtime.lastPhase = phase;

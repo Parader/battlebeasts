@@ -15,6 +15,7 @@ export * from "./cosmetics";
 export * from "./hubVillage";
 export * from "./arenaDesert";
 export * from "./content";
+export * from "./ranked";
 export * from "./protocol";
 export * from "./sim";
 export * from "./combat";

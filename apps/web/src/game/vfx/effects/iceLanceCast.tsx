@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { ICE_LANCE_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
-import { findBone } from "../attach";
+import { findHandBone } from "../attach";
 import { getCharacterRoot } from "../../characterRoots";
 import { createEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
@@ -24,12 +24,27 @@ const SHAFT_R = 0.018;
 const SPAWN_SEC =
   ICE_LANCE_CAST.spawnFrame / ICE_LANCE_CAST.fps / ICE_LANCE_CAST.playbackRate;
 
+type LanceProj = {
+  ownerSessionId?: string;
+  abilityId?: string;
+  x: number;
+  z: number;
+  vx?: number;
+  vz?: number;
+  mode?: string;
+};
+
 /** Aim the forward tip along `dir` (world). */
 function aimTip(g: THREE.Object3D, dir: THREE.Vector3, out: THREE.Vector3) {
   out.copy(dir);
   if (out.lengthSq() < 1e-8) return;
   out.normalize();
   g.quaternion.setFromUnitVectors(TIP_LOCAL, out);
+}
+
+function projSeq(id: string): number {
+  const m = /^p_(\d+)$/.exec(id);
+  return m ? Number(m[1]) : -1;
 }
 
 function LanceMesh({
@@ -82,11 +97,19 @@ export function IceLanceCastEffect({
   const light = useRef<THREE.PointLight>(null);
   const phase = useRef<"wait" | "hand" | "flight" | "done">("wait");
   const projId = useRef<string | null>(null);
+  /** Stuck/grounded lances already planted when this cast VFX spawned. */
+  const ignorePlantIds = useRef<Set<string> | null>(null);
+  /** Highest owner ice-lance projectile seq seen at first snapshot. */
+  const maxSeqAtStart = useRef<number | null>(null);
   const worldPos = useRef(new THREE.Vector3());
   const worldQuat = useRef(new THREE.Quaternion());
   const flightDir = useRef(new THREE.Vector3(0, 0, 1));
   const aim = useRef(new THREE.Vector3());
   const tmp = useRef(new THREE.Vector3());
+
+  // Late impact catch-up (chargeMs ≈ 1) — skip hand delay and latch immediately.
+  const lateThrow = (shot.chargeMs ?? SPAWN_SEC * 1000) < SPAWN_SEC * 1000 * 0.5;
+  const handSpawnSec = lateThrow ? 0 : SPAWN_SEC;
 
   useFrame((_, dt) => {
     if (phase.current === "done") return;
@@ -95,48 +118,73 @@ export function IceLanceCastEffect({
     const s = lance.current;
     if (!g || !s) return;
 
-    // Latch onto a live in-flight lance only — ignore stuck/grounded spikes
-    // still waiting to explode (second cast must stay in-hand until release).
-    if (phase.current !== "flight" && follow.room?.state?.projectiles && shot.followOwnerId) {
-      let found: string | null = null;
-      let px = 0;
-      let pz = 0;
-      let pvx = 0;
-      let pvz = 0;
-      follow.room.state.projectiles.forEach(
-        (
-          p: {
-            ownerSessionId?: string;
-            abilityId?: string;
-            x: number;
-            z: number;
-            vx?: number;
-            vz?: number;
-            mode?: string;
-          },
-          id: string,
-        ) => {
-          if (p.abilityId !== "iceLance") return;
-          if (p.ownerSessionId !== shot.followOwnerId) return;
-          const mode = p.mode ?? "flight";
-          if (mode !== "flight") return;
-          found = id;
-          px = p.x;
-          pz = p.z;
-          pvx = p.vx ?? 0;
-          pvz = p.vz ?? 0;
-        },
-      );
-      if (found) {
-        projId.current = found;
+    if (
+      ignorePlantIds.current == null &&
+      follow.room?.state?.projectiles &&
+      shot.followOwnerId
+    ) {
+      const prior = new Set<string>();
+      let maxSeq = -1;
+      follow.room.state.projectiles.forEach((p: LanceProj, id: string) => {
+        if (p.abilityId !== "iceLance") return;
+        if (p.ownerSessionId !== shot.followOwnerId) return;
+        maxSeq = Math.max(maxSeq, projSeq(id));
+        const m = p.mode ?? "flight";
+        if (m === "stuck" || m === "grounded") prior.add(id);
+      });
+      ignorePlantIds.current = prior;
+      maxSeqAtStart.current = maxSeq;
+    }
+
+    // Latch this cast's projectile only (seq watermark + ignore prior plants).
+    if (
+      phase.current !== "flight" &&
+      ageSec >= handSpawnSec &&
+      follow.room?.state?.projectiles &&
+      shot.followOwnerId &&
+      maxSeqAtStart.current != null
+    ) {
+      const watermark = maxSeqAtStart.current;
+      let bestFlight: { id: string; p: LanceProj; seq: number } | null = null;
+      let bestPlant: { id: string; p: LanceProj; seq: number } | null = null;
+      follow.room.state.projectiles.forEach((p: LanceProj, id: string) => {
+        if (p.abilityId !== "iceLance") return;
+        if (p.ownerSessionId !== shot.followOwnerId) return;
+        const seq = projSeq(id);
+        const m = p.mode ?? "flight";
+        if (m === "flight") {
+          // New throw: seq > watermark. Late mount: same seq, chargeMs was tiny.
+          const ok = seq > watermark || (lateThrow && seq >= watermark && seq >= 0);
+          if (!ok) return;
+          if (!bestFlight || seq >= bestFlight.seq) bestFlight = { id, p, seq };
+          return;
+        }
+        // Prior plants ignored — unless this is a late mount onto that plant.
+        if (
+          ignorePlantIds.current?.has(id) &&
+          !(lateThrow && seq >= watermark)
+        ) {
+          return;
+        }
+        if (seq < watermark) return;
+        if (!bestPlant || seq >= bestPlant.seq) bestPlant = { id, p, seq };
+      });
+
+      const pick = bestFlight ?? bestPlant;
+      if (pick) {
+        const { id, p } = pick;
+        const mode = p.mode ?? "flight";
+        projId.current = id;
         phase.current = "flight";
-        g.position.set(px, ICE_LANCE_CAST.handY, pz);
-        flightDir.current.set(pvx, 0, pvz);
+        const y = mode === "stuck" ? 1.05 : mode === "grounded" ? 0.28 : ICE_LANCE_CAST.handY;
+        g.position.set(p.x, y, p.z);
+        flightDir.current.set(p.vx ?? 0, 0, p.vz ?? 0);
         if (flightDir.current.lengthSq() < 1e-6) {
           flightDir.current.set(Math.sin(shot.yaw), 0, Math.cos(shot.yaw));
         }
         aimTip(g, flightDir.current, aim.current);
         s.visible = true;
+        s.scale.setScalar(1);
         coreMat.opacity = 1;
         glowMat.opacity = 0.55;
         const remainMs = 6000;
@@ -145,16 +193,7 @@ export function IceLanceCastEffect({
     }
 
     if (phase.current === "flight" && projId.current && follow.room?.state?.projectiles) {
-      const p = follow.room.state.projectiles.get(projId.current) as
-        | {
-            x: number;
-            z: number;
-            vx?: number;
-            vz?: number;
-            mode?: string;
-            stuckTargetId?: string;
-          }
-        | undefined;
+      const p = follow.room.state.projectiles.get(projId.current) as LanceProj | undefined;
       if (!p) {
         s.visible = false;
         phase.current = "done";
@@ -191,24 +230,20 @@ export function IceLanceCastEffect({
       return;
     }
 
-    if (ageSec < SPAWN_SEC) {
+    if (ageSec < handSpawnSec) {
       s.visible = false;
       return;
     }
     if (phase.current === "wait") phase.current = "hand";
     s.visible = true;
-    const grow = Math.min(1, (ageSec - SPAWN_SEC) / 0.1);
+    const grow = Math.min(1, (ageSec - handSpawnSec) / 0.1);
     s.scale.setScalar(0.55 + grow * 0.45);
     coreMat.opacity = grow;
     glowMat.opacity = grow * 0.5;
     if (light.current) light.current.intensity = grow * 1.35;
 
     const charRoot = getCharacterRoot(shot.followOwnerId);
-    const hand =
-      (charRoot &&
-        (findBone(charRoot, "RightHand", { partial: true }) ??
-          findBone(charRoot, "mixamorig:RightHand", { partial: true }))) ||
-      null;
+    const hand = (charRoot && findHandBone(charRoot, "right")) || null;
 
     if (hand) {
       hand.getWorldPosition(worldPos.current);

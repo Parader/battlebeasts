@@ -1,9 +1,9 @@
 /**
  * Procedural directional locomotion weights.
  *
- * Facing is aim-forward. World velocity is projected into that frame:
- *   forward = (sin(yaw), cos(yaw))
- *   right   = screen/player side (negated so LeftStrafe / RightStrafe match WASD)
+ * Facing is **aim-forward** (cursor), not mesh body yaw. World velocity is
+ * projected into that frame so WASD yields forward / back / strafe vs aim
+ * even when the root mesh faces travel direction.
  */
 
 export type LocoDir = "idle" | "forward" | "backward" | "left" | "right";
@@ -23,8 +23,16 @@ export type MovementParams = {
   worldVelocity: { x: number; y?: number; z: number };
   /** Aim / facing yaw in radians (same basis as gameplay atan2). */
   facingYaw: number;
-  /** Gameplay max move speed for normalizing (e.g. MOVE_SPEED). */
+  /**
+   * Current move-speed cap for blend normalize (includes haste/slow).
+   * Full stick at this speed → full run weights.
+   */
   maximumSpeed: number;
+  /**
+   * Unbuffed walk speed for loco clip timeScale (usually MOVE_SPEED).
+   * Defaults to `maximumSpeed`. A 6% move buff at full stick → ~1.06× run rate.
+   */
+  baseMoveSpeed?: number;
 };
 
 /**

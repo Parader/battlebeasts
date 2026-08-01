@@ -124,6 +124,9 @@ for (const item of Object.values(COSMETIC_CATALOG)) {
   };
 }
 
+/** Non-starter emotes — 20 silver (was 2s before economy scale). */
+const EMOTE_SHOP_COPPER = 2000;
+
 for (const emote of Object.values(EMOTES)) {
   if (emote.starter) continue;
   const id = `emote_${emote.id}`;
@@ -131,7 +134,7 @@ for (const emote of Object.values(EMOTES)) {
     id,
     name: emote.name,
     category: "emotes",
-    cost: coins(200),
+    cost: coins(EMOTE_SHOP_COPPER),
     grant: { kind: "emote", emoteId: emote.id },
   };
 }

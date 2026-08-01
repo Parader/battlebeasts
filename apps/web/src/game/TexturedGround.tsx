@@ -1,13 +1,14 @@
 import { useLayoutEffect, useMemo } from "react";
 import { useTexture } from "@react-three/drei";
 import * as THREE from "three";
+import { assetUrl } from "./assetUrl";
 
 /** Poly Haven sandy_gravel_02 — https://polyhaven.com/a/sandy_gravel_02 */
 const TEX = {
-  diff: "/ground_textures/sandy_gravel_02_diff_2k.jpg",
-  nor: "/ground_textures/sandy_gravel_02_nor_gl_2k.jpg",
-  rough: "/ground_textures/sandy_gravel_02_rough_2k.jpg",
-  ao: "/ground_textures/sandy_gravel_02_ao_2k.jpg",
+  diff: assetUrl("ground_textures/sandy_gravel_02_diff_2k.jpg"),
+  nor: assetUrl("ground_textures/sandy_gravel_02_nor_gl_2k.jpg"),
+  rough: assetUrl("ground_textures/sandy_gravel_02_rough_2k.jpg"),
+  ao: assetUrl("ground_textures/sandy_gravel_02_ao_2k.jpg"),
 } as const;
 
 export const GROUND_TEXTURE_URLS = [TEX.diff, TEX.nor, TEX.rough, TEX.ao] as const;

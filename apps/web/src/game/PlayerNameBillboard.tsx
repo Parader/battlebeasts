@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { Room } from "colyseus.js";
+import { hasStatusId } from "./StatusOrnaments";
 
 type Props = {
   room: Room | null;
@@ -12,6 +13,7 @@ type Props = {
 
 /**
  * Camera-projected display name above other hunters (sits above the HP bar).
+ * Hidden while cloaked — Html ignores parent mesh visibility.
  */
 export function PlayerNameBillboard({ room, sessionId, y = 2.48 }: Props) {
   const label = useRef<HTMLDivElement>(null);
@@ -24,9 +26,20 @@ export function PlayerNameBillboard({ room, sessionId, y = 2.48 }: Props) {
       return;
     }
     const p = room.state?.players?.get(sessionId) as
-      | { displayName?: string; hp?: number; disconnected?: boolean }
+      | {
+          displayName?: string;
+          hp?: number;
+          disconnected?: boolean;
+          statuses?: Parameters<typeof hasStatusId>[0];
+        }
       | undefined;
-    if (!p || p.disconnected || (typeof p.hp === "number" && p.hp <= 0)) {
+    if (
+      !p ||
+      p.disconnected ||
+      (typeof p.hp === "number" && p.hp <= 0) ||
+      hasStatusId(p.statuses, "cloaked") ||
+      hasStatusId(p.statuses, "revengePhased")
+    ) {
       el.style.visibility = "hidden";
       return;
     }

@@ -7,7 +7,8 @@ import { SHROOM_CAST } from "@battlebeasts/shared";
 import { GroundDecal } from "./components/GroundDecal";
 import { groundPresets } from "./presets/ground";
 import {
-  SHROOMS_GLB_URL,
+  SHROOM_GREEN_GLB_URL,
+  SHROOM_RED_GLB_URL,
   SHROOM_TARGET_SIZE,
   instantiateShroom,
   warmShroomAssets,
@@ -49,7 +50,8 @@ const allyTriggerPreset = {
 
 const enemyTriggerPreset = {
   ...groundPresets.iceFrost,
-  element: "fire" as const,
+  // Keep poison style (same as ally) — fire style was an unnecessary divergence.
+  element: "poison" as const,
   shape: "circle" as const,
   colorCore: "#fecaca",
   colorMid: "#f87171",
@@ -69,15 +71,20 @@ function shroomPadIsFriendly(
   room: Room,
   localSessionId: string | null,
   ownerSessionId: string | undefined,
+  pvpTeams: boolean,
+  localTeamHint?: string,
 ): boolean {
-  if (!localSessionId || !ownerSessionId) return true;
+  if (!localSessionId || !ownerSessionId) return !pvpTeams;
   if (localSessionId === ownerSessionId) return true;
   const local = room.state?.players?.get(localSessionId) as PlayerTeam | undefined;
   const owner = room.state?.players?.get(ownerSessionId) as PlayerTeam | undefined;
-  const localTeam = local?.team;
-  const ownerTeam = owner?.team;
-  if (localTeam && ownerTeam) return localTeam === ownerTeam;
-  // Hub / unteamed — pads heal players, so read as friendly.
+  const localTeam = (localTeamHint || local?.team || "").trim();
+  const ownerTeam = (owner?.team || "").trim();
+  if (pvpTeams) {
+    // Arena: hostile unless proven same team (matches RemotePlayers aim colors).
+    return Boolean(localTeam && ownerTeam && localTeam === ownerTeam);
+  }
+  // Hub — pads heal everyone.
   return true;
 }
 
@@ -85,12 +92,17 @@ function ShroomMesh({
   room,
   id,
   localSessionId,
+  pvpTeams,
+  localTeam,
 }: {
   room: Room;
   id: string;
   localSessionId: string | null;
+  pvpTeams: boolean;
+  localTeam?: string;
 }) {
-  const gltf = useGLTF(SHROOMS_GLB_URL);
+  const greenGltf = useGLTF(SHROOM_GREEN_GLB_URL);
+  const redGltf = useGLTF(SHROOM_RED_GLB_URL);
   const root = useRef<THREE.Group>(null);
   const meshRoot = useRef<THREE.Group>(null);
   const born = useRef(performance.now());
@@ -100,20 +112,27 @@ function ShroomMesh({
   const variantRef = useRef(0);
   const [friendly, setFriendly] = useState(() => {
     const v = room.state?.shrooms?.get(id) as ShroomSchema | undefined;
-    return shroomPadIsFriendly(room, localSessionId, v?.ownerSessionId);
+    return shroomPadIsFriendly(
+      room,
+      localSessionId,
+      v?.ownerSessionId,
+      pvpTeams,
+      localTeam,
+    );
   });
 
   const mesh = useMemo(() => {
-    warmShroomAssets(gltf.scene);
+    warmShroomAssets(greenGltf.scene, redGltf.scene);
     const v = room.state?.shrooms?.get(id) as ShroomSchema | undefined;
     variantRef.current = v?.variant ?? 0;
     return instantiateShroom(
-      gltf.scene,
+      greenGltf.scene,
+      redGltf.scene,
       variantRef.current,
       SHROOM_TARGET_SIZE,
       friendly ? "green" : "red",
     );
-  }, [gltf.scene, room, id, friendly]);
+  }, [greenGltf.scene, redGltf.scene, room, id, friendly]);
 
   useFrame((_, dt) => {
     const v = room.state?.shrooms?.get(id) as ShroomSchema | undefined;
@@ -127,7 +146,13 @@ function ShroomMesh({
     g.position.z = v.z;
     g.rotation.y = v.yaw ?? 0;
 
-    const nextFriendly = shroomPadIsFriendly(room, localSessionId, v.ownerSessionId);
+    const nextFriendly = shroomPadIsFriendly(
+      room,
+      localSessionId,
+      v.ownerSessionId,
+      pvpTeams,
+      localTeam,
+    );
     if (nextFriendly !== friendly) setFriendly(nextFriendly);
 
     const sinking = v.phase === "sinking";
@@ -175,7 +200,7 @@ function ShroomMesh({
         opacityMulRef={opacityMul}
       />
       <group ref={meshRoot}>
-        <primitive object={mesh} />
+        <primitive key={friendly ? "ally" : "enemy"} object={mesh} />
       </group>
     </group>
   );
@@ -185,9 +210,15 @@ function ShroomMesh({
 export function Shrooms({
   room,
   localSessionId,
+  pvpTeams = false,
+  localTeam,
 }: {
   room: Room | null;
   localSessionId: string | null;
+  /** When true, missing/mismatched teams read as hostile (arena). */
+  pvpTeams?: boolean;
+  /** Arena local team ("a" | "b") — same source as RemotePlayers aim colors. */
+  localTeam?: string;
 }) {
   const [ids, setIds] = useState<string[]>([]);
   const prevKey = useRef("");
@@ -208,7 +239,14 @@ export function Shrooms({
   return (
     <>
       {ids.map((id) => (
-        <ShroomMesh key={id} room={room} id={id} localSessionId={localSessionId} />
+        <ShroomMesh
+          key={id}
+          room={room}
+          id={id}
+          localSessionId={localSessionId}
+          pvpTeams={pvpTeams}
+          localTeam={localTeam}
+        />
       ))}
     </>
   );

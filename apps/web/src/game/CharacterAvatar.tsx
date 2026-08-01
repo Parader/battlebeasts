@@ -3,7 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
-import { MOVE_SPEED, type CosmeticsEquipped } from "@battlebeasts/shared";
+import { MOVE_SPEED, STARTER_COLORS, type CosmeticsEquipped } from "@battlebeasts/shared";
 import {
   CharacterAnimationController,
   heroAnimationConfig,
@@ -25,6 +25,7 @@ import { findBone } from "./vfx/attach";
 import { registerCharacterRoot } from "./characterRoots";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
+import { PlayerCastChannelBar } from "./PlayerCastChannelBar";
 import { InteractPromptBillboard } from "./InteractPromptBillboard";
 import { resetFootsteps, tickFootsteps } from "./gameSfx";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
@@ -49,8 +50,8 @@ type Props = {
 /**
  * Local player avatar + layered animation controller (hero.glb).
  * Gameplay owns root transform; animations never apply horizontal root motion.
- * Visual yaw is smoothed (and locked during full-body overrides like dash).
- * Aim ring follows instant gameplay yaw.
+ * Visual yaw follows aim (Mixamo 5-way needs aim-forward root).
+ * Aim ring / Spine1 follow gameplay cursor yaw.
  * While cloaked: crouch-walk aligned to move; head only looks at cursor.
  */
 export function CharacterAvatar({
@@ -191,7 +192,7 @@ export function CharacterAvatar({
             }
           | undefined)
       : undefined;
-    const liveColor = color ?? me?.color ?? "#4ade80";
+    const liveColor = me?.color ?? color ?? STARTER_COLORS[0]!;
     const livePattern = me?.pattern ?? "plain";
     const livePatternColor = me?.patternColor ?? "#1f2937";
     const key = `${liveColor}|${livePattern}|${livePatternColor}`;
@@ -205,7 +206,6 @@ export function CharacterAvatar({
       setEquipped(equippedFromPlayer(me));
     }
     g.position.set(p.x, smashHopOffsetY(me) + deathSinkOffsetY(deathSinkRef.current), p.z);
-    if (aim) aim.rotation.y = p.yaw;
 
     const revengeVanishedEarly =
       hasStatusId(me?.statuses, "revengePhased") || isRevengeVanished(localSessionId);
@@ -303,6 +303,8 @@ export function CharacterAvatar({
     const bloodRushAim =
       me?.castAbilityId === "bloodRush" &&
       (me?.castPhase === "anticipation" || me?.castPhase === "cast");
+    /** Slow-turn while Hand Shield is armed (body + disc follow capped yaw). */
+    const handShieldAim = hasStatusId(me?.statuses, "handShielding");
     const crouchWalkActive = cloaked && !castingDecoy;
     const grooveActive =
       me?.castAbilityId === "groove" ||
@@ -319,15 +321,16 @@ export function CharacterAvatar({
         !jumpAim &&
         !portalAim &&
         !bloodRushAim &&
+        !handShieldAim &&
         !crouchWalkActive &&
         !grooveActive &&
         !emoteAim) ||
       false;
 
-    if (jumpAim || portalAim || bloodRushAim || emoteAim) {
+    if (jumpAim || portalAim || bloodRushAim || handShieldAim || emoteAim) {
       visualYaw.current = p.yaw;
     } else if (moveBodyAim) {
-      // Body faces travel direction; idle keeps last move facing.
+      // Cloak / Groove: body faces travel; head tracks cursor separately.
       if (movingForBody) {
         const moveYaw = Math.atan2(velocity.current.x, velocity.current.z);
         visualYaw.current = dampYawClamped(
@@ -338,15 +341,14 @@ export function CharacterAvatar({
         );
       }
     } else if (!yawLocked.current) {
-      visualYaw.current = dampYawClamped(
-        visualYaw.current,
-        p.yaw,
-        VISUAL_YAW_RESPONSIVENESS,
-        safeDt,
-      );
+      // Mixamo 5-way loco is authored for aim-forward. Root must face aim or
+      // strafe/back clips read as "run toward WASD" when the mesh faces move.
+      visualYaw.current = p.yaw;
     }
 
     body.rotation.y = visualYaw.current;
+    // Aim ring is a sibling of body under an unrotated root — use world aim yaw.
+    if (aim) aim.rotation.y = p.yaw;
 
     // Fully hide mesh, ornaments, and aim during Revenge blink — no pre-appear flash.
     if (bodyRef.current) bodyRef.current.visible = !revengeVanished;
@@ -377,8 +379,11 @@ export function CharacterAvatar({
         : 1;
     controller.setMovement({
       worldVelocity: velocity.current,
-      facingYaw: visualYaw.current,
+      facingYaw: p.yaw,
+      aimYaw: p.yaw,
+      bodyYaw: visualYaw.current,
       maximumSpeed: MOVE_SPEED * speedMul,
+      baseMoveSpeed: MOVE_SPEED,
     });
     controller.update(safeDt);
 
@@ -417,6 +422,7 @@ export function CharacterAvatar({
         <AimIndicator color={AIM_RELATION_COLORS.self} />
       </group>
       <PlayerHpBillboard room={room} sessionId={localSessionId} />
+      <PlayerCastChannelBar room={room} sessionId={localSessionId} />
       <InteractPromptBillboard />
     </group>
   );

@@ -1,7 +1,16 @@
 import type { Client } from "@colyseus/core";
 import { matchMaker } from "@colyseus/core";
-import { PVP_MODES, resolvePvpTransfer, type PvpModeId, type PvpSeat } from "@battlebeasts/shared";
+import {
+  MMR_MIDPOINT,
+  PVP_MODES,
+  mmrBandForWaitMs,
+  resolvePvpTransfer,
+  type MatchKind,
+  type PvpModeId,
+  type PvpSeat,
+} from "@battlebeasts/shared";
 import { randomUUID } from "node:crypto";
+import { getActiveSeason, getPlayerMmrs } from "../ranked.js";
 
 export type PvpPartyMember = {
   /** Unique per (room, session) — used for dequeueing on disconnect / queue_cancel. */
@@ -17,11 +26,21 @@ export type PvpQueueEntry = {
   modes: string[];
   members: PvpPartyMember[];
   enqueuedAt: number;
+  /** Party average MMR (fighters only). */
+  avgMmr: number;
 };
 
 /** Process-wide PvP queue — hubs are separate rooms, but matchmaking is global. */
 const queue: PvpQueueEntry[] = [];
 let matching = false;
+let matchTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureMatchTimer() {
+  if (matchTimer) return;
+  matchTimer = setInterval(() => {
+    void tryMatch();
+  }, 2000);
+}
 
 function modeConfig(modeId: string) {
   return PVP_MODES.find((m) => m.id === modeId);
@@ -43,11 +62,15 @@ function spectatorCount(entry: PvpQueueEntry): number {
   return entry.members.filter((m) => m.seat === "spectator").length;
 }
 
+function partyWaitMs(entry: PvpQueueEntry, now: number): number {
+  return Math.max(0, now - entry.enqueuedAt);
+}
+
 /**
- * Pack whole parties until fighter count equals teamSize*2.
- * Solo parties that all default to teamA still match — seats are reassigned in createMatch.
+ * Find a set of whole parties that fill both teams and whose team avg MMR
+ * differ by at most the progressive band (based on max wait in the set).
  */
-function selectEntriesForMode(modeId: string): PvpQueueEntry[] | null {
+function selectEntriesForMode(modeId: string, now: number): PvpQueueEntry[] | null {
   const teamSize = teamSizeForMode(modeId);
   const need = teamSize * 2;
   const maxSpectators = maxSpectatorsForMode(modeId);
@@ -55,20 +78,66 @@ function selectEntriesForMode(modeId: string): PvpQueueEntry[] | null {
     .filter((e) => e.modes.includes(modeId))
     .sort((a, b) => a.enqueuedAt - b.enqueuedAt);
 
-  const selected: PvpQueueEntry[] = [];
-  let fighters = 0;
+  type Pack = { entries: PvpQueueEntry[]; fighters: number };
+  const packs: Pack[] = [];
 
-  for (const entry of candidates) {
-    const n = fighterCount(entry);
-    if (n === 0) continue;
-    if (fighters + n > need) continue;
-    selected.push(entry);
-    fighters += n;
-    if (fighters === need) break;
+  const dfs = (start: number, selected: PvpQueueEntry[], fighters: number) => {
+    if (fighters === need) {
+      packs.push({ entries: [...selected], fighters });
+      return;
+    }
+    if (fighters > need) return;
+    for (let i = start; i < candidates.length; i++) {
+      const entry = candidates[i]!;
+      const n = fighterCount(entry);
+      if (n === 0) continue;
+      if (fighters + n > need) continue;
+      if (selected.includes(entry)) continue;
+      selected.push(entry);
+      dfs(i + 1, selected, fighters + n);
+      selected.pop();
+      // Bound search for large queues
+      if (packs.length >= 40) return;
+    }
+  };
+  dfs(0, [], 0);
+
+  let best: { entries: PvpQueueEntry[]; gap: number } | null = null;
+
+  for (const pack of packs) {
+    const maxWait = Math.max(...pack.entries.map((e) => partyWaitMs(e, now)));
+    const band = mmrBandForWaitMs(maxWait);
+
+    // Split into two teams for gap estimate (same assignTeams heuristic).
+    const assignments = assignTeams(pack.entries, teamSize);
+    let sumA = 0;
+    let nA = 0;
+    let sumB = 0;
+    let nB = 0;
+    for (const entry of pack.entries) {
+      for (const member of entry.members) {
+        if (member.seat === "spectator") continue;
+        const a = assignments.get(member.key);
+        if (!a || a.role !== "fighter") continue;
+        const mmr = entry.avgMmr; // party-level approx; good enough for banding
+        if (a.team === "a") {
+          sumA += mmr;
+          nA++;
+        } else {
+          sumB += mmr;
+          nB++;
+        }
+      }
+    }
+    if (nA !== teamSize || nB !== teamSize) continue;
+    const gap = Math.abs(sumA / nA - sumB / nB);
+    if (gap > band) continue;
+    if (!best || gap < best.gap) best = { entries: pack.entries, gap };
   }
 
-  if (fighters !== need) return null;
+  if (!best) return null;
 
+  const selected = [...best.entries];
   let spectatorSlots = maxSpectators;
   for (const entry of candidates) {
     if (selected.includes(entry)) continue;
@@ -78,7 +147,6 @@ function selectEntriesForMode(modeId: string): PvpQueueEntry[] | null {
     selected.push(entry);
     spectatorSlots -= specs;
   }
-
   return selected;
 }
 
@@ -101,7 +169,6 @@ function assignTeams(
     out.set(member.key, { team, role: "fighter", spawnSlot });
   };
 
-  // Single party that already has both sides filled — honor seats.
   if (selected.length === 1) {
     const entry = selected[0]!;
     let a = 0;
@@ -129,7 +196,6 @@ function assignTeams(
     return out;
   }
 
-  // Multi-party: keep each party on one side, fill A then B.
   for (const entry of selected) {
     const fighters = entry.members.filter((m) => m.seat !== "spectator");
     const specs = entry.members.filter((m) => m.seat === "spectator");
@@ -148,7 +214,6 @@ function assignTeams(
     } else if (fighters.length <= roomA) {
       team = "a";
     } else {
-      // Split only if a party is larger than a side (shouldn't happen for valid locks).
       for (const member of fighters) {
         if (slotA < teamSize) placeFighter(member, "a");
         else placeFighter(member, "b");
@@ -161,14 +226,21 @@ function assignTeams(
   return out;
 }
 
-async function createMatch(modeId: PvpModeId, selected: PvpQueueEntry[]): Promise<void> {
+async function createMatch(
+  modeId: PvpModeId,
+  selected: PvpQueueEntry[],
+  matchKind: MatchKind,
+): Promise<void> {
   const transfer = resolvePvpTransfer(modeId);
   const matchId = randomUUID();
   const teamSize = teamSizeForMode(modeId);
+  const season = await getActiveSeason();
 
   const created = await matchMaker.createRoom(transfer.room, {
     matchId,
     mode: transfer.mode,
+    matchKind,
+    seasonId: season?.id ?? null,
   });
 
   const assignments = assignTeams(selected, teamSize);
@@ -183,7 +255,10 @@ async function createMatch(modeId: PvpModeId, selected: PvpQueueEntry[]): Promis
 
       member.client.send("queue_status", { queued: false });
       member.client.send("toast", {
-        message: `Match found — ${modeId} (${teamSize}v${teamSize})`,
+        message:
+          matchKind === "ranked"
+            ? `Ranked match — ${modeId} (${teamSize}v${teamSize})`
+            : `Unranked match — ${modeId} (${teamSize}v${teamSize})`,
       });
       member.client.send("transfer", {
         room: transfer.room,
@@ -191,6 +266,8 @@ async function createMatch(modeId: PvpModeId, selected: PvpQueueEntry[]): Promis
         options: {
           mode: transfer.mode,
           matchId,
+          matchKind,
+          seasonId: season?.id ?? null,
           hubOwnerId: member.hubOwnerId,
           team: assigned.team,
           role: assigned.role,
@@ -201,12 +278,27 @@ async function createMatch(modeId: PvpModeId, selected: PvpQueueEntry[]): Promis
   }
 }
 
+/** Start a full premade lobby directly (skips queue banding). */
+export async function startDirectPvpMatch(
+  modeId: PvpModeId,
+  entry: Omit<PvpQueueEntry, "enqueuedAt" | "avgMmr"> & { avgMmr?: number },
+  matchKind: MatchKind,
+): Promise<void> {
+  const full: PvpQueueEntry = {
+    ...entry,
+    enqueuedAt: Date.now(),
+    avgMmr: entry.avgMmr ?? MMR_MIDPOINT,
+  };
+  await createMatch(modeId, [full], matchKind);
+}
+
 async function tryMatch(): Promise<void> {
   if (matching) return;
   matching = true;
 
   try {
     let matchedAny = true;
+    const now = Date.now();
     while (matchedAny) {
       matchedAny = false;
 
@@ -216,7 +308,7 @@ async function tryMatch(): Promise<void> {
       }
 
       for (const modeId of modes) {
-        const selected = selectEntriesForMode(modeId);
+        const selected = selectEntriesForMode(modeId, now);
         if (!selected) continue;
 
         const ids = new Set(selected.map((e) => e.partyId));
@@ -224,7 +316,7 @@ async function tryMatch(): Promise<void> {
           if (ids.has(queue[i]!.partyId)) queue.splice(i, 1);
         }
 
-        await createMatch(modeId as PvpModeId, selected);
+        await createMatch(modeId as PvpModeId, selected, "ranked");
         matchedAny = true;
         break;
       }
@@ -236,17 +328,28 @@ async function tryMatch(): Promise<void> {
   }
 }
 
-/** Queues a party (solo parties are just a single-member entry) for PvP matchmaking. */
+/** Queues a party for ranked PvP matchmaking. */
 export function enqueuePvpParty(entry: Omit<PvpQueueEntry, "enqueuedAt">): void {
   dequeuePvpParty(entry.partyId);
   queue.push({ ...entry, enqueuedAt: Date.now() });
+  ensureMatchTimer();
   for (const member of entry.members) {
     member.client.send("queue_status", { queued: true, modes: entry.modes });
     member.client.send("toast", {
-      message: `Queued: ${entry.modes.join(", ")} — waiting for a full lobby`,
+      message: `Ranked queue: ${entry.modes.join(", ")} — searching…`,
     });
   }
   void tryMatch();
+}
+
+export async function resolvePartyAvgMmr(userIds: string[]): Promise<number> {
+  if (userIds.length === 0) return MMR_MIDPOINT;
+  const season = await getActiveSeason();
+  if (!season) return MMR_MIDPOINT;
+  const map = await getPlayerMmrs(userIds, season.id);
+  let sum = 0;
+  for (const id of userIds) sum += map.get(id) ?? MMR_MIDPOINT;
+  return sum / userIds.length;
 }
 
 export function dequeuePvpParty(partyId: string): boolean {

@@ -49,6 +49,19 @@ export function partyFitsMode(party: HubParty, modeId: string): boolean {
   return teamA <= mode.teamSize && teamB <= mode.teamSize && spectator <= mode.maxSpectators;
 }
 
+/** Full premade: both teams filled to mode capacity (can start Ranked/Unranked without queue). */
+export function isFullPremadeLobby(party: HubParty, modeId: string): boolean {
+  const mode = PVP_MODES.find((m) => m.id === modeId);
+  if (!mode) return false;
+  const { teamA, teamB, spectator } = seatCounts(party);
+  return (
+    teamA === mode.teamSize &&
+    teamB === mode.teamSize &&
+    spectator <= mode.maxSpectators &&
+    partyFitsMode(party, modeId)
+  );
+}
+
 export function seatCounts(party: HubParty): { teamA: number; teamB: number; spectator: number } {
   let teamA = 0;
   let teamB = 0;

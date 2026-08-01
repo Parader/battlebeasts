@@ -1,0 +1,64 @@
+{
+  "description": "Upper-body Mixamo actions that need ChestProxy bake for twin-stick casts. Keep in sync with heroAnimationConfig cast* (base names, no _aim). Dance / loco / idle / full-body emotes are intentionally omitted.",
+  "actions": [
+    {
+      "name": "magic_1h",
+      "aliases": ["Standing 1H Magic Attack 01"],
+      "spells": ["bolt", "grasp", "chainJump", "surge", "castPrimary"]
+    },
+    {
+      "name": "Standing 1H Magic Attack 02",
+      "spells": ["frostBall", "castFrost"]
+    },
+    {
+      "name": "Standing 1H Cast Spell 01",
+      "spells": ["barrier", "shrooms", "castBarrier"]
+    },
+    {
+      "name": "Standing 1H Magic Attack 03",
+      "spells": ["spikes", "castSpikes"]
+    },
+    {
+      "name": "Standing 2H Magic Attack 03",
+      "spells": ["frostMist", "lifeLeech", "castFrostMist"]
+    },
+    {
+      "name": "Casting Spell",
+      "spells": ["fireball", "castFireballCharge"]
+    },
+    {
+      "name": "Standing 2H Magic Attack 04",
+      "aliases": ["magic_2h"],
+      "spells": ["healBeam", "castHealBeam", "heavyCast"]
+    },
+    {
+      "name": "Standing 2H Magic Area Attack 01",
+      "spells": ["firewall", "volcano", "protectionBubble", "castFirewall", "castProtectionBubble"]
+    },
+    {
+      "name": "Standing 2H Magic Attack 05",
+      "spells": ["magmaOrbs", "castMagmaOrbs"]
+    },
+    {
+      "name": "Right Hook",
+      "spells": ["poisonDart", "castPoisonDart"]
+    },
+    {
+      "name": "Baseball Pitching",
+      "spells": ["iceLance", "castIceLance"]
+    },
+    {
+      "name": "magic_aoe",
+      "spells": ["gust", "castAoE"]
+    },
+    {
+      "name": "Standing Melee Attack Downward",
+      "spells": ["poisonCloud", "castPoisonCloud", "crescent", "castMelee"]
+    },
+    {
+      "name": "Dual Weapon Combo",
+      "aliases": ["attack_combo"],
+      "spells": ["attack_combo"]
+    }
+  ]
+}

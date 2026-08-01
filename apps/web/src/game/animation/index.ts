@@ -4,6 +4,7 @@ export {
   type FullBodyActionOptions,
   type CharacterAnimationState,
   type AnimDebugSnapshot,
+  type CharacterAnimOptions,
 } from "./CharacterAnimationController";
 
 /** @deprecated Use FullBodyActionOptions */
@@ -15,6 +16,7 @@ export {
   defaultCharacterAnimationConfig,
   abilityAnimationBindings,
   emoteAnimationClips,
+  HERO_CHEST_PROXY_BAKE_ACTIONS,
   type CharacterAnimationConfig,
 } from "./animationConfig";
 
@@ -27,8 +29,7 @@ export { listDeathClipNames, pickRandomDeathClip, playRandomDeath } from "./deat
 export {
   createLowerBodyClip,
   createUpperBodyClip,
-  createLegsOnlyClip,
-  createCastBodyClip,
+  createUpperLocoClip,
   stripHorizontalRootMotion,
   plantHipsRootMotion,
   getHipsStartY,
@@ -44,3 +45,13 @@ export {
   type LocoDir,
   type MovementParams,
 } from "./locomotionBlend";
+
+export {
+  applySpineCursorYaw,
+  findSpineAimBones,
+} from "./spineCursorAim";
+
+export {
+  applyChestProxySnap,
+  findChestProxyBones,
+} from "./chestProxySnap";

@@ -64,12 +64,14 @@ const BOLT_COUNT = 6;
 const SURGE_COLOR = "#67e8f9";
 const SURGE_HOT = "#fef08a";
 const POISON_WISP_COUNT = 6;
+const WEAKEN_WISP_COUNT = 7;
 const BURN_WISP_COUNT = 10;
 /** Flat overlapping ovals that spin around chained feet. */
 const CHAIN_OVAL_COUNT = 18;
 /** Any DoT that should show the emanating poison cloud. */
 const POISON_STATUS_IDS = new Set(["poisoned"]);
 const BURN_STATUS_IDS = new Set(["burning"]);
+const WEAKEN_STATUS_IDS = new Set(["weakened"]);
 
 /**
  * World-space malus ornaments over a unit (stun tornado, poison, bleed, slow)
@@ -80,6 +82,8 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
   const stunRings = useRef<(THREE.Group | null)[]>([null, null, null]);
   const poison = useRef<THREE.Group>(null);
   const poisonPoints = useRef<THREE.Points>(null);
+  const weaken = useRef<THREE.Group>(null);
+  const weakenPoints = useRef<THREE.Points>(null);
   const burn = useRef<THREE.Group>(null);
   const burnWisps = useRef<(THREE.Mesh | null)[]>([]);
   const bleed = useRef<THREE.Group>(null);
@@ -124,12 +128,38 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     [],
   );
 
+  const weakenPositions = useMemo(() => new Float32Array(WEAKEN_WISP_COUNT * 3), []);
+  const weakenSizes = useMemo(() => new Float32Array(WEAKEN_WISP_COUNT), []);
+  const weakenAlphas = useMemo(() => new Float32Array(WEAKEN_WISP_COUNT), []);
+  const weakenGeo = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(weakenPositions, 3));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(weakenSizes, 1));
+    geo.setAttribute("aAlpha", new THREE.BufferAttribute(weakenAlphas, 1));
+    return geo;
+  }, [weakenPositions, weakenSizes, weakenAlphas]);
+  const weakenPointMat = useMemo(() => createCirclePointMaterial("#94a3b8"), []);
+  const weakenCoreMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#334155",
+        transparent: true,
+        opacity: 0.32,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    [],
+  );
+  const weakenRingMat = useMemo(() => basicMat("#94a3b8", 0.45), []);
+
   useEffect(() => {
     return () => {
       poisonGeo.dispose();
       poisonPointMat.dispose();
+      weakenGeo.dispose();
+      weakenPointMat.dispose();
     };
-  }, [poisonGeo, poisonPointMat]);
+  }, [poisonGeo, poisonPointMat, weakenGeo, weakenPointMat]);
   const burnMats = useMemo(
     () =>
       Array.from({ length: BURN_WISP_COUNT }, (_, i) =>
@@ -247,6 +277,24 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     [],
   );
 
+  const weakenWispSpecs = useMemo(
+    () =>
+      Array.from({ length: WEAKEN_WISP_COUNT }, (_, i) => {
+        const a = (i / WEAKEN_WISP_COUNT) * Math.PI * 2 + 0.15;
+        return {
+          ang: a,
+          radius: 0.24 + (i % 4) * 0.06,
+          baseY: 0.48 + (i % 3) * 0.16,
+          rise: 0.48 + (i % 5) * 0.1,
+          size: 0.048 + (i % 3) * 0.02,
+          speed: 0.4 + (i % 4) * 0.1,
+          phase: i * 0.67,
+          spin: 0.5 + (i % 3) * 0.28,
+        };
+      }),
+    [],
+  );
+
   const burnWispSpecs = useMemo(
     () =>
       Array.from({ length: BURN_WISP_COUNT }, (_, i) => {
@@ -331,6 +379,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     if (rows.length === 0) {
       if (stun.current) stun.current.visible = false;
       if (poison.current) poison.current.visible = false;
+      if (weaken.current) weaken.current.visible = false;
       if (burn.current) burn.current.visible = false;
       if (bleed.current) bleed.current.visible = false;
       if (slow.current) slow.current.visible = false;
@@ -342,6 +391,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     }
 
     const poisoned = rows.some((r) => POISON_STATUS_IDS.has(r.statusId));
+    const weakened = rows.some((r) => WEAKEN_STATUS_IDS.has(r.statusId));
     const burning = rows.some((r) => BURN_STATUS_IDS.has(r.statusId));
 
     if (stun.current) {
@@ -378,6 +428,29 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         poisonGeo.attributes.aSize!.needsUpdate = true;
         poisonGeo.attributes.aAlpha!.needsUpdate = true;
         poisonCoreMat.opacity = 0.18 + 0.1 * (0.5 + 0.5 * Math.sin(t * 4.2));
+      }
+    }
+    if (weaken.current) {
+      weaken.current.visible = weakened;
+      if (weakened) {
+        for (let i = 0; i < WEAKEN_WISP_COUNT; i++) {
+          const spec = weakenWispSpecs[i]!;
+          const cycle = (t * spec.speed + spec.phase) % 1;
+          const ang = spec.ang + t * spec.spin;
+          const y = spec.baseY + cycle * spec.rise;
+          const outward = 0.9 + cycle * 0.5;
+          weakenPositions[i * 3] = Math.cos(ang) * spec.radius * outward;
+          weakenPositions[i * 3 + 1] = y;
+          weakenPositions[i * 3 + 2] = Math.sin(ang) * spec.radius * outward;
+          const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.55 ? 1 - (cycle - 0.55) / 0.45 : 1;
+          weakenSizes[i] = spec.size * (0.75 + cycle * 1.05) * 36;
+          weakenAlphas[i] = Math.max(0, fade) * (0.4 + (i % 3) * 0.07);
+        }
+        weakenGeo.attributes.position!.needsUpdate = true;
+        weakenGeo.attributes.aSize!.needsUpdate = true;
+        weakenGeo.attributes.aAlpha!.needsUpdate = true;
+        weakenCoreMat.opacity = 0.22 + 0.1 * (0.5 + 0.5 * Math.sin(t * 3.6));
+        weaken.current.rotation.y = t * 0.55;
       }
     }
     if (burn.current) {
@@ -419,7 +492,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       }
     }
     if (slow.current) {
-      slow.current.visible = has("slowed") || has("frostChill");
+      slow.current.visible = has("slowed") || has("frostChill") || has("poisonMiasma");
       if (slow.current.visible) {
         slow.current.rotation.y += safeDt * 0.9;
         slow.current.position.y = 0.12 + 0.03 * Math.sin(t * 2);
@@ -529,6 +602,23 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
           ref={poisonPoints}
           geometry={poisonGeo}
           material={poisonPointMat}
+          frustumCulled={false}
+        />
+      </group>
+
+      <group ref={weaken} visible={false}>
+        <mesh position={[0, 0.95, 0]} scale={[0.48, 0.72, 0.4]}>
+          <sphereGeometry args={[0.55, 10, 10]} />
+          <primitive object={weakenCoreMat} attach="material" />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]}>
+          <ringGeometry args={[0.38, 0.52, 28]} />
+          <primitive object={weakenRingMat} attach="material" />
+        </mesh>
+        <points
+          ref={weakenPoints}
+          geometry={weakenGeo}
+          material={weakenPointMat}
           frustumCulled={false}
         />
       </group>

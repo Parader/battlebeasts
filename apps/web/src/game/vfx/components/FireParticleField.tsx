@@ -1,6 +1,7 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { VFX_FIRE_URL } from "../vfxUrls";
 
 /**
  * Continuous textured point-sprite fire — adapted from bobbyroe's
@@ -45,6 +46,13 @@ export type FireParticleFieldProps = {
   maxSize?: number;
   rise?: number;
   spread?: number;
+  /**
+   * Optional spawn velocity (world units/s). When set, particles drift along
+   * this vector instead of rising (+Y) — use for projectile trails.
+   */
+  emitVelocityRef?: { current: { x: number; y: number; z: number } };
+  /** Hot → mid → cool tint over particle life. Defaults to fire oranges. */
+  colorStops?: readonly [string, string, string];
   progressRef?: { current: number };
   opacityMulRef?: { current: number };
 };
@@ -89,14 +97,17 @@ function sizeAt(t: number) {
   return 0.45 + 0.7 * Math.min(1, t * 1.15);
 }
 
-const _c0 = new THREE.Color("#fff7ed");
-const _c1 = new THREE.Color("#fb923c");
-const _c2 = new THREE.Color("#ef4444");
-const _cOut = new THREE.Color();
+const _defaultStops = ["#fff7ed", "#fb923c", "#ef4444"] as const;
 
-function colorAt(t: number, out: THREE.Color) {
-  if (t < 0.35) return out.copy(_c0).lerp(_c1, t / 0.35);
-  return out.copy(_c1).lerp(_c2, (t - 0.35) / 0.65);
+function lerpColorStops(
+  t: number,
+  c0: THREE.Color,
+  c1: THREE.Color,
+  c2: THREE.Color,
+  out: THREE.Color,
+) {
+  if (t < 0.35) return out.copy(c0).lerp(c1, t / 0.35);
+  return out.copy(c1).lerp(c2, (t - 0.35) / 0.65);
 }
 
 const fireTexCache = new Map<string, THREE.Texture>();
@@ -112,8 +123,16 @@ function getFireTexture(url: string): THREE.Texture {
   return tex;
 }
 
+/** Install a fully-decoded fire texture from the loading gate. */
+export function setFireTexture(url: string, tex: THREE.Texture): void {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  fireTexCache.set(url, tex);
+  const mat = fireMatCache.get(url);
+  if (mat?.uniforms.uMap) mat.uniforms.uMap.value = tex;
+}
+
 /** Shared across firewall/volcano — one compile, no per-mount dispose hitch. */
-export function getSharedFireMaterial(url = "/assets/vfx/fire.png"): THREE.ShaderMaterial {
+export function getSharedFireMaterial(url = VFX_FIRE_URL): THREE.ShaderMaterial {
   let mat = fireMatCache.get(url);
   if (!mat) {
     mat = new THREE.ShaderMaterial({
@@ -141,11 +160,13 @@ export function FireParticleField({
   emitters,
   rate = 85,
   maxParticles = 280,
-  textureUrl = "/assets/vfx/fire.png",
+  textureUrl = VFX_FIRE_URL,
   maxLife = 1.2,
   maxSize = 0.4,
   rise = 2.1,
   spread = 0.18,
+  emitVelocityRef,
+  colorStops = _defaultStops,
   progressRef,
   opacityMulRef,
 }: FireParticleFieldProps) {
@@ -190,6 +211,15 @@ export function FireParticleField({
   }, [positions, sizes, colors, angles]);
 
   const material = useMemo(() => getFireMaterial(textureUrl), [textureUrl]);
+
+  const palette = useMemo(() => {
+    return {
+      c0: new THREE.Color(colorStops[0]),
+      c1: new THREE.Color(colorStops[1]),
+      c2: new THREE.Color(colorStops[2]),
+      out: new THREE.Color(),
+    };
+  }, [colorStops[0], colorStops[1], colorStops[2]]);
 
   useEffect(() => {
     return () => {
@@ -236,9 +266,17 @@ export function FireParticleField({
         p.x = em.x + (Math.random() * 2 - 1) * spread;
         p.y = em.y + Math.random() * 0.06;
         p.z = em.z + (Math.random() * 2 - 1) * spread;
-        p.vx = (Math.random() * 2 - 1) * 0.28;
-        p.vy = rise * (0.7 + Math.random() * 0.45);
-        p.vz = (Math.random() * 2 - 1) * 0.28;
+        const drift = emitVelocityRef?.current;
+        if (drift) {
+          const jitter = 0.35;
+          p.vx = drift.x * (0.75 + Math.random() * 0.45) + (Math.random() * 2 - 1) * jitter;
+          p.vy = drift.y * (0.75 + Math.random() * 0.45) + (Math.random() * 2 - 1) * jitter * 0.35;
+          p.vz = drift.z * (0.75 + Math.random() * 0.45) + (Math.random() * 2 - 1) * jitter;
+        } else {
+          p.vx = (Math.random() * 2 - 1) * 0.28;
+          p.vy = rise * (0.7 + Math.random() * 0.45);
+          p.vz = (Math.random() * 2 - 1) * 0.28;
+        }
         p.life = life;
         p.maxLife = life;
         p.size = (Math.random() * 0.4 + 0.6) * maxSize;
@@ -273,11 +311,11 @@ export function FireParticleField({
       positions[write * 3 + 2] = p.z;
       // ×40 matches AdditiveParticleBurst scale into the distance formula
       sizes[write] = p.size * sizeAt(t) * 40;
-      colorAt(t, _cOut);
+      lerpColorStops(t, palette.c0, palette.c1, palette.c2, palette.out);
       const a = alphaAt(t) * opacityMul * 0.9;
-      colors[write * 4] = _cOut.r;
-      colors[write * 4 + 1] = _cOut.g;
-      colors[write * 4 + 2] = _cOut.b;
+      colors[write * 4] = palette.out.r;
+      colors[write * 4 + 1] = palette.out.g;
+      colors[write * 4 + 2] = palette.out.b;
       colors[write * 4 + 3] = a;
       angles[write] = p.rotation;
       write++;

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router";
 import { SocialButton } from "@/components/base/buttons/social-button";
 import { Button } from "@/components/base/buttons/button";
@@ -20,8 +20,35 @@ export const LoginScreen = () => {
     const [error, setError] = useState<string | null>(null);
     const [info, setInfo] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    const [awaitingBrowser, setAwaitingBrowser] = useState(false);
     const [mode, setMode] = useState<"signin" | "signup">("signin");
     const desktop = isDesktopApp();
+
+    useEffect(() => {
+        if (!awaitingBrowser) return;
+        const id = window.setTimeout(() => {
+            setAwaitingBrowser(false);
+            setInfo("Browser sign-in timed out. Try Google again.");
+        }, 5 * 60_000);
+        return () => window.clearTimeout(id);
+    }, [awaitingBrowser]);
+
+    useEffect(() => {
+        if (user) setAwaitingBrowser(false);
+    }, [user]);
+
+    useEffect(() => {
+        const onOauthError = (event: Event) => {
+            const detail = (event as CustomEvent<string>).detail;
+            setAwaitingBrowser(false);
+            setLoading(false);
+            setError(typeof detail === "string" ? detail : "Desktop Google sign-in failed");
+            void window.battlebeasts?.cancelDesktopOAuth?.();
+            void window.battlebeasts?.cancelOAuthLoopback?.();
+        };
+        window.addEventListener("bb-desktop-oauth-error", onOauthError);
+        return () => window.removeEventListener("bb-desktop-oauth-error", onOauthError);
+    }, []);
 
     if (ready && user) {
         return <Navigate to="/play" replace />;
@@ -33,8 +60,14 @@ export const LoginScreen = () => {
         setLoading(true);
         try {
             await signInWithGoogle();
+            if (desktop) {
+                setAwaitingBrowser(true);
+                setInfo("Continue in your browser. After Google, allow opening BattleBeasts — sign-in finishes in the app.");
+                setLoading(false);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Google sign-in failed");
+            setAwaitingBrowser(false);
             setLoading(false);
         }
     };
@@ -43,6 +76,7 @@ export const LoginScreen = () => {
         e.preventDefault();
         setError(null);
         setInfo(null);
+        setAwaitingBrowser(false);
         setLoading(true);
         const data = new FormData(e.currentTarget);
         const email = String(data.get("email") ?? "");
@@ -60,7 +94,15 @@ export const LoginScreen = () => {
                 }
             }
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Email auth failed");
+            const message = err instanceof Error ? err.message : "Email auth failed";
+            const already =
+                (err instanceof Error &&
+                    (err as Error & { code?: string }).code === "user_already_exists") ||
+                /already registered|already been registered|user already exists/i.test(message);
+            if (already && mode === "signup") {
+                setMode("signin");
+            }
+            setError(message);
             setLoading(false);
         }
     };
@@ -78,7 +120,7 @@ export const LoginScreen = () => {
                             {mode === "signin" ? "Sign in" : "Create account"}
                         </h1>
                         <p className="text-md text-tertiary">
-                            Email login works in the desktop app and unlocks friends / hub invites.
+                            Sign in to play, add friends, and join ranked matches.
                         </p>
                     </div>
                 </div>
@@ -91,9 +133,6 @@ export const LoginScreen = () => {
                             <code className="text-xs">VITE_SUPABASE_PUBLISHABLE_KEY</code> to{" "}
                             <code className="text-xs">apps/web/.env</code>.
                         </p>
-                        <Button className="mt-3" color="secondary" href="/play">
-                            Continue as guest
-                        </Button>
                     </div>
                 )}
 
@@ -146,20 +185,35 @@ export const LoginScreen = () => {
                             <span className="text-sm font-medium text-tertiary">OR</span>
                         </ContentDivider>
                         <div className="flex flex-col gap-3">
-                            {!desktop && (
-                                <SocialButton
-                                    social="google"
-                                    theme="color"
-                                    size="lg"
-                                    disabled={loading || !ready}
-                                    onClick={onGoogle}
+                            <SocialButton
+                                social="google"
+                                theme="color"
+                                size="lg"
+                                disabled={loading || awaitingBrowser || !ready}
+                                onClick={onGoogle}
+                            >
+                                {awaitingBrowser
+                                    ? "Waiting for browser…"
+                                    : loading
+                                      ? desktop
+                                          ? "Opening browser…"
+                                          : "Redirecting…"
+                                      : "Continue with Google"}
+                            </SocialButton>
+                            {awaitingBrowser && (
+                                <Button
+                                    size="md"
+                                    color="tertiary"
+                                    onClick={() => {
+                                        void window.battlebeasts?.cancelDesktopOAuth?.();
+                                        void window.battlebeasts?.cancelOAuthLoopback?.();
+                                        setAwaitingBrowser(false);
+                                        setInfo(null);
+                                    }}
                                 >
-                                    {loading ? "Redirecting…" : "Continue with Google"}
-                                </SocialButton>
+                                    Cancel browser sign-in
+                                </Button>
                             )}
-                            <Button size="lg" color="secondary" href="/play">
-                                Continue as guest
-                            </Button>
                         </div>
                     </>
                 )}

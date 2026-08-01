@@ -73,9 +73,19 @@ export function syncAbilityCast(
     return;
   }
 
+  const releasing =
+    Boolean(binding.impactUpper) && (player.castComboHit ?? 0) >= 2;
+  const releaseHold =
+    typeof binding.releaseHoldOnComboHit === "number" &&
+    (player.castComboHit ?? 0) >= binding.releaseHoldOnComboHit;
+  // Stable key for single-clip hold→throw (Fireball) so confirm doesn't restart the clip.
   const castKey = comboOnce
     ? `comboOnce:${player.castAbilityId}:${player.castLockUntil ?? 0}`
-    : `${player.castAbilityId}:${player.castComboHit ?? 0}:${player.castLockUntil ?? 0}`;
+    : binding.releaseHoldOnComboHit
+      ? `${player.castAbilityId}:spellCast`
+      : binding.impactUpper
+        ? `${player.castAbilityId}:${releasing ? "release" : "charge"}:${player.castLockUntil ?? 0}`
+        : `${player.castAbilityId}:${player.castComboHit ?? 0}:${player.castLockUntil ?? 0}`;
 
   // Multi-hit clip already playing — ignore later swings in the same chain
   if (
@@ -96,11 +106,107 @@ export function syncAbilityCast(
     lastCastId.current === castKey ||
     lastCastId.current.startsWith(`${castKey}:`)
   ) {
-    // Local cancel already faded this cast — don't re-drive hold/air scales from
-    // stale schema; wait until cast fields clear and the idle branch runs.
-    if (controller.getState().upperBody === "idle" && controller.getState().fullBody === "none") {
+    // Fireball: seek throw → play to release at 1x → accelerate / cut follow-through.
+    if (
+      player.castPhase === "recovery" &&
+      typeof binding.recoveryUpperSeekSec === "number"
+    ) {
+      if (
+        !lastCastId.current.includes(":throw") &&
+        !lastCastId.current.includes(":follow")
+      ) {
+        lastCastId.current = `${castKey}:throw`;
+        controller.seekUpperBodyTime(binding.recoveryUpperSeekSec);
+      }
+      const clipT = controller.getUpperBodyTime();
+      const releaseSec =
+        binding.recoveryUpperReleaseSec ?? binding.recoveryUpperSeekSec;
+      if (
+        typeof binding.recoveryUpperTimeScale === "number" &&
+        clipT >= releaseSec - 0.03
+      ) {
+        controller.setUpperBodyTimeScale(binding.recoveryUpperTimeScale);
+        if (!lastCastId.current.includes(":follow")) {
+          lastCastId.current = `${castKey}:throw:follow`;
+        }
+      }
+      if (
+        typeof binding.recoveryUpperEndSec === "number" &&
+        clipT >= binding.recoveryUpperEndSec
+      ) {
+        controller.cancelUpperBodyAction();
+        lastCastId.current = `${castKey}:throw:done`;
+      }
       return;
     }
+    // Local cancel already faded this cast — don't re-drive hold/air scales from
+    // stale schema; wait until cast fields clear and the idle branch runs.
+    // Exception: looping charge must restart if upper dropped while channeling.
+    if (controller.getState().upperBody === "idle" && controller.getState().fullBody === "none") {
+      const redriveCharge =
+        Boolean(binding.upperLoop) &&
+        !releasing &&
+        !releaseHold &&
+        (player.castPhase === "anticipation" ||
+          player.castPhase === "cast" ||
+          player.castPhase === "impact");
+      if (redriveCharge) {
+        lastCastId.current = "";
+      } else {
+        return;
+      }
+    }
+  }
+
+  // Single-clip throw: release hold at frame 160 and continue through frame 172+.
+  if (
+    releaseHold &&
+    binding.releaseHoldOnComboHit &&
+    !lastCastId.current.endsWith(":throw") &&
+    (player.castPhase === "impact" || player.castPhase === "cast")
+  ) {
+    lastCastId.current = `${castKey}:throw`;
+    controller.releaseUpperHold({ seekToHold: true });
+    return;
+  }
+
+    // Charge → release: lastCastId may still be the charge key while castKey flipped
+    // to release (comboHit ≥ 2). Force the swap even when keys differ.
+    if (
+      binding.impactUpper &&
+      releasing &&
+      lastCastId.current.includes(":charge:") &&
+      (player.castPhase === "impact" || player.castPhase === "cast")
+    ) {
+      lastCastId.current = `${player.castAbilityId}:release:${player.castLockUntil ?? 0}`;
+      controller.cancelUpperBodyAction();
+      const logical = String(binding.impactUpper);
+      const opts = {
+        timeScale: binding.impactUpperTimeScale ?? 1,
+        loop: false,
+        onComplete: () => {
+          controller.cancelUpperBodyAction();
+        },
+      };
+      const ok =
+        controller.playUpperBodyAction(logical, opts) ||
+        (() => {
+          const mapped =
+            logical in heroAnimationConfig
+              ? heroAnimationConfig[logical as keyof typeof heroAnimationConfig]
+              : undefined;
+          return mapped != null
+            ? controller.playUpperBodyAction(String(mapped), opts)
+            : false;
+        })();
+      if (!ok) lastCastId.current = castKey;
+      return;
+    }
+
+  if (
+    lastCastId.current === castKey ||
+    lastCastId.current.startsWith(`${castKey}:`)
+  ) {
     // Blood Rush: crouch hold → swap to Crouched To Sprinting on impact.
     // Hand Shield: Start → Idle loop on impact → End on recovery.
     if (
@@ -181,6 +287,42 @@ export function syncAbilityCast(
       !binding.recoveryFullBody
     ) {
       controller.cancelFullBodyAction();
+      // Don't cut single-clip throw follow-through; it fades via onComplete /
+      // cast-clear. Plain looping channels cancel here.
+      if (binding.upperLoop && !binding.impactUpper && !binding.releaseHoldOnComboHit) {
+        controller.cancelUpperBodyAction();
+      }
+    }
+    // Charge → release swap (same castLockUntil possible if comboHit updates alone).
+    if (
+      binding.impactUpper &&
+      releasing &&
+      !lastCastId.current.includes(":release:") &&
+      (player.castPhase === "impact" || player.castPhase === "cast")
+    ) {
+      lastCastId.current = `${player.castAbilityId}:release:${player.castLockUntil ?? 0}`;
+      controller.cancelUpperBodyAction();
+      const logical = String(binding.impactUpper);
+      const opts = {
+        timeScale: binding.impactUpperTimeScale ?? 1,
+        loop: false,
+        onComplete: () => {
+          controller.cancelUpperBodyAction();
+        },
+      };
+      const ok =
+        controller.playUpperBodyAction(logical, opts) ||
+        (() => {
+          const mapped =
+            logical in heroAnimationConfig
+              ? heroAnimationConfig[logical as keyof typeof heroAnimationConfig]
+              : undefined;
+          return mapped != null
+            ? controller.playUpperBodyAction(String(mapped), opts)
+            : false;
+        })();
+      if (!ok) lastCastId.current = castKey;
+      return;
     }
     return;
   }
@@ -285,16 +427,40 @@ export function syncAbilityCast(
   }
 
   if (binding.upper) {
-    const logical = String(binding.upper);
+    const releasingNow =
+      Boolean(binding.impactUpper) && (player.castComboHit ?? 0) >= 2;
+    const logical = releasingNow
+      ? String(binding.impactUpper)
+      : String(binding.upper);
     const animSec = binding.upperAnimDurationSec ?? durationSec;
+    const releaseScale = releasingNow ? binding.impactUpperTimeScale : undefined;
+    const looping = Boolean(binding.upperLoop) && !releasingNow;
+    if (releasingNow) {
+      controller.cancelUpperBodyAction();
+    }
     const opts = {
-      desiredDuration: binding.upperTimeScale != null ? undefined : animSec,
-      timeScale: binding.upperTimeScale,
-      holdAtSec: binding.upperHoldAtSec,
+      // Looping charge must play at natural speed — stretching to totalCastDuration
+      // makes one slow pass that looks like the clip never loops.
+      desiredDuration:
+        looping || releaseScale != null || binding.upperTimeScale != null
+          ? undefined
+          : animSec,
+      timeScale: releaseScale ?? (looping ? 1 : binding.upperTimeScale),
+      holdAtSec: releasingNow ? undefined : binding.upperHoldAtSec,
+      loop: looping,
+      onComplete:
+        releasingNow || binding.releaseHoldOnComboHit
+          ? () => {
+              controller.cancelUpperBodyAction();
+            }
+          : undefined,
     };
     const ok = controller.playUpperBodyAction(logical, opts);
     if (!ok) {
-      const mapped = heroAnimationConfig[binding.upper];
+      const mapped =
+        logical in heroAnimationConfig
+          ? heroAnimationConfig[logical as keyof typeof heroAnimationConfig]
+          : undefined;
       const ok2 =
         mapped != null ? controller.playUpperBodyAction(String(mapped), opts) : false;
       if (!ok2) lastCastId.current = "";

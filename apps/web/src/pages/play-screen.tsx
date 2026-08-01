@@ -1,14 +1,16 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { Navigate } from "react-router";
 import { GameCanvas } from "@/game/GameCanvas";
 import { useBaseCityRoom } from "@/game/useBaseCityRoom";
 import { useAssetPreload } from "@/game/useAssetPreload";
+import { useVfxGpuReady } from "@/game/useVfxGpuReady";
 import { useGameMusic } from "@/game/useGameMusic";
 import { useGameAmbiance } from "@/game/useGameAmbiance";
 import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
 import { QuestsPanel } from "@/game/ui/QuestsPanel";
+import { RankPanel } from "@/game/ui/RankPanel";
 import { ChestRevealPanel } from "@/game/ui/ChestRevealPanel";
 import { SettingsPanel } from "@/game/ui/SettingsPanel";
 import { PatchNotesPanel } from "@/game/ui/PatchNotesPanel";
@@ -25,6 +27,16 @@ import { EmotePieHud } from "@/game/ui/EmotePieHud";
 import { StatusBar } from "@/game/ui/StatusBar";
 import { ConfirmDialog } from "@/game/ui/ConfirmDialog";
 import { GameLoadingOverlay } from "@/game/ui/GameLoadingOverlay";
+import { HubIntroOverlay } from "@/game/intro/HubIntroOverlay";
+import {
+    dismissHubIntroObjective,
+    getHubIntroSnapshot,
+    resetHubIntroRuntime,
+    setHubIntroBeginPoseHandler,
+    setHubIntroCompleteHandler,
+    startHubIntro,
+    subscribeHubIntro,
+} from "@/game/intro/hubIntroRuntime";
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
@@ -49,9 +61,8 @@ function PauseCountdown({ until }: { until: number }) {
 
 export const PlayScreen = () => {
     const { ready, configured, user, profile, accessToken, needsNameSetup, signOut } = useAuth();
-    const guestId = useMemo(() => `guest_${Math.random().toString(36).slice(2, 9)}`, []);
 
-    const userId = user?.id ?? guestId;
+    const userId = user?.id ?? "";
     const displayName = profile?.display_name ?? user?.user_metadata?.full_name ?? "Hunter";
     const color = profile?.color;
 
@@ -61,11 +72,9 @@ export const PlayScreen = () => {
 
     // Restore last visited host hub before joining so refresh stays in that lobby.
     useEffect(() => {
-        if (!ready) return;
-        if (user?.id) {
-            const preferred = loadPreferredHub(user.id);
-            if (preferred) setHubOwnerId(preferred);
-        }
+        if (!ready || !user?.id) return;
+        const preferred = loadPreferredHub(user.id);
+        if (preferred) setHubOwnerId(preferred);
         setHubPrefReady(true);
     }, [ready, user?.id]);
 
@@ -76,22 +85,26 @@ export const PlayScreen = () => {
     }, [user?.id, hubOwnerId, hubPrefReady]);
 
     const canJoinRoom =
-        ready && hubPrefReady && (!user || (Boolean(profile) && !needsNameSetup));
+        ready && Boolean(user) && hubPrefReady && Boolean(profile) && !needsNameSetup && Boolean(accessToken);
 
     const friendsApi = useFriends(user?.id ?? null, user ? effectiveHubOwnerId : null);
     const [helpOpen, setHelpOpen] = useState(false);
     const [friendsOpen, setFriendsOpen] = useState(false);
     const [questsOpen, setQuestsOpen] = useState(false);
+    const [rankOpen, setRankOpen] = useState(false);
     const [chestLocksInput, setChestLocksInput] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [updatesOpen, setUpdatesOpen] = useState(false);
     const [confirmReturnHub, setConfirmReturnHub] = useState(false);
     /** True until hub/arena assets + room are ready (locks combat input). */
     const [loadingGate, setLoadingGate] = useState(true);
+    const [introPlaying, setIntroPlaying] = useState(false);
+    const [confirmSoftReset, setConfirmSoftReset] = useState(false);
 
     // Preload needs phase; start with hub until the room reports content.
     const [assetBundle, setAssetBundle] = useState<"hub" | "arena">("hub");
     const { progress, assetsReady } = useAssetPreload(assetBundle, canJoinRoom);
+    const vfxGpuReady = useVfxGpuReady();
 
     const {
         status,
@@ -108,6 +121,7 @@ export const PlayScreen = () => {
         cancelQueue,
         returnToHub,
         economy,
+        applyLoadoutLocal,
         matchPause,
         localHp,
         combatHudVisible,
@@ -118,11 +132,20 @@ export const PlayScreen = () => {
         kickFromHub,
         kickFromParty,
         isHubAdmin,
+        adminNoCooldown,
+        setAdminNoCooldownEnabled,
+        introCompleted,
+        introReplayToken,
         grantHubResources,
+        beginHubIntroPose,
+        completeHubIntro,
+        replayHubIntro,
+        softResetCharacter,
         hubQuests,
         hubChests,
         unseenQuestCompletions,
         chestReveal,
+        pendingChestOpenId,
         refreshHubQuests,
         openHubChest,
         spawnHubChest,
@@ -132,6 +155,9 @@ export const PlayScreen = () => {
         arenaHud,
         matchRecap,
         voteRematch,
+        rankedState,
+        rankedLeaderboard,
+        refreshRanked,
         party,
         partyInvite,
         inviteFriendToParty,
@@ -153,28 +179,63 @@ export const PlayScreen = () => {
         inputLocked:
             friendsOpen ||
             questsOpen ||
+            rankOpen ||
             settingsOpen ||
             updatesOpen ||
             loadingGate ||
-            chestLocksInput,
+            chestLocksInput ||
+            introPlaying,
         onActiveHubOwnerId: (id) => setHubOwnerId(id),
     });
 
     const inContent = phase === "content";
     useEffect(() => {
-        setChestLocksInput(Boolean(chestReveal));
+        setChestLocksInput(Boolean(chestReveal) || Boolean(pendingChestOpenId));
         if (chestReveal) setQuestsOpen(false);
-    }, [chestReveal]);
+    }, [chestReveal, pendingChestOpenId]);
 
     useEffect(() => {
         setAssetBundle(inContent ? "arena" : "hub");
     }, [inContent]);
 
     const roomReady = status === "connected" || status === "error";
-    const playReady = assetsReady && roomReady;
+    const playReady = assetsReady && roomReady && vfxGpuReady;
     useLayoutEffect(() => {
         setLoadingGate(!playReady);
     }, [playReady]);
+
+    useEffect(() => {
+        return subscribeHubIntro(() => {
+            setIntroPlaying(getHubIntroSnapshot().inputLocked);
+        });
+    }, []);
+
+    useEffect(() => {
+        setHubIntroBeginPoseHandler(() => beginHubIntroPose());
+        setHubIntroCompleteHandler(() => completeHubIntro());
+        return () => {
+            setHubIntroBeginPoseHandler(null);
+            setHubIntroCompleteHandler(null);
+        };
+    }, [beginHubIntroPose, completeHubIntro]);
+
+    // Start / replay hub intro once playable and server says not completed.
+    useEffect(() => {
+        if (!playReady || inContent) {
+            resetHubIntroRuntime();
+            return;
+        }
+        if (introCompleted !== false) return;
+        if (effectiveHubOwnerId !== userId) return;
+        startHubIntro();
+    }, [playReady, inContent, introCompleted, introReplayToken, effectiveHubOwnerId, userId]);
+
+    // Dismiss objective when player opens portal UI.
+    useEffect(() => {
+        if (activeUi === "portal_pvp" || activeUi === "portal_pve") {
+            dismissHubIntroObjective();
+        }
+    }, [activeUi]);
 
     useEffect(() => {
         if (!playReady || inContent || !user) return;
@@ -187,13 +248,15 @@ export const PlayScreen = () => {
         ? inContent
             ? "Preparing arena"
             : "Preparing hub"
-        : status === "connecting"
-          ? "Connecting"
-          : status === "error"
-            ? "Connection issue"
-            : status === "disconnected"
-              ? "Reconnecting"
-              : "Almost ready";
+        : !vfxGpuReady
+          ? "Warming spell FX"
+          : status === "connecting"
+            ? "Connecting"
+            : status === "error"
+              ? "Connection issue"
+              : status === "disconnected"
+                ? "Reconnecting"
+                : "Almost ready";
 
     if (!ready) {
         return (
@@ -203,12 +266,24 @@ export const PlayScreen = () => {
         );
     }
 
-    if (user && needsNameSetup) {
+    if (!configured || !user) {
+        return <Navigate to="/login" replace />;
+    }
+
+    if (needsNameSetup) {
         return <Navigate to="/setup/name" replace />;
     }
 
-    const isArena = Boolean(arenaHud?.matchPhase);
-    const arenaAllowRespawn = !isArena || arenaHud?.matchPhase === "rematch_wait";
+    if (!profile || !hubPrefReady) {
+        return (
+            <div className="flex h-dvh items-center justify-center bg-black">
+                <LoadingIndicator />
+            </div>
+        );
+    }
+
+    const isArena = Boolean(arenaHud);
+    const arenaAllowRespawn = !isArena;
     const hpMax = Math.max(1, localHp.maxHp);
     const hpPct = Math.max(0, Math.min(100, (localHp.hp / hpMax) * 100));
     const shieldPct = Math.max(0, Math.min(100, (localHp.shield / hpMax) * 100));
@@ -232,12 +307,20 @@ export const PlayScreen = () => {
 
             {!playReady ? (
                 <GameLoadingOverlay
-                    percent={assetsReady ? 100 : Math.min(95, progress.percent)}
+                    percent={
+                        assetsReady && vfxGpuReady
+                            ? 100
+                            : assetsReady
+                              ? 98
+                              : Math.min(95, progress.percent)
+                    }
                     statusLabel={loadingStatusLabel}
                 />
             ) : null}
 
-            {playReady && combatHudVisible && (
+            {playReady && !inContent ? <HubIntroOverlay /> : null}
+
+            {playReady && combatHudVisible && !introPlaying && (
                 <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
                     <div className="bb-hp-tray">
                         <div className="bb-hp-tray__label">
@@ -283,7 +366,7 @@ export const PlayScreen = () => {
                 />
             )}
 
-            {playReady ? (
+            {playReady && !introPlaying ? (
                 <div
                     data-ui-overlay
                     className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-4"
@@ -306,9 +389,7 @@ export const PlayScreen = () => {
                                   ? " · queued"
                                   : ""}
                         </span>
-                        {!configured || !user ? (
-                            <span className="bb-chip bb-chip--warn">Guest</span>
-                        ) : effectiveHubOwnerId !== userId && !inContent ? (
+                        {effectiveHubOwnerId !== userId && !inContent ? (
                             <span className="bb-chip bb-chip--warn">Visiting</span>
                         ) : null}
                         {!inContent && (
@@ -337,6 +418,16 @@ export const PlayScreen = () => {
                                 icon="return-arrow"
                                 accent
                                 onClick={() => setConfirmReturnHub(true)}
+                            />
+                        )}
+                        {user && !inContent && (
+                            <HudIconButton
+                                label="Ranked"
+                                icon="party-flags"
+                                onClick={() => {
+                                    setRankOpen(true);
+                                    refreshRanked();
+                                }}
                             />
                         )}
                         {user && !inContent && (
@@ -440,9 +531,14 @@ export const PlayScreen = () => {
                 </div>
             )}
 
-            {playReady && <StatusBar room={room} sessionId={room?.sessionId ?? null} />}
+            {playReady && !introPlaying && <StatusBar room={room} sessionId={room?.sessionId ?? null} />}
 
-            {playReady && <AbilityBar loadout={economy.loadout} wallet={economy} />}
+            {playReady && !introPlaying && (
+                <AbilityBar
+                    loadout={economy.loadout}
+                    wallet={inContent ? undefined : economy}
+                />
+            )}
 
             {playReady && !inContent && (
                 <EmotePieHud
@@ -537,6 +633,7 @@ export const PlayScreen = () => {
                         room={room}
                         economy={economy}
                         localSessionId={room?.sessionId ?? null}
+                        onLoadoutChange={applyLoadoutLocal}
                     />
                 )}
 
@@ -584,6 +681,18 @@ export const PlayScreen = () => {
             )}
 
             {playReady && user && (
+                <RankPanel
+                    open={rankOpen}
+                    onClose={() => setRankOpen(false)}
+                    season={rankedState.season}
+                    rating={rankedState.rating}
+                    label={rankedState.label}
+                    leaderboard={rankedLeaderboard}
+                    onRefresh={refreshRanked}
+                />
+            )}
+
+            {playReady && user && (
                 <FriendsPanel
                     open={friendsOpen}
                     onClose={() => setFriendsOpen(false)}
@@ -616,13 +725,36 @@ export const PlayScreen = () => {
                     chests={hubChests}
                     isAdmin={isHubAdmin}
                     onOpenChest={openHubChest}
+                    pendingChestOpenId={pendingChestOpenId}
                     onSpawnChest={spawnHubChest}
+                    adminNoCooldown={adminNoCooldown}
+                    onToggleAdminNoCooldown={setAdminNoCooldownEnabled}
+                    onReplayIntro={() => {
+                        setQuestsOpen(false);
+                        replayHubIntro();
+                    }}
+                    onSoftResetCharacter={() => {
+                        setQuestsOpen(false);
+                        setConfirmSoftReset(true);
+                    }}
                 />
             )}
 
             {playReady && chestReveal && (
                 <ChestRevealPanel reveal={chestReveal} onClose={clearChestReveal} />
             )}
+
+            <ConfirmDialog
+                open={playReady && confirmSoftReset}
+                title="Soft reset character?"
+                message="Resets wallet, loadouts, talents, quests, and all bought customization (colors, patterns, cosmetics, emotes) back to starter slate. Keeps your name. The intro will replay."
+                confirmLabel="Reset"
+                onConfirm={() => {
+                    setConfirmSoftReset(false);
+                    softResetCharacter();
+                }}
+                onCancel={() => setConfirmSoftReset(false)}
+            />
 
             <ConfirmDialog
                 open={playReady && confirmReturnHub}

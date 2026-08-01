@@ -6,14 +6,15 @@ import * as THREE from "three";
 import { COMBAT_ENGAGE_LINGER_MS, PLAYER_BASE_MAX_HP, totalShieldAbsorb } from "@battlebeasts/shared";
 import {
   StatusHpBadgeStack,
-  readBleedingStacks,
-  readBurningStacks,
-  readPoisonStacks,
-  readRejuvenationStacks,
+  readBleedingBadge,
+  readBurningBadge,
+  readPoisonBadge,
+  readRejuvenationBadge,
   syncBleedingBadge,
   syncBurningBadge,
   syncPoisonBadge,
   syncRejuvenationBadge,
+  type StatusRowLite,
 } from "./StatusHpBadgeStack";
 import { isRevengeVanished } from "./revengeVanishRuntime";
 
@@ -34,11 +35,15 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
   const shield = useRef<THREE.Mesh>(null);
   const poisonBadge = useRef<HTMLDivElement>(null);
   const poisonStacksEl = useRef<HTMLSpanElement>(null);
+  const poisonRing = useRef<SVGCircleElement>(null);
   const burningBadge = useRef<HTMLDivElement>(null);
+  const burningRing = useRef<SVGCircleElement>(null);
   const bleedingBadge = useRef<HTMLDivElement>(null);
   const bleedingStacksEl = useRef<HTMLSpanElement>(null);
+  const bleedingRing = useRef<SVGCircleElement>(null);
   const rejuvenationBadge = useRef<HTMLDivElement>(null);
   const rejuvenationStacksEl = useRef<HTMLSpanElement>(null);
+  const rejuvenationRing = useRef<SVGCircleElement>(null);
   const lingerUntil = useRef(0);
   const prevHp = useRef<number | null>(null);
   const lastPoisonStacks = useRef(0);
@@ -68,7 +73,7 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
           castPhase?: string;
           disconnected?: boolean;
           statuses?: {
-            forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void;
+            forEach: (cb: (row: StatusRowLite) => void) => void;
           };
         }
       | undefined;
@@ -100,7 +105,7 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
 
     const maxHp = Math.max(1, p.maxHp ?? PLAYER_BASE_MAX_HP);
     const ratio = Math.max(0, Math.min(1, p.hp / maxHp));
-    const rows: { statusId?: string; stacks?: number }[] = [];
+    const rows: StatusRowLite[] = [];
     p.statuses?.forEach((row) => {
       if (row?.statusId) rows.push(row);
     });
@@ -109,21 +114,21 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
     const casting = Boolean(p.castPhase);
     const damaged = p.hp < maxHp - 0.05;
     const now = performance.now();
-    const poisonStacks = readPoisonStacks(rows);
-    const burningStacks = readBurningStacks(rows);
-    const bleedingStacks = readBleedingStacks(rows);
-    const rejuvenationStacks = readRejuvenationStacks(rows);
-    const poisoned = poisonStacks > 0;
-    const burning = burningStacks > 0;
-    const bleeding = bleedingStacks > 0;
-    const rejuvenating = rejuvenationStacks > 0;
+    const poison = readPoisonBadge(rows);
+    const burning = readBurningBadge(rows);
+    const bleeding = readBleedingBadge(rows);
+    const rejuvenation = readRejuvenationBadge(rows);
+    const poisoned = poison.stacks > 0;
+    const isBurning = burning.stacks > 0;
+    const isBleeding = bleeding.stacks > 0;
+    const rejuvenating = rejuvenation.stacks > 0;
 
     if (prevHp.current != null && p.hp < prevHp.current - 0.05) {
       lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
     }
     prevHp.current = p.hp;
 
-    if (damaged || shieldRatio > 0 || casting || poisoned || burning || bleeding || rejuvenating) {
+    if (damaged || shieldRatio > 0 || casting || poisoned || isBurning || isBleeding || rejuvenating) {
       lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
     }
 
@@ -132,8 +137,8 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       shieldRatio > 0 ||
       casting ||
       poisoned ||
-      burning ||
-      bleeding ||
+      isBurning ||
+      isBleeding ||
       rejuvenating ||
       now < lingerUntil.current;
 
@@ -163,13 +168,20 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       }
     }
 
-    syncPoisonBadge(badge, poisonStacksEl.current, poisonStacks, lastPoisonStacks);
-    syncBurningBadge(burnBadge, burningStacks);
-    syncBleedingBadge(bleedBadge, bleedingStacksEl.current, bleedingStacks, lastBleedingStacks);
+    syncPoisonBadge(badge, poisonStacksEl.current, poisonRing.current, poison, lastPoisonStacks);
+    syncBurningBadge(burnBadge, burningRing.current, burning);
+    syncBleedingBadge(
+      bleedBadge,
+      bleedingStacksEl.current,
+      bleedingRing.current,
+      bleeding,
+      lastBleedingStacks,
+    );
     syncRejuvenationBadge(
       rejBadge,
       rejuvenationStacksEl.current,
-      rejuvenationStacks,
+      rejuvenationRing.current,
+      rejuvenation,
       lastRejuvenationStacks,
     );
   });
@@ -192,11 +204,15 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
         <StatusHpBadgeStack
           poisonBadgeRef={poisonBadge}
           poisonStacksRef={poisonStacksEl}
+          poisonRingRef={poisonRing}
           burningBadgeRef={burningBadge}
+          burningRingRef={burningRing}
           bleedingBadgeRef={bleedingBadge}
           bleedingStacksRef={bleedingStacksEl}
+          bleedingRingRef={bleedingRing}
           rejuvenationBadgeRef={rejuvenationBadge}
           rejuvenationStacksRef={rejuvenationStacksEl}
+          rejuvenationRingRef={rejuvenationRing}
         />
       </group>
     </Billboard>

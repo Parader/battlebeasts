@@ -13,16 +13,16 @@ import {
  */
 export const STARTER_ABILITY_IDS = [
   "bolt",
-  "smash",
+  "frostBall",
   "surge",
   "counter",
-  "grasp",
+  "spikes",
   "barrier",
-  "healBeam",
+  "fireball",
 ] as const;
 
-/** Free hide tint for new players (matches PlayerState default). */
-export const STARTER_COLORS = ["#4ade80"] as const;
+/** Free hide tint for new players (matches PlayerState default). Neutral slate gray. */
+export const STARTER_COLORS = ["#94a3b8"] as const;
 
 export const STARTER_PATTERNS = [DEFAULT_COSMETIC_PATTERN] as const;
 

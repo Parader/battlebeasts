@@ -9,12 +9,9 @@ export type StandKind = "customization" | "build" | "talent" | "shop";
  */
 export const HUB_WORLD_SCALE = 5;
 
-/** Portal torus size in the hub (visual + ring collision). */
+/** Portal interact pad size in the hub (ground zone footprint). */
 export const PORTAL_VISUAL_SCALE = 2.75;
 export const PORTAL_TORUS_MAJOR = 0.55 * PORTAL_VISUAL_SCALE;
-export const PORTAL_TORUS_TUBE = 0.07 * PORTAL_VISUAL_SCALE;
-/** Solid tube radius for the vertical portal legs (XZ bumpers). */
-export const PORTAL_RING_COLLIDE_RADIUS = 0.35;
 
 /** Oriented ground pad from a Blender Empty cube (hub world units). */
 export type InteractZone = {
@@ -187,6 +184,7 @@ export const COSMETIC_COLORS = [
   "#94a3b8", // slate
   "#a8a29e", // stone
   "#78716c", // clay
+  "#171717", // black
 ] as const;
 
 /** Ink / marking colors for creature patterns (independent of hide tint). */

@@ -1,3 +1,4 @@
+import { BOLT_CAST } from "@battlebeasts/shared";
 import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -27,7 +28,7 @@ export function BoltCastEffect({
     const age = (performance.now() - shot.born) / shot.life;
 
     if (shot.followOwnerId) {
-      const offset = shot.followSpawnOffset ?? 0.95;
+      const offset = shot.followSpawnOffset ?? BOLT_CAST.spawnOffset;
       const local =
         follow.localSessionId &&
         shot.followOwnerId === follow.localSessionId &&

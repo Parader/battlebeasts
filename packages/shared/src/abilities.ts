@@ -107,6 +107,18 @@ export interface AbilityCombo {
    * Avoids per-phase stop/start jerks on multi-hit M1s.
    */
   moveMul?: number;
+  /** Optional per-hit damage (1-based index into this array; last entry repeats). */
+  damageByHit?: number[];
+}
+
+/** Damage for a combo swing (1-based hit index). Falls back to `def.damage`. */
+export function abilityComboHitDamage(def: AbilityDef, hitIndex1Based: number): number {
+  const arr = def.combo?.damageByHit;
+  if (arr && arr.length > 0) {
+    const i = Math.max(0, Math.min(arr.length - 1, hitIndex1Based - 1));
+    return arr[i]!;
+  }
+  return def.damage;
 }
 
 /**
@@ -136,13 +148,17 @@ export type AbilityEffectKind =
   | "coneChannel"
   | "pulseHeal"
   | "healBeam"
+  | "lifeLeech"
   | "decoy"
   | "firewall"
   | "volcano"
+  | "poisonCloud"
+  | "smokeBomb"
   | "magmaOrbs"
   | "protectionBubble"
   | "shrooms"
-  | "spiritForm";
+  | "spiritForm"
+  | "fireball";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
 export type SpellTag =
@@ -333,6 +349,11 @@ export interface AbilityDef {
    * not automatically when impact begins.
    */
   confirmOnRelease?: boolean;
+  /**
+   * Hold-to-channel: effect starts at impact and keeps going until player cancel.
+   * Cooldown starts on cancel / hard interrupt (not when the channel begins).
+   */
+  holdChannel?: boolean;
   /** Wall ms from channel start to reach max blink range (Portal). */
   channelChargeMs?: number;
   /** Wall ms after max charge to confirm before auto-cancel (Portal). */
@@ -482,7 +503,7 @@ export const SHROOM_CAST = {
   /** Burst is poison-only on enemy trigger (no direct explode damage). */
   explodeDamage: 0,
   cooldownMs: 1000,
-  unlockCostEssence: 9,
+  unlockCostEssence: 90,
 } as const;
 
 function shroomSpawnWallMs(): number {
@@ -500,6 +521,33 @@ function shroomEffectiveWallMs(): number {
 
 function shroomRecoveryWallMs(): number {
   return 200;
+}
+
+/**
+ * Standing 1H Magic Attack 01 / magic_1h (hero.glb) @ 30fps.
+ * Arm punch peaks ~0.85s (frame 26) — release there, not during windup.
+ * playbackRate > 1 so the peak lands in a frost-like ~0.6s wall window.
+ */
+export const BOLT_CAST = {
+  fps: 30,
+  releaseFrame: 26,
+  clipDurationSec: 2.333333,
+  /** Compress windup→punch into a readable combat window (same idea as Spikes). */
+  playbackRate: 1.4,
+  /** Forward from caster — muzzle flash + projectile spawn share this. */
+  spawnOffset: 0.95,
+  /** World Y for muzzle flash. */
+  handY: 1.05,
+} as const;
+
+function boltReleaseWallMs(): number {
+  return (
+    (BOLT_CAST.releaseFrame / BOLT_CAST.fps / BOLT_CAST.playbackRate) * 1000
+  );
+}
+
+function boltRecoveryWallMs(): number {
+  return 100;
 }
 
 /**
@@ -617,6 +665,46 @@ export const FIREWALL_CAST = {
 } as const;
 
 /**
+ * Poison Cloud (E) — Standing Melee Attack Downward.
+ * Frame 26: vial leaves the hand toward ground aim; cloud persists after impact.
+ */
+export const POISON_CLOUD_CAST = {
+  fps: 30,
+  releaseFrame: 26,
+  /** Mixamo clip length (~69 frames @ 30fps). */
+  clipDurationSec: 2.3,
+  playbackRate: 1.35,
+  zoneDurationMs: 5500,
+  /** Stack pace — ~3 poison stacks if you stay for most of the zone. */
+  tickMs: 1600,
+  radius: 3,
+  range: 9,
+  /** Soft settle after the vial lands. */
+  recoveryMs: 380,
+  unlockCostEssence: 90,
+  cooldownMs: 11000,
+} as const;
+
+/**
+ * Smoke Bomb (Q) — Standing Melee Attack Downward.
+ * Frame 28: grey smoke bursts at your feet and you crouch into cloak.
+ */
+export const SMOKE_BOMB_CAST = {
+  fps: 30,
+  releaseFrame: 28,
+  clipDurationSec: 2.3,
+  playbackRate: 1.35,
+  /** Larger lingering cloud than Poison Cloud. */
+  zoneDurationMs: 5000,
+  tickMs: 1000,
+  radius: 4.5,
+  recoveryMs: 280,
+  /** Cloak lasts while you stay in the cloud (refreshed each combat tick). */
+  unlockCostEssence: 100,
+  cooldownMs: 12000,
+} as const;
+
+/**
  * Volcano (F) — same Standing 2H Magic Area Attack 01 clip as Firewall.
  * Erupts at frame 42; rocks barrage for `zoneDurationMs` after emerge.
  */
@@ -658,8 +746,12 @@ export const PROTECTION_BUBBLE_CAST = {
   zoneDurationMs: 7000,
   /** Soft dissolve after active ends. */
   fadeMs: 550,
-  cooldownMs: 15000,
-  unlockCostEssence: 12,
+  cooldownMs: 20000,
+  unlockCostEssence: 120,
+  /** Absorb ticks while the dome is fully formed. */
+  shieldTickMs: 250,
+  shieldPerTick: combatMag(2),
+  shieldCap: combatMag(30),
 } as const;
 
 /**
@@ -691,8 +783,8 @@ export const MAGMA_ORBS_CAST = {
   blastRadius: 2.5,
   /** Visual blast overshoot so soft crater edges still cover the hit disc. */
   blastVfxMul: 1.45,
-  cooldownMs: 6000,
-  unlockCostEssence: 10,
+  cooldownMs: 7000,
+  unlockCostEssence: 100,
 } as const;
 
 function magmaOrbsFrameWallMs(frame: number): number {
@@ -732,12 +824,12 @@ export const SPIRIT_FORM_CAST = {
   snapReturnSpeed: 70,
   snapReturnMinMs: 45,
   snapReturnMaxMs: 140,
-  cooldownMs: 9000,
-  unlockCostEssence: 10,
+  cooldownMs: 11000,
+  unlockCostEssence: 100,
   /** Ground timer ring radius. */
   timerRingRadius: 0.55,
   /** Husk↔spirit tether hit radius (enemies crossing the link). */
-  linkHitRadius: 0.5,
+  linkHitRadius: 0.18,
   /** Stun applied once per target when they touch the link. */
   linkStunMs: 700,
 } as const;
@@ -761,10 +853,12 @@ export const HAND_SHIELD_CAST = {
   shieldForward: 0.22,
   /** Disc radius that catches inbound projectiles. */
   shieldRadius: 0.7,
-  cooldownMs: 8000,
-  unlockCostEssence: 10,
+  cooldownMs: 7000,
+  unlockCostEssence: 100,
   /** Move mul while raising / holding the shield. */
   channelMoveMul: 0.45,
+  /** Max turn rate while shielding (~63°/s) — slow aim, still steerable. */
+  yawTurnRate: 1.1,
 } as const;
 
 /** Status + collider duration: channel hold through Block End recovery. */
@@ -789,6 +883,32 @@ function firewallReleaseWallMs(): number {
 function firewallRecoveryWallMs(): number {
   /** Soft settle after the wall appears (clip continues in the background). */
   return 420;
+}
+
+function poisonCloudReleaseWallMs(): number {
+  return (
+    (POISON_CLOUD_CAST.releaseFrame /
+      POISON_CLOUD_CAST.fps /
+      POISON_CLOUD_CAST.playbackRate) *
+    1000
+  );
+}
+
+function poisonCloudRecoveryWallMs(): number {
+  return POISON_CLOUD_CAST.recoveryMs;
+}
+
+function smokeBombReleaseWallMs(): number {
+  return (
+    (SMOKE_BOMB_CAST.releaseFrame /
+      SMOKE_BOMB_CAST.fps /
+      SMOKE_BOMB_CAST.playbackRate) *
+    1000
+  );
+}
+
+function smokeBombRecoveryWallMs(): number {
+  return SMOKE_BOMB_CAST.recoveryMs;
 }
 
 function volcanoReleaseWallMs(): number {
@@ -834,8 +954,8 @@ export const BLOOD_RUSH_CAST = {
   hitRadius: 0.75,
   /** Execute (remaining HP) when target is at/below this fraction. */
   executeBelowHpFrac: 0.25,
-  unlockCostEssence: 10,
-  cooldownMs: 12000,
+  unlockCostEssence: 100,
+  cooldownMs: 20000,
 } as const;
 
 /**
@@ -899,8 +1019,230 @@ function healBeamReleaseWallMs(): number {
   );
 }
 
+/**
+ * Fireball (F alt) — single clip `Casting Spell` (hero.glb, ~7.733s @ 30fps).
+ * Charge scales linearly from appear → release. Early confirm seeks to the throw
+ * frames, then the projectile waits until the release frame leaves the hands.
+ * Frame 34 = ball appears, 143 = throw seek, 160 = leaves the hands.
+ */
+export const FIREBALL_CAST = {
+  fps: 30,
+  appearFrame: 34,
+  /** On early confirm, jump Casting Spell here so the throw reads. */
+  throwSeekFrame: 143,
+  /** Projectile leaves the hands / auto-release at full linear charge. */
+  releaseFrame: 160,
+  /**
+   * After the ball leaves, play the rest of Casting Spell this much faster.
+   * Recovery length uses this so gameplay unlocks with the sped-up pose.
+   */
+  followThroughTimeScale: 2.5,
+  /** Cut the clip here (skip the long end settle). */
+  followThroughEndFrame: 188,
+  /** Casting Spell duration from hero.glb. */
+  clipDurationSec: 7.7333,
+  /** Slightly faster windup + charge (anim + cast lock track this). */
+  playbackRate: 1.2,
+  speed: 17,
+  /** Practically unlimited flight (wall / enemy ends it). */
+  range: 90,
+  /**
+   * Forward distance used by createProjectile before stamp repositions.
+   * Keep in sync with handPush — stamp rewrites to handPush + handSide.
+   */
+  spawnOffset: 0.22,
+  /** Forward from right hand (small — ball sits beside the body). */
+  handPush: 0.22,
+  /** Out along the caster's left so the ball clears the torso mesh. */
+  handSide: -0.42,
+  handY: 1.15,
+  /** Earliest confirm after the ball appears (channel start). */
+  chargeMinMs: 350,
+  /**
+   * Flight contact radius fallback (stamp scales with charge via radiusMin/Max).
+   * Keep below explode/burn size so charge size doesn't spawn-detonate.
+   */
+  flightHitRadius: 0.55,
+  flightWallRadius: 0.48,
+  /** Ignore collisions briefly after spawn so the throw clears the caster. */
+  spawnArmingMs: 90,
+  radiusMin: 0.38,
+  radiusMax: 0.95,
+  damageMin: combatMag(14),
+  damageMax: combatMag(38),
+  burnRadiusMin: 1.5,
+  burnRadiusMax: 3.4,
+  burnDurationMs: 1680,
+  burnTickMs: 500,
+  unlockCostEssence: 120,
+  cooldownMs: 20000,
+} as const;
+
+export function fireballFrameWallMs(frame: number): number {
+  return (frame / FIREBALL_CAST.fps / FIREBALL_CAST.playbackRate) * 1000;
+}
+
+/** Windup until the ball appears (frames 0–appear). */
+export function fireballAppearWallMs(): number {
+  return fireballFrameWallMs(FIREBALL_CAST.appearFrame);
+}
+
+/**
+ * Linear charge window: appear → release (no plateau / grace at "max").
+ * Charge 0 at channel start, 1 at auto-throw.
+ */
+export function fireballChargeWindowWallMs(): number {
+  return fireballFrameWallMs(
+    FIREBALL_CAST.releaseFrame - FIREBALL_CAST.appearFrame,
+  );
+}
+
+/** @deprecated No grace — linear charge ends at release. Kept as 0 for callers. */
+export function fireballChargeGraceWallMs(): number {
+  return 0;
+}
+
+/** Full cast until the ball leaves (frames 0–release). */
+export function fireballReleaseWallMs(): number {
+  return fireballFrameWallMs(FIREBALL_CAST.releaseFrame);
+}
+
+export function fireballReleaseSec(): number {
+  return (
+    FIREBALL_CAST.releaseFrame /
+    FIREBALL_CAST.fps /
+    FIREBALL_CAST.playbackRate
+  );
+}
+
+export function fireballFollowThroughEndSec(): number {
+  return (
+    FIREBALL_CAST.followThroughEndFrame /
+    FIREBALL_CAST.fps /
+    FIREBALL_CAST.playbackRate
+  );
+}
+
+/** Wall ms for release → followThroughEnd at accelerated playback. */
+export function fireballFollowThroughWallMs(): number {
+  const frames =
+    FIREBALL_CAST.followThroughEndFrame - FIREBALL_CAST.releaseFrame;
+  return (
+    fireballFrameWallMs(Math.max(0, frames)) /
+    Math.max(0.1, FIREBALL_CAST.followThroughTimeScale)
+  );
+}
+
+/** Follow-through after the ball leaves (sped-up, trimmed). */
+export function fireballRecoveryWallMs(): number {
+  return Math.max(120, fireballFollowThroughWallMs());
+}
+
+export function fireballThrowSeekSec(): number {
+  return (
+    FIREBALL_CAST.throwSeekFrame /
+    FIREBALL_CAST.fps /
+    FIREBALL_CAST.playbackRate
+  );
+}
+
+/** Wall ms from throw seek → ball leaves the hands (early-confirm spawn delay). */
+export function fireballThrowToReleaseWallMs(): number {
+  return fireballFrameWallMs(
+    FIREBALL_CAST.releaseFrame - FIREBALL_CAST.throwSeekFrame,
+  );
+}
+
+/**
+ * Approx Casting Spell frame from channel elapsed (channel starts at appear).
+ * Used to delay projectile spawn until the release pose.
+ */
+export function fireballApproxClipFrame(elapsedMs: number): number {
+  return (
+    FIREBALL_CAST.appearFrame +
+    (Math.max(0, elapsedMs) / 1000) *
+      FIREBALL_CAST.fps *
+      FIREBALL_CAST.playbackRate
+  );
+}
+
+/**
+ * Delay from confirm → projectile spawn so the ball leaves on the release frame.
+ * Early confirms seek to throwSeek first; late/full charge may already be near release.
+ */
+export function fireballLaunchDelayWallMs(elapsedMs: number): number {
+  const approx = fireballApproxClipFrame(elapsedMs);
+  const fromFrame = Math.max(approx, FIREBALL_CAST.throwSeekFrame);
+  return Math.max(
+    0,
+    fireballFrameWallMs(FIREBALL_CAST.releaseFrame - fromFrame),
+  );
+}
+
+/**
+ * Recovery after confirm: wait for launch (if early), then sped-up trimmed follow-through.
+ */
+export function fireballConfirmRecoveryWallMs(elapsedMs: number): number {
+  return Math.max(
+    120,
+    fireballLaunchDelayWallMs(elapsedMs) + fireballFollowThroughWallMs(),
+  );
+}
+
+export function fireballLerp(min: number, max: number, charge01: number): number {
+  const t = Math.max(0, Math.min(1, charge01));
+  return min + (max - min) * t;
+}
+
+/** Linear 0..1 over appear→release channel elapsed. */
+export function fireballCharge01(elapsedMs: number): number {
+  return Math.max(
+    0,
+    Math.min(1, elapsedMs / Math.max(1, fireballChargeWindowWallMs())),
+  );
+}
+
 function healBeamChannelWallMs(): number {
   return HEAL_BEAM_CAST.healTicks * HEAL_BEAM_CAST.healTickMs;
+}
+
+/**
+ * Life Leech (LMB) — Standing 2H Magic Attack 03 (hero.glb) @ 30fps.
+ * Frame 34 = beam begins (same windup as Frost Mist).
+ */
+export const LIFE_LEECH_CAST = {
+  fps: 30,
+  releaseFrame: 34,
+  /** Freeze upper cast here while the leech beam channels. */
+  holdFrame: 58,
+  clipDurationSec: 4.333333,
+  playbackRate: 1.55,
+  /** Flat damage per tick (combatMag → 40). */
+  damagePerTick: combatMag(4),
+  /** Fraction of damage dealt restored as self-heal. */
+  healFrac: 0.4,
+  damageTicks: 8,
+  /** Gap between drain ticks while held. */
+  tickMs: 400,
+  /**
+   * Safety cap for the hold channel (wall ms). Normal end is player release.
+   * Authored value — scaled by CAST_EXECUTION_SCALE via timing.impactMs.
+   */
+  holdMaxMs: 120_000,
+  /** Narrow short-range laser (≈8° half-angle). */
+  beamHalfAngle: 0.14,
+  range: 7.5,
+} as const;
+
+function lifeLeechReleaseWallMs(): number {
+  return (
+    (LIFE_LEECH_CAST.releaseFrame / LIFE_LEECH_CAST.fps / LIFE_LEECH_CAST.playbackRate) *
+    1000
+  );
+}
+
+function lifeLeechChannelWallMs(): number {
+  return LIFE_LEECH_CAST.holdMaxMs;
 }
 
 /**
@@ -945,6 +1287,10 @@ export const REVENGE_CAST = {
 
 /** Minimal v0 kit — one ability per Battlerite slot. */
 export const ABILITIES: Record<string, AbilityDef> = {
+  /**
+   * Bolt (LMB) — magic_1h (Standing 1H Magic Attack 01).
+   * Projectile leaves at frame 26 (arm punch peak), at BOLT_CAST.playbackRate.
+   */
   bolt: {
     id: "bolt",
     name: "Bolt",
@@ -953,21 +1299,20 @@ export const ABILITIES: Record<string, AbilityDef> = {
     range: 12,
     shape: "projectile",
     effectKind: "standard",
-    tags: ["Projectile", "Damage", "SingleTarget", "Instant"],
-    damage: combatMag(15),
+    tags: ["Projectile", "Damage", "SingleTarget", "Cast"],
+    damage: combatMag(13),
     speed: 22,
-    spawnOffset: 0.32,
+    spawnOffset: BOLT_CAST.spawnOffset,
     allowedSlots: ["m1"],
     defaultSlot: "m1",
-    // ~1.0s window → clip 2.3s plays ~2.3× (snappy, not 8×)
     timing: {
-      anticipationMs: 280,
-      castMs: 220,
-      impactMs: 200,
-      recoveryMs: 300,
+      anticipationMs: authoredForWallMs(80),
+      castMs: authoredForWallMs(Math.max(16, boltReleaseWallMs() - 80)),
+      impactMs: authoredForWallMs(80),
+      recoveryMs: authoredForWallMs(boltRecoveryWallMs()),
       anticipationMoveMul: 0.9,
       castMoveMul: 0.65,
-      impactMoveMul: 0.55,
+      impactMoveMul: 0.7,
       recoveryMoveMul: 1,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
@@ -1026,7 +1371,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   iceLance: {
     id: "iceLance",
-    unlockCostEssence: 8,
+    unlockCostEssence: 80,
     name: "Ice Lance",
     description:
       "Hurl an ice spike. Direct impact sticks it to the target; after 1.4 seconds it detonates for a frost blast. Misses plant in the ground and explode the same way.",
@@ -1035,13 +1380,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "SingleTarget", "Explosion", "Area", "Cast"],
-    damage: combatMag(14),
+    damage: combatMag(12),
     speed: 28,
     radius: 0.4,
     spawnOffset: ICE_LANCE_CAST.spawnOffset,
     detonate: {
       delayMs: 1400,
-      damage: combatMag(18),
+      damage: combatMag(10),
       radius: 2.0,
     },
     allowedSlots: ["m1"],
@@ -1062,7 +1407,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   /** Close-range magical slash — 3 quick hits, then CD (or CD if chain stops early). */
   crescent: {
     id: "crescent",
-    unlockCostEssence: 8,
+    unlockCostEssence: 80,
     name: "Crescent",
     description:
       "Close-range slash combo — three quick hits. Chain swings or stop early to start cooldown.",
@@ -1071,7 +1416,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "melee",
     effectKind: "standard",
     tags: ["Melee", "Damage", "MultiHit", "Combo", "Instant"],
-    damage: combatMag(16),
+    damage: combatMag(12),
     /** Tight frontal slash — was 2.0 and felt like a wide AoE. */
     radius: 1.15,
     allowedSlots: ["m1"],
@@ -1080,6 +1425,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       hits: 3,
       continueWindowMs: 220,
       moveMul: 0.72,
+      damageByHit: [combatMag(9), combatMag(9), combatMag(12)],
     },
     timing: {
       anticipationMs: 110,
@@ -1092,18 +1438,17 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
   smash: {
     id: "smash",
-    name: "Leap Slam",
+    name: "Jump Slam",
     description:
       "Leap to your aim and slam the ground. Airborne iframes; stuns enemies on landing.",
-    cooldownMs: 5500,
+    cooldownMs: 7000,
     range: 2.8,
     shape: "aoe",
     effectKind: "standard",
     tags: ["Area", "Damage", "Movement", "Stun", "Control", "Cast"],
     damage: combatMag(12),
-    radius: 2.6,
+    radius: 3.1,
     allowedSlots: ["m2"],
-    defaultSlot: "m2",
     // Windup start→19 (fast), air 19→54 (unchanged rate), then 150ms pose hold.
     timing: {
       anticipationMs: authoredForWallMs(
@@ -1164,11 +1509,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
   frostBall: {
     id: "frostBall",
-    unlockCostEssence: 10,
+    unlockCostEssence: 100,
     name: "Frost Ball",
     description:
       "Slow drifting frost orb with a ground aura. Ticks damage and refreshes slow on anyone standing in the disc until it expires.",
-    cooldownMs: 2800,
+    cooldownMs: 7000,
     range: 12.5,
     shape: "projectile",
     effectKind: "standard",
@@ -1182,6 +1527,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     aura: true,
     spawnOffset: FROST_BALL_CAST.spawnOffset,
     allowedSlots: ["m2"],
+    defaultSlot: "m2",
     timing: {
       anticipationMs: authoredForWallMs(100),
       castMs: authoredForWallMs(Math.max(16, frostBallReleaseWallMs() - 100)),
@@ -1203,11 +1549,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   poisonDart: {
     id: "poisonDart",
-    unlockCostEssence: 8,
+    unlockCostEssence: 80,
     name: "Poison Dart",
     description:
       "Snap a venomous dart with a right hook. Light impact, then Poisoned (stacks up to 3, shared with Spikes).",
-    cooldownMs: 2200,
+    cooldownMs: 4500,
     range: 11,
     shape: "projectile",
     effectKind: "standard",
@@ -1216,7 +1562,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     speed: 28,
     spawnOffset: POISON_DART_CAST.spawnOffset,
     allowedSlots: ["m2"],
-    defaultSlot: "m2",
     timing: {
       /** Windup to original frame 11 (~367ms wall). */
       anticipationMs: authoredForWallMs(50),
@@ -1278,7 +1623,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "surge",
     name: "Surge",
     description: "Crackling self-buff — burst of move speed. Can interrupt your other casts.",
-    cooldownMs: 7000,
+    cooldownMs: 10000,
     range: 0,
     shape: "buff",
     effectKind: "standard",
@@ -1397,7 +1742,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Barrier",
     description:
       `Locked cast — absorb bubble charges to ${combatMag(40)} shield over the windup (3s once complete). Damage during cast only eats what you've built so far.`,
-    cooldownMs: 6000,
+    cooldownMs: 14000,
     range: 0,
     shape: "buff",
     effectKind: "standard",
@@ -1435,7 +1780,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Counter",
     description:
       "Plant into a dance stance and glow for 1.2s (no movement). Cancel anytime. The next direct hit (melee or projectile — not ground AoE) is denied, then you gain +20% move speed, +20% damage, and 40% damage resistance for 3s.",
-    cooldownMs: 9000,
+    cooldownMs: 12000,
     range: 0,
     shape: "buff",
     effectKind: "standard",
@@ -1473,11 +1818,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   revenge: {
     id: "revenge",
-    unlockCostEssence: 10,
+    unlockCostEssence: 100,
     name: "Revenge",
     description:
       "Plant into a dance stance and glow red for 1.2s (no movement). Cancel anytime. The next direct hit (melee or projectile — not ground AoE) is denied — you vanish, blink behind the attacker, then reappear.",
-    cooldownMs: 9000,
+    cooldownMs: 12000,
     range: 0,
     shape: "buff",
     effectKind: "standard",
@@ -1502,10 +1847,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
   dash: {
     id: "dash",
-    unlockCostEssence: 6,
+    unlockCostEssence: 60,
     name: "Dash",
     description: "Dive forward with brief iframes, then a short haste. Cuts other casts.",
-    cooldownMs: 4000,
+    cooldownMs: 10000,
     range: 5,
     shape: "dash",
     effectKind: "standard",
@@ -1545,11 +1890,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   portal: {
     id: "portal",
-    unlockCostEssence: 12,
+    unlockCostEssence: 120,
     name: "Portal",
     description:
       "Hold Space to plant and channel. A landing marker slides farther with charge — release to blink there. At max range you have a second to confirm or the cast cancels. Cooldown starts on any successful blink.",
-    cooldownMs: 8000,
+    cooldownMs: 11000,
     range: 10,
     shape: "dash",
     effectKind: "standard",
@@ -1591,11 +1936,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   decoy: {
     id: "decoy",
-    unlockCostEssence: 10,
+    unlockCostEssence: 100,
     name: "Decoy",
     description:
       "Spawn an identical clone that drifts with your move (or stands still), then cloak for a short time. Invisible to enemies / ghost to yourself. Casting or interacting reveals you; you can still take damage.",
-    cooldownMs: 8000,
+    cooldownMs: 14000,
     range: 0,
     shape: "buff",
     effectKind: "decoy",
@@ -1622,11 +1967,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   gust: {
     id: "gust",
-    unlockCostEssence: 8,
+    unlockCostEssence: 80,
     name: "Gust",
     description:
       "Circular push wave at your feet. Knocks enemies outward, then slows them briefly.",
-    cooldownMs: 6000,
+    cooldownMs: 10000,
     range: 0,
     shape: "aoe",
     effectKind: "standard",
@@ -1655,14 +2000,14 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
   /**
    * Grasp (E) — dark stretching arm / hand yank.
-   * Anim: magic_1h (Standing 1H Magic Attack 01).
+   * Anim: Standing 1H Magic Attack 01.
    */
   grasp: {
     id: "grasp",
     name: "Grasp",
     description:
       "Stretch a dark hand forward and yank an enemy toward you. Light damage, then slows them briefly.",
-    cooldownMs: 7000,
+    cooldownMs: 10000,
     range: 12,
     shape: "projectile",
     effectKind: "standard",
@@ -1675,8 +2020,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     pullMs: 320,
     pullStopDistance: 1.35,
     allowedSlots: ["e"],
-    defaultSlot: "e",
-    // Timed to magic_1h (~2.33s) at a snappy combat pace.
+    // Timed to Standing 1H Magic Attack 01 (~2.33s) at a snappy combat pace.
     timing: {
       anticipationMs: 260,
       castMs: 180,
@@ -1692,16 +2036,52 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnHit: [{ statusId: "slowed", durationMs: 2000, chance: 1 }],
   },
   /**
+   * Life Leech (LMB) — short-range drain stream.
+   * Anim: Standing 2H Magic Attack 03 — beam starts @ frame 34.
+   */
+  lifeLeech: {
+    id: "lifeLeech",
+    unlockCostEssence: 100,
+    name: "Life Leech",
+    description:
+      "Hold to channel a short red–green drain stream. Enemies in the line take damage each tick; you heal for 40% of damage dealt. Release to end — cooldown starts then.",
+    cooldownMs: 2000,
+    range: LIFE_LEECH_CAST.range,
+    shape: "aoe",
+    effectKind: "lifeLeech",
+    tags: ["Line", "Channel", "Damage", "Healing", "Self", "Cast"],
+    damage: LIFE_LEECH_CAST.damagePerTick,
+    healTicks: LIFE_LEECH_CAST.damageTicks,
+    tickMs: LIFE_LEECH_CAST.tickMs,
+    coneHalfAngle: LIFE_LEECH_CAST.beamHalfAngle,
+    allowedSlots: ["m1"],
+    holdChannel: true,
+    timing: {
+      anticipationMs: authoredForWallMs(90),
+      castMs: authoredForWallMs(Math.max(16, lifeLeechReleaseWallMs() - 90)),
+      impactMs: authoredForWallMs(lifeLeechChannelWallMs()),
+      recoveryMs: authoredForWallMs(160),
+      anticipationMoveMul: 0.8,
+      castMoveMul: 0.75,
+      impactMoveMul: 0.75,
+      recoveryMoveMul: 0.95,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "impact",
+    },
+    /** Channel — Surge/Dash/etc. cannot cut; release / stun ends it. */
+    interruptible: false,
+  },
+  /**
    * Chain Jump (E) — grasp mirror: hook flies out, then you leap to the foe.
    * Same range/timing/speed as Grasp; roots the target briefly on hit.
    */
   chainJump: {
     id: "chainJump",
-    unlockCostEssence: 10,
-    name: "Chain Jump",
+    unlockCostEssence: 100,
+    name: "Chain Hook",
     description:
       "Fling a chain hook forward. On hit, leap to the enemy and bind them in chains for half a second.",
-    cooldownMs: 7000,
+    cooldownMs: 10000,
     range: 12,
     shape: "projectile",
     effectKind: "standard",
@@ -1716,7 +2096,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     pullStopDistance: 1.35,
     leapToTarget: true,
     allowedSlots: ["e"],
-    // Same cast pacing as Grasp (magic_1h).
+    // Same cast pacing as Grasp (Standing 1H Magic Attack 01).
     timing: {
       anticipationMs: 260,
       castMs: 180,
@@ -1738,11 +2118,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   spikes: {
     id: "spikes",
-    unlockCostEssence: 8,
+    unlockCostEssence: 80,
     name: "Spikes",
     description:
       "Venomous spikes erupt from the ground in a fast staggered line. Narrow path, long reach; applies Poisoned (stacks with Poison Dart).",
-    cooldownMs: 5500,
+    cooldownMs: 9000,
     range: 10,
     shape: "aoe",
     effectKind: "spikeWave",
@@ -1754,6 +2134,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     spikeStaggerMs: 32,
     spikeStart: 0.85,
     allowedSlots: ["e"],
+    defaultSlot: "e",
     timing: {
       anticipationMs: authoredForWallMs(70),
       castMs: authoredForWallMs(Math.max(16, spikesReleaseWallMs() - 70)),
@@ -1769,17 +2150,110 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnHit: [{ statusId: "poisoned", chance: 1 }],
   },
   /**
+   * Poison Cloud (E) — smash-throw a vial at ground aim (clamped to range).
+   * Anim: Standing Melee Attack Downward — vial leaves @ frame 26.
+   * Lingering green cloud: stacks Poisoned + 20% Miasma slow while inside (no direct damage).
+   */
+  poisonCloud: {
+    id: "poisonCloud",
+    unlockCostEssence: POISON_CLOUD_CAST.unlockCostEssence,
+    name: "Poison Cloud",
+    description:
+      "Hurl a poison vial at your aim. On impact it bursts into a toxic cloud that slows enemies by 20% and stacks Poisoned while they stand in it.",
+    cooldownMs: POISON_CLOUD_CAST.cooldownMs,
+    range: POISON_CLOUD_CAST.range,
+    shape: "aoe",
+    effectKind: "poisonCloud",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "DamageOverTime",
+      "Debuff",
+      "Slow",
+      "Persistent",
+      "Cast",
+      "Explosion",
+    ],
+    /** Status-only zone — shared `poisoned` DoT carries the damage. */
+    damage: 0,
+    radius: POISON_CLOUD_CAST.radius,
+    tickMs: POISON_CLOUD_CAST.tickMs,
+    zoneDurationMs: POISON_CLOUD_CAST.zoneDurationMs,
+    allowedSlots: ["e"],
+    timing: {
+      anticipationMs: authoredForWallMs(80),
+      castMs: authoredForWallMs(Math.max(16, poisonCloudReleaseWallMs() - 80)),
+      impactMs: authoredForWallMs(160),
+      recoveryMs: authoredForWallMs(poisonCloudRecoveryWallMs()),
+      anticipationMoveMul: 0.5,
+      castMoveMul: 0.3,
+      impactMoveMul: 0.4,
+      recoveryMoveMul: 0.9,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [
+      { statusId: "poisoned", chance: 1 },
+      { statusId: "poisonMiasma", chance: 1 },
+    ],
+  },
+  /**
+   * Smoke Bomb (Q) — smash-plant at your feet (Standing Melee Attack Downward @ frame 28).
+   * Grey smoke weakens enemies (−20% defense) while you crouch into cloak.
+   */
+  smokeBomb: {
+    id: "smokeBomb",
+    unlockCostEssence: SMOKE_BOMB_CAST.unlockCostEssence,
+    name: "Smoke Bomb",
+    description:
+      "Smash a smoke bomb at your feet. A thick grey cloud weakens enemies (they take 20% more damage). You stay cloaked while you remain in the smoke — leave or cast to reveal.",
+    cooldownMs: SMOKE_BOMB_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "smokeBomb",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "Debuff",
+      "Stealth",
+      "Self",
+      "Persistent",
+      "Cast",
+      "Nova",
+    ],
+    damage: 0,
+    radius: SMOKE_BOMB_CAST.radius,
+    tickMs: SMOKE_BOMB_CAST.tickMs,
+    zoneDurationMs: SMOKE_BOMB_CAST.zoneDurationMs,
+    allowedSlots: ["q"],
+    timing: {
+      anticipationMs: authoredForWallMs(80),
+      castMs: authoredForWallMs(Math.max(16, smokeBombReleaseWallMs() - 80)),
+      impactMs: authoredForWallMs(160),
+      recoveryMs: authoredForWallMs(smokeBombRecoveryWallMs()),
+      anticipationMoveMul: 0.45,
+      castMoveMul: 0.25,
+      impactMoveMul: 0.35,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "weakened", chance: 1 }],
+    /** Cloak duration is driven by the live smoke zone (see CombatSystem). */
+    applyOnSelf: [{ statusId: "cloaked" }],
+  },
+  /**
    * Firewall (R) — stationary fire wall perpendicular to aim.
    * Anim: Standing 2H Magic Area Attack 01 — ignites @ frame 42 (cancel before).
    * Draws from center out to both edges; burns in place for several seconds.
    */
   firewall: {
     id: "firewall",
-    unlockCostEssence: 12,
+    unlockCostEssence: 120,
     name: "Firewall",
     description:
       "Crack the earth and raise a wall of flame. Ignites at the climax of the cast — cancel anytime before then. The wall draws from its center to both edges and scorches anyone who stands in it.",
-    cooldownMs: 10000,
+    cooldownMs: 14000,
     /** Full wall length (center → each edge = half). */
     range: 13,
     shape: "aoe",
@@ -1812,17 +2286,77 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnHit: [{ statusId: "burning", chance: 1 }],
   },
   /**
+   * Fireball (F alt) — linear charge appear→release; F/LMB throws early.
+   * Early confirm seeks Casting Spell to the throw frames (~143).
+   */
+  fireball: {
+    id: "fireball",
+    unlockCostEssence: FIREBALL_CAST.unlockCostEssence,
+    name: "Fireball",
+    description:
+      "Gather a fireball (F). Charge grows until release — press F or LMB early to throw a smaller blast, or wait for full power. Explodes on enemies or walls and leaves a burning circle.",
+    cooldownMs: FIREBALL_CAST.cooldownMs,
+    range: FIREBALL_CAST.range,
+    shape: "projectile",
+    effectKind: "fireball",
+    tags: [
+      "Projectile",
+      "Explosion",
+      "Area",
+      "Damage",
+      "DamageOverTime",
+      "Debuff",
+      "GroundEffect",
+      "Cast",
+      "Channel",
+    ],
+    damage: FIREBALL_CAST.damageMax,
+    speed: FIREBALL_CAST.speed,
+    radius: FIREBALL_CAST.radiusMax,
+    spawnOffset: FIREBALL_CAST.spawnOffset,
+    zoneDurationMs: FIREBALL_CAST.burnDurationMs,
+    tickMs: FIREBALL_CAST.burnTickMs,
+    /** Near-instant plant fuse — impact damage comes from the detonation blast. */
+    detonate: {
+      delayMs: 40,
+      damage: FIREBALL_CAST.damageMax,
+      radius: FIREBALL_CAST.burnRadiusMax,
+    },
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    confirmOnRelease: true,
+    /** Linear appear→release; no max-hold grace. */
+    channelChargeMs: fireballChargeWindowWallMs(),
+    channelCapGraceMs: 0,
+    interruptible: false,
+    timing: {
+      /** Frames 0–appear — windup until the ball shows in the hands. */
+      anticipationMs: authoredForWallMs(fireballAppearWallMs()),
+      castMs: authoredForWallMs(80),
+      /** Linear charge — confirm / auto-release at the end. */
+      impactMs: authoredForWallMs(fireballChargeWindowWallMs()),
+      recoveryMs: authoredForWallMs(fireballRecoveryWallMs()),
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.55,
+      impactMoveMul: 0.5,
+      recoveryMoveMul: 0.85,
+      canCancelAnticipation: false,
+      cancelUntilPhase: "impact",
+    },
+    applyOnHit: [{ statusId: "burning", chance: 1 }],
+  },
+  /**
    * Volcano (F) — place a erupting volcano at ground aim (clamped to range).
    * Anim: Standing 2H Magic Area Attack 01 — erupts @ frame 42 (cancel before).
    * Throws flaming rocks for several seconds; impacts burn.
    */
   volcano: {
     id: "volcano",
-    unlockCostEssence: 14,
+    unlockCostEssence: 140,
     name: "Volcano",
     description:
       "Crack the earth at your aim and raise a volcano. It shoves bodies aside as it emerges, burns anyone pressed against it, blocks the ground while active, and rains flaming rocks that shatter on impact and leave foes burning.",
-    cooldownMs: 16000,
+    cooldownMs: 20000,
     /** Max place distance from caster. */
     range: 10,
     shape: "aoe",
@@ -1859,7 +2393,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: PROTECTION_BUBBLE_CAST.unlockCostEssence,
     name: "Protection Bubble",
     description:
-      "Weave a large dome at your feet. While it stands, enemy projectiles shatter on the outside — you can still cast out from within. Locked cast; the shield forms where you started the spell.",
+      "Weave a large dome at your feet. While it stands, enemy projectiles shatter on the outside and you gain absorb over time — you can still cast out from within. Locked cast; the shield forms where you started the spell.",
     cooldownMs: PROTECTION_BUBBLE_CAST.cooldownMs,
     range: 0,
     shape: "aoe",
@@ -1935,11 +2469,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   frostMist: {
     id: "frostMist",
-    unlockCostEssence: 12,
+    unlockCostEssence: 120,
     name: "Frost Mist",
     description:
       "Spray an expanding cone of frost. Ticks damage and deepens chill — stacking onto whatever slow they already have — until they freeze solid at the feet.",
-    cooldownMs: 12000,
+    cooldownMs: 14000,
     range: 11,
     shape: "aoe",
     effectKind: "coneChannel",
@@ -1952,7 +2486,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     mistGrowMs: FROST_MIST_CAST.mistGrowMs,
     tickMs: FROST_MIST_CAST.mistTickMs,
     allowedSlots: ["r"],
-    defaultSlot: "r",
     timing: {
       anticipationMs: authoredForWallMs(90),
       castMs: authoredForWallMs(Math.max(16, frostMistReleaseWallMs() - 90)),
@@ -1977,7 +2510,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Heal Beam",
     description:
       "Channel a narrow beam of light. Allies and practice dummies in the line are healed each tick. Cancel anytime after the beam starts.",
-    cooldownMs: 7000,
+    cooldownMs: 20000,
     range: HEAL_BEAM_CAST.range,
     shape: "aoe",
     effectKind: "healBeam",
@@ -1988,7 +2521,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     tickMs: HEAL_BEAM_CAST.healTickMs,
     coneHalfAngle: HEAL_BEAM_CAST.beamHalfAngle,
     allowedSlots: ["f"],
-    defaultSlot: "f",
     timing: {
       anticipationMs: authoredForWallMs(90),
       castMs: authoredForWallMs(Math.max(16, healBeamReleaseWallMs() - 90)),
@@ -2012,11 +2544,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   groove: {
     id: "groove",
-    unlockCostEssence: 10,
+    unlockCostEssence: 100,
     name: "Groove",
     description:
       `Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. If a pulse heals nobody, gain a ${combatMag(4)} HP shield for 8s (stacks). 40% damage resistance while channeling. Cancel anytime.`,
-    cooldownMs: 10000,
+    cooldownMs: 14000,
     range: 0,
     shape: "aoe",
     effectKind: "pulseHeal",
@@ -2059,7 +2591,7 @@ export function abilityUnlockCostEssence(abilityId: string): number {
   if (isStarterLoadoutAbility(abilityId)) return 0;
   const def = ABILITIES[abilityId];
   if (!def) return 0;
-  return Math.max(0, def.unlockCostEssence ?? 8);
+  return Math.max(0, def.unlockCostEssence ?? 80);
 }
 
 export function canEquipInSlot(abilityId: string, slotId: SpellSlotId): boolean {
@@ -2150,6 +2682,8 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
 
   if (def.aura && def.damage > 0 && def.tickMs) {
     parts.push(`${def.damage} dmg / ${formatSeconds(def.tickMs)}`);
+  } else if (def.combo?.damageByHit?.length) {
+    parts.push(`${def.combo.damageByHit.join("/")} dmg`);
   } else if (def.combo && def.damage > 0) {
     parts.push(`${def.damage}×${def.combo.hits} dmg`);
   } else if (def.heal != null && def.heal > 0) {

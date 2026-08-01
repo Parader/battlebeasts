@@ -4,11 +4,16 @@ import { createTrailMaterial } from "./materials/trailMaterial";
 import { createEnergyBallMaterial, createEnergyRingMaterial } from "./materials/energyBall";
 import { createLightningBoltMaterial } from "./materials/lightningBolt";
 import { createCirclePointMaterial } from "./materials/circlePoint";
+import { getSharedFireMaterial } from "./components/FireParticleField";
+import { getLavaTexture } from "./components/LavaGroundStrip";
+import { getChainTexture } from "./materials/chainTexture";
+import { getSmokeTexture } from "./smokeTexture";
 import { groundPresets } from "./presets/ground";
 
 /**
  * Compile spell VFX shader programs once so the first cast doesn't hitch.
  * Materials are temporary — disposed after `gl.compile`.
+ * Call after spell textures are primed so uMap samples are non-null.
  */
 export function warmSpellMaterials(
   gl: THREE.WebGLRenderer,
@@ -21,6 +26,7 @@ export function warmSpellMaterials(
 
   const plane = new THREE.PlaneGeometry(0.2, 0.2);
   const toDispose: THREE.Material[] = [];
+  const sharedMaps = new Set<THREE.Texture>();
 
   const addMesh = (mat: THREE.Material) => {
     toDispose.push(mat);
@@ -42,9 +48,28 @@ export function warmSpellMaterials(
   // Trails (frost mist / gust)
   addMesh(createTrailMaterial("#e0f2fe", { opacity: 0.85, head: 0.22 }));
 
-  // Bolt / crescent / frost energy
+  // Bolt / crescent / frost energy + ice-lance explode shards
   addMesh(createEnergyBallMaterial("#93c5fd"));
+  addMesh(createEnergyBallMaterial("#e0f2fe"));
   addMesh(createEnergyRingMaterial("#7dd3fc"));
+  addMesh(createGroundDecalMaterial(groundPresets.iceFrost, "circle"));
+  addMesh(
+    new THREE.MeshBasicMaterial({
+      color: "#e0f2fe",
+      transparent: true,
+      opacity: 0.01,
+      depthWrite: false,
+    }),
+  );
+  const iceOcta = new THREE.OctahedronGeometry(0.05, 0);
+  const iceOctaMat = new THREE.MeshBasicMaterial({
+    color: "#7dd3fc",
+    transparent: true,
+    opacity: 0.01,
+    depthWrite: false,
+  });
+  toDispose.push(iceOctaMat);
+  group.add(new THREE.Mesh(iceOcta, iceOctaMat));
 
   // Spikes bark (MeshStandard under scene lights)
   addMesh(
@@ -55,7 +80,7 @@ export function warmSpellMaterials(
     }),
   );
 
-  // Surge / status lightning (cheap to include)
+  // Surge / status lightning
   addMesh(createLightningBoltMaterial("#67e8f9"));
 
   // Soft circle.png point sprites (AdditiveParticleBurst)
@@ -70,32 +95,8 @@ export function warmSpellMaterials(
   particleGeo.setAttribute("aAlpha", new THREE.BufferAttribute(new Float32Array([1]), 1));
   group.add(new THREE.Points(particleGeo, particleMat));
 
-  // Firewall / volcano fire field (shared ShaderMaterial program)
-  const fireMat = new THREE.ShaderMaterial({
-    uniforms: { uMap: { value: null } },
-    vertexShader: /* glsl */ `
-      attribute float aSize; attribute float aAngle; attribute vec4 aColor;
-      varying vec4 vColor; varying vec2 vAngle;
-      void main() {
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_Position = projectionMatrix * mv;
-        gl_PointSize = min(aSize * (160.0 / max(-mv.z, 0.6)), 64.0);
-        vAngle = vec2(cos(aAngle), sin(aAngle));
-        vColor = aColor;
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform sampler2D uMap; varying vec4 vColor; varying vec2 vAngle;
-      void main() {
-        vec2 coords = (gl_PointCoord - 0.5) * mat2(vAngle.x, vAngle.y, -vAngle.y, vAngle.x) + 0.5;
-        vec4 col = texture2D(uMap, coords) * vColor;
-        if (col.a < 0.03) discard;
-        gl_FragColor = col;
-      }`,
-    blending: THREE.AdditiveBlending,
-    transparent: true,
-    depthWrite: false,
-  });
-  toDispose.push(fireMat);
+  // Firewall / volcano / fireball — shared fire program with real texture (do not dispose).
+  const fireMat = getSharedFireMaterial();
   const fireGeo = new THREE.BufferGeometry();
   fireGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
   fireGeo.setAttribute("aSize", new THREE.BufferAttribute(new Float32Array([1]), 1));
@@ -103,15 +104,53 @@ export function warmSpellMaterials(
   fireGeo.setAttribute("aAngle", new THREE.BufferAttribute(new Float32Array([0]), 1));
   group.add(new THREE.Points(fireGeo, fireMat));
 
+  // Touch lava / smoke / chain maps so GPU uploads before first cast.
+  const lava = getLavaTexture();
+  const smoke = getSmokeTexture();
+  const chain = getChainTexture();
+  sharedMaps.add(lava);
+  sharedMaps.add(smoke);
+  sharedMaps.add(chain);
+  addMesh(
+    new THREE.MeshBasicMaterial({
+      map: lava,
+      transparent: true,
+      opacity: 0.01,
+      depthWrite: false,
+    }),
+  );
+  addMesh(
+    new THREE.MeshBasicMaterial({
+      map: smoke,
+      transparent: true,
+      opacity: 0.01,
+      depthWrite: false,
+    }),
+  );
+  addMesh(
+    new THREE.MeshBasicMaterial({
+      map: chain,
+      transparent: true,
+      opacity: 0.01,
+      depthWrite: false,
+    }),
+  );
+
   scene.add(group);
   try {
     gl.compile(scene, camera);
   } finally {
     scene.remove(group);
     plane.dispose();
+    iceOcta.dispose();
     particleGeo.dispose();
     fireGeo.dispose();
-    for (const mat of toDispose) mat.dispose();
+    for (const mat of toDispose) {
+      if (mat === fireMat || mat === particleMat) continue;
+      const basic = mat as THREE.MeshBasicMaterial;
+      if (basic.map && sharedMaps.has(basic.map)) basic.map = null;
+      mat.dispose();
+    }
     group.clear();
   }
 }

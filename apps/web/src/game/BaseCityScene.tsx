@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
@@ -9,8 +9,7 @@ import {
     HUB_SCENE_URL,
     HUB_SPAWN,
     HUB_STANDS,
-    PORTAL_TORUS_MAJOR,
-    PORTAL_TORUS_TUBE,
+    STARTER_COLORS,
     type InteractZone,
 } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
@@ -26,6 +25,8 @@ import { useGLTF } from "@react-three/drei";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { assetUrl } from "./assetUrl";
+import { HubIntroCamera } from "./intro/HubIntroCamera";
+import { getHubIntroSnapshot, subscribeHubIntro } from "./intro/hubIntroRuntime";
 
 const HUB_GLB = assetUrl(HUB_SCENE_URL.replace(/^\//, ""));
 useGLTF.preload(HUB_GLB);
@@ -94,10 +95,6 @@ function PortalMarker({
 }: InteractZone & { color: string }) {
     return (
         <group position={[x, 0, z]}>
-            <mesh position={[0, PORTAL_TORUS_MAJOR * 0.85, 0]} castShadow>
-                <torusGeometry args={[PORTAL_TORUS_MAJOR, PORTAL_TORUS_TUBE, 12, 32]} />
-                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.35} />
-            </mesh>
             <InteractZoneField
                 x={0}
                 z={0}
@@ -313,7 +310,17 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     const groundPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
     const raycaster = useMemo(() => new THREE.Raycaster(), []);
     const hit = useMemo(() => new THREE.Vector3(), []);
-    const localColor = (localSessionId && room?.state?.players?.get(localSessionId)?.color) || "#4ade80";
+    const localColor =
+        (localSessionId && room?.state?.players?.get(localSessionId)?.color) || STARTER_COLORS[0]!;
+    const [followEnabled, setFollowEnabled] = useState(
+        () => getHubIntroSnapshot().followCameraEnabled,
+    );
+
+    useEffect(() => {
+        return subscribeHubIntro(() => {
+            setFollowEnabled(getHubIntroSnapshot().followCameraEnabled);
+        });
+    }, []);
 
     useFrame(() => {
         const p = predictedRef.current;
@@ -321,6 +328,8 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
 
         // Keep ground aim fresh even when the cursor is still (cast clicks need it).
         if (!aimReady.current) return;
+        // Don't fight intro face-cam with aim yaw.
+        if (!getHubIntroSnapshot().followCameraEnabled) return;
         raycaster.setFromCamera(aimNdc.current, camera);
         if (raycaster.ray.intersectPlane(groundPlane, hit)) {
             const origin = predictedRef.current;
@@ -333,6 +342,8 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     useEffect(() => {
         const el = gl.domElement;
         const onPointer = (e: PointerEvent) => {
+            // Freeze aim / yaw during intro cinematic so the face-cam doesn't orbit.
+            if (!getHubIntroSnapshot().followCameraEnabled) return;
             const rect = el.getBoundingClientRect();
             const ndc = aimNdc.current;
             ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -415,6 +426,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
                 predictedRef={predictedRef}
             />
             <SpellVfxBridge room={room} />
+            <HubIntroCamera predictedRef={predictedRef} />
             <FixedFollowCamera
                 target={localPos}
                 pitchDeg={CAMERA.pitchDeg}
@@ -424,6 +436,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
                 followLambda={CAMERA.followLambda}
                 cursorLambda={CAMERA.cursorLambda}
                 cursorInfluence={CAMERA.cursorInfluence}
+                enabled={followEnabled}
             />
         </>
     );

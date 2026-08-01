@@ -12,57 +12,133 @@ export interface EmoteDef {
   starter?: boolean;
 }
 
+/**
+ * All hero.glb clips whose names contain dance/dancing (except near-zero
+ * pose clips like Female Dance Pose, which is reserved for Counter).
+ */
 export const EMOTES: Record<string, EmoteDef> = {
   wave: {
     id: "wave",
     name: "Wave",
     animClip: "Wave Hip Hop Dance",
-    durationMs: 3200,
+    durationMs: 16870,
     starter: true,
   },
   chicken: {
     id: "chicken",
     name: "Chicken",
     animClip: "Chicken Dance",
-    durationMs: 4000,
+    durationMs: 4800,
     starter: true,
   },
   shuffle: {
     id: "shuffle",
     name: "Shuffle",
     animClip: "Shuffling Dance",
-    durationMs: 3600,
+    durationMs: 7530,
     starter: true,
   },
   macarena: {
     id: "macarena",
     name: "Macarena",
     animClip: "Macarena Dance",
-    durationMs: 5200,
+    durationMs: 8270,
   },
   ymca: {
     id: "ymca",
     name: "YMCA",
     animClip: "Ymca Dance",
-    durationMs: 4800,
+    durationMs: 4530,
   },
   twist: {
     id: "twist",
     name: "Twist",
     animClip: "Twist Dance",
-    durationMs: 4000,
+    durationMs: 9470,
   },
   locking: {
     id: "locking",
     name: "Locking",
     animClip: "Locking Hip Hop Dance",
-    durationMs: 4200,
+    durationMs: 17030,
   },
   running_man: {
     id: "running_man",
     name: "Running Man",
     animClip: "Dancing Running Man",
-    durationMs: 3800,
+    durationMs: 10870,
+  },
+  booty: {
+    id: "booty",
+    name: "Booty Hip Hop",
+    animClip: "Booty Hip Hop Dance",
+    durationMs: 4930,
+  },
+  breakdance: {
+    id: "breakdance",
+    name: "Breakdance Freezes",
+    animClip: "Breakdance Freezes",
+    durationMs: 6730,
+  },
+  maraschino: {
+    id: "maraschino",
+    name: "Maraschino Step",
+    animClip: "Dancing Maraschino Step",
+    durationMs: 3270,
+  },
+  twerk: {
+    id: "twerk",
+    name: "Twerk",
+    animClip: "Dancing Twerk",
+    durationMs: 15230,
+  },
+  hip_hop: {
+    id: "hip_hop",
+    name: "Hip Hop",
+    animClip: "Hip Hop Dancing",
+    durationMs: 5230,
+  },
+  hip_hop_2: {
+    id: "hip_hop_2",
+    name: "Hip Hop 2",
+    animClip: "Hip Hop Dancing 2",
+    durationMs: 4130,
+  },
+  jazz: {
+    id: "jazz",
+    name: "Jazz",
+    animClip: "Jazz Dancing",
+    durationMs: 2770,
+  },
+  salsa: {
+    id: "salsa",
+    name: "Salsa",
+    animClip: "Salsa Dancing",
+    durationMs: 12000,
+  },
+  samba: {
+    id: "samba",
+    name: "Samba",
+    animClip: "Samba Dancing",
+    durationMs: 27900,
+  },
+  silly: {
+    id: "silly",
+    name: "Silly",
+    animClip: "Silly Dancing",
+    durationMs: 5470,
+  },
+  step_hip_hop: {
+    id: "step_hip_hop",
+    name: "Step Hip Hop",
+    animClip: "Step Hip Hop Dance",
+    durationMs: 7830,
+  },
+  tut: {
+    id: "tut",
+    name: "Tutting",
+    animClip: "Tut Hip Hop Dance",
+    durationMs: 16970,
   },
 };
 

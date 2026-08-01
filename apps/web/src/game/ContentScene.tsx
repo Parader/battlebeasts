@@ -9,6 +9,7 @@ import {
   ARENA_SCENE_URL,
   ARENA_SPAWNS,
   CAMERA,
+  STARTER_COLORS,
 } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
@@ -106,7 +107,7 @@ export function ContentScene({ room, localSessionId, predictedRef }: Props) {
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const hit = useMemo(() => new THREE.Vector3(), []);
   const localColor =
-    (localSessionId && room?.state?.players?.get(localSessionId)?.color) || "#4ade80";
+    (localSessionId && room?.state?.players?.get(localSessionId)?.color) || STARTER_COLORS[0]!;
   const localTeam =
     (localSessionId &&
       (room?.state?.players?.get(localSessionId) as { team?: string } | undefined)?.team) ||
@@ -174,7 +175,12 @@ export function ContentScene({ room, localSessionId, predictedRef }: Props) {
       <Decoys room={room} />
       <Volcanoes room={room} />
       <ProtectionBubbles room={room} />
-      <Shrooms room={room} localSessionId={localSessionId} />
+      <Shrooms
+        room={room}
+        localSessionId={localSessionId}
+        pvpTeams
+        localTeam={localTeam}
+      />
       <SpiritHusks
         room={room}
         localSessionId={localSessionId}

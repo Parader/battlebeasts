@@ -72,7 +72,6 @@ Write-Host "Setting secrets..."
 Invoke-Fly secrets set `
   "SUPABASE_URL=$($vars['SUPABASE_URL'])" `
   "SUPABASE_SECRET_KEY=$($vars['SUPABASE_SECRET_KEY'])" `
-  "ALLOW_GUESTS=true" `
   --app $appName
 
 Write-Host "Deploying (remote build)..."

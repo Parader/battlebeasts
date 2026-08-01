@@ -32,10 +32,18 @@ export function setHandle(
   sessionId: string,
   key: string,
   handle: VfxHandle,
+  opts?: { /** Leave the previous shot alive (ownedByCast projectile handoff). */
+    orphanPrevious?: boolean },
 ): void {
   const runtime = getPlayerVfxRuntime(sessionId);
-  runtime.handles.get(key)?.cancel();
+  const prev = runtime.handles.get(key);
+  if (prev && !opts?.orphanPrevious) prev.cancel();
   runtime.handles.set(key, handle);
+}
+
+/** Cancel only the active cast handle — does not wipe detached ownedByCast shots. */
+export function cancelActiveCastHandle(sessionId: string, key: string): void {
+  clearHandle(sessionId, key, true);
 }
 
 export function clearHandle(sessionId: string, key: string, cancel = false): void {

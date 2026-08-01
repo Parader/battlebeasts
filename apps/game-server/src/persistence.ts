@@ -1,7 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import {
+  DEFAULT_COSMETIC_PATTERN,
+  DEFAULT_COSMETIC_PATTERN_COLOR,
   DEFAULT_LOADOUT,
+  STARTER_COLORS,
   STARTER_TALENT_POINTS,
+  STARTER_WALLET,
   cosmeticsEquippedToFields,
   normalizeCoins,
   normalizeCosmeticsEquipped,
@@ -72,9 +76,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   if (!supabase) {
     return {
       ...DEFAULT_ECO,
-      copper: 75,
-      silver: 2,
-      essence: 12,
+      ...STARTER_WALLET,
       talentPoints: STARTER_TALENT_POINTS,
       unlocks: emptyPlayerUnlocks(),
     };
@@ -155,7 +157,20 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   }
 
   const qty = (id: string) => inv.data?.find((r) => r.resource_id === id)?.quantity ?? 0;
-  const copper = qty("copper") + qty("scrap");
+  const hasCurrencyRow = (inv.data ?? []).some((r) =>
+    ["copper", "scrap", "silver", "gold", "essence", "rubies"].includes(r.resource_id),
+  );
+  // Brand-new accounts have an empty inventory — seed the starter wallet once.
+  if (!hasCurrencyRow) {
+    void saveInventory(userId, STARTER_WALLET, STARTER_TALENT_POINTS);
+  }
+  const copper = hasCurrencyRow
+    ? qty("copper") + qty("scrap")
+    : STARTER_WALLET.copper;
+  const silver = hasCurrencyRow ? qty("silver") : STARTER_WALLET.silver;
+  const gold = hasCurrencyRow ? qty("gold") : STARTER_WALLET.gold;
+  const essence = hasCurrencyRow ? qty("essence") : STARTER_WALLET.essence;
+  const rubies = hasCurrencyRow ? qty("rubies") : STARTER_WALLET.rubies;
   const talentPointsRow = qty("talent_points");
   const talentPoints = inv.data?.some((r) => r.resource_id === "talent_points")
     ? talentPointsRow
@@ -248,9 +263,9 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   }
 
   return {
-    ...normalizeCoins({ copper, silver: qty("silver"), gold: qty("gold") }),
-    essence: qty("essence"),
-    rubies: qty("rubies"),
+    ...normalizeCoins({ copper, silver, gold }),
+    essence,
+    rubies,
     abilityIds: resolvedAbilityIds,
     talentIds: Array.isArray(talents.data?.talent_ids) ? talents.data.talent_ids : [],
     talentPoints,
@@ -427,6 +442,102 @@ export async function saveProfileCosmeticsEquipped(
   cosmeticsEquipped: CosmeticsEquipped,
 ): Promise<boolean> {
   return saveProfileAppearance(userId, { cosmeticsEquipped });
+}
+
+/** Whether the hub intro cinematic has been completed. */
+export async function loadIntroCompleted(userId: string): Promise<boolean> {
+  if (!supabase) return false;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("intro_completed")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) {
+    if (/intro_completed/i.test(error.message)) {
+      console.warn(
+        "[persistence] intro_completed missing — run migration 20260731010000_profile_intro_completed.sql",
+      );
+    } else {
+      console.warn("[persistence] loadIntroCompleted failed:", error.message);
+    }
+    return false;
+  }
+  return Boolean(data?.intro_completed);
+}
+
+export async function setIntroCompleted(userId: string, completed: boolean): Promise<boolean> {
+  if (!supabase) return true;
+  const { error } = await supabase
+    .from("profiles")
+    .update({ intro_completed: completed, updated_at: new Date().toISOString() })
+    .eq("id", userId);
+  if (error) {
+    console.warn("[persistence] setIntroCompleted failed:", error.message);
+    return false;
+  }
+  return true;
+}
+
+export type SoftResetResult = {
+  ok: boolean;
+  error?: string;
+  economy?: EconomySnapshot;
+};
+
+/**
+ * Soft character reset: starter wallet/loadout/talents/quests/appearance.
+ * Wipes purchased cosmetics, colors, patterns, emotes back to starters;
+ * clears intro so cinematic can replay.
+ */
+export async function softResetCharacter(userId: string): Promise<SoftResetResult> {
+  const starterUnlocks = emptyPlayerUnlocks();
+  const starterColor = STARTER_COLORS[0]!;
+  if (!supabase) {
+    return {
+      ok: true,
+      economy: {
+        ...DEFAULT_ECO,
+        ...STARTER_WALLET,
+        color: starterColor,
+        pattern: DEFAULT_COSMETIC_PATTERN,
+        patternColor: DEFAULT_COSMETIC_PATTERN_COLOR,
+        cosmeticsEquipped: normalizeCosmeticsEquipped({}),
+        unlocks: starterUnlocks,
+      },
+    };
+  }
+
+  const wallet: Wallet = { ...STARTER_WALLET };
+
+  await Promise.all([
+    saveInventory(userId, wallet, STARTER_TALENT_POINTS),
+    savePlayerUnlocks(userId, starterUnlocks),
+    saveLoadout(userId, [...DEFAULT_LOADOUT]),
+    saveTalents(userId, []),
+    saveTalentBuild(userId, {}),
+    setIntroCompleted(userId, false),
+    supabase.from("quest_progress").delete().eq("user_id", userId),
+    supabase.from("loadout_presets").delete().eq("user_id", userId),
+    supabase
+      .from("profiles")
+      .update({
+        active_loadout_slot: 0,
+        color: starterColor,
+        pattern: DEFAULT_COSMETIC_PATTERN,
+        pattern_color: DEFAULT_COSMETIC_PATTERN_COLOR,
+        cosmetics_equipped: {},
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userId),
+  ]);
+
+  await saveLoadoutPreset(userId, 0, [...DEFAULT_LOADOUT], {
+    name: "Loadout 1",
+    talentBuild: {},
+  });
+
+  const economy = await loadEconomy(userId);
+  return { ok: true, economy };
 }
 
 export type RewardGrantPayload = {

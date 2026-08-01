@@ -4,14 +4,12 @@ import {
   BASE_CITY_STANDS,
   HUB_WORLD_SCALE,
   HUB_SPAWN_FALLBACK,
-  PORTAL_RING_COLLIDE_RADIUS,
-  PORTAL_TORUS_MAJOR,
   PRACTICE_DUMMY,
   type InteractZone,
   type PortalPadDef,
   type StandDef,
 } from "./stands";
-import type { CircleCollider, StaticCollider, WallCollider } from "./collision";
+import type { StaticCollider, WallCollider } from "./collision";
 import villageMarkers from "./maps/main_village.markers.json";
 import villageWalls from "./maps/main_village.walls.json";
 
@@ -190,24 +188,6 @@ export const HUB_PRACTICE_DUMMIES: PracticeDummyDef[] =
 /** @deprecated Prefer HUB_PRACTICE_DUMMIES — first dummy for single-target APIs. */
 export const HUB_PRACTICE_DUMMY = HUB_PRACTICE_DUMMIES[0]!;
 
-/** Vertical portal torus: only left/right legs block on XZ. */
-export function portalRingColliders(portal: PortalPadDef): CircleCollider[] {
-  return [
-    {
-      id: `${portal.id}_leg_l`,
-      x: portal.x - PORTAL_TORUS_MAJOR,
-      z: portal.z,
-      radius: PORTAL_RING_COLLIDE_RADIUS,
-    },
-    {
-      id: `${portal.id}_leg_r`,
-      x: portal.x + PORTAL_TORUS_MAJOR,
-      z: portal.z,
-      radius: PORTAL_RING_COLLIDE_RADIUS,
-    },
-  ];
-}
-
 export function hubWallColliders(): WallCollider[] {
   return (wallsDoc.walls ?? []).map((w) => ({
     id: w.id,
@@ -219,12 +199,10 @@ export function hubWallColliders(): WallCollider[] {
 /** Cached hub solids — wall segs are large; never rebuild per frame. */
 let hubStaticsCache: StaticCollider[] | null = null;
 
-/** All solid hub obstacles for movement (Bezier walls + portal rings).
+/** All solid hub obstacles for movement (Bezier walls).
  * Practice dummies are not static — walk solids come from live `state.targets`. */
 export function hubStaticColliders(): StaticCollider[] {
   if (hubStaticsCache) return hubStaticsCache;
-  const walls = hubWallColliders();
-  const circles: CircleCollider[] = [...HUB_PORTALS.flatMap(portalRingColliders)];
-  hubStaticsCache = [...circles, ...walls];
+  hubStaticsCache = [...hubWallColliders()];
   return hubStaticsCache;
 }

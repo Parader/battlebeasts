@@ -1,4 +1,4 @@
-import { ABILITIES, phaseDurationMs } from "@battlebeasts/shared";
+import { ABILITIES, fireballChargeWindowWallMs, phaseDurationMs } from "@battlebeasts/shared";
 import { spawnCastEffect, cancelFollowOwnerVfx } from "../runtime";
 import {
   clearHandle,
@@ -16,6 +16,12 @@ function chargeMsFor(
 ): number {
   const def = ABILITIES[abilityId];
   if (!def) return fallback;
+  if (def.effectKind === "fireball") {
+    return fireballChargeWindowWallMs() + padMs;
+  }
+  if (def.confirmOnRelease && def.channelChargeMs) {
+    return def.channelChargeMs + (def.channelCapGraceMs ?? 0) + padMs;
+  }
   const base = enteringAnticipation
     ? phaseDurationMs(def, "anticipation") + phaseDurationMs(def, "cast")
     : phaseDurationMs(def, "cast");
@@ -43,6 +49,14 @@ function spawnCharge(ctx: CastEngineContext, chargeMs: number): void {
   const opts = ctx.profile.chargeHand!;
   if (opts.cancelFollowOnStart) {
     cancelFollowOwnerVfx(ctx.abilityId, ctx.sessionId);
+    clearHandle(ctx.sessionId, ctx.abilityId, false);
+  } else if (
+    ctx.profile.projectile === "ownedByCast" &&
+    hasHandle(ctx.sessionId, ctx.abilityId)
+  ) {
+    // Detach prior cast bookkeeping without killing a planted / in-flight mesh
+    // (ice lance fuse plants must survive back-to-back casts).
+    clearHandle(ctx.sessionId, ctx.abilityId, false);
   }
   const yaw = ctx.pose.yaw ?? 0;
   const forward = opts.forward;
@@ -61,6 +75,7 @@ function spawnCharge(ctx: CastEngineContext, chargeMs: number): void {
         chargeMs,
       },
     ),
+    { orphanPrevious: true },
   );
 }
 
@@ -85,6 +100,10 @@ function onImpact(ctx: CastEngineContext): void {
   const opts = ctx.profile.chargeHand;
   if (!opts) return;
   if (ctx.phase !== "impact" || ctx.prevPhase === "impact") return;
+
+  // Confirm-on-release (Portal / Fireball): impact is the charge hold — keep the hand orb.
+  const defEarly = ABILITIES[ctx.abilityId];
+  if (defEarly?.confirmOnRelease) return;
 
   if (!hasHandle(ctx.sessionId, ctx.abilityId)) {
     // Missed cast patches — spawn full-size visual that latches to projectile / continues.
@@ -127,9 +146,25 @@ function onImpact(ctx: CastEngineContext): void {
   clearHandle(ctx.sessionId, ctx.abilityId, false);
 }
 
+/**
+ * Fireball / Portal: once recovery starts the ball has left the hands.
+ * Detach bookkeeping without canceling the shot — otherwise idle →
+ * cancelPlayerCastHandles removes the in-flight mesh mid-trajectory.
+ */
+function onReleaseRecovery(ctx: CastEngineContext): void {
+  const opts = ctx.profile.chargeHand;
+  if (!opts) return;
+  if (ctx.phase !== "recovery" || ctx.prevPhase === "recovery") return;
+  const def = ABILITIES[ctx.abilityId];
+  if (!def?.confirmOnRelease) return;
+  if (!hasHandle(ctx.sessionId, ctx.abilityId)) return;
+  clearHandle(ctx.sessionId, ctx.abilityId, false);
+}
+
 export const chargeHandEngine: CastEngine = {
   onPhaseChange(ctx) {
     maybeStartCharge(ctx);
     onImpact(ctx);
+    onReleaseRecovery(ctx);
   },
 };

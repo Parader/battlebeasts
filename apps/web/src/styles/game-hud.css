@@ -152,11 +152,53 @@
   margin-bottom: 1.1rem;
 }
 
+.bb-panel-header__lead {
+  min-width: 0;
+  flex: 1;
+}
+
+.bb-panel-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 1rem;
+}
+
 .bb-panel-header__actions {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   flex-shrink: 0;
+}
+
+.bb-talent-header-pts {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem 0.55rem;
+}
+
+.bb-talent-header-pts__label {
+  font-family: var(--bb-font-display);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bb-panel-accent);
+}
+
+.bb-talent-header-pts__value {
+  font-family: var(--bb-font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--bb-brass);
+  min-width: 2.6rem;
+}
+
+.bb-talent-header-pts__buy {
+  padding: 0.28rem 0.7rem;
+  font-size: 0.78rem;
+  line-height: 1.2;
 }
 
 .bb-panel-title {
@@ -869,6 +911,65 @@
   text-shadow: 0 1px 2px #000;
 }
 
+.bb-charge-channel {
+  width: min(16rem, 52vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.bb-charge-channel__label {
+  font-family: var(--bb-font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fecaca;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+}
+
+.bb-charge-channel__track {
+  position: relative;
+  width: 100%;
+  height: 0.55rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(12, 8, 6, 0.82);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+.bb-charge-channel__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #b45309 0%, #ea580c 55%, #fbbf24 100%);
+  box-shadow: 0 0 10px rgba(249, 115, 22, 0.45);
+  transition: width 50ms linear;
+}
+
+.bb-charge-channel__fill--max {
+  animation: bb-charge-pulse 0.7s ease-in-out infinite;
+}
+
+.bb-charge-channel__hold {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  background: rgba(254, 243, 199, 0.35);
+  pointer-events: none;
+}
+
+@keyframes bb-charge-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.25);
+  }
+}
+
 .bb-ability-slot__glyph {
   position: absolute;
   inset-inline: 0;
@@ -1412,6 +1513,23 @@
   background: rgba(6, 18, 32, 0.72);
 }
 
+.bb-talent-rail__trees-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0;
+}
+
+.bb-talent-rail__budget {
+  font-family: var(--bb-font-body);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--bb-ink-soft);
+}
+
 .bb-talent-rail__tabs {
   display: flex;
   flex: 1;
@@ -1480,8 +1598,9 @@
 }
 
 .bb-talent-main {
+  /* loadout presets | stage (fills) | footer — points live in the panel header */
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 0.75rem;
   min-width: 0;
   min-height: 0;
@@ -2834,4 +2953,114 @@
 
 .bb-chest-reveal__collect:not(:disabled):hover {
   filter: brightness(1.06);
+}
+
+/* Rank badge reveal (division / tier change) */
+.bb-rank-reveal {
+  background: radial-gradient(ellipse at center, rgba(8, 18, 32, 0.55) 0%, rgba(2, 6, 12, 0.92) 72%);
+}
+
+.bb-rank-reveal__glow {
+  pointer-events: none;
+}
+
+.bb-rank-reveal__headline {
+  font-family: var(--bb-font-display, var(--bb-font-body));
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #f5ecda;
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.55),
+    0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.bb-rank-reveal__fromto {
+  font-family: var(--bb-font-body);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f3e6c0;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+}
+
+.bb-rank-reveal__sub {
+  font-family: var(--bb-font-body);
+  font-size: 0.9rem;
+  color: rgba(243, 230, 192, 0.8);
+}
+
+.bb-rank-badge {
+  position: relative;
+  width: min(11rem, 42vw);
+  height: min(11rem, 42vw);
+  display: grid;
+  place-items: center;
+  will-change: transform;
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.55));
+}
+
+.bb-rank-badge__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid color-mix(in srgb, var(--bb-rank-hex) 80%, #fff);
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--bb-rank-hex) 28%, transparent),
+    0 0 36px color-mix(in srgb, var(--bb-rank-hex) 55%, transparent),
+    inset 0 0 24px color-mix(in srgb, var(--bb-rank-hex) 35%, transparent);
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.35), transparent 42%),
+    radial-gradient(circle at 50% 55%, color-mix(in srgb, var(--bb-rank-hex) 70%, #1a1208), #120c06 72%);
+}
+
+.bb-rank-badge__face {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  text-align: center;
+  padding: 0.5rem;
+}
+
+.bb-rank-badge__tier {
+  font-family: var(--bb-font-display, var(--bb-font-body));
+  font-size: clamp(1rem, 3.2vw, 1.25rem);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff8e8;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+.bb-rank-badge__div {
+  font-family: var(--bb-font-display, var(--bb-font-body));
+  font-size: clamp(1.8rem, 6vw, 2.4rem);
+  font-weight: 900;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.4);
+}
+
+.bb-rank-lp {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.bb-rank-lp__bar {
+  height: 0.45rem;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bb-panel-line) 80%, #000);
+}
+
+.bb-rank-lp__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bb-brass) 70%, #fff), var(--bb-brass));
+  transition: width 0.85s cubic-bezier(0.22, 1, 0.36, 1);
 }

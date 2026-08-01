@@ -3,7 +3,6 @@ import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import { renderOneShot } from "./catalog";
 import { vfxRuntime } from "./runtime";
-import { VfxWarmup } from "./VfxWarmup";
 import type { OneShotEffect } from "./types";
 import { PortalLandingTelegraph } from "./effects/portalChannel";
 
@@ -31,7 +30,6 @@ export function VfxWorld({ room, localSessionId, predictedRef }: Props) {
 
   return (
     <>
-      <VfxWarmup />
       {shots.map((shot) => renderOneShot(shot, ctx))}
       {room && localSessionId && predictedRef ? (
         <PortalLandingTelegraph

@@ -1,7 +1,7 @@
 # fly.toml app configuration for BattleBeasts Colyseus game-server
 # Deploy from repo root:
 #   fly launch --config fly.toml --dockerfile Dockerfile.game-server --no-deploy
-#   fly secrets set SUPABASE_URL=... SUPABASE_SECRET_KEY=... ALLOW_GUESTS=true
+#   fly secrets set SUPABASE_URL=... SUPABASE_SECRET_KEY=...
 #   fly deploy --config fly.toml --dockerfile Dockerfile.game-server
 
 app = "battlebeasts-game"
@@ -12,7 +12,6 @@ primary_region = "iad"
 
 [env]
   PORT = "2567"
-  ALLOW_GUESTS = "true"
   NODE_ENV = "production"
 
 [http_service]

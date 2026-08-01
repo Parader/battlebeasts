@@ -10,6 +10,8 @@ import { CrescentImpactEffect } from "./effects/crescentImpact";
 import { SmashCrackEffect } from "./effects/smashCrack";
 import { GustWaveEffect } from "./effects/gustWave";
 import { FrostBallCastEffect } from "./effects/frostBallCast";
+import { FireballCastEffect } from "./effects/fireballCast";
+import { FireballBurnGroundEffect } from "./effects/fireballBurnGround";
 import { BarrierCastEffect } from "./effects/barrierCast";
 import { GraspProjectileEffect } from "./effects/graspProjectile";
 import { ChainJumpProjectileEffect } from "./effects/chainJumpProjectile";
@@ -17,11 +19,14 @@ import { SpikesPopEffect } from "./effects/spikesPop";
 import { FrostMistConeEffect } from "./effects/frostMistCone";
 import { HealSwooshEffect } from "./effects/healSwoosh";
 import { HealBeamEffect } from "./effects/healBeam";
+import { LifeLeechEffect } from "./effects/lifeLeech";
 import { PoisonDartCastEffect } from "./effects/poisonDartCast";
 import { PoisonDartProjectileEffect } from "./effects/poisonDartProjectile";
 import { IceLanceCastEffect } from "./effects/iceLanceCast";
 import { IceLanceExplodeEffect } from "./effects/iceLanceExplode";
 import { FirewallGroundEffect } from "./effects/firewallGround";
+import { PoisonCloudGroundEffect } from "./effects/poisonCloudGround";
+import { SmokeBombGroundEffect } from "./effects/smokeBombGround";
 import { PortalBlinkEffect } from "./effects/portalBlink";
 import { VolcanoRockEffect } from "./effects/volcanoRock";
 import { BloodRushTrailEffect } from "./effects/bloodRushTrail";
@@ -42,7 +47,14 @@ import {
 } from "./profiles/registry";
 
 export type ProjectileVfxId = "bolt" | "grasp" | "chainJump" | "poisonDart";
-export type CastVfxId = "bolt" | "crescent" | "frostBall" | "barrier" | "poisonDart" | "iceLance";
+export type CastVfxId =
+  | "bolt"
+  | "crescent"
+  | "frostBall"
+  | "fireball"
+  | "barrier"
+  | "poisonDart"
+  | "iceLance";
 export type ImpactVfxId =
   | "bolt"
   | "crescent"
@@ -52,6 +64,7 @@ export type ImpactVfxId =
   | "frostMist"
   | "groove"
   | "healBeam"
+  | "lifeLeech"
   | "poisonDart"
   | "firewall"
   | "portal"
@@ -140,8 +153,20 @@ export function usesHealBeamFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "healBeam";
 }
 
+export function usesLifeLeechFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "lifeLeech";
+}
+
 export function usesFirewallFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "firewall";
+}
+
+export function usesPoisonCloudFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "poisonCloud";
+}
+
+export function usesSmokeBombFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "smokeBomb";
 }
 
 export function usesVolcanoFx(abilityId: string | undefined): boolean {
@@ -167,6 +192,7 @@ export function isOwnedByCastProjectile(abilityId: string | undefined): boolean 
 const CAST_RENDERERS: Record<string, ShotRenderer> = {
   crescent: (shot, ctx) => <CrescentCastEffect key={shot.key} shot={shot} follow={ctx} />,
   frostBall: (shot, ctx) => <FrostBallCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  fireball: (shot, ctx) => <FireballCastEffect key={shot.key} shot={shot} follow={ctx} />,
   iceLance: (shot, ctx) => <IceLanceCastEffect key={shot.key} shot={shot} follow={ctx} />,
   barrier: (shot, ctx) => <BarrierCastEffect key={shot.key} shot={shot} follow={ctx} />,
   poisonDart: (shot, ctx) => <PoisonDartCastEffect key={shot.key} shot={shot} follow={ctx} />,
@@ -186,6 +212,9 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   spiritForm: (shot, ctx) => <SpiritReturnTrailEffect key={shot.key} shot={shot} follow={ctx} />,
   magmaOrbs: (shot, ctx) => <MagmaOrbsCastEffect key={shot.key} shot={shot} follow={ctx} />,
   shrooms: (shot) => <ShroomBurstEffect key={shot.key} shot={shot} />,
+  poisonCloud: (shot) => <PoisonCloudGroundEffect key={shot.key} shot={shot} />,
+  smokeBomb: (shot) => <SmokeBombGroundEffect key={shot.key} shot={shot} />,
+  fireball: (shot) => <FireballBurnGroundEffect key={shot.key} shot={shot} />,
 };
 
 function renderByEffectKind(shot: OneShotEffect, ctx: VfxFollowContext): ReactNode | null {
@@ -198,8 +227,17 @@ function renderByEffectKind(shot: OneShotEffect, ctx: VfxFollowContext): ReactNo
   if (usesHealBeamFx(shot.abilityId)) {
     return <HealBeamEffect key={shot.key} shot={shot} follow={ctx} />;
   }
+  if (usesLifeLeechFx(shot.abilityId)) {
+    return <LifeLeechEffect key={shot.key} shot={shot} follow={ctx} />;
+  }
   if (usesFirewallFx(shot.abilityId)) {
     return <FirewallGroundEffect key={shot.key} shot={shot} />;
+  }
+  if (usesPoisonCloudFx(shot.abilityId)) {
+    return <PoisonCloudGroundEffect key={shot.key} shot={shot} />;
+  }
+  if (usesSmokeBombFx(shot.abilityId)) {
+    return <SmokeBombGroundEffect key={shot.key} shot={shot} />;
   }
   if (usesGrooveFx(shot.abilityId)) {
     return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
@@ -257,6 +295,7 @@ export {
   IceLanceCastEffect,
   IceLanceExplodeEffect,
   FirewallGroundEffect,
+  PoisonCloudGroundEffect,
   PortalBlinkEffect,
   VolcanoRockEffect,
   BloodRushTrailEffect,

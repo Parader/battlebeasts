@@ -14,6 +14,7 @@ import {
   TICK_MS,
   applyMovement,
   applyYaw,
+  HAND_SHIELD_CAST,
   arenaSpawnForSlot,
   arenaSpawnsForTeam,
   arenaStaticColliders,
@@ -26,8 +27,10 @@ import {
   normalizeLoadout,
   outcomeFromMatch,
   rewardRollSalt,
+  STARTER_COLORS,
   type MatchRecapRow,
   type MatchRewardResult,
+  type MatchKind,
   type PlayerInput,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
@@ -35,12 +38,15 @@ import { CombatSystem } from "../combat/CombatSystem.js";
 import { grantPendingLoot } from "../pendingLoot.js";
 import { insertRewardGrant, loadEconomy } from "../persistence.js";
 import { bumpQuest } from "../quests.js";
+import { applyRankedMatchFinish } from "../ranked.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
 export type ContentJoinOptions = AuthJoinOptions & {
   mode?: string;
   modifiers?: string[];
   matchId?: string;
+  matchKind?: MatchKind;
+  seasonId?: string | null;
   team?: "a" | "b" | "";
   role?: "fighter" | "spectator";
   spawnSlot?: number;
@@ -79,6 +85,9 @@ export class ContentRoom extends Room<BaseCityState> {
   private activityBySession = new Map<string, { moveTicks: number; castCount: number }>();
   /** Rewards computed at finishMatch for recap / leave idempotency. */
   private recapRewardsBySession = new Map<string, MatchRewardResult>();
+  private matchKind: MatchKind = "ranked";
+  private seasonId: string | null = null;
+  private rankedAppliedForGrantKey = new Set<string>();
 
   private matchGrantKey(): string {
     return `${this.matchId || this.roomId}:r${this.rematchIndex}`;
@@ -99,8 +108,15 @@ export class ContentRoom extends Room<BaseCityState> {
     this.returnHubOwnerId = options.hubOwnerId ?? options.userId ?? null;
     this.kind = kindFromRoomName(this.roomName);
     this.matchId = options.matchId ?? `m_${Date.now().toString(36)}`;
+    this.matchKind = options.matchKind === "custom" ? "custom" : "ranked";
+    this.seasonId = options.seasonId ?? null;
     this.state.matchMode = this.mode;
-    this.setMetadata({ mode: this.mode, matchId: this.matchId, kind: this.kind });
+    this.setMetadata({
+      mode: this.mode,
+      matchId: this.matchId,
+      kind: this.kind,
+      matchKind: this.matchKind,
+    });
     this.combat = new CombatSystem(this as never, {
       canHurtPlayers: true,
       onPlayerDamaged: (sessionId, damage, attackerId) => {
@@ -161,13 +177,10 @@ export class ContentRoom extends Room<BaseCityState> {
   }
 
   onJoin(client: Client, options: ContentJoinOptions, identity?: VerifiedIdentity) {
-    const verified =
-      identity ??
-      ({
-        userId: client.sessionId,
-        displayName: "Hunter",
-        isGuest: true,
-      } satisfies VerifiedIdentity);
+    if (!identity || identity.isGuest) {
+      throw new Error("Authentication required");
+    }
+    const verified = identity;
 
     const existing = this.state.players.get(client.sessionId);
     if (existing) {
@@ -192,7 +205,7 @@ export class ContentRoom extends Room<BaseCityState> {
     const player = new PlayerState();
     player.id = verified.userId;
     player.displayName = verified.displayName;
-    player.color = options.color ?? "#4ade80";
+    player.color = options.color ?? STARTER_COLORS[0]!;
     player.pattern = normalizeCosmeticPattern((options as { pattern?: string }).pattern);
     player.patternColor = normalizeCosmeticPatternColor(
       (options as { patternColor?: string }).patternColor,
@@ -573,15 +586,72 @@ export class ContentRoom extends Room<BaseCityState> {
           : undefined,
       });
     });
-    this.broadcast("match_recap", {
-      winner,
-      scoreA: this.state.scoreA,
-      scoreB: this.state.scoreB,
-      rows,
+
+    void this.applyRankedAndAugmentRecap(winner, rows).then((augmented) => {
+      this.broadcast("match_recap", {
+        winner,
+        scoreA: this.state.scoreA,
+        scoreB: this.state.scoreB,
+        matchKind: this.matchKind,
+        rows: augmented,
+      });
     });
+
     this.state.matchPhase = "rematch_wait";
     this.state.players.forEach((p) => {
       p.rematchReady = false;
+    });
+  }
+
+  private async applyRankedAndAugmentRecap(
+    winner: "a" | "b" | "draw",
+    rows: MatchRecapRow[],
+  ): Promise<MatchRecapRow[]> {
+    if (this.kind !== "pvp" || this.matchKind !== "ranked") return rows;
+    const grantKey = this.matchGrantKey();
+    if (this.rankedAppliedForGrantKey.has(grantKey)) return rows;
+    this.rankedAppliedForGrantKey.add(grantKey);
+
+    const players: Array<{ userId: string; team: "a" | "b" | "" }> = [];
+    this.state.players.forEach((p) => {
+      if (!p.id || p.role === "spectator") return;
+      players.push({ userId: p.id, team: (p.team as "a" | "b" | "") || "" });
+    });
+
+    const results = await applyRankedMatchFinish({
+      matchId: grantKey,
+      mode: this.mode,
+      kind: "ranked",
+      winner,
+      players,
+    });
+
+    const byUser = new Map(results.map((r) => [r.userId, r]));
+    for (const r of results) {
+      if (r.delta.after.tier !== r.delta.before.tier) {
+        void bumpQuest(r.userId, { type: "ranked_tier_reached", tier: r.delta.after.tier });
+      }
+    }
+    return rows.map((row) => {
+      const player = this.state.players.get(row.sessionId);
+      const ranked = player?.id ? byUser.get(player.id) : undefined;
+      if (!ranked) return row;
+      return {
+        ...row,
+        ranked: {
+          label: ranked.label,
+          mmrDelta: ranked.delta.mmrDelta,
+          lpDelta: ranked.delta.lpDelta,
+          lpAfter: ranked.delta.after.lp,
+          tierBefore: ranked.delta.before.tier,
+          tierAfter: ranked.delta.after.tier,
+          divisionBefore: ranked.delta.before.division,
+          divisionAfter: ranked.delta.after.division,
+          promoted: ranked.delta.promoted,
+          demoted: ranked.delta.demoted,
+          placementRemaining: ranked.delta.after.placementRemaining,
+        },
+      };
     });
   }
 
@@ -655,6 +725,10 @@ export class ContentRoom extends Room<BaseCityState> {
       if (outcome === "win") void bumpQuest(player.id, { type: "pvp_win" });
       if (outcome !== "leave_early") {
         void bumpQuest(player.id, { type: "pvp_match_completed" });
+      }
+      if (this.matchKind === "ranked" && outcome !== "leave_early") {
+        void bumpQuest(player.id, { type: "ranked_match_completed" });
+        if (outcome === "win") void bumpQuest(player.id, { type: "ranked_win" });
       }
     }
     if (reward.essence > 0) {
@@ -825,7 +899,13 @@ export class ContentRoom extends Room<BaseCityState> {
         const next = this.combat.movePlayer(sessionId, from, desired);
         player.x = next.x;
         player.z = next.z;
-        player.yaw = applyYaw(player.yaw, input.yaw);
+        const shieldTurning = this.combat.statuses.has(sessionId, "handShielding");
+        player.yaw = applyYaw(
+          player.yaw,
+          input.yaw,
+          input.dt || dt,
+          shieldTurning ? HAND_SHIELD_CAST.yawTurnRate : undefined,
+        );
         if (input.aimX != null && input.aimZ != null) {
           this.combat.refreshCastAim(sessionId, input.aimX, input.aimZ);
         }

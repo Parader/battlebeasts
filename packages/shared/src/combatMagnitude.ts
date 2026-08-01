@@ -10,7 +10,7 @@ export function combatMag(n: number): number {
 }
 
 /** Default player max HP (pre-talent). */
-export const PLAYER_BASE_MAX_HP = combatMag(100);
+export const PLAYER_BASE_MAX_HP = combatMag(200);
 
 /** Practice dummy max HP. */
 export const PRACTICE_DUMMY_MAX_HP = combatMag(200);

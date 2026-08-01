@@ -14,6 +14,22 @@ export type PatchNote = {
  */
 export const PATCH_NOTES: readonly PatchNote[] = [
   {
+    id: "2026-08-01-smoke-ranked-polish",
+    title: "Smoke Bomb, ranked LP & combat polish",
+    date: "2026-08-01",
+    highlights: [
+      "Smoke Bomb (Q): grey smoke at your feet — Weakened (−20% defense) on enemies; stay cloaked while you remain in the cloud",
+      "Spell armory autosaves on equip (Save loadout removed); hotbar updates immediately",
+      "Ranked: placement matches removed — league points apply from the first ranked finish",
+      "Protection Bubble: more transparent dome; shield cap raised to 300",
+      "Fireball projectile hitbox scales with charge size; cast plays slightly faster",
+      "Balance: Frost Ball CD 7s; Decoy 14s; Counter/Revenge 12s; Gust stays 10s; Bolt damage up; spell unlock costs ×10; starter wallet + 1 talent point",
+      "Talent UI: Points shows spendable only; spent/budget sits beside Trees",
+      "Hub portals: torus “donuts” removed (interact pads remain)",
+      "Ice Lance, admin no-cooldowns toggle, emote shop dances, and assorted VFX/UI fixes",
+    ],
+  },
+  {
     id: "2026-07-29-spirit-shield-rewards",
     title: "Spirit Form, Hand Shield & rewards",
     date: "2026-07-29",

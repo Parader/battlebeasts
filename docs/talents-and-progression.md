@@ -198,6 +198,10 @@ Live stub mods today:
 | Tree UI, buy points, save/reset build | Live (hub) |
 | Catalog talent combat effects | **Not live** until `implemented: true` + bake in `resolveKit` from `talentBuild` |
 | **Opening Salvo (`DES_08`)** | **Live** — initiate-combat damage bonus (2.7 / 5.3 / 8%), **8s** CD (= leave-combat linger), disarmed if hit first |
+| **Protective Instinct (`GUA_08`)** | **Live** — Defense cast → nearest ally (else self) **2% DR per rank** for **3s**, **6s** CD |
+| **Opportunist (`CON_03`)** | **Live** — Damage spells deal **+2 / 4 / 6%** vs enemies under **your** hard CC (stun / root / silence) |
+| **Sprinter (`FLO_01`)** | **Live** — Passive **+2 / 4 / 6%** movement speed |
+| **Overflow (`HAR_01`)** | **Live** — Overheal → shield (**13.3/26.7/40%** convert, **2.7/5.3/8%** max-HP cap, **5s**) |
 | WIP marker in tree UI | Nodes without `implemented: true` show **WIP** + tooltip note |
 | `tough` / `swift` / `focused` | Live via stub `TALENTS` + `resolveKit` |
 | Authored talent prerequisite links | Visual nearest-parent only |
@@ -209,6 +213,35 @@ Live stub mods today:
 - Bonus applies only when **initiating combat** (deal a Damage-tagged ability hit while out of combat).
 - Being **hit first** or attacking while **already in combat** withholds the bonus until **leave combat** (**8s** linger — same as Opening Salvo CD / HP bar combat tint).
 - Kit field: `CombatSessionKit.openingSalvoDmgBonus`; gate: `CombatSystem.applyRawDamage`.
+
+### Protective Instinct rules
+
+- First node in Guardian (`layoutOrder: 0`).
+- Procs when a **Defense**-tagged ability's effect fires (Barrier, Hand Shield, Counter, Revenge, Dash, Protection Bubble, Groove, …).
+- Grants `protectiveInstinct` resist buff: **2 / 4 / 6%** damage reduction for **3s** (rank 1–3).
+- Target: nearest friendly player (cannot-hurt / same team / hub); if none, **self**.
+- Kit field: `CombatSessionKit.protectiveInstinctReducePct`; internal CD **6s**.
+
+### Opportunist rules
+
+- First node in Control (`layoutOrder: 0`).
+- Damaging spells (`Damage` tag, `damage > 0`) deal bonus damage to targets that currently have **your** hard CC.
+- Hard CC = status mechanic `stun` / `root` / `silence` (e.g. stunned, rooted, chained, silenced) with `sourceId` = you. Slows / DoTs do not count.
+- Kit field: `CombatSessionKit.opportunistDmgBonus` (2 / 4 / 6%); gate: `CombatSystem.applyRawDamage`.
+
+### Sprinter rules
+
+- First node in Flow (`layoutOrder: 0`, `FLO_01`).
+- Passive movement speed: **+2 / 4 / 6%** at ranks 1–3.
+- Multiplies into kit `CombatSessionKit.moveSpeedMul` (stacks with stub `swift` and status move mul).
+- No proc / cooldown — always on while invested.
+
+### Overflow rules
+
+- First node in Harmony (`layoutOrder: 0`, `HAR_01`).
+- When a **Healing** spell or **HoT** tick overheals (self or ally), **13.3 / 26.7 / 40%** of the wasted heal becomes `overflowShield` absorb for **5s**.
+- Shield stacks from further overheals, refreshed to 5s, capped at **2.7 / 5.3 / 8%** of the target's max HP.
+- Kit fields: `overflowConvertFrac`, `overflowCapFrac`; gate: `CombatSystem.applyHealAmount` (+ Groove self refund).
 
 ### Marking a talent implemented
 

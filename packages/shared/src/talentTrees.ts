@@ -22,7 +22,7 @@ export const ESSENCE_PER_TALENT_POINT = 40;
  */
 export const ESSENCE_PER_TALENT_REFUND = 10;
 /** Free points for new hunters so the tree is playable immediately. */
-export const STARTER_TALENT_POINTS = 10;
+export const STARTER_TALENT_POINTS = 1;
 
 // Match payouts: see ./rewards (MATCH_REWARDS / computeMatchReward).
 

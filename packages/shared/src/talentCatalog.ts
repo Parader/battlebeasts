@@ -62,6 +62,71 @@ export function openingSalvoBonusPercent(rank: number, maxRank = 3): number {
   return Math.round(raw * 10) / 10;
 }
 
+/** Protective Instinct — first live Guardian foundation. */
+export const PROTECTIVE_INSTINCT_TALENT_ID = "GUA_08";
+/** Damage reduction percent per invested rank. */
+export const PROTECTIVE_INSTINCT_PERCENT_PER_RANK = 2;
+/** Buff duration on the ally (and self when solo). */
+export const PROTECTIVE_INSTINCT_DURATION_MS = 3_000;
+/** Internal cooldown after a proc. */
+export const PROTECTIVE_INSTINCT_COOLDOWN_MS = 6_000;
+
+/** Total DR percent at `rank` (2 / 4 / 6 for ranks 1–3). */
+export function protectiveInstinctReducePercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  return PROTECTIVE_INSTINCT_PERCENT_PER_RANK * r;
+}
+
+/** Opportunist — first live Control foundation. */
+export const OPPORTUNIST_TALENT_ID = "CON_03";
+/** Max damage bonus at full ranks (percent). Rank N → (this * N / maxRank). */
+export const OPPORTUNIST_BONUS_PERCENT_AT_MAX = 6;
+
+/** Bonus percent for invested ranks (2 / 4 / 6). */
+export function opportunistBonusPercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  return (OPPORTUNIST_BONUS_PERCENT_AT_MAX * r) / maxRank;
+}
+
+/** Sprinter — first live Flow foundation. */
+export const SPRINTER_TALENT_ID = "FLO_01";
+/** Movement speed percent per invested rank. */
+export const SPRINTER_PERCENT_PER_RANK = 2;
+
+/** Total move-speed percent at `rank` (2 / 4 / 6 for ranks 1–3). */
+export function sprinterMoveSpeedPercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  return SPRINTER_PERCENT_PER_RANK * r;
+}
+
+/** Overflow — first live Harmony foundation. */
+export const OVERFLOW_TALENT_ID = "HAR_01";
+/** Overheal → shield conversion percent at full ranks. */
+export const OVERFLOW_CONVERT_PERCENT_AT_MAX = 40;
+/** Overflow shield cap as percent of target max HP at full ranks. */
+export const OVERFLOW_CAP_PERCENT_AT_MAX = 8;
+/** Overflow absorb duration. */
+export const OVERFLOW_DURATION_MS = 5_000;
+
+/** Conversion percent at `rank` (13.3 / 26.7 / 40). */
+export function overflowConvertPercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  const raw = (OVERFLOW_CONVERT_PERCENT_AT_MAX * r) / maxRank;
+  return Math.round(raw * 10) / 10;
+}
+
+/** Cap percent of max HP at `rank` (2.7 / 5.3 / 8). */
+export function overflowCapPercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  const raw = (OVERFLOW_CAP_PERCENT_AT_MAX * r) / maxRank;
+  return Math.round(raw * 10) / 10;
+}
+
 export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
   "DES_01": {
     id: "DES_01",
@@ -395,12 +460,15 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     tree: "Guardian",
     tier: 1,
     requiredPoints: 0,
+    layoutOrder: 0,
     name: "Protective Instinct",
     pointCost: 1,
-    affectedTags: ["Defensive", "Ally"] as const,
-    exactEffect: "Using a Defensive-slot spell grants the nearest ally 3% damage reduction for 2s.",
-    balanceNote: "6s cooldown.",
+    affectedTags: ["Defense", "Ally"] as const,
+    exactEffect:
+      "Using a Defense spell grants the nearest ally 6% damage reduction for 3s (6s cooldown). Alone, the buff applies to you.",
+    balanceNote: "2% DR per rank (2 / 4 / 6). Nearest friendly player, else self.",
     status: "catalog",
+    implemented: true,
   },
   "GUA_09": {
     id: "GUA_09",
@@ -575,12 +643,15 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     tree: "Control",
     tier: 1,
     requiredPoints: 0,
+    layoutOrder: 0,
     name: "Opportunist",
     pointCost: 1,
     affectedTags: ["CrowdControl", "Damage"] as const,
-    exactEffect: "Deal +6% damage to enemies currently affected by your CC.",
-    balanceNote: "Does not apply to simple debuffs.",
+    exactEffect:
+      "Damaging spells deal +6% damage to enemies currently stunned, rooted, or silenced by you.",
+    balanceNote: "Hard CC only (stun / root / silence) — not slows or DoTs. Source must be you.",
     status: "catalog",
+    implemented: true,
   },
   "CON_04": {
     id: "CON_04",
@@ -791,12 +862,14 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     tree: "Flow",
     tier: 1,
     requiredPoints: 0,
-    name: "Momentum",
+    layoutOrder: 0,
+    name: "Sprinter",
     pointCost: 1,
     affectedTags: ["Movement"] as const,
-    exactEffect: "After using a Movement-slot spell, gain 10% movement speed for 2s.",
-    balanceNote: "Does not stack.",
+    exactEffect: "Movement speed +6%.",
+    balanceNote: "2% per rank (2 / 4 / 6). Passive — always on.",
     status: "catalog",
+    implemented: true,
   },
   "FLO_02": {
     id: "FLO_02",
@@ -1031,12 +1104,16 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     tree: "Harmony",
     tier: 1,
     requiredPoints: 0,
+    layoutOrder: 0,
     name: "Overflow",
     pointCost: 1,
-    affectedTags: ["Healing", "Shield"] as const,
-    exactEffect: "40% of overhealing becomes a shield lasting 5s, capped at 8% target max health.",
-    balanceNote: "Does not trigger from self-regeneration.",
+    affectedTags: ["Healing", "HealOverTime", "Shield"] as const,
+    exactEffect:
+      "40% of overhealing (including HoTs) becomes a shield lasting 5s, capped at 8% target max health.",
+    balanceNote:
+      "Ranks scale conversion + cap (13.3/26.7/40% convert, 2.7/5.3/8% cap). Spells and HoTs; self and allies.",
     status: "catalog",
+    implemented: true,
   },
   "HAR_02": {
     id: "HAR_02",

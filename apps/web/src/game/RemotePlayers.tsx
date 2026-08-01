@@ -20,12 +20,12 @@ import {
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
 import { syncPlayerCast } from "./syncPlayerCast";
-import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
 import { smashHopOffsetY } from "./smashHop";
 import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndicator";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
+import { PlayerCastChannelBar } from "./PlayerCastChannelBar";
 import { PlayerNameBillboard } from "./PlayerNameBillboard";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
 import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
@@ -66,6 +66,7 @@ function RemotePlayerAvatar({
   relation: AimRelation;
 }) {
   const group = useRef<THREE.Group>(null);
+  const bodyRef = useRef<THREE.Group>(null);
   const aimRef = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
   const lastCastId = useRef("");
@@ -230,7 +231,7 @@ function RemotePlayerAvatar({
     const aim = aimRef.current;
     if (cloaked) {
       renderYaw.current = p.yaw;
-      g.rotation.y = renderYaw.current;
+      if (bodyRef.current) bodyRef.current.rotation.y = renderYaw.current;
       if (aim) aim.rotation.y = 0;
       return;
     }
@@ -258,11 +259,11 @@ function RemotePlayerAvatar({
       );
       vel.current.set(0, 0, 0);
       yawLocked.current = true;
-      g.rotation.y = renderYaw.current;
+      if (bodyRef.current) bodyRef.current.rotation.y = renderYaw.current;
       if (aim) aim.rotation.y = p.yaw - renderYaw.current;
       controller.setMovement({
         worldVelocity: zeroVel.current,
-        facingYaw: renderYaw.current,
+        facingYaw: p.yaw,
         maximumSpeed: MOVE_SPEED,
       });
       controller.update(safeDt);
@@ -296,31 +297,28 @@ function RemotePlayerAvatar({
     const bloodRushAim =
       p.castAbilityId === "bloodRush" &&
       (p.castPhase === "anticipation" || p.castPhase === "cast");
+    const handShieldAim = hasStatusId(p.statuses, "handShielding");
     /** Emote wheel dances: full-body plays, but facing still follows the cursor. */
     const emoteAim = Boolean(activeEmoteId);
+    const speed = Math.hypot(vel.current.x, vel.current.z);
     yawLocked.current =
       controller.getState().fullBody === "override" &&
       !jumpAim &&
       !portalAim &&
       !bloodRushAim &&
+      !handShieldAim &&
       !emoteAim;
-    if (jumpAim || portalAim || bloodRushAim || emoteAim) {
+    if (jumpAim || portalAim || bloodRushAim || handShieldAim || emoteAim) {
       renderYaw.current = p.yaw;
     } else if (!yawLocked.current) {
-      renderYaw.current = dampYawClamped(
-        renderYaw.current,
-        p.yaw,
-        VISUAL_YAW_RESPONSIVENESS,
-        safeDt,
-      );
+      // Mixamo strafe/back require aim-forward root (same as local avatar).
+      renderYaw.current = p.yaw;
     }
 
     g.position.set(renderPos.current.x, smashHopOffsetY(p), renderPos.current.z);
-    g.rotation.y = renderYaw.current;
-    // Parent uses smoothed body yaw; offset so the tip tracks true look yaw.
+    if (bodyRef.current) bodyRef.current.rotation.y = renderYaw.current;
     if (aim) aim.rotation.y = p.yaw - renderYaw.current;
 
-    const speed = Math.hypot(vel.current.x, vel.current.z);
     controller.setStunned(hasStatusId(p.statuses, "stunned"));
     const speedMul = hasStatusId(p.statuses, "surged")
       ? 1.6
@@ -329,31 +327,38 @@ function RemotePlayerAvatar({
         : 1;
     controller.setMovement({
       worldVelocity: speed > 0.12 ? vel.current : zeroVel.current,
-      facingYaw: renderYaw.current,
+      facingYaw: p.yaw,
+      aimYaw: p.yaw,
+      bodyYaw: renderYaw.current,
       maximumSpeed: MOVE_SPEED * speedMul,
+      baseMoveSpeed: MOVE_SPEED,
     });
     controller.update(safeDt);
   });
 
   return (
     <group ref={group}>
-      <primitive object={scene} />
-      <EquippedCosmetics characterRoot={scene} equipped={equipped} />
-      <StatusOrnaments
-        characterRoot={scene}
-        getStatuses={() => {
-          const p = room.state?.players?.get(sessionId) as
-            | { statuses?: Parameters<typeof collectStatusRows>[0] }
-            | undefined;
-          return collectStatusRows(p?.statuses);
-        }}
-      />
-      <PortalChannelAura room={room} sessionId={sessionId} />
-      <BloodRushChargeAura room={room} sessionId={sessionId} />
-      <group ref={aimRef}>
-        <AimIndicator color={aimColor} />
+      <group ref={bodyRef}>
+        <primitive object={scene} />
+        <EquippedCosmetics characterRoot={scene} equipped={equipped} />
+        <StatusOrnaments
+          characterRoot={scene}
+          getStatuses={() => {
+            const p = room.state?.players?.get(sessionId) as
+              | { statuses?: Parameters<typeof collectStatusRows>[0] }
+              | undefined;
+            return collectStatusRows(p?.statuses);
+          }}
+        />
+        <PortalChannelAura room={room} sessionId={sessionId} />
+        <BloodRushChargeAura room={room} sessionId={sessionId} />
+        <group ref={aimRef}>
+          <AimIndicator color={aimColor} />
+        </group>
       </group>
+      {/* HP/name stay on non-rotated root so spin doesn't ghost a second bar. */}
       <PlayerHpBillboard room={room} sessionId={sessionId} />
+      <PlayerCastChannelBar room={room} sessionId={sessionId} />
       <PlayerNameBillboard room={room} sessionId={sessionId} />
     </group>
   );

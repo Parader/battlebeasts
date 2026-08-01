@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BARRIER_CAST, HEAL_BEAM_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, EMOTES } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, POISON_CLOUD_CAST, SMOKE_BOMB_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BOLT_CAST, BARRIER_CAST, HEAL_BEAM_CAST, LIFE_LEECH_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, FIREBALL_CAST, fireballThrowSeekSec, fireballReleaseSec, fireballFollowThroughEndSec, EMOTES } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -14,7 +14,7 @@ export type CharacterAnimationConfig = {
   stunnedIdle?: string;
   /** Upper torso when not casting (usually Idle upper mask). */
   upperBodyIdle?: string;
-  /** Default upper-body cast (1H magic). */
+  /** Default upper-body cast (ChestProxy-baked Mixamo clip). */
   castPrimary: string;
   /** Frost Ball / Standing 1H Magic Attack 02. */
   castFrost?: string;
@@ -22,6 +22,9 @@ export type CharacterAnimationConfig = {
   castBarrier?: string;
   /** Spikes / Standing 1H Magic Attack 03. */
   castSpikes?: string;
+  /** Poison Cloud / Standing Melee Attack Downward. */
+  castPoisonCloud?: string;
+  castFireballCharge?: string;
   /** Frost Mist / Standing 2H Magic Attack 03. */
   castFrostMist?: string;
   /** Heal Beam / Standing 2H Magic Attack 04. */
@@ -87,12 +90,14 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castFrost: "Standing 1H Magic Attack 02",
   castBarrier: "Standing 1H Cast Spell 01",
   castSpikes: "Standing 1H Magic Attack 03",
+  castPoisonCloud: "Standing Melee Attack Downward",
+  castFireballCharge: "Casting Spell",
   castFrostMist: "Standing 2H Magic Attack 03",
   /** Standing 2H Magic Attack 04 (was historically exported as magic_2h). */
   castHealBeam: "Standing 2H Magic Attack 04",
   castFirewall: "Standing 2H Magic Area Attack 01",
-  /** Prefer 02 when present in the GLB; controller falls back to Area Attack 01. */
-  castProtectionBubble: "Standing 2H Magic Area Attack 02",
+  /** GLB ships Area Attack 01 only (02 not exported). */
+  castProtectionBubble: "Standing 2H Magic Area Attack 01",
   castMagmaOrbs: "Standing 2H Magic Attack 05",
   castPoisonDart: "Right Hook",
   castIceLance: "Baseball Pitching",
@@ -102,7 +107,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castBlockEnd: "Standing Block End",
   castPraying: "praying",
   castAoE: "magic_aoe",
-  castMelee: "attack",
+  castMelee: "Standing Melee Attack Downward",
   heavyCast: "Standing 2H Magic Attack 04",
   dash: "dive",
   jumpAttack: "Jump Attack",
@@ -113,7 +118,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   locomotionBlendResponsiveness: 12,
   idleBlendResponsiveness: 10,
   locoTimeScaleMin: 0.75,
-  locoTimeScaleMax: 1.35,
+  locoTimeScaleMax: 2,
 };
 
 /** @deprecated Legacy Mixamo `/character1.glb` clip names. */
@@ -132,10 +137,30 @@ export const character1AnimationConfig: CharacterAnimationConfig = {
   locomotionBlendResponsiveness: 12,
   idleBlendResponsiveness: 10,
   locoTimeScaleMin: 0.75,
-  locoTimeScaleMax: 1.35,
+  locoTimeScaleMax: 2,
 };
 
 /** Default = hero. */
+
+/**
+ * Base Mixamo action names that need ChestProxy bake for hero upper casts.
+ * Keep in sync with tools/spell_cast_bake_actions.json (no *_aim suffix).
+ */
+export const HERO_CHEST_PROXY_BAKE_ACTIONS = [
+  "magic_1h",
+  "Standing 1H Magic Attack 02",
+  "Standing 1H Cast Spell 01",
+  "Standing 1H Magic Attack 03",
+  "Standing 2H Magic Attack 03",
+  "Standing 2H Magic Attack 04",
+  "Standing 2H Magic Area Attack 01",
+  "Standing 2H Magic Attack 05",
+  "Right Hook",
+  "Baseball Pitching",
+  "magic_aoe",
+  "Standing Melee Attack Downward",
+] as const;
+
 export const defaultCharacterAnimationConfig = heroAnimationConfig;
 
 /**
@@ -209,6 +234,15 @@ export const abilityAnimationBindings: Record<
      * Swap to this full-body clip when impact begins (Blood Rush crouch → sprint).
      * Logical key on CharacterAnimationConfig or raw clip name.
      */
+    /** Swap upper cast when castComboHit >= 2 (legacy two-clip release). */
+    impactUpper?: keyof CharacterAnimationConfig;
+    upperLoop?: boolean;
+    impactUpperTimeScale?: number;
+    /**
+     * Keep the same upper clip; when castComboHit reaches this value, release
+     * upperHoldAtSec and let the throw frames play (Fireball Casting Spell).
+     */
+    releaseHoldOnComboHit?: number;
     impactFullBody?: keyof CharacterAnimationConfig | string;
     /** Playback length for impactFullBody (seconds). */
     impactFullBodyAnimDurationSec?: number;
@@ -223,11 +257,41 @@ export const abilityAnimationBindings: Record<
     recoveryFullBody?: keyof CharacterAnimationConfig | string;
     /** Playback length for recoveryFullBody (seconds). */
     recoveryFullBodyAnimDurationSec?: number;
+    /**
+     * On recovery, seek the active upper cast forward to this time (seconds)
+     * if earlier — Fireball early throw jumps to the casting frames (~143).
+     */
+    recoveryUpperSeekSec?: number;
+    /** Clip time (sec) when the projectile leaves — start accelerating after. */
+    recoveryUpperReleaseSec?: number;
+    /** Mixer timeScale after release (Fireball follow-through). */
+    recoveryUpperTimeScale?: number;
+    /** Cancel upper cast once clip time reaches this (skip long end settle). */
+    recoveryUpperEndSec?: number;
   }
 > = {
-  bolt: { upper: "castPrimary" },
+  bolt: {
+    upper: "castPrimary",
+    upperTimeScale: BOLT_CAST.playbackRate,
+  },
   grasp: { upper: "castPrimary" },
   chainJump: { upper: "castPrimary" },
+  fireball: {
+    upper: "castFireballCharge",
+    upperTimeScale: FIREBALL_CAST.playbackRate,
+    recoveryUpperSeekSec: fireballThrowSeekSec(),
+    recoveryUpperReleaseSec: fireballReleaseSec(),
+    recoveryUpperTimeScale: FIREBALL_CAST.followThroughTimeScale,
+    recoveryUpperEndSec: fireballFollowThroughEndSec(),
+  },
+  poisonCloud: {
+    upper: "castPoisonCloud",
+    upperTimeScale: POISON_CLOUD_CAST.playbackRate,
+  },
+  smokeBomb: {
+    upper: "castPoisonCloud",
+    upperTimeScale: SMOKE_BOMB_CAST.playbackRate,
+  },
   spikes: {
     upper: "castSpikes",
     upperAnimDurationSec: SPIKES_CAST.clipDurationSec / SPIKES_CAST.playbackRate,
@@ -236,6 +300,11 @@ export const abilityAnimationBindings: Record<
     upper: "castFrostMist",
     upperTimeScale: FROST_MIST_CAST.playbackRate,
     upperHoldAtSec: FROST_MIST_CAST.holdFrame / FROST_MIST_CAST.fps,
+  },
+  lifeLeech: {
+    upper: "castFrostMist",
+    upperTimeScale: LIFE_LEECH_CAST.playbackRate,
+    upperHoldAtSec: LIFE_LEECH_CAST.holdFrame / LIFE_LEECH_CAST.fps,
   },
   healBeam: {
     upper: "castHealBeam",

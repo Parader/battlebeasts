@@ -36,3 +36,14 @@ Next to the exe (or extract folder), edit `config.json`:
 ```
 
 Your friend runs the portable app; you run `pnpm --filter @battlebeasts/game-server dev` (firewall allow port 2567). Assets stay local — only gameplay traffic hits the network.
+
+## Google sign-in (desktop)
+
+Desktop Google OAuth opens the **system browser**. After Google finishes, the browser hits
+`http://127.0.0.1:3847/auth/callback`, then focuses BattleBeasts. The packaged UI is served from
+`http://127.0.0.1:3850` (not `file://`) so Supabase PKCE session storage works.
+
+1. In Supabase → Authentication → URL Configuration, add redirect URL (required):
+   `http://127.0.0.1:3847/auth/callback`
+2. Ensure the Google OAuth provider is enabled for the same Supabase project used by `apps/web/.env`.
+3. After Google sign-in, allow opening BattleBeasts — the waiting state should clear automatically.

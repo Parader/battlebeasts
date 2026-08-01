@@ -19,6 +19,7 @@ import {
   SPELL_SLOTS,
   STARTER_COLORS,
   STARTER_TALENT_POINTS,
+  STARTER_WALLET,
   TALENTS,
   TALENT_POINT_BUDGET,
   TALENT_TREE_IDS,
@@ -27,6 +28,7 @@ import {
   addCoins,
   applyMovement,
   applyYaw,
+  HAND_SHIELD_CAST,
   canAffordShopCost,
   canEquipInSlot,
   clampBuildToOwned,
@@ -77,19 +79,22 @@ import {
   type Wallet,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
-import { dequeuePvpParty, dequeuePvpSession, enqueuePvpParty, type PvpPartyMember } from "../matchmaking/pvpQueue.js";
+import { dequeuePvpParty, dequeuePvpSession, enqueuePvpParty, resolvePartyAvgMmr, startDirectPvpMatch, type PvpPartyMember } from "../matchmaking/pvpQueue.js";
 import {
   HubPartyRegistry,
   defaultSeatFor,
   filterModesForHubSize,
+  isFullPremadeLobby,
   partyFitsMode,
   toPartySnapshot,
   type HubParty,
 } from "../matchmaking/hubParty.js";
+import { getActiveSeason, getHubRankedState, getRankedLeaderboard } from "../ranked.js";
 import {
   claimPendingRewardGrants,
   insertRewardGrant,
   loadEconomy,
+  loadIntroCompleted,
   saveActiveLoadoutSlot,
   saveInventory,
   saveLoadout,
@@ -101,6 +106,8 @@ import {
   saveProfileAppearance,
   saveTalentBuild,
   saveTalents,
+  setIntroCompleted,
+  softResetCharacter,
   type LoadoutPresetRow,
 } from "../persistence.js";
 import { takePendingLoot } from "../pendingLoot.js";
@@ -327,6 +334,26 @@ export class BaseCityRoom extends Room<BaseCityState> {
       void this.handleHubSpawnChest(client, message?.quality);
     });
 
+    this.onMessage("hub_intro_complete", (client) => {
+      void this.handleHubIntroComplete(client);
+    });
+
+    this.onMessage("hub_intro_begin", (client) => {
+      this.handleHubIntroBegin(client);
+    });
+
+    this.onMessage("hub_replay_intro", (client) => {
+      void this.handleHubReplayIntro(client);
+    });
+
+    this.onMessage("hub_soft_reset_character", (client) => {
+      void this.handleHubSoftResetCharacter(client);
+    });
+
+    this.onMessage("hub_admin_no_cooldown", (client, message: { enabled?: boolean }) => {
+      this.handleHubAdminNoCooldown(client, message?.enabled);
+    });
+
     this.onMessage("hub_friend_code_redeemed", (client) => {
       void this.handleFriendCodeRedeemed(client);
     });
@@ -358,8 +385,16 @@ export class BaseCityRoom extends Room<BaseCityState> {
       this.handlePartySetModes(client, message?.modes ?? []);
     });
 
-    this.onMessage("party_lock", (client) => {
-      this.handlePartyLock(client);
+    this.onMessage("party_lock", (client, message?: { matchKind?: "ranked" | "unranked" }) => {
+      void this.handlePartyLock(client, message?.matchKind ?? "ranked");
+    });
+
+    this.onMessage("hub_ranked_request", (client) => {
+      void this.handleRankedRequest(client);
+    });
+
+    this.onMessage("hub_ranked_leaderboard", (client) => {
+      void this.handleRankedLeaderboard(client);
     });
 
     this.onMessage("party_leave", (client) => {
@@ -387,13 +422,10 @@ export class BaseCityRoom extends Room<BaseCityState> {
   }
 
   async onJoin(client: Client, options: AuthJoinOptions, identity?: VerifiedIdentity) {
-    const verified =
-      identity ??
-      ({
-        userId: client.sessionId,
-        displayName: "Hunter",
-        isGuest: true,
-      } satisfies VerifiedIdentity);
+    if (!identity || identity.isGuest) {
+      throw new Error("Authentication required");
+    }
+    const verified = identity;
 
     // Match return / soft-leave races can leave a prior seat for the same hunter.
     this.evictSessionsForUser(verified.userId, client.sessionId);
@@ -422,12 +454,12 @@ export class BaseCityRoom extends Room<BaseCityState> {
         },
       ]);
       this.activeLoadoutSlotBySession.set(client.sessionId, 0);
-      const starter = normalizeCoins({ copper: 75, silver: 2, gold: 0 });
+      const starter = normalizeCoins(STARTER_WALLET);
       player.copper = starter.copper;
       player.silver = starter.silver;
       player.gold = starter.gold;
-      player.essence = 12;
-      player.rubies = 0;
+      player.essence = STARTER_WALLET.essence;
+      player.rubies = STARTER_WALLET.rubies;
       player.color =
         verified.color && ownsColor(unlocks.colors, verified.color)
           ? verified.color
@@ -509,17 +541,24 @@ export class BaseCityRoom extends Room<BaseCityState> {
 
     const visiting = this.ownerId && verified.userId !== this.ownerId;
     client.send("toast", {
-      message: verified.isGuest
-        ? "Welcome (guest) — try abilities on the practice dummy"
-        : visiting
-          ? `Visiting hub`
-          : `Welcome home, ${verified.displayName}`,
+      message: visiting
+        ? `Visiting hub`
+        : `Welcome home, ${verified.displayName}`,
     });
     this.sendInventory(client, player);
     this.broadcastHubRoster();
     if (isAdminEmail(verified.email)) {
       client.send("hub_you_are_admin", { admin: true });
     }
+
+    // Hub owner intro flag — visitors never get the cinematic.
+    if (!visiting) {
+      const introCompleted = await loadIntroCompleted(verified.userId);
+      client.send("hub_intro_status", { completed: introCompleted });
+    } else {
+      client.send("hub_intro_status", { completed: true });
+    }
+
     // Catch soft-leave ghosts that survived eviction (collision without a model).
     this.purgeDuplicateUserSeats(client.sessionId);
     this.tryJoinPendingParty(client);
@@ -758,6 +797,13 @@ export class BaseCityRoom extends Room<BaseCityState> {
     abilityIds: string[],
   ): string[] | null {
     const unlocks = this.unlocksOf(client.sessionId);
+    const unknown = abilityIds.filter((id) => Boolean(id) && !(id in ABILITIES));
+    if (unknown.length > 0) {
+      client.send("toast", {
+        message: `Unknown spell(s): ${unknown.join(", ")} — restart the game server if you just added them`,
+      });
+      return null;
+    }
     const cleaned = abilityIds.filter((id) => id in ABILITIES);
     if (cleaned.length !== LOADOUT_SIZE) {
       client.send("toast", { message: `Assign all ${LOADOUT_SIZE} slots` });
@@ -770,12 +816,14 @@ export class BaseCityRoom extends Room<BaseCityState> {
     for (let i = 0; i < LOADOUT_SIZE; i++) {
       const id = cleaned[i]!;
       if (!ownsAbility(unlocks.abilities, id)) {
-        client.send("toast", { message: `Ability not unlocked: ${id}` });
+        client.send("toast", { message: `Ability not unlocked: ${ABILITIES[id]?.name ?? id}` });
         return null;
       }
       const slotId = SPELL_SLOTS[i]!.id;
       if (!canEquipInSlot(id, slotId)) {
-        client.send("toast", { message: `${id} cannot go in slot ${slotId}` });
+        client.send("toast", {
+          message: `${ABILITIES[id]?.name ?? id} cannot go in ${SPELL_SLOTS[i]!.label}`,
+        });
         return null;
       }
     }
@@ -1283,9 +1331,12 @@ export class BaseCityRoom extends Room<BaseCityState> {
     this.applyCombatKit(client.sessionId, player);
 
     const talentBuild = this.talentBuildBySession.get(client.sessionId) ?? {};
-    await this.persistActiveLoadoutPreset(client, cleaned, talentBuild);
+    try {
+      await this.persistActiveLoadoutPreset(client, cleaned, talentBuild);
+    } catch (err) {
+      console.warn("[loadout] persist failed:", err);
+    }
     this.sendInventory(client, player);
-    client.send("toast", { message: "Loadout saved" });
   }
 
   private async handleSaveLoadoutPreset(
@@ -1493,15 +1544,16 @@ export class BaseCityRoom extends Room<BaseCityState> {
       client.send("hub_quests_state", { quests: [], chests: [] });
       return;
     }
-    const [progress, chests] = await Promise.all([
+    const [progress, chests, season] = await Promise.all([
       listQuestProgress(identity.userId),
       listClosedChests(identity.userId),
+      getActiveSeason(),
     ]);
     const progressMap = new Map(
       progress.map((p) => [`${p.quest_id}:${p.period_key}`, p] as const),
     );
     const quests = QUEST_CATALOG.map((q) => {
-      const period = questPeriodKey(q);
+      const period = questPeriodKey(q, new Date(), season?.id ?? null);
       const row = progressMap.get(`${q.id}:${period}`);
       return {
         id: q.id,
@@ -1547,6 +1599,21 @@ export class BaseCityRoom extends Room<BaseCityState> {
       rubies: player.rubies,
     });
 
+    const essenceGain = result.essence ?? 0;
+    const copperGain = result.copper ?? 0;
+    if (essenceGain > 0) {
+      await bumpQuest(identity.userId, {
+        type: "essence_earned",
+        amount: essenceGain,
+      });
+    }
+    if (copperGain > 0) {
+      await bumpQuest(identity.userId, {
+        type: "copper_earned",
+        amount: copperGain,
+      });
+    }
+
     if (result.grants?.length) {
       const next = { ...unlocks };
       next.cosmetics = [...unlocks.cosmetics];
@@ -1588,7 +1655,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
       lines: result.lines ?? [],
       grants: result.grants ?? [],
     });
-    void this.handleHubQuests(client);
+    await this.handleHubQuests(client);
   }
 
   private async handleHubSpawnChest(client: Client, qualityRaw: string | undefined) {
@@ -1612,6 +1679,107 @@ export class BaseCityRoom extends Room<BaseCityState> {
       return;
     }
     client.send("toast", { message: `Spawned ${quality} chest` });
+    void this.handleHubQuests(client);
+  }
+
+  /** Place hub owner at the House stand facing the village for the intro. */
+  private handleHubIntroBegin(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    const player = this.state.players.get(client.sessionId);
+    if (!identity || !player) return;
+    if (this.ownerId && identity.userId !== this.ownerId) return;
+
+    const house = HUB_STANDS.find((s) => s.kind === "customization") ?? HUB_STANDS[0];
+    if (!house) return;
+    const portal = HUB_PORTALS.find((p) => p.kind === "pvp") ?? HUB_PORTALS[0];
+    const lookX = portal?.x ?? HUB_SPAWN.x;
+    const lookZ = portal?.z ?? HUB_SPAWN.z;
+    player.x = house.x;
+    player.z = house.z;
+    // Face portal, then ~25° left so the House reads behind the clone.
+    player.yaw = Math.atan2(lookX - house.x, lookZ - house.z) + (-25 * Math.PI) / 180;
+    this.spawnBySession.set(client.sessionId, {
+      x: player.x,
+      z: player.z,
+      yaw: player.yaw,
+    });
+    client.send("hub_intro_posed", { x: player.x, z: player.z, yaw: player.yaw });
+  }
+
+  private async handleHubIntroComplete(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest) return;
+    if (this.ownerId && identity.userId !== this.ownerId) return;
+    await setIntroCompleted(identity.userId, true);
+    client.send("hub_intro_status", { completed: true });
+  }
+
+  private async handleHubReplayIntro(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest || !isAdminEmail(identity.email)) {
+      client.send("toast", { message: "Not authorized" });
+      return;
+    }
+    await setIntroCompleted(identity.userId, false);
+    client.send("hub_intro_status", { completed: false, replay: true });
+    client.send("toast", { message: "Intro ready to replay" });
+  }
+
+  private handleHubAdminNoCooldown(client: Client, enabledRaw: boolean | undefined) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest || !isAdminEmail(identity.email)) {
+      client.send("toast", { message: "Not authorized" });
+      return;
+    }
+    const enabled = Boolean(enabledRaw);
+    const active = this.combat.setNoCooldowns(client.sessionId, enabled);
+    client.send("hub_admin_no_cooldown", { enabled: active });
+    client.send("toast", {
+      message: active ? "Cooldowns disabled" : "Cooldowns restored",
+    });
+  }
+
+  private async handleHubSoftResetCharacter(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest || !isAdminEmail(identity.email)) {
+      client.send("toast", { message: "Not authorized" });
+      return;
+    }
+    const result = await softResetCharacter(identity.userId);
+    if (!result.ok || !result.economy) {
+      client.send("toast", { message: result.error ?? "Reset failed" });
+      return;
+    }
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const eco = result.economy;
+    player.copper = eco.copper;
+    player.silver = eco.silver;
+    player.gold = eco.gold;
+    player.essence = eco.essence;
+    player.rubies = eco.rubies;
+    player.loadout = normalizeLoadout(eco.abilityIds).join(",");
+    player.talents = "";
+    this.talentPointsBySession.set(client.sessionId, eco.talentPoints);
+    this.talentBuildBySession.set(client.sessionId, eco.talentBuild);
+    this.unlocksBySession.set(client.sessionId, eco.unlocks);
+    this.loadoutPresetsBySession.set(client.sessionId, eco.loadoutPresets);
+    this.activeLoadoutSlotBySession.set(client.sessionId, eco.activeLoadoutSlot);
+    this.applyCosmeticsEquipped(player, {});
+    player.color =
+      eco.color && ownsColor(eco.unlocks.colors, eco.color)
+        ? eco.color
+        : STARTER_COLORS[0]!;
+    player.pattern = ownsPattern(eco.unlocks.patterns, eco.pattern ?? "")
+      ? (eco.pattern as string)
+      : DEFAULT_COSMETIC_PATTERN;
+    player.patternColor = ownsPatternColor(eco.unlocks.patternColors, eco.patternColor ?? "")
+      ? (eco.patternColor as string)
+      : DEFAULT_COSMETIC_PATTERN_COLOR;
+    this.applyCombatKit(client.sessionId, player);
+    this.sendInventory(client, player);
+    client.send("hub_intro_status", { completed: false, replay: true });
+    client.send("toast", { message: "Character soft-reset — intro will replay" });
     void this.handleHubQuests(client);
   }
 
@@ -2052,7 +2220,22 @@ export class BaseCityRoom extends Room<BaseCityState> {
     this.broadcastToParty(party, "toast", { message: `Modes updated: ${validModes.join(", ")}` });
   }
 
-  private handlePartyLock(client: Client) {
+  private async handleRankedRequest(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest) {
+      client.send("hub_ranked_state", { season: null, rating: null, label: null });
+      return;
+    }
+    const state = await getHubRankedState(identity.userId);
+    client.send("hub_ranked_state", state ?? { season: null, rating: null, label: null });
+  }
+
+  private async handleRankedLeaderboard(client: Client) {
+    const rows = await getRankedLeaderboard(100);
+    client.send("hub_ranked_leaderboard", { rows });
+  }
+
+  private async handlePartyLock(client: Client, matchKind: "ranked" | "unranked") {
     const party = this.parties.getBySession(client.sessionId);
     if (!party || party.leaderSessionId !== client.sessionId) {
       client.send("toast", { message: "Only the party leader can lock the queue" });
@@ -2079,7 +2262,6 @@ export class BaseCityRoom extends Room<BaseCityState> {
         client: memberClient,
         userId: member.userId,
         seat: member.seat,
-        // Party stays together in this lobby; solo always returns home after the match.
         hubOwnerId:
           party.members.size > 1 ? (partyLobbyHub ?? member.userId) : member.userId,
       });
@@ -2087,8 +2269,41 @@ export class BaseCityRoom extends Room<BaseCityState> {
     if (members.length === 0) return;
 
     party.modes = feasibleModes;
+
+    const primaryMode = feasibleModes[0]!;
+    const fullPremade = feasibleModes.some((m) => isFullPremadeLobby(party, m));
+    const fullMode = feasibleModes.find((m) => isFullPremadeLobby(party, m)) ?? primaryMode;
+
+    if (matchKind === "unranked" && !fullPremade) {
+      client.send("toast", { message: "Unranked requires a full lobby (both teams filled)" });
+      return;
+    }
+
+    const fighterIds = members.filter((m) => m.seat !== "spectator").map((m) => m.userId);
+    const avgMmr = await resolvePartyAvgMmr(fighterIds);
+
+    if (fullPremade) {
+      party.queued = true;
+      this.broadcastPartyUpdate(party);
+      try {
+        await startDirectPvpMatch(
+          fullMode as "arena_1v1" | "arena_2v2" | "arena_3v3" | "battleground",
+          { partyId: party.partyId, modes: [fullMode], members, avgMmr },
+          matchKind === "unranked" ? "custom" : "ranked",
+        );
+      } catch (err) {
+        console.error("[party] direct start failed", err);
+        party.queued = false;
+        this.broadcastPartyUpdate(party);
+        client.send("toast", { message: "Could not start match" });
+      }
+      return;
+    }
+
+    // Partial lobby → ranked queue only
     party.queued = true;
-    enqueuePvpParty({ partyId: party.partyId, modes: feasibleModes, members });
+    enqueuePvpParty({ partyId: party.partyId, modes: feasibleModes, members, avgMmr });
+    this.broadcastPartyUpdate(party);
   }
 
   private handlePartyLeave(client: Client) {
@@ -2141,7 +2356,13 @@ export class BaseCityRoom extends Room<BaseCityState> {
         const next = this.combat.movePlayer(sessionId, from, desired);
         player.x = next.x;
         player.z = next.z;
-        player.yaw = applyYaw(player.yaw, input.yaw);
+        const shieldTurning = this.combat.statuses.has(sessionId, "handShielding");
+        player.yaw = applyYaw(
+          player.yaw,
+          input.yaw,
+          input.dt || dt,
+          shieldTurning ? HAND_SHIELD_CAST.yawTurnRate : undefined,
+        );
 
         if (input.aimX != null && input.aimZ != null) {
           this.combat.refreshCastAim(sessionId, input.aimX, input.aimZ);

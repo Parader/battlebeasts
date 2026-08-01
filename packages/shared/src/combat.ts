@@ -93,6 +93,11 @@ export type ProjectileSim = {
    * without being treated as an exterior hit.
    */
   passBubbleIds: Set<string>;
+  /**
+   * Seconds remaining before wall/body collisions arm (spawn grace).
+   * Movement still applies.
+   */
+  armingIn: number;
 };
 
 export type CombatFxEvent = {
@@ -327,6 +332,7 @@ export function createProjectile(
     explodeDamage: det?.damage ?? 0,
     explodeRadius: det?.radius ?? 0,
     passBubbleIds: new Set(),
+    armingIn: 0,
   };
 }
 
@@ -810,6 +816,18 @@ export function tickProjectiles(
     p.x += p.vx * dt;
     p.z += p.vz * dt;
     p.life -= dt;
+
+    if (p.armingIn > 0) {
+      p.armingIn = Math.max(0, p.armingIn - dt);
+      if (p.life <= 0) {
+        if (canDetonate) {
+          armDetonate(p, fuseSec, "grounded", null);
+        } else {
+          removedIds.push(p.id);
+        }
+      }
+      continue;
+    }
 
     const hitWall =
       walls.length > 0 &&

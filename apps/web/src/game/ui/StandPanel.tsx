@@ -44,6 +44,7 @@ import { AppearancePreview } from "./AppearancePreview";
 import { GameIcon } from "./GameIcon";
 import { GEAR_SLOT_ICONS } from "./gameIcons";
 import { GamePanelShell } from "./GamePanelShell";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { appearanceFromPlayer, MerchantPanel } from "./MerchantShop";
 import { WalletDisplay } from "./CoinDisplay";
 import { TalentTreePanel } from "./TalentTreePanel";
@@ -80,6 +81,8 @@ type Props = {
   room: Room | null;
   economy: Economy;
   localSessionId?: string | null;
+  /** Optimistic hotbar update when a spell is equipped (autosave). */
+  onLoadoutChange?: (abilityIds: string[]) => void;
 };
 
 const TITLES: Record<Kind, string> = {
@@ -531,7 +534,7 @@ function AppearanceEditor({
   );
 }
 
-export function StandPanel({ kind, onClose, room, economy, localSessionId }: Props) {
+export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoadoutChange }: Props) {
   const unlocks = economy.unlocks ?? emptyPlayerUnlocks();
   const wallet = {
     copper: economy.copper,
@@ -544,6 +547,12 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
   const [draftLoadout, setDraftLoadout] = useState(() => normalizeLoadout(economy.loadout));
   const [selectedSlot, setSelectedSlot] = useState(() => loadStandMenuMemory().spellSlot);
   const [hideOwnedShopItems, setHideOwnedShopItems] = useState(false);
+  const [talentHeaderActions, setTalentHeaderActions] = useState<ReactNode>(null);
+  const [unlockConfirm, setUnlockConfirm] = useState<{
+    abilityId: string;
+    name: string;
+    cost: number;
+  } | null>(null);
 
   const serverLoadoutKey = normalizeLoadout(economy.loadout).join(",");
   useEffect(() => {
@@ -563,11 +572,13 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
     const slot = SPELL_SLOTS[selectedSlot];
     if (!slot || !canEquipInSlot(abilityId, slot.id)) return;
     if (!ownsAbility(unlocks.abilities, abilityId)) return;
-    setDraftLoadout((prev) => {
-      const next = [...prev];
-      next[selectedSlot] = abilityId;
-      return normalizeLoadout(next);
-    });
+    if (draftLoadout[selectedSlot] === abilityId) return;
+    const next = [...draftLoadout];
+    next[selectedSlot] = abilityId;
+    const cleaned = normalizeLoadout(next);
+    setDraftLoadout(cleaned);
+    onLoadoutChange?.(cleaned);
+    room?.send("set_loadout", { abilityIds: cleaned });
   };
 
   const selectPreset = (slotIndex: number) => {
@@ -575,9 +586,6 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
     const preset = economy.loadoutPresets.find((p) => p.slotIndex === slotIndex);
     if (preset) setDraftLoadout(normalizeLoadout(preset.abilityIds));
   };
-
-  const loadoutReady =
-    draftLoadout.length === LOADOUT_SIZE && new Set(draftLoadout).size === LOADOUT_SIZE;
 
   let body: ReactNode = null;
   let footer: ReactNode = null;
@@ -662,6 +670,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
                 </h3>
                 <p className="bb-meta mt-1">
                   {selectedSlotDef?.hint} · {slotPool.length} available — click to equip
+                  (autosaves)
                 </p>
               </div>
             </header>
@@ -696,7 +705,9 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
                             type="button"
                             className="bb-btn-brass !min-w-[7rem] !px-3 !py-1.5 !text-xs disabled:opacity-40"
                             disabled={!afford}
-                            onClick={() => room?.send("unlock_ability", { abilityId: a.id })}
+                            onClick={() =>
+                              setUnlockConfirm({ abilityId: a.id, name: a.name, cost })
+                            }
                           >
                             Unlock · {cost} essence
                           </button>
@@ -747,20 +758,6 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
         </div>
       </>
     );
-    footer = (
-      <button
-        type="button"
-        className="bb-btn-brass min-w-[12rem] disabled:opacity-40"
-        disabled={!loadoutReady}
-        onClick={() => {
-          if (!loadoutReady) return;
-          room?.send("set_loadout", { abilityIds: draftLoadout });
-          onClose();
-        }}
-      >
-        Save loadout
-      </button>
-    );
   } else if (kind === "talent") {
     body = (
       <TalentTreePanel
@@ -772,6 +769,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
         activeLoadoutSlot={economy.activeLoadoutSlot}
         loadoutSlotCount={unlocks.loadoutSlotCount}
         onSelectPreset={selectPreset}
+        onHeaderActions={setTalentHeaderActions}
       />
     );
   } else if (kind === "shop") {
@@ -792,10 +790,31 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
   }
 
   return (
-    <GamePanelShell
+    <>
+      <ConfirmDialog
+        open={Boolean(unlockConfirm)}
+        title="Unlock spell?"
+        message={
+          unlockConfirm ? (
+            <>
+              Unlock <strong>{unlockConfirm.name}</strong> for{" "}
+              <strong>{unlockConfirm.cost} essence</strong>?
+            </>
+          ) : null
+        }
+        confirmLabel={unlockConfirm ? `Unlock (−${unlockConfirm.cost})` : "Unlock"}
+        onConfirm={() => {
+          if (!unlockConfirm) return;
+          room?.send("unlock_ability", { abilityId: unlockConfirm.abilityId });
+          setUnlockConfirm(null);
+        }}
+        onCancel={() => setUnlockConfirm(null)}
+      />
+      <GamePanelShell
       title={TITLES[kind]}
       subtitle={<WalletDisplay wallet={economy} />}
       onClose={onClose}
+      titleAside={kind === "talent" ? talentHeaderActions : undefined}
       headerActions={
         kind === "shop" ? (
           <label className="bb-shop__hide-owned">
@@ -831,5 +850,6 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId }: Pro
     >
       {body}
     </GamePanelShell>
+    </>
   );
 }

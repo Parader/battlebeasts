@@ -1,5 +1,12 @@
 import { MapSchema, Schema, type } from "@colyseus/schema";
-import { DEFAULT_LOADOUT, PLAYER_BASE_MAX_HP, PRACTICE_DUMMY_MAX_HP } from "@battlebeasts/shared";
+import {
+  DEFAULT_COSMETIC_PATTERN,
+  DEFAULT_COSMETIC_PATTERN_COLOR,
+  DEFAULT_LOADOUT,
+  PLAYER_BASE_MAX_HP,
+  PRACTICE_DUMMY_MAX_HP,
+  STARTER_COLORS,
+} from "@battlebeasts/shared";
 
 export class StatusInstanceState extends Schema {
   /** Same as statusId for map key stability (one row per status id). */
@@ -19,11 +26,11 @@ export class PlayerState extends Schema {
   @type("number") yaw = 0;
   @type("number") hp = PLAYER_BASE_MAX_HP;
   @type("number") maxHp = PLAYER_BASE_MAX_HP;
-  @type("string") color = "#4ade80";
+  @type("string") color = STARTER_COLORS[0];
   /** Creature hide pattern id (`plain` | `scales` | …). */
-  @type("string") pattern = "plain";
+  @type("string") pattern = DEFAULT_COSMETIC_PATTERN;
   /** Ink color for pattern markings. */
-  @type("string") patternColor = "#f8fafc";
+  @type("string") patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
   /** Equipped wearable cosmetics (catalog id, or "" = none). */
   @type("string") cosmeticHat = "";
   @type("string") cosmeticShoulders = "";
@@ -115,9 +122,9 @@ export class DecoyState extends Schema {
   @type("number") yaw = 0;
   @type("number") vx = 0;
   @type("number") vz = 0;
-  @type("string") color = "#4ade80";
-  @type("string") pattern = "plain";
-  @type("string") patternColor = "#f8fafc";
+  @type("string") color = STARTER_COLORS[0];
+  @type("string") pattern = DEFAULT_COSMETIC_PATTERN;
+  @type("string") patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
   /** Server epoch ms when this decoy despawns. */
   @type("number") expiresAt = 0;
 }
@@ -129,9 +136,9 @@ export class SpiritHuskState extends Schema {
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") yaw = 0;
-  @type("string") color = "#4ade80";
-  @type("string") pattern = "plain";
-  @type("string") patternColor = "#f8fafc";
+  @type("string") color = STARTER_COLORS[0];
+  @type("string") pattern = DEFAULT_COSMETIC_PATTERN;
+  @type("string") patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
   /** Server epoch ms when the form started (timer ring clock). */
   @type("number") startedAt = 0;
   /** Server epoch ms when the form expires / snap back. */

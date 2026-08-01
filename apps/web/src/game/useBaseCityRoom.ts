@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, COMBAT_ENGAGE_LINGER_MS, PLAYER_BASE_MAX_HP, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, totalShieldAbsorb, unitCollidersExcept, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat } from "@battlebeasts/shared";
+import { ABILITIES, COMBAT_ENGAGE_LINGER_MS, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, stepYawToward, totalShieldAbsorb, unitCollidersExcept, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { LocalPredictor } from "./LocalPredictor";
 import type { DamagePopup } from "./CombatVfx";
@@ -8,9 +8,11 @@ import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { setWorldStaticColliders } from "./worldCollidersRuntime";
 import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime";
 import { abilityHudRuntime } from "./abilityHudRuntime";
-import { spawnImpactEffect, cancelFollowOwnerVfx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, clearCrescentSpawnState } from "./vfx";
+import { spawnImpactEffect, cancelFollowOwnerVfx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, usesLifeLeechFx, clearCrescentSpawnState } from "./vfx";
+import { cancelActiveCastHandle } from "./vfx/runtime/playerVfxRuntime";
 import { dispatchCombatFxVfx } from "./vfx/combatFxDispatch";
 import { takePortalChannelBubbleScale } from "./vfx/portalChannelRuntime";
+import { chargeHudRuntime } from "./chargeHudRuntime";
 import { setActiveEmote, clearActiveEmote, isEmoteActive } from "./emoteRuntime";
 import { getGroundAim } from "./groundAimRuntime";
 import { hasStatusId } from "./StatusOrnaments";
@@ -114,6 +116,7 @@ export type MatchRecapState = {
     winner: "a" | "b" | "draw";
     scoreA: number;
     scoreB: number;
+    matchKind?: "ranked" | "custom";
     rows: MatchRecapRow[];
 };
 
@@ -161,6 +164,11 @@ export function useBaseCityRoom(options: Options) {
     const diedAtRef = useRef<number | null>(null);
     const [hubRoster, setHubRoster] = useState<HubRosterPlayer[]>([]);
     const [isHubAdmin, setIsHubAdmin] = useState(false);
+    const [adminNoCooldown, setAdminNoCooldownState] = useState(false);
+    const adminNoCooldownRef = useRef(false);
+    /** Hub intro cinematic — false until server says completed or not owner. */
+    const [introCompleted, setIntroCompleted] = useState<boolean | null>(null);
+    const [introReplayToken, setIntroReplayToken] = useState(0);
     const [hubQuests, setHubQuests] = useState<
         Array<{
             id: string;
@@ -181,6 +189,7 @@ export function useBaseCityRoom(options: Options) {
         copper: number;
         lines: import("@battlebeasts/shared").ChestLootLine[];
     } | null>(null);
+    const [pendingChestOpenId, setPendingChestOpenId] = useState<string | null>(null);
     /** Unseen quest completions (cleared when Quests panel opens). */
     const [unseenQuestCompletions, setUnseenQuestCompletions] = useState(0);
     const seenQuestCompletionsRef = useRef<Set<string>>(new Set());
@@ -188,6 +197,28 @@ export function useBaseCityRoom(options: Options) {
     const questsHydratedRef = useRef(false);
     const [arenaHud, setArenaHud] = useState<ArenaHudState | null>(null);
     const [matchRecap, setMatchRecap] = useState<MatchRecapState | null>(null);
+    const [rankedState, setRankedState] = useState<{
+        season: {
+            id: string;
+            slug: string;
+            starts_at: string;
+            ends_at: string | null;
+            status: string;
+        } | null;
+        rating: RankSnapshot | null;
+        label: string | null;
+    }>({ season: null, rating: null, label: null });
+    const [rankedLeaderboard, setRankedLeaderboard] = useState<
+        Array<{
+            userId: string;
+            displayName: string;
+            mmr: number;
+            lp: number;
+            tier: string;
+            division: number;
+            rank: number;
+        }>
+    >([]);
     const [party, setParty] = useState<PartySnapshot | null>(null);
     const [partyInvite, setPartyInvite] = useState<{
         partyId: string;
@@ -246,6 +277,8 @@ export function useBaseCityRoom(options: Options) {
     /** Optimistic cancel — ignore stale schema cast slow until server clears. */
     const localCastCancelledRef = useRef(false);
     const awaitingCastAckRef = useRef(false);
+    /** performance.now when awaitingCastAck became true — safety clear if server never acks. */
+    const awaitingCastAckSinceRef = useRef(0);
     const castingAbilityRef = useRef<string | null>(null);
     const castPhaseRef = useRef<string>("");
     const cooldownUntilRef = useRef<Record<string, number>>({});
@@ -280,6 +313,7 @@ export function useBaseCityRoom(options: Options) {
         castPhaseRef.current = "";
         castingAbilityRef.current = null;
         awaitingCastAckRef.current = false;
+        awaitingCastAckSinceRef.current = 0;
         localCastCancelledRef.current = false;
         pendingCastRef.current = undefined;
         pendingCancelRef.current = false;
@@ -289,6 +323,7 @@ export function useBaseCityRoom(options: Options) {
         heldCastSlotsRef.current = { mouse0: false, mouse2: false };
         cooldownUntilRef.current = {};
         abilityHudRuntime.clear();
+        chargeHudRuntime.clear();
         window.clearTimeout(castFlashTimerRef.current);
         predictorRef.current.clearTravel();
         predictorRef.current.clearMoveMul();
@@ -347,6 +382,9 @@ export function useBaseCityRoom(options: Options) {
             if (nextPhase !== "hub") {
                 setHubRoster([]);
                 setIsHubAdmin(false);
+                adminNoCooldownRef.current = false;
+                setAdminNoCooldownState(false);
+                setIntroCompleted(null);
                 setParty(null);
             }
             if (nextPhase !== "content") setArenaHud(null);
@@ -454,6 +492,39 @@ export function useBaseCityRoom(options: Options) {
             joined.onMessage("hub_you_are_admin", (msg: { admin?: boolean }) => {
                 setIsHubAdmin(Boolean(msg?.admin));
             });
+            joined.onMessage("hub_admin_no_cooldown", (msg: { enabled?: boolean }) => {
+                const on = Boolean(msg?.enabled);
+                adminNoCooldownRef.current = on;
+                setAdminNoCooldownState(on);
+                if (on) {
+                    cooldownUntilRef.current = {};
+                    abilityHudRuntime.setCooldownUntil({});
+                }
+            });
+            joined.onMessage(
+                "hub_intro_status",
+                (msg: { completed?: boolean; replay?: boolean }) => {
+                    setIntroCompleted(Boolean(msg?.completed));
+                    if (msg?.replay && msg.completed === false) {
+                        setIntroReplayToken((n) => n + 1);
+                    }
+                },
+            );
+            joined.onMessage(
+                "hub_intro_posed",
+                (msg: { x?: number; z?: number; yaw?: number }) => {
+                    if (
+                        typeof msg?.x !== "number" ||
+                        typeof msg?.z !== "number" ||
+                        typeof msg?.yaw !== "number"
+                    ) {
+                        return;
+                    }
+                    predictorRef.current.seed(msg.x, msg.z, msg.yaw);
+                    predictedRef.current = { x: msg.x, z: msg.z, yaw: msg.yaw };
+                    yawRef.current = msg.yaw;
+                },
+            );
             joined.onMessage("hub_grant_result", (msg: { ok?: boolean; error?: string }) => {
                 if (msg?.ok === false && msg.error) {
                     // toast already sent from server for success; surface auth errors
@@ -530,6 +601,7 @@ export function useBaseCityRoom(options: Options) {
                     copper?: number;
                     lines?: import("@battlebeasts/shared").ChestLootLine[];
                 }) => {
+                    setPendingChestOpenId(null);
                     if (!msg?.ok) return;
                     setChestReveal({
                         quality: msg.quality ?? "green",
@@ -581,14 +653,47 @@ export function useBaseCityRoom(options: Options) {
                     winner: "a" | "b" | "draw";
                     scoreA: number;
                     scoreB: number;
+                    matchKind?: "ranked" | "custom";
                     rows: MatchRecapRow[];
                 }) => {
                     setMatchRecap({
                         winner: msg.winner,
                         scoreA: msg.scoreA,
                         scoreB: msg.scoreB,
+                        matchKind: msg.matchKind,
                         rows: msg.rows ?? [],
                     });
+                },
+            );
+
+            joined.onMessage("hub_ranked_state", (msg: {
+                season: {
+                    id: string;
+                    slug: string;
+                    starts_at: string;
+                    ends_at: string | null;
+                    status: string;
+                } | null;
+                rating: RankSnapshot | null;
+                label: string | null;
+            }) => {
+                setRankedState(msg);
+            });
+
+            joined.onMessage(
+                "hub_ranked_leaderboard",
+                (msg: {
+                    rows: Array<{
+                        userId: string;
+                        displayName: string;
+                        mmr: number;
+                        lp: number;
+                        tier: string;
+                        division: number;
+                        rank: number;
+                    }>;
+                }) => {
+                    setRankedLeaderboard(msg.rows ?? []);
                 },
             );
 
@@ -605,6 +710,7 @@ export function useBaseCityRoom(options: Options) {
                     radius?: number;
                     yaw?: number;
                     ownerId?: string;
+                    targetId?: string;
                     damage?: number;
                     crit?: boolean;
                     phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
@@ -630,7 +736,11 @@ export function useBaseCityRoom(options: Options) {
                             { x: msg.x2 ?? msg.x, z: msg.z2 ?? msg.z, y: 0.05, yaw: msg.yaw },
                             { lifeMs: 300, variant: 1 },
                         );
-                        if (isLocal && typeof msg.cooldownMs === "number") {
+                        if (
+                            isLocal &&
+                            typeof msg.cooldownMs === "number" &&
+                            !adminNoCooldownRef.current
+                        ) {
                             const until = Date.now() + msg.cooldownMs;
                             cooldownUntilRef.current = {
                                 ...cooldownUntilRef.current,
@@ -668,15 +778,23 @@ export function useBaseCityRoom(options: Options) {
                     if (msg.kind === "cast_phase") {
                         if (
                             (msg.phase === "cancel" || msg.phase === "interrupt") &&
-                            (usesFrostMistFx(msg.abilityId) ||
-                                usesGrooveFx(msg.abilityId) ||
-                                usesHealBeamFx(msg.abilityId)) &&
                             msg.ownerId
                         ) {
-                            cancelFollowOwnerVfx(msg.abilityId, msg.ownerId);
+                            if (msg.abilityId === "iceLance") {
+                                // Only the active cast — keep prior fuse plants flying/stuck.
+                                cancelActiveCastHandle(msg.ownerId, "iceLance");
+                            } else if (
+                                usesFrostMistFx(msg.abilityId) ||
+                                usesGrooveFx(msg.abilityId) ||
+                                usesHealBeamFx(msg.abilityId) ||
+                                usesLifeLeechFx(msg.abilityId)
+                            ) {
+                                cancelFollowOwnerVfx(msg.abilityId, msg.ownerId);
+                            }
                         }
                         if (isLocal) {
                             awaitingCastAckRef.current = false;
+                            awaitingCastAckSinceRef.current = 0;
                             const ended =
                                 msg.phase === "idle" ||
                                 msg.phase === "cancel" ||
@@ -710,15 +828,18 @@ export function useBaseCityRoom(options: Options) {
                                 const def = ABILITIES[msg.abilityId];
                                 if (def?.confirmOnRelease) {
                                     portalChannelAnchorRef.current = performance.now();
-                                    // Released during windup — blink immediately at min/early charge.
+                                    // Released during windup — confirm as soon as impact opens.
                                     if (portalConfirmArmedRef.current) {
-                                        const dist = channelChargeDistance(def, 0);
-                                        predictorRef.current.beginInstantBlink(
-                                            msg.abilityId,
-                                            yawRef.current,
-                                            dist,
-                                        );
-                                        portalChannelAnchorRef.current = 0;
+                                        if (msg.abilityId === "portal") {
+                                            const dist = channelChargeDistance(def, 0);
+                                            predictorRef.current.beginInstantBlink(
+                                                msg.abilityId,
+                                                yawRef.current,
+                                                dist,
+                                            );
+                                        }
+                                        portalChannelAnchorRef.current =
+                                            msg.abilityId === "portal" ? 0 : portalChannelAnchorRef.current;
                                         pendingConfirmRef.current = true;
                                         portalConfirmArmedRef.current = false;
                                     }
@@ -733,7 +854,27 @@ export function useBaseCityRoom(options: Options) {
                                 portalChannelAnchorRef.current = 0;
                                 portalConfirmArmedRef.current = false;
                             }
-                            if (typeof msg.cooldownMs === "number") {
+                            if (msg.abilityId === "fireball") {
+                                if (msg.phase === "impact") {
+                                    chargeHudRuntime.begin(
+                                        "fireball",
+                                        fireballChargeWindowWallMs(),
+                                        0,
+                                    );
+                                } else if (
+                                    msg.phase === "anticipation" ||
+                                    msg.phase === "cast"
+                                ) {
+                                    // Wait for impact (ball appear) before filling.
+                                    chargeHudRuntime.clear();
+                                } else {
+                                    chargeHudRuntime.clear();
+                                }
+                            }
+                            if (
+                                typeof msg.cooldownMs === "number" &&
+                                !adminNoCooldownRef.current
+                            ) {
                                 const until = Date.now() + msg.cooldownMs;
                                 cooldownUntilRef.current = {
                                     ...cooldownUntilRef.current,
@@ -765,7 +906,11 @@ export function useBaseCityRoom(options: Options) {
                             usesGrooveFx(msg.abilityId) ||
                             usesHealBeamFx(msg.abilityId) ||
                             getStatus(msg.abilityId)?.mechanic === "hot" ||
-                            (ABILITIES[msg.abilityId]?.heal ?? 0) > 0;
+                            (ABILITIES[msg.abilityId]?.heal ?? 0) > 0 ||
+                            // Life Leech: self-restore hits are heals; enemy hits stay damage.
+                            (usesLifeLeechFx(msg.abilityId) &&
+                                !!msg.ownerId &&
+                                msg.targetId === msg.ownerId);
                         const popup: DamagePopup = {
                             key,
                             amount: msg.damage,
@@ -1019,6 +1164,16 @@ export function useBaseCityRoom(options: Options) {
         loadoutRef.current = normalizeLoadout(economy.loadout);
     }, [economy.loadout]);
 
+    /** Optimistic spell-bar update while set_loadout round-trips (schema/inventory confirm or revert). */
+    const applyLoadoutLocal = useCallback((abilityIds: string[]) => {
+        const cleaned = normalizeLoadout(abilityIds);
+        loadoutRef.current = cleaned;
+        setEconomy((prev) => {
+            if (prev.loadout.join(",") === cleaned.join(",")) return prev;
+            return { ...prev, loadout: cleaned };
+        });
+    }, []);
+
     useEffect(() => {
         emoteSlotsRef.current = economy.unlocks?.emoteSlots ?? emptyEmoteSlots();
     }, [economy.unlocks]);
@@ -1040,12 +1195,19 @@ export function useBaseCityRoom(options: Options) {
         const spiritRecast =
             abilityId === "spiritForm" && hasStatusId(me?.statuses, "spiritFormed");
         // Spirit Form recast ends the form while CD is already ticking — don't block.
-        if (!spiritRecast && (cooldownUntilRef.current[abilityId] ?? 0) > now) return;
+        if (
+            !spiritRecast &&
+            !adminNoCooldownRef.current &&
+            (cooldownUntilRef.current[abilityId] ?? 0) > now
+        ) {
+            return;
+        }
         if (pendingCastRef.current) return;
 
         if (spiritRecast) {
             pendingCastRef.current = abilityId;
             awaitingCastAckRef.current = true;
+            awaitingCastAckSinceRef.current = performance.now();
             localCastCancelledRef.current = false;
             abilityHudRuntime.setFlashId(abilityId);
             window.clearTimeout(castFlashTimerRef.current);
@@ -1074,10 +1236,15 @@ export function useBaseCityRoom(options: Options) {
 
         pendingCastRef.current = abilityId;
         awaitingCastAckRef.current = true;
+        awaitingCastAckSinceRef.current = performance.now();
         localCastCancelledRef.current = false;
         castPhaseRef.current = "anticipation";
         castingAbilityRef.current = abilityId;
         predictorRef.current.applyCastMove(abilityId, "anticipation");
+        if (abilityId === "fireball") {
+          // Charge bar starts when impact/channel begins (combat_fx).
+          chargeHudRuntime.clear();
+        }
         abilityHudRuntime.setFlashId(abilityId);
         window.clearTimeout(castFlashTimerRef.current);
         castFlashTimerRef.current = window.setTimeout(() => abilityHudRuntime.setFlashId(null), 120);
@@ -1117,11 +1284,14 @@ export function useBaseCityRoom(options: Options) {
         if (phase !== "impact" && phase !== "anticipation" && phase !== "cast") return;
 
         portalConfirmArmedRef.current = true;
-        if (phase === "impact" && portalChannelAnchorRef.current > 0) {
+        if (phase === "impact" && portalChannelAnchorRef.current > 0 && abilityId === "portal") {
             const elapsed = performance.now() - portalChannelAnchorRef.current;
             const dist = channelChargeDistance(def, elapsed);
             predictorRef.current.beginInstantBlink(abilityId, yawRef.current, dist);
             portalChannelAnchorRef.current = 0;
+            pendingConfirmRef.current = true;
+            portalConfirmArmedRef.current = false;
+        } else if (phase === "impact") {
             pendingConfirmRef.current = true;
             portalConfirmArmedRef.current = false;
         }
@@ -1142,10 +1312,20 @@ export function useBaseCityRoom(options: Options) {
         castingAbilityRef.current = null;
         portalChannelAnchorRef.current = 0;
         portalConfirmArmedRef.current = false;
+        chargeHudRuntime.clear();
         predictorRef.current.clearMoveMul();
         const sid = sessionIdRef.current;
-        if (sid && (usesFrostMistFx(abilityId) || usesGrooveFx(abilityId) || usesHealBeamFx(abilityId))) {
-            cancelFollowOwnerVfx(abilityId, sid);
+        if (sid) {
+            if (abilityId === "iceLance") {
+                cancelActiveCastHandle(sid, "iceLance");
+            } else if (
+                usesFrostMistFx(abilityId) ||
+                usesGrooveFx(abilityId) ||
+                usesHealBeamFx(abilityId) ||
+                usesLifeLeechFx(abilityId)
+            ) {
+                cancelFollowOwnerVfx(abilityId, sid);
+            }
         }
         window.dispatchEvent(new CustomEvent("bb-cast-anim-cancel"));
     }, []);
@@ -1203,7 +1383,19 @@ export function useBaseCityRoom(options: Options) {
                 case "KeyF":
                     if (down) {
                         e.preventDefault();
-                        beginCastFromSlotInput("f");
+                        const abilityId = castingAbilityRef.current;
+                        const phase = castPhaseRef.current;
+                        if (
+                            abilityId === "fireball" &&
+                            ABILITIES[abilityId]?.confirmOnRelease &&
+                            (phase === "impact" ||
+                                phase === "anticipation" ||
+                                phase === "cast")
+                        ) {
+                            queueConfirmCast();
+                        } else {
+                            beginCastFromSlotInput("f");
+                        }
                     }
                     break;
                 case "Space":
@@ -1292,14 +1484,32 @@ export function useBaseCityRoom(options: Options) {
             const target = e.target as HTMLElement | null;
             if (target?.closest?.("[data-ui-overlay]")) return;
             if (e.button === 0) {
-                beginCastFromSlotInput("mouse0");
+                const abilityId = castingAbilityRef.current;
+                if (
+                    abilityId === "fireball" &&
+                    ABILITIES[abilityId]?.confirmOnRelease &&
+                    (castPhaseRef.current === "impact" ||
+                        castPhaseRef.current === "anticipation" ||
+                        castPhaseRef.current === "cast")
+                ) {
+                    queueConfirmCast();
+                } else {
+                    beginCastFromSlotInput("mouse0");
+                }
             } else if (e.button === 2) {
                 e.preventDefault();
                 beginCastFromSlotInput("mouse2");
             }
         };
         const onMouseUp = (e: MouseEvent) => {
-            if (e.button === 0) heldCastSlotsRef.current.mouse0 = false;
+            if (e.button === 0) {
+                heldCastSlotsRef.current.mouse0 = false;
+                // Hold-channel (Life Leech): LMB release ends the stream and starts CD.
+                const abilityId = castingAbilityRef.current;
+                if (abilityId && ABILITIES[abilityId]?.holdChannel) {
+                    queueCancelCast();
+                }
+            }
             if (e.button === 2) heldCastSlotsRef.current.mouse2 = false;
         };
         const onMouseMoveForEmotePie = (e: MouseEvent) => {
@@ -1366,7 +1576,7 @@ export function useBaseCityRoom(options: Options) {
             window.removeEventListener("blur", clearHeld);
             window.removeEventListener("contextmenu", onContextMenu);
         };
-    }, [beginCastFromSlotInput, tryMouseCancelCast]);
+    }, [beginCastFromSlotInput, queueCancelCast, queueConfirmCast, tryMouseCancelCast]);
 
     useEffect(() => {
         if (options.enabled === false) return;
@@ -1628,8 +1838,20 @@ export function useBaseCityRoom(options: Options) {
                         castPhaseRef.current = serverMe.castPhase;
                         castingAbilityRef.current = serverMe.castAbilityId || null;
                         awaitingCastAckRef.current = false;
+                        awaitingCastAckSinceRef.current = 0;
                         if (serverMe.castAbilityId) {
                             predictor.applyCastMove(serverMe.castAbilityId, serverMe.castPhase);
+                        }
+                    } else if (awaitingCastAckRef.current) {
+                        // Server rejected or never acked — don't stay busy forever.
+                        const waited = performance.now() - awaitingCastAckSinceRef.current;
+                        if (waited > 400) {
+                            awaitingCastAckRef.current = false;
+                            awaitingCastAckSinceRef.current = 0;
+                            pendingCastRef.current = undefined;
+                            castPhaseRef.current = "";
+                            castingAbilityRef.current = null;
+                            if (!predictor.isInComboGap()) predictor.clearMoveMul();
                         }
                     } else if (!pendingCastRef.current && !awaitingCastAckRef.current) {
                         const hadCast =
@@ -1771,6 +1993,24 @@ export function useBaseCityRoom(options: Options) {
                         confirmCast: confirmCast || undefined,
                         interactId: canAct ? pendingInteractRef.current : undefined,
                     };
+                    // Hand Shield: slow-turn the sent/predicted yaw (cursor still free).
+                    {
+                        const meShield = r.state?.players?.get(r.sessionId) as
+                            | {
+                                  statuses?: {
+                                      forEach: (cb: (row: { statusId?: string }) => void) => void;
+                                  };
+                              }
+                            | undefined;
+                        if (hasStatusId(meShield?.statuses, "handShielding")) {
+                            input.yaw = stepYawToward(
+                                predictedRef.current.yaw,
+                                yawRef.current,
+                                HAND_SHIELD_CAST.yawTurnRate,
+                                dt,
+                            );
+                        }
+                    }
                     // Always send cursor ground aim so placed spells (shrooms/volcano)
                     // can track the pointer during windup, not only on the cast frame.
                     const aim = getGroundAim();
@@ -1958,20 +2198,59 @@ export function useBaseCityRoom(options: Options) {
         [],
     );
 
+    const beginHubIntroPose = useCallback(() => {
+        const house = HUB_STANDS.find((s) => s.kind === "customization");
+        const portal = HUB_PORTALS.find((p) => p.kind === "pvp");
+        if (house) {
+            const lookX = portal?.x ?? house.x;
+            const lookZ = portal?.z ?? house.z;
+            // Face portal, then turn ~25° left so the House reads in frame.
+            const yaw =
+                Math.atan2(lookX - house.x, lookZ - house.z) + (-25 * Math.PI) / 180;
+            predictorRef.current.seed(house.x, house.z, yaw);
+            predictedRef.current = { x: house.x, z: house.z, yaw };
+            yawRef.current = yaw;
+        }
+        roomRef.current?.send("hub_intro_begin");
+    }, []);
+
+    const completeHubIntro = useCallback(() => {
+        roomRef.current?.send("hub_intro_complete");
+        setIntroCompleted(true);
+    }, []);
+
+    const replayHubIntro = useCallback(() => {
+        roomRef.current?.send("hub_replay_intro");
+    }, []);
+
+    const softResetCharacter = useCallback(() => {
+        roomRef.current?.send("hub_soft_reset_character");
+    }, []);
+
     const refreshHubQuests = useCallback(() => {
         roomRef.current?.send("hub_quests");
     }, []);
 
     const openHubChest = useCallback((chestId: string) => {
+        setPendingChestOpenId(chestId);
         roomRef.current?.send("hub_open_chest", { chestId });
+        // Safety: if server never answers, unlock after a while.
+        window.setTimeout(() => {
+            setPendingChestOpenId((cur) => (cur === chestId ? null : cur));
+        }, 12_000);
     }, []);
 
     const spawnHubChest = useCallback((quality: "green" | "blue" | "purple" | "legendary") => {
         roomRef.current?.send("hub_spawn_chest", { quality });
     }, []);
 
+    const setAdminNoCooldownEnabled = useCallback((enabled: boolean) => {
+        roomRef.current?.send("hub_admin_no_cooldown", { enabled });
+    }, []);
+
     const clearChestReveal = useCallback(() => {
         setChestReveal(null);
+        setPendingChestOpenId(null);
     }, []);
 
     const acknowledgeQuestAlerts = useCallback(() => {
@@ -2002,8 +2281,13 @@ export function useBaseCityRoom(options: Options) {
         roomRef.current?.send("party_set_seat", { sessionId, seat });
     }, []);
 
-    const lockParty = useCallback(() => {
-        roomRef.current?.send("party_lock");
+    const lockParty = useCallback((matchKind: "ranked" | "unranked" = "ranked") => {
+        roomRef.current?.send("party_lock", { matchKind });
+    }, []);
+
+    const refreshRanked = useCallback(() => {
+        roomRef.current?.send("hub_ranked_request");
+        roomRef.current?.send("hub_ranked_leaderboard");
     }, []);
 
     const cancelParty = useCallback(() => {
@@ -2048,6 +2332,7 @@ export function useBaseCityRoom(options: Options) {
         cancelQueue,
         returnToHub,
         economy,
+        applyLoadoutLocal,
         matchPause,
         localHp,
         combatHudVisible,
@@ -2056,12 +2341,21 @@ export function useBaseCityRoom(options: Options) {
         requestRespawn,
         hubRoster,
         isHubAdmin,
+        adminNoCooldown,
+        setAdminNoCooldownEnabled,
+        introCompleted,
+        introReplayToken,
         kickFromHub,
         grantHubResources,
+        beginHubIntroPose,
+        completeHubIntro,
+        replayHubIntro,
+        softResetCharacter,
         hubQuests,
         hubChests,
         unseenQuestCompletions,
         chestReveal,
+        pendingChestOpenId,
         refreshHubQuests,
         openHubChest,
         spawnHubChest,
@@ -2072,6 +2366,9 @@ export function useBaseCityRoom(options: Options) {
         arenaHud,
         matchRecap,
         voteRematch,
+        rankedState,
+        rankedLeaderboard,
+        refreshRanked,
         party,
         partyInvite,
         nearInteract,

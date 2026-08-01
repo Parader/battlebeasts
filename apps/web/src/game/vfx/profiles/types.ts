@@ -14,9 +14,13 @@ export type CombatFxAoeMode =
   | "groundCrack"
   | "spikes"
   | "firewall"
+  | "poisonCloud"
+  | "smokeBomb"
+  | "fireballBurn"
   | "iceLanceExplode"
   | "groove"
   | "healBeam"
+  | "lifeLeech"
   | "volcano"
   | "none";
 

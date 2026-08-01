@@ -7,8 +7,6 @@ export const DETONATE_COAST_MS = 800;
 export const BARRIER_DISSOLVE_MS = 500;
 export const BRIDGED_AOE_LIFE_PAD_MS = 280;
 export const MUZZLE_LEAD_MS = 150;
-export const BOLT_MUZZLE_FORWARD = 0.95;
-export const BOLT_MUZZLE_Y = 1.05;
 
 /** Flight duration from ability range/speed. */
 export function getFlightDurationMs(

@@ -42,6 +42,10 @@
     },
     "portable": {
       "artifactName": "BattleBeasts-${version}-portable.exe"
+    },
+    "protocols": {
+      "name": "BattleBeasts",
+      "schemes": ["battlebeasts"]
     }
   }
 }

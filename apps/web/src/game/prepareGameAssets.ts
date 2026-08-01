@@ -6,6 +6,10 @@ import { preloadArenaMusic, preloadVillageMusic } from "./gameMusic";
 import { preloadArenaAmbiance, preloadVillageAmbiance } from "./gameAmbiance";
 import { preloadCombatSfx } from "./gameSfx";
 import { GROUND_TEXTURE_URLS } from "./TexturedGround";
+import { VOLCANO_GLB_URL } from "./vfx/volcanoAsset";
+import { SHROOM_GREEN_GLB_URL, SHROOM_RED_GLB_URL } from "./vfx/shroomAsset";
+import { CHEST_GLB_URL } from "./vfx/vfxUrls";
+import { preloadSpellVfxTextures } from "./vfx/primeSpellTextures";
 
 export type AssetBundle = "hub" | "arena";
 
@@ -51,6 +55,16 @@ async function preloadTextures(urls: readonly string[]): Promise<void> {
   await awaitPreload(useTexture.preload(list));
 }
 
+/** Spell VFX GLBs used on first cast / spawn (volcano rocks, shrooms, chest). */
+async function preloadSpellGlbs(): Promise<void> {
+  await Promise.all([
+    preloadGltf(VOLCANO_GLB_URL),
+    preloadGltf(SHROOM_GREEN_GLB_URL),
+    preloadGltf(SHROOM_RED_GLB_URL),
+    preloadGltf(CHEST_GLB_URL),
+  ]);
+}
+
 async function runTracked(
   tasks: Array<() => Promise<unknown>>,
   onProgress?: (p: AssetProgress) => void,
@@ -72,7 +86,7 @@ async function runTracked(
 }
 
 /**
- * Warm caches for the hub critical path (character, village, ground).
+ * Warm caches for the hub critical path (character, village, ground, all spell VFX).
  * Safe to call multiple times — subsequent runs hit HTTP/drei cache.
  */
 export async function preloadHubAssets(
@@ -82,7 +96,9 @@ export async function preloadHubAssets(
     [
       () => preloadGltf(CHARACTER_URL),
       () => preloadGltf(hubSceneUrl()),
+      () => preloadSpellGlbs(),
       () => preloadTextures(GROUND_TEXTURE_URLS),
+      () => preloadSpellVfxTextures(),
       () => preloadVillageMusic(),
       () => preloadVillageAmbiance(),
       () => preloadCombatSfx(),
@@ -91,7 +107,7 @@ export async function preloadHubAssets(
   );
 }
 
-/** Warm desert arena GLB (character already cached from hub when possible). */
+/** Warm desert arena + full spell/combat bundle (safe if hub already cached). */
 export async function preloadArenaAssets(
   onProgress?: (p: AssetProgress) => void,
 ): Promise<void> {
@@ -99,6 +115,9 @@ export async function preloadArenaAssets(
     [
       () => preloadGltf(CHARACTER_URL),
       () => preloadGltf(arenaSceneUrl()),
+      () => preloadSpellGlbs(),
+      () => preloadSpellVfxTextures(),
+      () => preloadCombatSfx(),
       () => preloadArenaMusic(),
       () => preloadArenaAmbiance(),
     ],

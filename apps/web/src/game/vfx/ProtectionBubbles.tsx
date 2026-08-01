@@ -29,7 +29,7 @@ const rimPreset = {
   colorCore: "#e0f2fe",
   colorMid: "#38bdf8",
   colorEdge: "#0ea5e9",
-  opacity: 0.92,
+  opacity: 0.28,
   additive: true,
   ringWidth: 0.08,
   softness: 0.045,
@@ -44,14 +44,14 @@ function BubbleMesh({ room, id }: { room: Room; id: string }) {
   const domeGroup = useRef<THREE.Group>(null);
   const born = useRef(performance.now());
   const formProgress = useRef(0.12);
-  const opacityMul = useRef(0.35);
+  const opacityMul = useRef(0.12);
 
   const domeMat = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
         color: DOME_COLOR,
         transparent: true,
-        opacity: 0.14,
+        opacity: 0.025,
         depthWrite: false,
         side: THREE.DoubleSide,
         toneMapped: false,
@@ -64,7 +64,7 @@ function BubbleMesh({ room, id }: { room: Room; id: string }) {
       new THREE.MeshBasicMaterial({
         color: DOME_EDGE,
         transparent: true,
-        opacity: 0.22,
+        opacity: 0.04,
         depthWrite: false,
         side: THREE.FrontSide,
         toneMapped: false,
@@ -114,8 +114,8 @@ function BubbleMesh({ room, id }: { room: Room; id: string }) {
       domeGroup.current.scale.setScalar(Math.max(0.05, liveR));
       domeGroup.current.visible = fade > 0.04;
     }
-    domeMat.opacity = 0.1 + 0.1 * fade;
-    shellMat.opacity = 0.16 + 0.14 * fade;
+    domeMat.opacity = 0.015 + 0.02 * fade;
+    shellMat.opacity = 0.025 + 0.025 * fade;
   });
 
   return (

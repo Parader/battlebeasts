@@ -1,11 +1,21 @@
 import { ABILITIES, abilityHasTags, type SpellTag } from "./abilities";
 import { COMBAT } from "./combat";
 import { TALENTS, type TalentDef } from "./stands";
+import { getStatus } from "./statuses";
 import {
   isCatalogTalentImplemented,
   OPENING_SALVO_COOLDOWN_MS,
   OPENING_SALVO_TALENT_ID,
   openingSalvoBonusPercent,
+  OPPORTUNIST_TALENT_ID,
+  opportunistBonusPercent,
+  OVERFLOW_TALENT_ID,
+  overflowCapPercent,
+  overflowConvertPercent,
+  PROTECTIVE_INSTINCT_TALENT_ID,
+  protectiveInstinctReducePercent,
+  SPRINTER_TALENT_ID,
+  sprinterMoveSpeedPercent,
   TALENT_CATALOG,
 } from "./talentCatalog";
 import type { TalentBuild } from "./talentTrees";
@@ -32,6 +42,25 @@ export type CombatSessionKit = {
    * 0 = talent not invested / not implemented.
    */
   openingSalvoDmgBonus: number;
+  /**
+   * Protective Instinct — damage reduction percent granted to nearest ally (2 / 4 / 6).
+   * 0 = talent not invested / not implemented.
+   */
+  protectiveInstinctReducePct: number;
+  /**
+   * Opportunist — flat outgoing damage bonus vs your hard-CC'd targets (0.02 / 0.04 / 0.06).
+   * 0 = talent not invested / not implemented.
+   */
+  opportunistDmgBonus: number;
+  /**
+   * Overflow — fraction of overheal converted to shield (0.133 / 0.267 / 0.4).
+   * 0 = talent not invested / not implemented.
+   */
+  overflowConvertFrac: number;
+  /**
+   * Overflow — shield cap as fraction of target max HP (0.027 / 0.053 / 0.08).
+   */
+  overflowCapFrac: number;
 };
 
 export function emptyCombatSessionKit(): CombatSessionKit {
@@ -43,6 +72,10 @@ export function emptyCombatSessionKit(): CombatSessionKit {
     critChance: COMBAT.critChance,
     cooldownMulByAbility: new Map(),
     openingSalvoDmgBonus: 0,
+    protectiveInstinctReducePct: 0,
+    opportunistDmgBonus: 0,
+    overflowConvertFrac: 0,
+    overflowCapFrac: 0,
   };
 }
 
@@ -61,6 +94,47 @@ function bakeOpeningSalvoBonus(talentBuild: TalentBuild | undefined): number {
   if (rank <= 0) return 0;
   const maxRank = talentMaxRank(def);
   return openingSalvoBonusPercent(rank, maxRank) / 100;
+}
+
+function bakeProtectiveInstinctPct(talentBuild: TalentBuild | undefined): number {
+  const def = TALENT_CATALOG[PROTECTIVE_INSTINCT_TALENT_ID];
+  if (!isCatalogTalentImplemented(def)) return 0;
+  const rank = talentRank(talentBuild ?? {}, PROTECTIVE_INSTINCT_TALENT_ID);
+  if (rank <= 0) return 0;
+  return protectiveInstinctReducePercent(rank, talentMaxRank(def));
+}
+
+function bakeOpportunistBonus(talentBuild: TalentBuild | undefined): number {
+  const def = TALENT_CATALOG[OPPORTUNIST_TALENT_ID];
+  if (!isCatalogTalentImplemented(def)) return 0;
+  const rank = talentRank(talentBuild ?? {}, OPPORTUNIST_TALENT_ID);
+  if (rank <= 0) return 0;
+  return opportunistBonusPercent(rank, talentMaxRank(def)) / 100;
+}
+
+/** Additive move-speed fraction (0.02 / 0.04 / 0.06) — multiply into kit `moveSpeedMul`. */
+function bakeSprinterMoveMul(talentBuild: TalentBuild | undefined): number {
+  const def = TALENT_CATALOG[SPRINTER_TALENT_ID];
+  if (!isCatalogTalentImplemented(def)) return 1;
+  const rank = talentRank(talentBuild ?? {}, SPRINTER_TALENT_ID);
+  if (rank <= 0) return 1;
+  return 1 + sprinterMoveSpeedPercent(rank, talentMaxRank(def)) / 100;
+}
+
+function bakeOverflowConvertFrac(talentBuild: TalentBuild | undefined): number {
+  const def = TALENT_CATALOG[OVERFLOW_TALENT_ID];
+  if (!isCatalogTalentImplemented(def)) return 0;
+  const rank = talentRank(talentBuild ?? {}, OVERFLOW_TALENT_ID);
+  if (rank <= 0) return 0;
+  return overflowConvertPercent(rank, talentMaxRank(def)) / 100;
+}
+
+function bakeOverflowCapFrac(talentBuild: TalentBuild | undefined): number {
+  const def = TALENT_CATALOG[OVERFLOW_TALENT_ID];
+  if (!isCatalogTalentImplemented(def)) return 0;
+  const rank = talentRank(talentBuild ?? {}, OVERFLOW_TALENT_ID);
+  if (rank <= 0) return 0;
+  return overflowCapPercent(rank, talentMaxRank(def)) / 100;
 }
 
 /**
@@ -97,6 +171,8 @@ export function resolveKit(
     }
   }
 
+  moveSpeedMul *= bakeSprinterMoveMul(talentBuild);
+
   return {
     loadoutIds,
     talentIds: cleaned,
@@ -105,6 +181,10 @@ export function resolveKit(
     critChance: COMBAT.critChance,
     cooldownMulByAbility,
     openingSalvoDmgBonus: bakeOpeningSalvoBonus(talentBuild),
+    protectiveInstinctReducePct: bakeProtectiveInstinctPct(talentBuild),
+    opportunistDmgBonus: bakeOpportunistBonus(talentBuild),
+    overflowConvertFrac: bakeOverflowConvertFrac(talentBuild),
+    overflowCapFrac: bakeOverflowCapFrac(talentBuild),
   };
 }
 
@@ -122,4 +202,20 @@ export function abilityCanProcOpeningSalvo(abilityId: string): boolean {
   const def = ABILITIES[abilityId];
   if (!def || !(def.damage > 0)) return false;
   return abilityHasTags(def, "Damage");
+}
+
+/** True when casting this ability can proc Protective Instinct. */
+export function abilityCanProcProtectiveInstinct(abilityId: string): boolean {
+  return abilityHasTags(ABILITIES[abilityId], "Defense");
+}
+
+/** Damaging spells that can benefit from Opportunist. */
+export function abilityCanProcOpportunist(abilityId: string): boolean {
+  return abilityCanProcOpeningSalvo(abilityId);
+}
+
+/** Healing spells and HoT ticks that can convert overheal via Overflow (self or ally). */
+export function abilityCanProcOverflow(abilityId: string): boolean {
+  if (abilityHasTags(ABILITIES[abilityId], "Healing")) return true;
+  return getStatus(abilityId)?.mechanic === "hot";
 }

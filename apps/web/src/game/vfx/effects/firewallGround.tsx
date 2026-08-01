@@ -6,6 +6,7 @@ import { softEnvelope } from "../easing";
 import { FireParticleField } from "../components/FireParticleField";
 import { LavaGroundStrip } from "../components/LavaGroundStrip";
 import { AoeRimMarker } from "../components/AoeRimMarker";
+import { VFX_FIRE_URL } from "../vfxUrls";
 
 const GROW_MS = 620;
 
@@ -128,7 +129,7 @@ export function FirewallGroundEffect({ shot }: { shot: OneShotEffect }) {
         emitters={fireEmitters}
         rate={95}
         maxParticles={320}
-        textureUrl="/assets/vfx/fire.png"
+        textureUrl={VFX_FIRE_URL}
         maxLife={1.25}
         maxSize={0.5}
         rise={2.15}

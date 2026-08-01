@@ -5,6 +5,10 @@ import {
   FROST_MIST_CAST,
   GROOVE_CAST,
   HEAL_BEAM_CAST,
+  LIFE_LEECH_CAST,
+  POISON_CLOUD_CAST,
+  SMOKE_BOMB_CAST,
+  FIREBALL_CAST,
   VOLCANO_CAST,
 } from "@battlebeasts/shared";
 import { abilityVfxColor } from "./colors";
@@ -18,7 +22,10 @@ import {
   usesGrooveFx,
   usesHealBeamFx,
   usesIceLanceExplodeFx,
+  usesLifeLeechFx,
   usesMeleeSwoopFx,
+  usesPoisonCloudFx,
+  usesSmokeBombFx,
   usesSpikeFx,
   usesVolcanoFx,
 } from "./catalog";
@@ -77,7 +84,10 @@ function shouldSkipLegacyBurst(msg: CombatFxMessage): boolean {
     (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesGrooveFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesHealBeamFx(msg.abilityId) && msg.kind === "aoe") ||
+    (usesLifeLeechFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesFirewallFx(msg.abilityId) && msg.kind === "aoe") ||
+    (usesPoisonCloudFx(msg.abilityId) && msg.kind === "aoe") ||
+    (usesSmokeBombFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesIceLanceExplodeFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesVolcanoFx(msg.abilityId) && msg.kind === "aoe") ||
     (msg.abilityId === "protectionBubble" && msg.kind === "aoe") ||
@@ -88,7 +98,9 @@ function shouldSkipLegacyBurst(msg: CombatFxMessage): boolean {
     // don't flash a "reappear" burst before the vanish ends. Dash puff stays.
     (msg.abilityId === "revenge" && msg.kind === "hit") ||
     (msg.kind === "hit" && msg.variant === COMBAT_FX_VARIANT_WALL_HIT) ||
-    Boolean(getAbilityVfxProfile(msg.abilityId).combatFx?.skipLegacyBurst && msg.kind === "dash")
+    // Profiles with custom cast/impact FX set this — honor for every kind
+    // (fireball explode was still painting a huge legacy ring and crushing bloom).
+    Boolean(getAbilityVfxProfile(msg.abilityId).combatFx?.skipLegacyBurst)
   );
 }
 
@@ -195,8 +207,14 @@ export function dispatchCombatFxVfx(
           ? "groove"
           : usesHealBeamFx(msg.abilityId)
             ? "healBeam"
+            : usesLifeLeechFx(msg.abilityId)
+              ? "lifeLeech"
             : usesFirewallFx(msg.abilityId)
               ? "firewall"
+              : usesPoisonCloudFx(msg.abilityId)
+                ? "poisonCloud"
+              : usesSmokeBombFx(msg.abilityId)
+                ? "smokeBomb"
               : usesAoeCrackFx(msg.abilityId)
                 ? "groundCrack"
                 : usesIceLanceExplodeFx(msg.abilityId)
@@ -207,7 +225,7 @@ export function dispatchCombatFxVfx(
     spawnImpactEffect(
       msg.abilityId,
       { x: msg.x, z: msg.z, y: 0.04 },
-      { radius: msg.radius ?? 2.6 },
+      { radius: msg.radius ?? 3.1 },
     );
     if (msg.abilityId === "smash") playSlamHitSfx();
   }
@@ -221,6 +239,41 @@ export function dispatchCombatFxVfx(
       msg.abilityId,
       { x: msg.x, z: msg.z, y: 0.03, yaw: msg.yaw },
       { lifeMs: FIREWALL_CAST.zoneDurationMs + 100, radius: msg.radius },
+    );
+  }
+
+  if (msg.kind === "aoe" && effectKindAoe === "poisonCloud") {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.03, yaw: msg.yaw },
+      {
+        lifeMs: POISON_CLOUD_CAST.zoneDurationMs + 200,
+        radius: msg.radius ?? POISON_CLOUD_CAST.radius,
+        originX: msg.x2,
+        originZ: msg.z2,
+      },
+    );
+  }
+
+  if (msg.kind === "aoe" && effectKindAoe === "smokeBomb") {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.03, yaw: msg.yaw },
+      {
+        lifeMs: SMOKE_BOMB_CAST.zoneDurationMs + 200,
+        radius: msg.radius ?? SMOKE_BOMB_CAST.radius,
+      },
+    );
+  }
+
+  if (msg.kind === "aoe" && effectKindAoe === "fireballBurn") {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.03 },
+      {
+        lifeMs: FIREBALL_CAST.burnDurationMs + 200,
+        radius: msg.radius ?? FIREBALL_CAST.burnRadiusMax,
+      },
     );
   }
 
@@ -327,6 +380,30 @@ export function dispatchCombatFxVfx(
       {
         lifeMs: channelMs,
         radius: beamDef?.range ?? HEAL_BEAM_CAST.range,
+        growMs: ch.growMs,
+        followOwnerId: msg.ownerId,
+      },
+    );
+  }
+
+  if (
+    msg.kind === "aoe" &&
+    effectKindAoe === "lifeLeech" &&
+    (msg.comboHit ?? 1) === 1
+  ) {
+    const yaw = resolveOwnerYaw(msg, ctx);
+    const beamDef = ABILITIES.lifeLeech;
+    const ch = CHANNEL_VFX.lifeLeech;
+    // Hold channel — long life; cancelFollowOwnerVfx ends it on release.
+    const channelMs = beamDef?.holdChannel
+      ? LIFE_LEECH_CAST.holdMaxMs + ch.lifePadMs
+      : ch.ticks * ch.tickMs + ch.lifePadMs;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 1.1, yaw },
+      {
+        lifeMs: channelMs,
+        radius: beamDef?.range ?? LIFE_LEECH_CAST.range,
         growMs: ch.growMs,
         followOwnerId: msg.ownerId,
       },
