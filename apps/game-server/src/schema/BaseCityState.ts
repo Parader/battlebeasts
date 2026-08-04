@@ -125,6 +125,9 @@ export class DecoyState extends Schema {
   @type("string") color = STARTER_COLORS[0];
   @type("string") pattern = DEFAULT_COSMETIC_PATTERN;
   @type("string") patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
+  /** Ground aim destination the decoy walks toward (cast-time). */
+  @type("number") targetX = 0;
+  @type("number") targetZ = 0;
   /** Server epoch ms when this decoy despawns. */
   @type("number") expiresAt = 0;
 }
@@ -200,6 +203,35 @@ export class ShroomState extends Schema {
   @type("number") expiresAt = 0;
 }
 
+/** Linked Rift Fissure mouth — walk-through teleport when paired. */
+export class RiftPortalState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  /** Empty while waiting for the second plant. */
+  @type("string") pairId = "";
+  /** 0 = first portal, 1 = second. */
+  @type("number") index = 0;
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") yaw = 0;
+  @type("number") radius = 1;
+  /** "arming" | "open" | "closing" */
+  @type("string") phase = "arming";
+  /** Server epoch ms when arm window ends (portal A only). */
+  @type("number") armEndsAt = 0;
+  /** Server epoch ms when the portal despawns. */
+  @type("number") expiresAt = 0;
+}
+
+/** Hub plaza beach ball (owner-purchased, 0–2 per lobby). */
+export class HubBallState extends Schema {
+  @type("string") id = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") vx = 0;
+  @type("number") vz = 0;
+}
+
 export class BaseCityState extends Schema {
   @type("number") tick = 0;
   @type("boolean") paused = false;
@@ -222,4 +254,10 @@ export class BaseCityState extends Schema {
   @type({ map: VolcanoState }) volcanoes = new MapSchema<VolcanoState>();
   @type({ map: ProtectionBubbleState }) protectionBubbles = new MapSchema<ProtectionBubbleState>();
   @type({ map: ShroomState }) shrooms = new MapSchema<ShroomState>();
+  @type({ map: RiftPortalState }) riftPortals = new MapSchema<RiftPortalState>();
+  /** How many beach balls the lobby owner has purchased (0–2). */
+  @type("number") beachBallCount = 0;
+  /** Hub owner's account id (for own-lobby shop gates). */
+  @type("string") hubOwnerUserId = "";
+  @type({ map: HubBallState }) hubBalls = new MapSchema<HubBallState>();
 }

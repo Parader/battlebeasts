@@ -10,13 +10,14 @@ import {
 /**
  * Free spell ids (mirrors DEFAULT_LOADOUT — keep in sync with abilities.ts defaults).
  * Kept here to avoid a circular import with the abilities module.
+ * Order matches SPELL_SLOTS: LMB, RMB, Space, Q, E, R, F — first spell in each slot pool.
  */
 export const STARTER_ABILITY_IDS = [
   "bolt",
-  "frostBall",
+  "smash",
   "surge",
   "counter",
-  "spikes",
+  "grasp",
   "barrier",
   "fireball",
 ] as const;
@@ -26,8 +27,8 @@ export const STARTER_COLORS = ["#94a3b8"] as const;
 
 export const STARTER_PATTERNS = [DEFAULT_COSMETIC_PATTERN] as const;
 
-/** Free pattern ink — white chalk only. */
-export const STARTER_PATTERN_COLORS = ["#f8fafc"] as const;
+/** Free pattern ink — charcoal markings (white chalk is sold in the shop). */
+export const STARTER_PATTERN_COLORS = [DEFAULT_COSMETIC_PATTERN_COLOR] as const;
 
 /** Free loadout preset count. Coin shop sells slot 2; slot 3+ reserved for rubies later. */
 export const STARTER_LOADOUT_SLOT_COUNT = 1;

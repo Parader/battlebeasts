@@ -8,6 +8,7 @@ import {
   LIFE_LEECH_CAST,
   POISON_CLOUD_CAST,
   SMOKE_BOMB_CAST,
+  HOLY_GROUND_CAST,
   FIREBALL_CAST,
   VOLCANO_CAST,
 } from "@battlebeasts/shared";
@@ -26,11 +27,17 @@ import {
   usesMeleeSwoopFx,
   usesPoisonCloudFx,
   usesSmokeBombFx,
+  usesHolyGroundFx,
   usesSpikeFx,
   usesVolcanoFx,
+  usesMagmaOrbsFx,
 } from "./catalog";
 import { notifyCrescentHit, notifyCrescentMelee } from "./crescentSpawn";
 import { playBoltHitSfx, playSlamHitSfx } from "../gameSfx";
+import {
+  setMagmaOrbsMeetCollide,
+  setMagmaOrbsMeetRange,
+} from "../magmaOrbsMeetRuntime";
 import type { FxBurst } from "../CombatVfx";
 
 export type CombatFxMessage = {
@@ -88,6 +95,7 @@ function shouldSkipLegacyBurst(msg: CombatFxMessage): boolean {
     (usesFirewallFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesPoisonCloudFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesSmokeBombFx(msg.abilityId) && msg.kind === "aoe") ||
+    (usesHolyGroundFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesIceLanceExplodeFx(msg.abilityId) && msg.kind === "aoe") ||
     (usesVolcanoFx(msg.abilityId) && msg.kind === "aoe") ||
     (msg.abilityId === "protectionBubble" && msg.kind === "aoe") ||
@@ -116,7 +124,24 @@ export function dispatchCombatFxVfx(
     return { handledPortal: false };
   }
   if (msg.kind === "cast_phase") {
+    if (
+      usesMagmaOrbsFx(msg.abilityId) &&
+      msg.ownerId &&
+      typeof msg.radius === "number" &&
+      msg.radius > 0
+    ) {
+      setMagmaOrbsMeetRange(msg.ownerId, msg.radius);
+    }
     return { handledPortal: false };
+  }
+
+  if (usesMagmaOrbsFx(msg.abilityId) && msg.kind === "aoe" && msg.ownerId) {
+    setMagmaOrbsMeetCollide(
+      msg.ownerId,
+      msg.x,
+      msg.z,
+      typeof msg.yaw === "number" ? msg.yaw : undefined,
+    );
   }
 
   if (msg.kind === "hit" && msg.variant === COMBAT_FX_VARIANT_WALL_HIT) {
@@ -215,6 +240,8 @@ export function dispatchCombatFxVfx(
                 ? "poisonCloud"
               : usesSmokeBombFx(msg.abilityId)
                 ? "smokeBomb"
+              : usesHolyGroundFx(msg.abilityId)
+                ? "holyGround"
               : usesAoeCrackFx(msg.abilityId)
                 ? "groundCrack"
                 : usesIceLanceExplodeFx(msg.abilityId)
@@ -225,7 +252,7 @@ export function dispatchCombatFxVfx(
     spawnImpactEffect(
       msg.abilityId,
       { x: msg.x, z: msg.z, y: 0.04 },
-      { radius: msg.radius ?? 3.1 },
+      { radius: msg.radius ?? 2.2 },
     );
     if (msg.abilityId === "smash") playSlamHitSfx();
   }
@@ -262,6 +289,17 @@ export function dispatchCombatFxVfx(
       {
         lifeMs: SMOKE_BOMB_CAST.zoneDurationMs + 200,
         radius: msg.radius ?? SMOKE_BOMB_CAST.radius,
+      },
+    );
+  }
+
+  if (msg.kind === "aoe" && effectKindAoe === "holyGround") {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.03, yaw: msg.yaw },
+      {
+        lifeMs: HOLY_GROUND_CAST.zoneDurationMs + 200,
+        radius: msg.radius ?? HOLY_GROUND_CAST.radius,
       },
     );
   }

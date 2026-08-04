@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
@@ -9,12 +9,26 @@ import {
   ARENA_SCENE_URL,
   ARENA_SPAWNS,
   CAMERA,
+  CEMETERY_GROUND_SIZE,
+  CEMETERY_SCENE_SCALE,
+  CEMETERY_SCENE_URL,
   STARTER_COLORS,
 } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, Decoys, Volcanoes, ProtectionBubbles, Shrooms, SpiritHusks } from "./CombatVfx";
+import {
+  CombatFxMeshes,
+  DamagePopups,
+  Projectiles,
+  Decoys,
+  Volcanoes,
+  ProtectionBubbles,
+  RiftPortals,
+  Shrooms,
+  SpiritHusks,
+  WorldTargets,
+} from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
@@ -23,7 +37,9 @@ import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { assetUrl } from "./assetUrl";
 
 const ARENA_GLB = assetUrl(ARENA_SCENE_URL.replace(/^\//, ""));
+const CEMETERY_GLB = assetUrl(CEMETERY_SCENE_URL.replace(/^\//, ""));
 useGLTF.preload(ARENA_GLB);
+useGLTF.preload(CEMETERY_GLB);
 
 type Props = {
   room: Room | null;
@@ -31,6 +47,24 @@ type Props = {
   predictedRef: MutableRefObject<PredictedPose>;
   modeLabel: string;
 };
+
+function plantSceneAtOrigin(root: THREE.Object3D) {
+  root.updateMatrixWorld(true);
+  const meshes: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) meshes.push(o);
+  });
+  if (meshes.length === 0) return;
+  const origin = new THREE.Vector3(0, 200, 0);
+  const hits = new THREE.Raycaster(origin, new THREE.Vector3(0, -1, 0)).intersectObjects(
+    meshes,
+    false,
+  );
+  const hit = hits[0];
+  if (hit && Number.isFinite(hit.point.y)) {
+    root.position.y -= hit.point.y;
+  }
+}
 
 function plantArenaAtMid(root: THREE.Object3D) {
   root.updateMatrixWorld(true);
@@ -76,6 +110,25 @@ function DesertArenaScene() {
   return <primitive object={scene} />;
 }
 
+function CemeteryScene() {
+  const gltf = useGLTF(CEMETERY_GLB);
+  const scene = useMemo(() => {
+    const root = cloneSkinned(gltf.scene);
+    root.scale.setScalar(CEMETERY_SCENE_SCALE);
+    root.updateMatrixWorld(true);
+    plantSceneAtOrigin(root);
+    root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    });
+    return root;
+  }, [gltf.scene]);
+
+  return <primitive object={scene} />;
+}
+
 function LocalMesh({
   predictedRef,
   room,
@@ -97,8 +150,9 @@ function LocalMesh({
   );
 }
 
-/** Desert arena content — walls from shared colliders, visuals from desert.glb. */
-export function ContentScene({ room, localSessionId, predictedRef }: Props) {
+/** Content room scene — desert for PvP arenas, cemetery for Wave Assault. */
+export function ContentScene({ room, localSessionId, predictedRef, modeLabel }: Props) {
+  const isDungeon = modeLabel === "dungeon";
   const localPos = useRef(new THREE.Vector3(0, 0, 0));
   const aimNdc = useRef(new THREE.Vector2(0, 0));
   const aimReady = useRef(false);
@@ -106,17 +160,33 @@ export function ContentScene({ room, localSessionId, predictedRef }: Props) {
   const groundPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const hit = useMemo(() => new THREE.Vector3(), []);
-  const localColor =
-    (localSessionId && room?.state?.players?.get(localSessionId)?.color) || STARTER_COLORS[0]!;
-  const localTeam =
-    (localSessionId &&
-      (room?.state?.players?.get(localSessionId) as { team?: string } | undefined)?.team) ||
-    "";
+  const localPlayer = localSessionId
+    ? (room?.state?.players?.get(localSessionId) as
+        | { color?: string; team?: string; role?: string }
+        | undefined)
+    : undefined;
+  const localColor = localPlayer?.color || STARTER_COLORS[0]!;
+  const localTeam = localPlayer?.team || "";
+  const spectatorRef = useRef(localPlayer?.role === "spectator");
+  const [isSpectator, setIsSpectator] = useState(spectatorRef.current);
+
+  useFrame(() => {
+    const role = (
+      localSessionId
+        ? (room?.state?.players?.get(localSessionId) as { role?: string } | undefined)
+        : undefined
+    )?.role;
+    const next = role === "spectator";
+    if (next !== spectatorRef.current) {
+      spectatorRef.current = next;
+      setIsSpectator(next);
+    }
+  });
 
   useFrame(() => {
     const p = predictedRef.current;
     localPos.current.set(p.x, 0, p.z);
-
+    // Keep ground aim + facing fresh even when the cursor is still (cast clicks need it).
     if (!aimReady.current) return;
     raycaster.setFromCamera(aimNdc.current, camera);
     if (raycaster.ray.intersectPlane(groundPlane, hit)) {
@@ -132,8 +202,8 @@ export function ContentScene({ room, localSessionId, predictedRef }: Props) {
     const onPointer = (e: PointerEvent) => {
       const rect = el.getBoundingClientRect();
       const ndc = aimNdc.current;
-      ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      ndc.x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+      ndc.y = -(((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1);
       aimReady.current = true;
       raycaster.setFromCamera(ndc, camera);
       if (raycaster.ray.intersectPlane(groundPlane, hit)) {
@@ -151,34 +221,41 @@ export function ContentScene({ room, localSessionId, predictedRef }: Props) {
     };
   }, [camera, gl, groundPlane, hit, predictedRef, raycaster]);
 
+  const groundSize = isDungeon ? CEMETERY_GROUND_SIZE : ARENA_GROUND_SIZE;
+  const groundColor = isDungeon ? "#1a1f18" : "#c4a574";
+
   return (
     <>
-      <ambientLight intensity={0.55} />
-      <FollowSun follow={localPos} intensity={1.2} />
-      <DesertArenaScene />
+      <ambientLight intensity={isDungeon ? 0.4 : 0.55} />
+      <FollowSun follow={localPos} intensity={isDungeon ? 0.95 : 1.2} />
+      {isDungeon ? <CemeteryScene /> : <DesertArenaScene />}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <planeGeometry args={[ARENA_GROUND_SIZE, ARENA_GROUND_SIZE]} />
-        <meshStandardMaterial color="#c4a574" />
+        <planeGeometry args={[groundSize, groundSize]} />
+        <meshStandardMaterial color={groundColor} />
       </mesh>
-      <LocalMesh
-        predictedRef={predictedRef}
-        room={room}
-        localSessionId={localSessionId}
-        color={localColor}
-      />
+      {!isSpectator ? (
+        <LocalMesh
+          predictedRef={predictedRef}
+          room={room}
+          localSessionId={localSessionId}
+          color={localColor}
+        />
+      ) : null}
       <RemotePlayers
         room={room}
         localSessionId={localSessionId}
-        relation="enemy"
+        relation={isDungeon ? "ally" : "enemy"}
         localTeam={localTeam}
       />
+      {isDungeon ? <WorldTargets room={room} /> : null}
       <Decoys room={room} />
       <Volcanoes room={room} />
       <ProtectionBubbles room={room} />
+      <RiftPortals room={room} />
       <Shrooms
         room={room}
         localSessionId={localSessionId}
-        pvpTeams
+        pvpTeams={!isDungeon}
         localTeam={localTeam}
       />
       <SpiritHusks

@@ -12,6 +12,7 @@ import {
   INTERACT,
   LOADOUT_SIZE,
   MAX_COIN_LOADOUT_SLOTS,
+  MAX_LOBBY_BEACH_BALLS,
   MAX_TALENTS,
   PLAYER_BASE_MAX_HP,
   RESPAWN_LOCK_MS,
@@ -52,6 +53,8 @@ import {
   isCosmeticSlot,
   normalizeLoadout,
   normalizeTalentBuild,
+  isTalentBuildValid,
+  sanitizeTalentBuild,
   ownsAbility,
   ownsColor,
   ownsCosmetic,
@@ -65,6 +68,7 @@ import {
   spendCoins,
   baseCityStaticColliders,
   pointInInteractZone,
+  sweepTravel,
   totalPointsSpent,
   talentPointsRemoved,
   talentRefundEssenceCost,
@@ -74,6 +78,7 @@ import {
   type PvpSeat,
   type ShopCost,
   type ShopGrant,
+  type StaticCollider,
   type TalentBuild,
   type TalentTreeId,
   type Wallet,
@@ -94,8 +99,10 @@ import {
   claimPendingRewardGrants,
   insertRewardGrant,
   loadEconomy,
+  loadBeachBallCount,
   loadIntroCompleted,
   saveActiveLoadoutSlot,
+  saveBeachBallCount,
   saveInventory,
   saveLoadout,
   saveLoadoutPreset,
@@ -121,7 +128,7 @@ import {
   openChest,
 } from "../quests.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
-import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
+import { BaseCityState, HubBallState, PlayerState } from "../schema/BaseCityState.js";
 
 const DUMMY_BOLT_GAP_MS = 420;
 /** Drop aggro if the dummy hasn't been damaged for this long. */
@@ -164,10 +171,17 @@ export class BaseCityRoom extends Room<BaseCityState> {
   private activeLoadoutSlotBySession = new Map<string, number>();
   /** Emote anti-spam / active window (epoch ms). */
   private emoteUntilBySession = new Map<string, number>();
+  /** Hub plaza ball vs village walls. */
+  private hubBallColliders: StaticCollider[] = [];
+  /** Prior feet pose for walk-into-ball impulse. */
+  private ballPlayerPrev = new Map<string, { x: number; z: number }>();
 
   onCreate(options: AuthJoinOptions) {
     this.setState(new BaseCityState());
+    this.hubBallColliders = baseCityStaticColliders();
     this.ownerId = options.hubOwnerId ?? null;
+    this.state.hubOwnerUserId = this.ownerId ?? "";
+    void this.reloadOwnerBeachBalls();
     this.combat = new CombatSystem(this as never, {
       canHurtPlayers: false,
       onPlayerDamaged: (sessionId) => {
@@ -535,7 +549,11 @@ export class BaseCityRoom extends Room<BaseCityState> {
       });
     }
 
-    if (!this.ownerId) this.ownerId = options.hubOwnerId ?? verified.userId;
+    if (!this.ownerId) {
+      this.ownerId = options.hubOwnerId ?? verified.userId;
+      this.state.hubOwnerUserId = this.ownerId ?? "";
+      void this.reloadOwnerBeachBalls();
+    }
 
     this.applyCombatKit(client.sessionId, player);
 
@@ -547,9 +565,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
     });
     this.sendInventory(client, player);
     this.broadcastHubRoster();
-    if (isAdminEmail(verified.email)) {
-      client.send("hub_you_are_admin", { admin: true });
-    }
+    client.send("hub_you_are_admin", { admin: isAdminEmail(verified.email) });
 
     // Hub owner intro flag — visitors never get the cinematic.
     if (!visiting) {
@@ -783,6 +799,8 @@ export class BaseCityRoom extends Room<BaseCityState> {
         return ownsEmote(unlocks.emotes, grant.emoteId);
       case "loadout_slot":
         return unlocks.loadoutSlotCount >= grant.toCount;
+      case "lobby_beach_ball":
+        return this.state.beachBallCount >= grant.toCount;
       case "consumable":
       case "item_stack":
         return false;
@@ -918,6 +936,12 @@ export class BaseCityRoom extends Room<BaseCityState> {
     build = clampBuildToOwned(build, owned);
     if (totalPointsSpent(build) > Math.min(owned, TALENT_POINT_BUDGET)) {
       client.send("toast", { message: "Build exceeds owned talent points" });
+      return;
+    }
+    if (!isTalentBuildValid(build, owned)) {
+      client.send("toast", {
+        message: "Invalid talent path — linked talents need a point in the previous node",
+      });
       return;
     }
     const removed = talentPointsRemoved(current, build);
@@ -1136,6 +1160,29 @@ export class BaseCityRoom extends Room<BaseCityState> {
     unlocks.abilities = [...unlocks.abilities];
     unlocks.emoteSlots = [...unlocks.emoteSlots];
 
+    if (item.grant.kind === "lobby_beach_ball") {
+      const identity = this.identities.get(client.sessionId);
+      if (!identity || !this.ownerId || identity.userId !== this.ownerId) {
+        client.send("toast", { message: "Beach balls can only be bought in your own lobby" });
+        return;
+      }
+      const toCount = item.grant.toCount;
+      if (toCount < 1 || toCount > MAX_LOBBY_BEACH_BALLS) {
+        client.send("toast", { message: "Beach ball unavailable" });
+        return;
+      }
+      if (this.state.beachBallCount >= toCount) {
+        client.send("toast", { message: "Already owned" });
+        return;
+      }
+      if (this.state.beachBallCount !== toCount - 1) {
+        client.send("toast", {
+          message: toCount === 2 ? "Buy the first beach ball first" : "Beach ball unavailable",
+        });
+        return;
+      }
+    }
+
     if (this.alreadyOwnsGrant(unlocks, item.grant)) {
       client.send("toast", { message: "Already owned" });
       return;
@@ -1226,6 +1273,34 @@ export class BaseCityRoom extends Room<BaseCityState> {
           });
         }
         toastMessage = `Unlocked loadout preset slot ${grant.toCount}`;
+        break;
+      }
+      case "lobby_beach_ball": {
+        const identity = this.identities.get(client.sessionId);
+        if (!identity || !this.ownerId || identity.userId !== this.ownerId) {
+          this.creditShopCost(player, item.cost);
+          client.send("toast", { message: "Beach balls can only be bought in your own lobby" });
+          await this.persistInventory(client.sessionId, player);
+          this.sendInventory(client, player);
+          return;
+        }
+        this.ensureHubBalls(grant.toCount);
+        try {
+          await saveBeachBallCount(this.ownerId, grant.toCount);
+        } catch {
+          this.ensureHubBalls(Math.max(0, grant.toCount - 1));
+          this.creditShopCost(player, item.cost);
+          client.send("toast", {
+            message: "Purchase could not be saved — you were not charged",
+          });
+          await this.persistInventory(client.sessionId, player);
+          this.sendInventory(client, player);
+          return;
+        }
+        toastMessage =
+          grant.toCount === 1
+            ? "Beach ball placed in your lobby"
+            : "Second beach ball placed in your lobby";
         break;
       }
       case "item_stack":
@@ -1404,8 +1479,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
     }
 
     const owned = this.talentPointsBySession.get(client.sessionId) ?? 0;
-    let talentBuild = normalizeTalentBuild(preset?.talentBuild ?? {});
-    talentBuild = clampBuildToOwned(talentBuild, owned);
+    let talentBuild = sanitizeTalentBuild(preset?.talentBuild ?? {}, owned);
 
     this.activeLoadoutSlotBySession.set(client.sessionId, slotIndex);
     player.loadout = abilityIds.join(",");
@@ -1573,6 +1647,7 @@ export class BaseCityRoom extends Room<BaseCityState> {
     const player = this.state.players.get(client.sessionId);
     if (!identity || identity.isGuest || !player || !chestId) {
       client.send("toast", { message: "Cannot open chest" });
+      client.send("hub_chest_opened", { ok: false });
       return;
     }
     const unlocks = this.unlocksOf(client.sessionId);
@@ -1585,6 +1660,8 @@ export class BaseCityRoom extends Room<BaseCityState> {
     });
     if (!result.ok) {
       client.send("toast", { message: result.error ?? "Open failed" });
+      client.send("hub_chest_opened", { ok: false });
+      await this.handleHubQuests(client);
       return;
     }
 
@@ -1669,10 +1746,12 @@ export class BaseCityRoom extends Room<BaseCityState> {
       client.send("toast", { message: "Pick a chest rarity" });
       return;
     }
+    // Source must be unique per (user_id, source) — stamp each admin grant.
+    const source = `admin:spawn:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
     const result = await insertClosedChest(
       identity.userId,
       quality as "green" | "blue" | "purple" | "legendary",
-      "admin:spawn",
+      source,
     );
     if (!result.ok) {
       client.send("toast", { message: result.error ?? "Spawn failed" });
@@ -2390,11 +2469,184 @@ export class BaseCityRoom extends Room<BaseCityState> {
 
     this.combat.tick(dt, now);
     this.tickDummyAggro(now);
+    this.tickHubPushBall(dt);
 
     if (now - this.lastHubRosterBroadcastAt >= HUB_ROSTER_BROADCAST_MS) {
       this.broadcastHubRoster();
       this.purgeDuplicateUserSeats();
     }
+  }
+
+  /** Soft plaza balls — walk into them to push; damp + village wall sweep. */
+  private tickHubPushBall(dt: number) {
+    if (this.state.hubBalls.size <= 0) return;
+    const BALL_R = 0.48;
+    /** Wider than foot radius so the mesh doesn't clip the character torso. */
+    const PLAYER_CONTACT = 0.78;
+    const DAMP = Math.exp(-1.35 * dt);
+    const MAX_SPEED = 11;
+    const PUSH_GAIN = 14;
+    const SOFT_BOUNDS = 26;
+    const cx = HUB_SPAWN.x;
+    const cz = HUB_SPAWN.z;
+    const safeDt = Math.max(1e-4, Math.min(0.05, dt));
+
+    const balls: Array<{ id: string; ball: HubBallState }> = [];
+    this.state.hubBalls.forEach((ball, id) => balls.push({ id, ball }));
+
+    for (const { id, ball } of balls) {
+      let vx = ball.vx;
+      let vz = ball.vz;
+      let x = ball.x;
+      let z = ball.z;
+
+      for (let pass = 0; pass < 2; pass++) {
+        for (const [sessionId, player] of this.state.players.entries()) {
+          if (player.disconnected || player.hp <= 0) continue;
+          const prev = this.ballPlayerPrev.get(sessionId) ?? { x: player.x, z: player.z };
+          const pvx = (player.x - prev.x) / safeDt;
+          const pvz = (player.z - prev.z) / safeDt;
+
+          const dx = x - player.x;
+          const dz = z - player.z;
+          const dist = Math.hypot(dx, dz);
+          const minDist = BALL_R + PLAYER_CONTACT;
+          if (dist < 1e-4) {
+            const len = Math.hypot(pvx, pvz);
+            const nx = len > 0.05 ? pvx / len : 1;
+            const nz = len > 0.05 ? pvz / len : 0;
+            x += nx * minDist;
+            z += nz * minDist;
+            vx += nx * PUSH_GAIN * 0.5;
+            vz += nz * PUSH_GAIN * 0.5;
+            continue;
+          }
+          if (dist >= minDist) continue;
+
+          const nx = dx / dist;
+          const nz = dz / dist;
+          const overlap = minDist - dist;
+          x += nx * overlap;
+          z += nz * overlap;
+
+          const approach = Math.max(0, -(pvx * nx + pvz * nz));
+          const push = PUSH_GAIN * (0.25 + overlap) + approach * 1.15;
+          vx += nx * push * safeDt * (pass === 0 ? 1 : 0.35);
+          vz += nz * push * safeDt * (pass === 0 ? 1 : 0.35);
+        }
+      }
+
+      // Soft ball–ball separation.
+      for (const other of balls) {
+        if (other.id === id) continue;
+        const dx = x - other.ball.x;
+        const dz = z - other.ball.z;
+        const dist = Math.hypot(dx, dz);
+        const minDist = BALL_R * 2;
+        if (dist < 1e-4 || dist >= minDist) continue;
+        const nx = dx / dist;
+        const nz = dz / dist;
+        const overlap = (minDist - dist) * 0.5;
+        x += nx * overlap;
+        z += nz * overlap;
+        vx += nx * overlap * 8;
+        vz += nz * overlap * 8;
+      }
+
+      vx *= DAMP;
+      vz *= DAMP;
+      const spd = Math.hypot(vx, vz);
+      if (spd > MAX_SPEED) {
+        const s = MAX_SPEED / spd;
+        vx *= s;
+        vz *= s;
+      }
+
+      const from = { x, z };
+      const desired = { x: x + vx * safeDt, z: z + vz * safeDt };
+      const next = sweepTravel(from, desired, BALL_R, this.hubBallColliders);
+      const steppedX = Math.abs(next.x - from.x) > 1e-5;
+      const steppedZ = Math.abs(next.z - from.z) > 1e-5;
+      if (!steppedX && Math.abs(vx) > 0.08) vx *= -0.55;
+      if (!steppedZ && Math.abs(vz) > 0.08) vz *= -0.55;
+      x = next.x;
+      z = next.z;
+
+      const maxX = cx + SOFT_BOUNDS;
+      const minX = cx - SOFT_BOUNDS;
+      const maxZ = cz + SOFT_BOUNDS;
+      const minZ = cz - SOFT_BOUNDS;
+      if (x > maxX) {
+        x = maxX;
+        vx = -Math.abs(vx) * 0.4;
+      } else if (x < minX) {
+        x = minX;
+        vx = Math.abs(vx) * 0.4;
+      }
+      if (z > maxZ) {
+        z = maxZ;
+        vz = -Math.abs(vz) * 0.4;
+      } else if (z < minZ) {
+        z = minZ;
+        vz = Math.abs(vz) * 0.4;
+      }
+
+      ball.x = x;
+      ball.z = z;
+      ball.vx = Math.abs(vx) < 0.015 ? 0 : vx;
+      ball.vz = Math.abs(vz) < 0.015 ? 0 : vz;
+    }
+
+    for (const [sessionId, player] of this.state.players.entries()) {
+      if (player.disconnected || player.hp <= 0) {
+        this.ballPlayerPrev.delete(sessionId);
+        continue;
+      }
+      this.ballPlayerPrev.set(sessionId, { x: player.x, z: player.z });
+    }
+  }
+
+  private async reloadOwnerBeachBalls() {
+    if (!this.ownerId) {
+      this.ensureHubBalls(0);
+      return;
+    }
+    try {
+      const count = await loadBeachBallCount(this.ownerId);
+      this.ensureHubBalls(count);
+    } catch {
+      this.ensureHubBalls(0);
+    }
+  }
+
+  private ensureHubBalls(count: number) {
+    const target = Math.max(0, Math.min(MAX_LOBBY_BEACH_BALLS, Math.floor(count)));
+    this.state.beachBallCount = target;
+    const ids = [...this.state.hubBalls.keys()].sort();
+    while (ids.length > target) {
+      const id = ids.pop()!;
+      this.state.hubBalls.delete(id);
+    }
+    while (this.state.hubBalls.size < target) {
+      this.spawnHubBall(this.state.hubBalls.size);
+    }
+  }
+
+  private spawnHubBall(index: number) {
+    const offsets = [
+      { x: 2.4, z: 1.6 },
+      { x: -2.1, z: 2.3 },
+    ] as const;
+    const off = offsets[Math.max(0, Math.min(offsets.length - 1, index))]!;
+    const id = `beach_${index}`;
+    if (this.state.hubBalls.has(id)) return;
+    const ball = new HubBallState();
+    ball.id = id;
+    ball.x = HUB_SPAWN.x + off.x;
+    ball.z = HUB_SPAWN.z + off.z;
+    ball.vx = 0;
+    ball.vz = 0;
+    this.state.hubBalls.set(id, ball);
   }
 
   /** Aggro'd practice dummies cast bolt (with anim) at their attacker until death. */

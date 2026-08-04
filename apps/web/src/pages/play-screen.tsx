@@ -10,6 +10,7 @@ import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
 import { QuestsPanel } from "@/game/ui/QuestsPanel";
+import { AdminPanel } from "@/game/ui/AdminPanel";
 import { RankPanel } from "@/game/ui/RankPanel";
 import { ChestRevealPanel } from "@/game/ui/ChestRevealPanel";
 import { SettingsPanel } from "@/game/ui/SettingsPanel";
@@ -18,6 +19,8 @@ import { hasUnseenPatchNotes } from "@/game/patchNotes";
 import { DeathOverlay } from "@/game/ui/DeathOverlay";
 import { HubRoster } from "@/game/ui/HubRoster";
 import { ArenaMatchHud } from "@/game/ui/ArenaMatchHud";
+import { WaveAssaultHud } from "@/game/ui/WaveAssaultHud";
+import { WaveRunRecapPanel } from "@/game/ui/WaveRunRecapPanel";
 import { MatchRecapPanel } from "@/game/ui/MatchRecapPanel";
 import { PartyLobbyPanel } from "@/game/ui/PartyLobbyPanel";
 import { InvitePromptStack } from "@/game/ui/InvitePromptStack";
@@ -40,7 +43,7 @@ import {
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
-import { emptyEmoteSlots } from "@battlebeasts/shared";
+import { emptyEmoteSlots, isAdminEmail } from "@battlebeasts/shared";
 import { clearPreferredHub, loadPreferredHub, savePreferredHub } from "@/game/contentRejoin";
 
 const WS_URL =
@@ -65,6 +68,17 @@ export const PlayScreen = () => {
     const userId = user?.id ?? "";
     const displayName = profile?.display_name ?? user?.user_metadata?.full_name ?? "Hunter";
     const color = profile?.color;
+    /** Server flag or local allowlist — actions still gated on the game server. */
+    const authEmail =
+        user?.email ||
+        (typeof user?.user_metadata?.email === "string" ? user.user_metadata.email : undefined) ||
+        user?.identities
+            ?.map((id) => {
+                const data = id.identity_data as { email?: string } | undefined;
+                return typeof data?.email === "string" ? data.email : undefined;
+            })
+            .find(Boolean);
+    const clientIsAdmin = isAdminEmail(authEmail);
 
     const [hubOwnerId, setHubOwnerId] = useState<string | null>(null);
     const [hubPrefReady, setHubPrefReady] = useState(false);
@@ -91,6 +105,7 @@ export const PlayScreen = () => {
     const [helpOpen, setHelpOpen] = useState(false);
     const [friendsOpen, setFriendsOpen] = useState(false);
     const [questsOpen, setQuestsOpen] = useState(false);
+    const [adminOpen, setAdminOpen] = useState(false);
     const [rankOpen, setRankOpen] = useState(false);
     const [chestLocksInput, setChestLocksInput] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -153,6 +168,10 @@ export const PlayScreen = () => {
         acknowledgeQuestAlerts,
         notifyFriendCodeRedeemed,
         arenaHud,
+        waveHud,
+        pvePaused,
+        setPvePaused,
+        waveRunRecap,
         matchRecap,
         voteRematch,
         rankedState,
@@ -179,6 +198,7 @@ export const PlayScreen = () => {
         inputLocked:
             friendsOpen ||
             questsOpen ||
+            adminOpen ||
             rankOpen ||
             settingsOpen ||
             updatesOpen ||
@@ -189,6 +209,7 @@ export const PlayScreen = () => {
     });
 
     const inContent = phase === "content";
+    const isAdmin = isHubAdmin || clientIsAdmin;
     useEffect(() => {
         setChestLocksInput(Boolean(chestReveal) || Boolean(pendingChestOpenId));
         if (chestReveal) setQuestsOpen(false);
@@ -283,7 +304,14 @@ export const PlayScreen = () => {
     }
 
     const isArena = Boolean(arenaHud);
-    const arenaAllowRespawn = !isArena;
+    const isWaveAssault = contentMode === "dungeon";
+    const arenaAllowRespawn = !isArena && !isWaveAssault;
+    const isSpectator =
+        Boolean(inContent) &&
+        (room?.sessionId
+            ? (room.state?.players?.get(room.sessionId) as { role?: string } | undefined)?.role ===
+              "spectator"
+            : false);
     const hpMax = Math.max(1, localHp.maxHp);
     const hpPct = Math.max(0, Math.min(100, (localHp.hp / hpMax) * 100));
     const shieldPct = Math.max(0, Math.min(100, (localHp.shield / hpMax) * 100));
@@ -320,7 +348,7 @@ export const PlayScreen = () => {
 
             {playReady && !inContent ? <HubIntroOverlay /> : null}
 
-            {playReady && combatHudVisible && !introPlaying && (
+            {playReady && combatHudVisible && !introPlaying && !isSpectator && (
                 <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
                     <div className="bb-hp-tray">
                         <div className="bb-hp-tray__label">
@@ -345,22 +373,47 @@ export const PlayScreen = () => {
                 </div>
             )}
 
-            {playReady && diedAt != null && (
+            {playReady && diedAt != null && !isSpectator && !waveRunRecap && (
                 <DeathOverlay
                     diedAt={diedAt}
                     animDurationMs={deathAnimMs}
                     onRespawn={requestRespawn}
                     allowRespawn={arenaAllowRespawn}
+                    fallenHint={
+                        isWaveAssault ? "No respawn — the run ends when all hunters fall." : undefined
+                    }
                 />
             )}
 
             {playReady && arenaHud && inContent && <ArenaMatchHud hud={arenaHud} />}
+
+            {playReady && isWaveAssault && inContent && !waveRunRecap && (
+                <WaveAssaultHud
+                    hud={waveHud}
+                    paused={pvePaused}
+                    onTogglePause={() => setPvePaused(!pvePaused)}
+                    onReturnHub={returnToHub}
+                />
+            )}
+
+            {playReady && waveRunRecap && inContent && (
+                <WaveRunRecapPanel
+                    kills={waveRunRecap.kills}
+                    wave={waveRunRecap.wave}
+                    bestKills={waveRunRecap.bestKills}
+                    isNewBest={waveRunRecap.isNewBest}
+                    retryReady={waveRunRecap.retryReady}
+                    onRetry={voteRematch}
+                    onReturnHub={returnToHub}
+                />
+            )}
 
             {playReady && matchRecap && inContent && (
                 <MatchRecapPanel
                     recap={matchRecap}
                     rematchReady={Boolean(arenaHud?.rematchReady)}
                     localSessionId={room?.sessionId ?? null}
+                    isSpectator={isSpectator}
                     onRematch={voteRematch}
                     onReturnHub={returnToHub}
                 />
@@ -397,7 +450,7 @@ export const PlayScreen = () => {
                                 players={hubRoster}
                                 localSessionId={room?.sessionId ?? null}
                                 isHubOwner={isHubOwner}
-                                isAdmin={isHubAdmin}
+                                isAdmin={isAdmin}
                                 onKick={kickFromHub}
                                 onGrantResources={grantHubResources}
                             />
@@ -460,6 +513,13 @@ export const PlayScreen = () => {
                                             : hubChests.length + unseenQuestCompletions
                                         : null
                                 }
+                            />
+                        )}
+                        {isAdmin && !inContent && (
+                            <HudIconButton
+                                label="Admin"
+                                icon="wizard-staff"
+                                onClick={() => setAdminOpen(true)}
                             />
                         )}
                         <HudIconButton
@@ -531,16 +591,20 @@ export const PlayScreen = () => {
                 </div>
             )}
 
-            {playReady && !introPlaying && <StatusBar room={room} sessionId={room?.sessionId ?? null} />}
+            {playReady && !introPlaying && !isSpectator && (
+                <StatusBar room={room} sessionId={room?.sessionId ?? null} />
+            )}
 
-            {playReady && !introPlaying && (
+            {playReady && !introPlaying && !isSpectator && (
                 <AbilityBar
                     loadout={economy.loadout}
                     wallet={inContent ? undefined : economy}
+                    talentIds={economy.talents}
+                    talentBuild={economy.talentBuild}
                 />
             )}
 
-            {playReady && !inContent && (
+            {playReady && !isSpectator && (
                 <EmotePieHud
                     slots={economy.unlocks?.emoteSlots ?? emptyEmoteSlots()}
                     aimAngleRad={emoteAimAngle}
@@ -723,31 +787,43 @@ export const PlayScreen = () => {
                     onClose={() => setQuestsOpen(false)}
                     quests={hubQuests}
                     chests={hubChests}
-                    isAdmin={isHubAdmin}
                     onOpenChest={openHubChest}
                     pendingChestOpenId={pendingChestOpenId}
+                />
+            )}
+
+            {playReady && isAdmin && (
+                <AdminPanel
+                    open={adminOpen}
+                    onClose={() => setAdminOpen(false)}
                     onSpawnChest={spawnHubChest}
                     adminNoCooldown={adminNoCooldown}
                     onToggleAdminNoCooldown={setAdminNoCooldownEnabled}
                     onReplayIntro={() => {
-                        setQuestsOpen(false);
+                        setAdminOpen(false);
                         replayHubIntro();
                     }}
                     onSoftResetCharacter={() => {
-                        setQuestsOpen(false);
+                        setAdminOpen(false);
                         setConfirmSoftReset(true);
                     }}
                 />
             )}
 
             {playReady && chestReveal && (
-                <ChestRevealPanel reveal={chestReveal} onClose={clearChestReveal} />
+                <ChestRevealPanel
+                    reveal={chestReveal}
+                    onClose={() => {
+                        clearChestReveal();
+                        setQuestsOpen(true);
+                    }}
+                />
             )}
 
             <ConfirmDialog
                 open={playReady && confirmSoftReset}
                 title="Soft reset character?"
-                message="Resets wallet, loadouts, talents, quests, and all bought customization (colors, patterns, cosmetics, emotes) back to starter slate. Keeps your name. The intro will replay."
+                message="Resets wallet, loadouts, talents, quests, chests, and all bought customization (colors, patterns, cosmetics, emotes) back to starter slate. Keeps your name. The intro will replay."
                 confirmLabel="Reset"
                 onConfirm={() => {
                     setConfirmSoftReset(false);

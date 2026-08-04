@@ -12,6 +12,7 @@ import {
   normalizeLoadout,
   normalizePlayerUnlocks,
   normalizeTalentBuild,
+  sanitizeTalentBuild,
   sanitizeUnlocksWithEquipped,
   emptyPlayerUnlocks,
   type CosmeticsEquipped,
@@ -216,11 +217,15 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     abilityIds,
   );
 
-  const accountTalentBuild = normalizeTalentBuild(talents.data?.talent_build);
+  const accountTalentBuild = sanitizeTalentBuild(
+    talents.data?.talent_build,
+    talentPoints,
+  );
 
   const loadoutPresets: LoadoutPresetRow[] = (presetsRes.data ?? []).map((row) => {
-    const fromPreset = normalizeTalentBuild(
+    const fromPreset = sanitizeTalentBuild(
       row.talent_build && typeof row.talent_build === "object" ? row.talent_build : {},
+      talentPoints,
     );
     return {
       slotIndex: row.slot_index as number,
@@ -294,6 +299,31 @@ export async function saveInventory(userId: string, wallet: Wallet, talentPoints
     rows.push({ user_id: userId, resource_id: "talent_points", quantity: Math.max(0, talentPoints) });
   }
   await supabase.from("inventory").upsert(rows, { onConflict: "user_id,resource_id" });
+}
+
+const BEACH_BALL_RESOURCE = "beach_ball";
+const MAX_BEACH_BALLS = 2;
+
+/** Lobby beach balls owned by this hunter (persists on their hub). */
+export async function loadBeachBallCount(userId: string): Promise<number> {
+  if (!supabase) return 0;
+  const { data } = await supabase
+    .from("inventory")
+    .select("quantity")
+    .eq("user_id", userId)
+    .eq("resource_id", BEACH_BALL_RESOURCE)
+    .maybeSingle();
+  const n = Math.floor(data?.quantity ?? 0);
+  return Math.max(0, Math.min(MAX_BEACH_BALLS, n));
+}
+
+export async function saveBeachBallCount(userId: string, count: number): Promise<void> {
+  if (!supabase) return;
+  const quantity = Math.max(0, Math.min(MAX_BEACH_BALLS, Math.floor(count)));
+  await supabase.from("inventory").upsert(
+    [{ user_id: userId, resource_id: BEACH_BALL_RESOURCE, quantity }],
+    { onConflict: "user_id,resource_id" },
+  );
 }
 
 export async function savePlayerUnlocks(userId: string, unlocks: PlayerUnlocks): Promise<boolean> {
@@ -485,7 +515,7 @@ export type SoftResetResult = {
 };
 
 /**
- * Soft character reset: starter wallet/loadout/talents/quests/appearance.
+ * Soft character reset: starter wallet/loadout/talents/quests/chests/appearance.
  * Wipes purchased cosmetics, colors, patterns, emotes back to starters;
  * clears intro so cinematic can replay.
  */
@@ -511,12 +541,14 @@ export async function softResetCharacter(userId: string): Promise<SoftResetResul
 
   await Promise.all([
     saveInventory(userId, wallet, STARTER_TALENT_POINTS),
+    saveBeachBallCount(userId, 0),
     savePlayerUnlocks(userId, starterUnlocks),
     saveLoadout(userId, [...DEFAULT_LOADOUT]),
     saveTalents(userId, []),
     saveTalentBuild(userId, {}),
     setIntroCompleted(userId, false),
     supabase.from("quest_progress").delete().eq("user_id", userId),
+    supabase.from("chests").delete().eq("user_id", userId),
     supabase.from("loadout_presets").delete().eq("user_id", userId),
     supabase
       .from("profiles")

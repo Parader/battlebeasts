@@ -1,3 +1,4 @@
+import { RIFT_FISSURE_CAST } from "./abilities";
 import { length2 } from "./sim";
 import type { Vec2 } from "./protocol";
 
@@ -575,10 +576,20 @@ export function resolveCollisions(
   return p;
 }
 
-/** Other players as solid circles (skip self / same account / disconnected / dead). */
+/** Other players as solid circles (skip self / same account / disconnected / dead / spectators). */
 export function playerCollidersExcept(
   players: Iterable<
-    [string, { x: number; z: number; disconnected?: boolean; hp?: number; id?: string }]
+    [
+      string,
+      {
+        x: number;
+        z: number;
+        disconnected?: boolean;
+        hp?: number;
+        id?: string;
+        role?: string;
+      },
+    ]
   >,
   exceptId: string,
   /** Account id (`player.id`) — drops match-return ghost seats for the same hunter. */
@@ -589,6 +600,7 @@ export function playerCollidersExcept(
     if (id === exceptId) continue;
     if (exceptUserId && p.id && p.id === exceptUserId) continue;
     if (p.disconnected) continue;
+    if (p.role === "spectator") continue;
     if (typeof p.hp === "number" && p.hp <= 0) continue;
     out.push({
       id,
@@ -620,7 +632,17 @@ export function targetColliders(
 /** Players (except self / same account) + optional living targets for walk collision. */
 export function unitCollidersExcept(
   players: Iterable<
-    [string, { x: number; z: number; disconnected?: boolean; hp?: number; id?: string }]
+    [
+      string,
+      {
+        x: number;
+        z: number;
+        disconnected?: boolean;
+        hp?: number;
+        id?: string;
+        role?: string;
+      },
+    ]
   >,
   targets: Iterable<[string, { x: number; z: number; hp?: number }]> | null | undefined,
   exceptPlayerId: string,
@@ -646,6 +668,64 @@ export function volcanoColliders(
       x: v.x,
       z: v.z,
       radius: Math.max(0.4, v.radius ?? 1.35),
+    });
+  }
+  return out;
+}
+
+type RiftPortalColliderPose = {
+  x: number;
+  z: number;
+  yaw?: number;
+  radius?: number;
+  phase?: string;
+};
+
+/**
+ * True when the traveler is lined up with the portal face (front/back), so the
+ * walk pane should not block — teleport enter volume handles that approach.
+ */
+export function riftPortalFaceApproach(
+  portal: RiftPortalColliderPose,
+  x: number,
+  z: number,
+): boolean {
+  const radius = Math.max(0.35, portal.radius ?? RIFT_FISSURE_CAST.mouthRadius);
+  const yaw = portal.yaw ?? 0;
+  const fx = Math.sin(yaw);
+  const fz = Math.cos(yaw);
+  const rx = Math.cos(yaw);
+  const rz = -Math.sin(yaw);
+  const dx = x - portal.x;
+  const dz = z - portal.z;
+  const alongFwd = dx * fx + dz * fz;
+  const alongSide = dx * rx + dz * rz;
+  const sideHalf = radius * RIFT_FISSURE_CAST.enterSideHalf;
+  if (Math.abs(alongSide) > sideHalf * 1.05) return false;
+  return Math.abs(alongFwd) >= Math.abs(alongSide) * RIFT_FISSURE_CAST.enterFaceBias;
+}
+
+/**
+ * Rift Fissure mouths — thin oriented panes. Blocks walking through from the
+ * sides. When `traveler` is face-aligned with a mouth, that pane is omitted so
+ * front/back entry still reaches the teleport trigger.
+ */
+export function riftPortalColliders(
+  portals: Iterable<[string, RiftPortalColliderPose]>,
+  traveler?: { x: number; z: number },
+): BoxCollider[] {
+  const out: BoxCollider[] = [];
+  for (const [id, p] of portals) {
+    if (traveler && riftPortalFaceApproach(p, traveler.x, traveler.z)) continue;
+    const radius = Math.max(0.35, p.radius ?? RIFT_FISSURE_CAST.mouthRadius);
+    out.push({
+      id: `rift_${id}`,
+      shape: "box",
+      x: p.x,
+      z: p.z,
+      halfX: radius * RIFT_FISSURE_CAST.enterSideHalf,
+      halfZ: Math.max(0.07, radius * RIFT_FISSURE_CAST.colliderDepthHalf),
+      yaw: p.yaw ?? 0,
     });
   }
   return out;

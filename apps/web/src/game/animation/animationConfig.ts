@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, POISON_CLOUD_CAST, SMOKE_BOMB_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BOLT_CAST, BARRIER_CAST, HEAL_BEAM_CAST, LIFE_LEECH_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, FIREBALL_CAST, fireballThrowSeekSec, fireballReleaseSec, fireballFollowThroughEndSec, EMOTES } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, POISON_CLOUD_CAST, SMOKE_BOMB_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BOLT_CAST, BARRIER_CAST, HEAL_BEAM_CAST, LIFE_LEECH_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, HOLY_GROUND_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, FIREBALL_CAST, RIFT_FISSURE_CAST, fireballThrowSeekSec, fireballReleaseSec, fireballFollowThroughEndSec, EMOTES } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -315,6 +315,10 @@ export const abilityAnimationBindings: Record<
     upper: "castFirewall",
     upperTimeScale: FIREWALL_CAST.playbackRate,
   },
+  holyGround: {
+    upper: "castFirewall",
+    upperTimeScale: HOLY_GROUND_CAST.playbackRate,
+  },
   volcano: {
     upper: "castFirewall",
     upperTimeScale: VOLCANO_CAST.playbackRate,
@@ -328,6 +332,11 @@ export const abilityAnimationBindings: Record<
     upper: "castBarrier",
     upperTimeScale: SHROOM_CAST.playbackRate,
   },
+  riftFissure: {
+    /** Same Standing 1H Cast Spell 01 as Barrier. */
+    upper: "castBarrier",
+    upperTimeScale: RIFT_FISSURE_CAST.playbackRate,
+  },
   magmaOrbs: {
     upper: "castMagmaOrbs",
     upperTimeScale: MAGMA_ORBS_CAST.playbackRate,
@@ -337,6 +346,10 @@ export const abilityAnimationBindings: Record<
     upperTimeScale: FROST_BALL_CAST.playbackRate,
   },
   poisonDart: {
+    upper: "castPoisonDart",
+    upperTimeScale: POISON_DART_CAST.playbackRate,
+  },
+  silenceSweep: {
     upper: "castPoisonDart",
     upperTimeScale: POISON_DART_CAST.playbackRate,
   },

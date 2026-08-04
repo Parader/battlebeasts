@@ -17,6 +17,7 @@ import { GraspProjectileEffect } from "./effects/graspProjectile";
 import { ChainJumpProjectileEffect } from "./effects/chainJumpProjectile";
 import { SpikesPopEffect } from "./effects/spikesPop";
 import { FrostMistConeEffect } from "./effects/frostMistCone";
+import { SilenceSweepEffect } from "./effects/silenceSweep";
 import { HealSwooshEffect } from "./effects/healSwoosh";
 import { HealBeamEffect } from "./effects/healBeam";
 import { LifeLeechEffect } from "./effects/lifeLeech";
@@ -27,6 +28,7 @@ import { IceLanceExplodeEffect } from "./effects/iceLanceExplode";
 import { FirewallGroundEffect } from "./effects/firewallGround";
 import { PoisonCloudGroundEffect } from "./effects/poisonCloudGround";
 import { SmokeBombGroundEffect } from "./effects/smokeBombGround";
+import { HolyGroundEffect } from "./effects/holyGround";
 import { PortalBlinkEffect } from "./effects/portalBlink";
 import { VolcanoRockEffect } from "./effects/volcanoRock";
 import { BloodRushTrailEffect } from "./effects/bloodRushTrail";
@@ -62,6 +64,7 @@ export type ImpactVfxId =
   | "gust"
   | "spikes"
   | "frostMist"
+  | "silenceSweep"
   | "groove"
   | "healBeam"
   | "lifeLeech"
@@ -145,6 +148,10 @@ export function usesFrostMistFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "coneChannel";
 }
 
+export function usesSilenceSweepFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "silenceSweep";
+}
+
 export function usesGrooveFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "pulseHeal";
 }
@@ -167,6 +174,10 @@ export function usesPoisonCloudFx(abilityId: string | undefined): boolean {
 
 export function usesSmokeBombFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "smokeBomb";
+}
+
+export function usesHolyGroundFx(abilityId: string | undefined): boolean {
+  return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "holyGround";
 }
 
 export function usesVolcanoFx(abilityId: string | undefined): boolean {
@@ -214,7 +225,9 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   shrooms: (shot) => <ShroomBurstEffect key={shot.key} shot={shot} />,
   poisonCloud: (shot) => <PoisonCloudGroundEffect key={shot.key} shot={shot} />,
   smokeBomb: (shot) => <SmokeBombGroundEffect key={shot.key} shot={shot} />,
+  holyGround: (shot) => <HolyGroundEffect key={shot.key} shot={shot} />,
   fireball: (shot) => <FireballBurnGroundEffect key={shot.key} shot={shot} />,
+  silenceSweep: (shot, ctx) => <SilenceSweepEffect key={shot.key} shot={shot} follow={ctx} />,
 };
 
 function renderByEffectKind(shot: OneShotEffect, ctx: VfxFollowContext): ReactNode | null {
@@ -223,6 +236,9 @@ function renderByEffectKind(shot: OneShotEffect, ctx: VfxFollowContext): ReactNo
   }
   if (usesFrostMistFx(shot.abilityId)) {
     return <FrostMistConeEffect key={shot.key} shot={shot} follow={ctx} />;
+  }
+  if (usesSilenceSweepFx(shot.abilityId)) {
+    return <SilenceSweepEffect key={shot.key} shot={shot} follow={ctx} />;
   }
   if (usesHealBeamFx(shot.abilityId)) {
     return <HealBeamEffect key={shot.key} shot={shot} follow={ctx} />;
@@ -238,6 +254,9 @@ function renderByEffectKind(shot: OneShotEffect, ctx: VfxFollowContext): ReactNo
   }
   if (usesSmokeBombFx(shot.abilityId)) {
     return <SmokeBombGroundEffect key={shot.key} shot={shot} />;
+  }
+  if (usesHolyGroundFx(shot.abilityId)) {
+    return <HolyGroundEffect key={shot.key} shot={shot} />;
   }
   if (usesGrooveFx(shot.abilityId)) {
     return <HealSwooshEffect key={shot.key} shot={shot} follow={ctx} />;
@@ -288,6 +307,7 @@ export {
   ChainJumpProjectileEffect,
   SpikesPopEffect,
   FrostMistConeEffect,
+  SilenceSweepEffect,
   HealSwooshEffect,
   HealBeamEffect,
   PoisonDartCastEffect,

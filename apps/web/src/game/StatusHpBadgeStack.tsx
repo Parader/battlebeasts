@@ -15,6 +15,12 @@ export const BLEEDING_BADGE_IDS = new Set(["bleeding"]);
 /** Status ids that show the rejuvenation badge above HP bars. */
 export const REJUVENATION_BADGE_IDS = new Set(["rejuvenated"]);
 
+/** Status ids that show the silence badge above HP bars. */
+export const SILENCE_BADGE_IDS = new Set(["silenced"]);
+
+/** Status ids that show the holy blessing badge above HP bars. */
+export const HOLY_BADGE_IDS = new Set(["holyBlessed"]);
+
 export type StatusRowLite = {
   statusId?: string;
   stacks?: number;
@@ -67,6 +73,14 @@ export function readBleedingBadge(rows: StatusRowLite[]): BadgeRead {
 
 export function readRejuvenationBadge(rows: StatusRowLite[]): BadgeRead {
   return readBadge(rows, REJUVENATION_BADGE_IDS);
+}
+
+export function readSilenceBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, SILENCE_BADGE_IDS);
+}
+
+export function readHolyBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, HOLY_BADGE_IDS);
 }
 
 const BADGE_SIZE = 20;
@@ -123,6 +137,10 @@ type StackProps = {
   rejuvenationBadgeRef: RefObject<HTMLDivElement | null>;
   rejuvenationStacksRef: RefObject<HTMLSpanElement | null>;
   rejuvenationRingRef: RefObject<SVGCircleElement | null>;
+  silenceBadgeRef: RefObject<HTMLDivElement | null>;
+  silenceRingRef: RefObject<SVGCircleElement | null>;
+  holyBadgeRef: RefObject<HTMLDivElement | null>;
+  holyRingRef: RefObject<SVGCircleElement | null>;
   /** Anchor for the left edge of the icon row (above HP bar). */
   position?: [number, number, number];
 };
@@ -180,6 +198,10 @@ export function StatusHpBadgeStack({
   rejuvenationBadgeRef,
   rejuvenationStacksRef,
   rejuvenationRingRef,
+  silenceBadgeRef,
+  silenceRingRef,
+  holyBadgeRef,
+  holyRingRef,
   position = [-0.55, 0.22, 0],
 }: StackProps) {
   return (
@@ -193,6 +215,48 @@ export function StatusHpBadgeStack({
           transform: "translate(0, -50%)",
         }}
       >
+        <div
+          ref={holyBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(113, 63, 18, 0.94)",
+            border: "1px solid rgba(251, 191, 36, 0.45)",
+          }}
+          title="Holy Blessing"
+        >
+          <DurationRing ringRef={holyRingRef} accent="#fbbf24" />
+          <img
+            src={assetUrl("icons/game/shield.svg")}
+            alt=""
+            width={12}
+            height={12}
+            draggable={false}
+            aria-hidden
+            style={{ display: "block", position: "relative", zIndex: 1, filter: "invert(1)" }}
+          />
+        </div>
+
+        <div
+          ref={silenceBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(46, 16, 101, 0.94)",
+            border: "1px solid rgba(167, 139, 250, 0.4)",
+          }}
+          title="Silenced"
+        >
+          <DurationRing ringRef={silenceRingRef} accent="#a78bfa" />
+          <img
+            src={assetUrl("icons/game/silence.svg")}
+            alt=""
+            width={12}
+            height={12}
+            draggable={false}
+            aria-hidden
+            style={{ display: "block", position: "relative", zIndex: 1, filter: "invert(1)" }}
+          />
+        </div>
+
         <div
           ref={rejuvenationBadgeRef}
           style={{
@@ -433,4 +497,34 @@ export function syncRejuvenationBadge(
     if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
   setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("rejuvenated")));
+}
+
+export function syncSilenceBadge(
+  badge: HTMLDivElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+) {
+  if (!badge) return;
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    return;
+  }
+  badge.style.display = "flex";
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("silenced")));
+}
+
+export function syncHolyBadge(
+  badge: HTMLDivElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+) {
+  if (!badge) return;
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    return;
+  }
+  badge.style.display = "flex";
+  // Zone-driven refresh uses remaining zone life; fall back to status base duration.
+  const span = Math.max(durationMsFor("holyBlessed"), 6500);
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, span));
 }

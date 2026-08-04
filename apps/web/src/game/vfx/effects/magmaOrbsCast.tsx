@@ -4,12 +4,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import {
   MAGMA_ORBS_CAST,
+  buildMagmaOrbsFlightPath,
+  magmaOrbsArcYForRange,
   magmaOrbsMaxFlightTs,
+  resolveMagmaOrbsMeetRange,
   type WallCollider,
 } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { getWorldStaticColliders } from "../../worldCollidersRuntime";
+import { getMagmaOrbsMeet, setMagmaOrbsMeetRange } from "../../magmaOrbsMeetRuntime";
+import { getGroundAim } from "../../groundAimRuntime";
 import {
   BOULDER_TARGET_SIZE,
   VOLCANO_GLB_URL,
@@ -78,11 +83,6 @@ function lateralPoint(
   };
 }
 
-function collidePoint(x: number, z: number, yaw: number, range: number): { x: number; z: number } {
-  const { fx, fz } = basis(yaw);
-  return { x: x + fx * range, z: z + fz * range };
-}
-
 function quadBezier(p0: Vec3, p1: Vec3, p2: Vec3, t: number): Vec3 {
   const u = 1 - t;
   return {
@@ -92,25 +92,13 @@ function quadBezier(p0: Vec3, p1: Vec3, p2: Vec3, t: number): Vec3 {
   };
 }
 
-function flightControl(from: Vec3, collide: Vec3, yaw: number, side: OrbSide): Vec3 {
-  const { fx, fz, rx, rz } = basis(yaw);
-  const bow = MAGMA_ORBS_CAST.arcBow;
-  const midX = (from.x + collide.x) * 0.5;
-  const midZ = (from.z + collide.z) * 0.5;
-  return {
-    x: midX + rx * side * bow + fx * 0.55,
-    y: Math.max(from.y, COLLIDE_Y) + MAGMA_ORBS_CAST.flightArcY,
-    z: midZ + rz * side * bow + fz * 0.55,
-  };
-}
-
 function worldWalls(): WallCollider[] {
   return getWorldStaticColliders().filter((c): c is WallCollider => c.shape === "walls");
 }
 
 /**
  * Magma Orbs — twin volcano boulders rise, arc, collide, then volcano-style ground blast.
- * Each orb stops independently on walls; meet explode only if both arrive.
+ * Flight Beziers are rebuilt at launch from the server meet range / collide point.
  */
 export function MagmaOrbsCastEffect({
   shot,
@@ -199,7 +187,6 @@ export function MagmaOrbsCastEffect({
       );
       if (!emerged.current) {
         emerged.current = true;
-        // Lock scars at the first erupt pose (start lateral), not mid-rise drift.
         const scarLat = MAGMA_ORBS_CAST.lateral * 0.85;
         const sl = lateralPoint(
           pose.x,
@@ -238,38 +225,54 @@ export function MagmaOrbsCastEffect({
 
     if (!launched.current) {
       launched.current = true;
-      const lat = MAGMA_ORBS_CAST.lateral * 1.2;
-      const pl = lateralPoint(
-        pose.x,
-        pose.z,
+      const meet = getMagmaOrbsMeet(shot.followOwnerId);
+      const isLocal =
+        Boolean(shot.followOwnerId) &&
+        shot.followOwnerId === follow.localSessionId;
+      // Local caster: freeze to live cursor. Remotes: server meet / collide.
+      const cursorMeet = isLocal
+        ? resolveMagmaOrbsMeetRange({ x: pose.x, z: pose.z }, getGroundAim())
+        : undefined;
+      if (isLocal && cursorMeet != null && shot.followOwnerId) {
+        setMagmaOrbsMeetRange(shot.followOwnerId, cursorMeet);
+      }
+      const meetRange =
+        cursorMeet ??
+        (meet?.meetRange && meet.meetRange > 0 ? meet.meetRange : undefined) ??
+        (typeof shot.radius === "number" && shot.radius > 0
+          ? shot.radius
+          : MAGMA_ORBS_CAST.meetRange);
+      const collideOverride =
+        !isLocal && meet?.collideX != null && meet?.collideZ != null
+          ? { x: meet.collideX, z: meet.collideZ }
+          : undefined;
+      const path = buildMagmaOrbsFlightPath(
+        { x: pose.x, z: pose.z },
         pose.yaw,
-        MAGMA_ORBS_CAST.emergeAhead,
-        -1,
-        lat,
+        meetRange,
+        collideOverride,
       );
-      const pr = lateralPoint(
-        pose.x,
-        pose.z,
-        pose.yaw,
-        MAGMA_ORBS_CAST.emergeAhead,
-        1,
-        lat,
+      const actualRange = Math.hypot(
+        path.collide.x - pose.x,
+        path.collide.z - pose.z,
       );
-      const hit = collidePoint(pose.x, pose.z, pose.yaw, MAGMA_ORBS_CAST.meetRange);
-      collide.current = hit;
-      launchFromL.current = { x: pl.x, y: LAUNCH_Y, z: pl.z };
-      launchFromR.current = { x: pr.x, y: LAUNCH_Y, z: pr.z };
-      const end = { x: hit.x, y: COLLIDE_Y, z: hit.z };
-      controlL.current = flightControl(launchFromL.current, end, pose.yaw, -1);
-      controlR.current = flightControl(launchFromR.current, end, pose.yaw, 1);
+      const arcY = magmaOrbsArcYForRange(actualRange);
+
+      collide.current = path.collide;
+      launchFromL.current = { x: path.left0.x, y: LAUNCH_Y, z: path.left0.z };
+      launchFromR.current = { x: path.right0.x, y: LAUNCH_Y, z: path.right0.z };
+      controlL.current = {
+        x: path.ctrlL.x,
+        y: Math.max(LAUNCH_Y, COLLIDE_Y) + arcY,
+        z: path.ctrlL.z,
+      };
+      controlR.current = {
+        x: path.ctrlR.x,
+        y: Math.max(LAUNCH_Y, COLLIDE_Y) + arcY,
+        z: path.ctrlR.z,
+      };
       const maxT = magmaOrbsMaxFlightTs(
-        {
-          left0: { x: pl.x, z: pl.z },
-          right0: { x: pr.x, z: pr.z },
-          ctrlL: { x: controlL.current.x, z: controlL.current.z },
-          ctrlR: { x: controlR.current.x, z: controlR.current.z },
-          collide: hit,
-        },
+        path,
         worldWalls(),
         MAGMA_ORBS_CAST.flightHitRadius,
       );

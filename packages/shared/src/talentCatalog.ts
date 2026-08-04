@@ -30,6 +30,10 @@ export type CatalogTalentDef = {
    * Lower = earlier in the tree grid within a tier (default: id order).
    */
   layoutOrder?: number;
+  /**
+   * Extra parents beyond nearest previous-row visual link (same-row gates, etc.).
+   */
+  requires?: readonly string[];
   affectedTags: readonly SpellTag[];
   exactEffect: string;
   balanceNote: string;
@@ -39,6 +43,10 @@ export type CatalogTalentDef = {
    * Flip to true when the talent is wired through resolveKit / live combat.
    */
   implemented?: boolean;
+  /**
+   * Hidden from the tree UI and stripped from builds (retired / WIP placeholders).
+   */
+  hidden?: boolean;
 };
 
 /** True only when explicitly marked combat-ready. */
@@ -48,6 +56,18 @@ export function isCatalogTalentImplemented(def: CatalogTalentDef | undefined): b
 
 /** Opening Salvo catalog id — first live Destruction foundation. */
 export const OPENING_SALVO_TALENT_ID = "DES_08";
+/** Unstable Magic — crits deal more damage. */
+export const UNSTABLE_MAGIC_TALENT_ID = "DES_01";
+/** Intensified Elements — stronger secondary effects (DoTs / slows). */
+export const INTENSIFIED_ELEMENTS_TALENT_ID = "DES_02";
+/** Fifth Cadence — every 5th damaging spell deals bonus damage. */
+export const FIFTH_CADENCE_TALENT_ID = "DES_09";
+/** Critical Focus — bonus crit chance (under Unstable Magic). */
+export const CRITICAL_FOCUS_TALENT_ID = "DES_10";
+/** Elemental Quickness — cooldown reduction on elemental spells. */
+export const ELEMENTAL_QUICKNESS_TALENT_ID = "DES_11";
+/** Widened Elements — larger elemental AoE (requires Elemental Quickness). */
+export const WIDENED_ELEMENTS_TALENT_ID = "DES_12";
 
 /** Max total damage bonus at full ranks (percent). Rank N → (this * N / maxRank). */
 export const OPENING_SALVO_BONUS_PERCENT_AT_MAX = 8;
@@ -61,6 +81,50 @@ export function openingSalvoBonusPercent(rank: number, maxRank = 3): number {
   const raw = (OPENING_SALVO_BONUS_PERCENT_AT_MAX * r) / maxRank;
   return Math.round(raw * 10) / 10;
 }
+
+/** Crit damage bonus percent at full ranks (3 / 6 / 9). */
+export const UNSTABLE_MAGIC_CRIT_DAMAGE_PERCENT_AT_MAX = 9;
+
+export function unstableMagicCritDamagePercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  return (UNSTABLE_MAGIC_CRIT_DAMAGE_PERCENT_AT_MAX * r) / maxRank;
+}
+
+/** Secondary-effect strength percent at full ranks (5 / 10 / 15). */
+export const INTENSIFIED_ELEMENTS_PERCENT_AT_MAX = 15;
+
+export function intensifiedElementsPercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  return (INTENSIFIED_ELEMENTS_PERCENT_AT_MAX * r) / maxRank;
+}
+
+/** Crit chance bonus percent at full ranks (2 / 4 / 6). */
+export const CRITICAL_FOCUS_PERCENT_AT_MAX = 6;
+
+export function criticalFocusCritChancePercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  return (CRITICAL_FOCUS_PERCENT_AT_MAX * r) / maxRank;
+}
+
+/** Fifth Cadence — flat damage on every 5th damaging spell. */
+export const FIFTH_CADENCE_DAMAGE_PERCENT = 15;
+/** Spells cast in the cycle before the bonus fires. */
+export const FIFTH_CADENCE_SPELL_INTERVAL = 5;
+
+/** Elemental Quickness — cooldown reduction percent at full ranks (5 / 10 / 15). */
+export const ELEMENTAL_QUICKNESS_CDR_PERCENT_AT_MAX = 15;
+
+export function elementalQuicknessCdrPercent(rank: number, maxRank = 3): number {
+  const r = Math.max(0, Math.min(maxRank, Math.floor(rank)));
+  if (r <= 0) return 0;
+  return (ELEMENTAL_QUICKNESS_CDR_PERCENT_AT_MAX * r) / maxRank;
+}
+
+/** Widened Elements — elemental AoE radius bonus (single rank). */
+export const WIDENED_ELEMENTS_AOE_PERCENT = 10;
 
 /** Protective Instinct — first live Guardian foundation. */
 export const PROTECTIVE_INSTINCT_TALENT_ID = "GUA_08";
@@ -133,24 +197,29 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     tree: "Destruction",
     tier: 1,
     requiredPoints: 0,
-    name: "Arcane Precision",
+    layoutOrder: 1,
+    name: "Unstable Magic",
     pointCost: 1,
-    affectedTags: ["Projectile"] as const,
-    exactEffect: "Projectile speed +15%.",
-    balanceNote: "Reliable projectile quality; no direct damage.",
+    affectedTags: ["Damage"] as const,
+    exactEffect: "Critical strikes deal +9% more damage.",
+    balanceNote: "Scales crit multiplier — 3 / 6 / 9% across ranks.",
     status: "catalog",
+    implemented: true,
   },
   "DES_02": {
     id: "DES_02",
     tree: "Destruction",
     tier: 1,
     requiredPoints: 0,
-    name: "Demolition",
+    layoutOrder: 2,
+    name: "Intensified Elements",
     pointCost: 1,
-    affectedTags: ["Explosion"] as const,
-    exactEffect: "Explosion radius +12%.",
-    balanceNote: "Area coverage increase.",
+    affectedTags: ["Damage", "DamageOverTime"] as const,
+    exactEffect:
+      "Elemental secondary effects are 15% stronger (longer burns, poisons, and bleeds; harder slows).",
+    balanceNote: "Duration + slow stack potency — 5 / 10 / 15% across ranks.",
     status: "catalog",
+    implemented: true,
   },
   "DES_03": {
     id: "DES_03",
@@ -163,6 +232,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     exactEffect: "Repeated hits on the same enemy within 4s grant +2% damage per stack, max 5.",
     balanceNote: "Maximum +10%; stacks are target-specific.",
     status: "catalog",
+    hidden: true,
   },
   "DES_04": {
     id: "DES_04",
@@ -175,6 +245,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     exactEffect: "Damaging spells with a cast time complete 8% faster.",
     balanceNote: "Exclude channels and instant spells.",
     status: "catalog",
+    hidden: true,
   },
   "DES_05": {
     id: "DES_05",
@@ -187,6 +258,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     exactEffect: "Damage-over-time effects reduce healing received by 8%.",
     balanceNote: "Does not stack with itself.",
     status: "catalog",
+    hidden: true,
   },
   "DES_06": {
     id: "DES_06",
@@ -199,6 +271,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     exactEffect: "Single-target spells deal +6% damage.",
     balanceNote: "Must not have Area, Nova, Chain, or Explosion.",
     status: "catalog",
+    hidden: true,
   },
   "DES_07": {
     id: "DES_07",
@@ -211,6 +284,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     exactEffect: "Deal +15% damage to barriers, summons, and obstacles.",
     balanceNote: "Utility damage only.",
     status: "catalog",
+    hidden: true,
   },
   "DES_08": {
     id: "DES_08",
@@ -231,73 +305,88 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     id: "DES_09",
     tree: "Destruction",
     tier: 2,
-    requiredPoints: 4,
-    name: "Heavy Projectiles",
-    pointCost: 2,
-    affectedTags: ["Projectile"] as const,
-    exactEffect: "Projectile speed -20%, size +20%, damage +10%.",
-    balanceNote: "Mutually exclusive with Needlecast.",
+    requiredPoints: 3,
+    layoutOrder: 0,
+    name: "Fifth Cadence",
+    pointCost: 1,
+    maxRank: 1,
+    affectedTags: ["Damage"] as const,
+    exactEffect: "Every 5th damaging spell deals +15% damage.",
+    balanceNote: "Tracked above the spellbar; resets after the empowered cast.",
     status: "catalog",
+    implemented: true,
   },
   "DES_10": {
     id: "DES_10",
     tree: "Destruction",
     tier: 2,
-    requiredPoints: 4,
-    name: "Needlecast",
-    pointCost: 2,
-    affectedTags: ["Projectile"] as const,
-    exactEffect: "Projectile speed +30%, size -20%, damage +5%.",
-    balanceNote: "Mutually exclusive with Heavy Projectiles.",
+    requiredPoints: 3,
+    layoutOrder: 1,
+    name: "Critical Focus",
+    pointCost: 1,
+    maxRank: 3,
+    affectedTags: ["Damage"] as const,
+    exactEffect: "Critical strike chance increased by 6%.",
+    balanceNote: "Additive crit chance — 2 / 4 / 6% across ranks.",
     status: "catalog",
+    implemented: true,
   },
   "DES_11": {
     id: "DES_11",
     tree: "Destruction",
     tier: 2,
-    requiredPoints: 4,
-    name: "Piercing Force",
-    pointCost: 2,
-    affectedTags: ["Projectile"] as const,
-    exactEffect: "Non-piercing projectiles pierce one enemy; existing pierce gains +1.",
-    balanceNote: "Secondary hits deal 70% damage.",
+    requiredPoints: 3,
+    layoutOrder: 2,
+    name: "Elemental Quickness",
+    pointCost: 1,
+    maxRank: 3,
+    affectedTags: ["Damage", "DamageOverTime"] as const,
+    exactEffect: "Elemental spell cooldowns reduced by 15%.",
+    balanceNote: "Fire / frost / poison / bleed kits — 5 / 10 / 15% across ranks.",
     status: "catalog",
+    implemented: true,
   },
   "DES_12": {
     id: "DES_12",
     tree: "Destruction",
     tier: 2,
-    requiredPoints: 4,
-    name: "Volatile Magic",
-    pointCost: 2,
-    affectedTags: ["Explosion"] as const,
-    exactEffect: "Explosions apply a 15% slow for 1.25s.",
-    balanceNote: "Control contribution kept modest.",
+    requiredPoints: 3,
+    layoutOrder: 3,
+    name: "Widened Elements",
+    pointCost: 1,
+    maxRank: 1,
+    requires: ["DES_11"] as const,
+    affectedTags: ["Area", "Nova", "Cone", "Explosion"] as const,
+    exactEffect: "Elemental area spells have 10% larger radius.",
+    balanceNote: "Requires Elemental Quickness; only Area / Nova / Cone / Explosion.",
     status: "catalog",
+    implemented: true,
   },
   "DES_13": {
     id: "DES_13",
     tree: "Destruction",
     tier: 2,
-    requiredPoints: 4,
+    requiredPoints: 3,
     name: "Chain Reaction",
     pointCost: 2,
     affectedTags: ["Explosion", "Area"] as const,
     exactEffect: "Hitting 2+ enemies refunds 8% of that spell's base cooldown.",
     balanceNote: "Once per cast.",
     status: "catalog",
+    hidden: true,
   },
   "DES_14": {
     id: "DES_14",
     tree: "Destruction",
     tier: 2,
-    requiredPoints: 4,
+    requiredPoints: 3,
     name: "Accelerated Decay",
     pointCost: 2,
     affectedTags: ["DamageOverTime"] as const,
     exactEffect: "DoTs tick 20% faster and expire 16.7% sooner.",
     balanceNote: "Approximately unchanged total damage.",
     status: "catalog",
+    hidden: true,
   },
   "DES_15": {
     id: "DES_15",

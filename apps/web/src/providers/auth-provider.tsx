@@ -274,8 +274,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const claimDisplayName = useCallback(async (name: string) => {
         if (!supabase) throw new Error("Supabase is not configured");
-        const { data, error } = await supabase.rpc("claim_display_name", { desired_name: name });
-        if (error) throw error;
+        const desired_name = String(name ?? "").trim();
+        if (desired_name.length < 3 || desired_name.length > 20) {
+            throw new Error("Name must be 3–20 characters");
+        }
+        const { data, error } = await supabase.rpc("claim_display_name", { desired_name });
+        if (error) {
+            const detail = [error.message, error.details, error.hint].filter(Boolean).join(" — ");
+            throw new Error(detail || "Could not save name");
+        }
         const next = data as Profile;
         setProfile(next);
         return next;

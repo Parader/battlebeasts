@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import {
   COSMETIC_SLOT_LABELS,
+  DEFAULT_COSMETIC_PATTERN_COLOR,
+  cosmeticColorName,
+  cosmeticPatternColorName,
   getCosmeticItem,
   getEmote,
   type ChestUnlockGrant,
@@ -57,7 +60,7 @@ export function ShopGrantThumb({
   if (grant.kind === "pattern") {
     return (
       <span className="bb-shop__thumb bb-shop__thumb--pattern" aria-hidden>
-        <PatternSwatch patternId={grant.patternId} patternColor="#f8fafc" />
+        <PatternSwatch patternId={grant.patternId} patternColor={DEFAULT_COSMETIC_PATTERN_COLOR} />
       </span>
     );
   }
@@ -107,9 +110,9 @@ export function ShopItemThumb({ item }: { item: ShopItemDef }) {
 export function grantDisplayLabel(grant: ChestUnlockGrant, fallback: string): string {
   switch (grant.kind) {
     case "color":
-      return `Tint ${grant.hex}`;
+      return cosmeticColorName(grant.hex);
     case "pattern_color":
-      return `Ink ${grant.hex}`;
+      return `${cosmeticPatternColorName(grant.hex)} Ink`;
     case "pattern":
       return fallback;
     case "cosmetic": {

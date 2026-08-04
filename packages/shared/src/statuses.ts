@@ -61,6 +61,11 @@ export interface StatusDef {
   color: string;
   /** Short label for icon placeholder. */
   tag: string;
+  /**
+   * Never expires from the status tick; cleared only by explicit remove.
+   * Used for talent trackers (e.g. Fifth Cadence stacks above the spellbar).
+   */
+  permanent?: boolean;
 }
 
 /** How an ability applies a status. */
@@ -127,7 +132,7 @@ export const STATUSES: Record<string, StatusDef> = {
     blocksCast: true,
     maxStacks: 1,
     stackRule: "refresh",
-    color: "#67e8f9",
+    color: "#a78bfa",
     tag: "SIL",
   },
   slowed: {
@@ -377,6 +382,22 @@ export const STATUSES: Record<string, StatusDef> = {
     tag: "OVF",
   },
   /**
+   * Fifth Cadence — permanent while the talent is owned.
+   * `stacks` = damaging spells cast toward the next +15% (0–4); the 5th arms the bonus.
+   */
+  fifthSpellCadence: {
+    id: "fifthSpellCadence",
+    name: "Fifth Cadence",
+    polarity: "buff",
+    mechanic: "empower",
+    durationMs: 0,
+    permanent: true,
+    maxStacks: 5,
+    stackRule: "refresh",
+    color: "#f97316",
+    tag: "5th",
+  },
+  /**
    * Barrier — self absorb bubble. `stacks` = remaining shield HP.
    */
   barrier: {
@@ -483,6 +504,23 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#f59e0b",
     tag: "DMG",
   },
+  /**
+   * Holy Ground — +60% resistance and +30% damage while standing in the circle.
+   * Duration is refreshed by the live zone each combat tick.
+   */
+  holyBlessed: {
+    id: "holyBlessed",
+    name: "Holy Blessing",
+    polarity: "buff",
+    mechanic: "empower",
+    durationMs: 500,
+    damageTakenMul: 0.4,
+    damageDealtMul: 1.3,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#fbbf24",
+    tag: "HLY",
+  },
 };
 
 /** Max frost chill stacks (10% each → 100%). */
@@ -519,6 +557,19 @@ export function nextFrostChillStacks(
 
 export function getStatus(id: string): StatusDef | undefined {
   return STATUSES[id];
+}
+
+/** DoTs / slows amplified by Intensified Elements (and gated as "elemental"). */
+export function isElementalSecondaryStatus(def: StatusDef | undefined): boolean {
+  if (!def || def.polarity !== "debuff") return false;
+  if (def.mechanic === "dot" || def.mechanic === "slow") return true;
+  if (typeof def.moveMul === "number" && def.moveMul < 1) return true;
+  return (
+    def.id === "burning" ||
+    def.id === "poisoned" ||
+    def.id === "bleeding" ||
+    def.id === "frostChill"
+  );
 }
 
 /** Stun / root / silence — Opportunist hard CC (not slows or soft debuffs). */

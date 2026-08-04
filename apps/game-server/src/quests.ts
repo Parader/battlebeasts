@@ -24,7 +24,6 @@ const serverKey =
 const supabase = url && serverKey ? createClient(url, serverKey) : null;
 
 export type QuestEvent =
-  | { type: "pvp_win" }
   | { type: "pvp_mode"; mode: string }
   | { type: "pvp_match_completed" }
   | { type: "ranked_match_completed" }
@@ -38,14 +37,30 @@ export type QuestEvent =
   | { type: "friend_code_redeemed" }
   | { type: "friend_referral_credited" };
 
-async function grantChest(userId: string, quality: ChestQuality, source: string) {
-  if (!supabase) return;
-  await supabase.from("chests").insert({
-    user_id: userId,
-    quality,
-    source,
-    status: "closed",
-  });
+/** Insert a closed chest; returns false if source already granted (unique conflict). */
+async function grantChest(
+  userId: string,
+  quality: ChestQuality,
+  source: string,
+): Promise<boolean> {
+  if (!supabase) return false;
+  const { data, error } = await supabase
+    .from("chests")
+    .insert({
+      user_id: userId,
+      quality,
+      source,
+      status: "closed",
+    })
+    .select("id")
+    .maybeSingle();
+  if (error) {
+    // Unique (user_id, source) — treat as already granted.
+    if (error.code === "23505") return false;
+    console.warn("[quests] grantChest", error.message);
+    return false;
+  }
+  return Boolean(data?.id);
 }
 
 /** Insert a closed chest for a user (admin / quest reward). */
@@ -57,13 +72,8 @@ export async function insertClosedChest(
   if (!supabase || userId.startsWith("guest_")) {
     return { ok: false, error: "Unavailable" };
   }
-  const { error } = await supabase.from("chests").insert({
-    user_id: userId,
-    quality,
-    source,
-    status: "closed",
-  });
-  if (error) return { ok: false, error: error.message };
+  const ok = await grantChest(userId, quality, source);
+  if (!ok) return { ok: false, error: "Chest already granted for this source" };
   return { ok: true };
 }
 
@@ -181,9 +191,6 @@ export async function bumpQuest(userId: string, event: QuestEvent): Promise<void
   if (!supabase || !userId || userId.startsWith("guest_")) return;
   try {
     switch (event.type) {
-      case "pvp_win":
-        await bumpOne(userId, "daily_win_3", 1);
-        break;
       case "pvp_mode":
         await bumpDistinctPvpMode(userId, event.mode);
         break;
@@ -191,11 +198,9 @@ export async function bumpQuest(userId: string, event: QuestEvent): Promise<void
         await bumpOne(userId, "once_first_pvp", 1);
         break;
       case "ranked_match_completed":
-        await bumpOne(userId, "daily_ranked_play_2", 1);
+        await bumpOne(userId, "daily_ranked_play_3", 1);
         break;
       case "ranked_win":
-        await bumpOne(userId, "daily_ranked_win_2", 1);
-        await bumpOne(userId, "daily_win_3", 1);
         await bumpPrefix(userId, "season_ranked_wins_", 1);
         await bumpPrefix(userId, "life_ranked_wins_", 1);
         break;

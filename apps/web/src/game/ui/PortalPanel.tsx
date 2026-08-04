@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  PVE_PORTAL_CONTENTS,
   PVP_PORTAL_MODES,
   pvpModeCapacity,
   pvpModeFitsPlayerCount,
@@ -9,7 +10,6 @@ import { GamePanelShell } from "./GamePanelShell";
 type Props = {
   kind: "portal_pvp" | "portal_pve";
   onClose: () => void;
-  /** Players currently in the hub room (capacity gate). */
   hubPlayerCount?: number;
   onConfirm: (
     portal: "pvp" | "pve",
@@ -25,15 +25,58 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
   const [modes, setModes] = useState<string[]>(() =>
     enabledModes[0] ? [enabledModes[0].id] : ["arena_1v1"],
   );
+  const [pveContent, setPveContent] = useState(
+    () => PVE_PORTAL_CONTENTS[0]?.id ?? "dungeon",
+  );
 
   const isPvp = kind === "portal_pvp";
   const title = isPvp ? "PvP Portal" : "PvE / Coop Portal";
-  const canEnter = isPvp && modes.some((id) => pvpModeFitsPlayerCount(id, hubPlayerCount));
+  const canEnterPvp = isPvp && modes.some((id) => pvpModeFitsPlayerCount(id, hubPlayerCount));
+  const canEnterPve = !isPvp && PVE_PORTAL_CONTENTS.some((c) => c.id === pveContent);
 
   if (!isPvp) {
     return (
-      <GamePanelShell title={title} onClose={onClose}>
-        <p className="bb-section-label py-8 text-center tracking-[0.2em]">In development</p>
+      <GamePanelShell
+        title={title}
+        subtitle="Solo for now — coop comes later."
+        onClose={onClose}
+        footer={
+          <>
+            <button type="button" className="bb-btn-ink" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="bb-btn-brass disabled:opacity-45"
+              disabled={!canEnterPve}
+              onClick={() => onConfirm("pve", { content: pveContent })}
+            >
+              Enter
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-2">
+          {PVE_PORTAL_CONTENTS.map((opt) => {
+            const on = pveContent === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                className={["bb-choice", on ? "bb-choice--on" : ""].join(" ")}
+                onClick={() => setPveContent(opt.id)}
+              >
+                <span
+                  className="text-[0.95rem] font-semibold"
+                  style={{ fontFamily: "var(--bb-font-display)" }}
+                >
+                  {opt.label}
+                </span>
+                <span className="bb-meta mt-1 block">{opt.description}</span>
+              </button>
+            );
+          })}
+        </div>
       </GamePanelShell>
     );
   }
@@ -51,7 +94,7 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
           <button
             type="button"
             className="bb-btn-brass disabled:opacity-45"
-            disabled={!canEnter || modes.length === 0}
+            disabled={!canEnterPvp || modes.length === 0}
             onClick={() => onConfirm("pvp", { modes })}
           >
             Open party lobby

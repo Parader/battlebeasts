@@ -34,7 +34,10 @@ export const TALENT_TREE_IDS: readonly TalentTreeId[] = [
   "Harmony",
 ] as const;
 
-/** Points required in-tree before a tier unlocks. */
+/**
+ * Points required in-tree before a tier unlocks (default).
+ * Destruction tier 2 uses 3 (first-row foundations) via per-talent `requiredPoints`.
+ */
 export const TALENT_TIER_REQUIRED_POINTS: Record<number, number> = {
   1: 0,
   2: 4,
@@ -47,7 +50,7 @@ export type TalentBuild = Record<string, number>;
 
 export function catalogTalentsInTree(tree: TalentTreeId): CatalogTalentDef[] {
   return Object.values(TALENT_CATALOG)
-    .filter((t) => t.tree === tree)
+    .filter((t) => t.tree === tree && !t.hidden)
     .sort((a, b) => {
       const ao = a.layoutOrder ?? Number.MAX_SAFE_INTEGER;
       const bo = b.layoutOrder ?? Number.MAX_SAFE_INTEGER;
@@ -152,6 +155,73 @@ function tierNeed(def: CatalogTalentDef): number {
   return Math.min(raw, Math.max(0, TALENT_TREE_CAP - cost));
 }
 
+/** Cached parent ids from visual tree links (same rails the UI draws). */
+const prereqCache = new Map<TalentTreeId, Map<string, readonly string[]>>();
+
+/**
+ * Talents that must have ≥1 rank before this node can be taken.
+ * Derived from `talentTreeLinks` so rails and gates stay aligned,
+ * plus optional authored `requires` on the catalog entry.
+ */
+export function talentPrerequisites(talentId: string): readonly string[] {
+  const def = TALENT_CATALOG[talentId];
+  if (!def || def.hidden) return [];
+  let treeMap = prereqCache.get(def.tree);
+  if (!treeMap) {
+    treeMap = new Map();
+    const { cells } = layoutTalentTree(def.tree);
+    for (const link of talentTreeLinks(cells)) {
+      const list = treeMap.get(link.toId);
+      treeMap.set(
+        link.toId,
+        list ? [...list, link.fromId] : [link.fromId],
+      );
+    }
+    prereqCache.set(def.tree, treeMap);
+  }
+  const fromLinks = treeMap.get(talentId) ?? [];
+  const authored = def.requires ?? [];
+  if (!authored.length) return fromLinks;
+  const seen = new Set(fromLinks);
+  const merged = [...fromLinks];
+  for (const id of authored) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    merged.push(id);
+  }
+  return merged;
+}
+
+/** True when every linked parent has at least one point invested. */
+export function talentPrerequisitesMet(
+  build: TalentBuild,
+  talentId: string,
+): boolean {
+  for (const pre of talentPrerequisites(talentId)) {
+    if (talentRank(build, pre) < 1) return false;
+  }
+  return true;
+}
+
+/**
+ * Points invested in `tree` excluding one talent's ranks (for tier-gate checks
+ * against a finished build).
+ */
+function treePointsExcluding(
+  build: TalentBuild,
+  tree: TalentTreeId,
+  excludeId: string,
+): number {
+  let sum = 0;
+  for (const [id, rank] of Object.entries(build)) {
+    if (rank <= 0 || id === excludeId) continue;
+    const def = TALENT_CATALOG[id];
+    if (!def || def.tree !== tree) continue;
+    sum += talentRankCost(def) * rank;
+  }
+  return sum;
+}
+
 /**
  * Can spend one more rank on this node?
  * `ownedPoints` caps how many points the account may have invested in the build.
@@ -162,7 +232,7 @@ export function canInvestTalent(
   ownedPoints: number = TALENT_POINT_BUDGET,
 ): boolean {
   const def = TALENT_CATALOG[talentId];
-  if (!def) return false;
+  if (!def || def.hidden) return false;
 
   const rank = talentRank(build, talentId);
   if (rank >= talentMaxRank(def)) return false;
@@ -172,6 +242,8 @@ export function canInvestTalent(
   const total = totalPointsSpent(build);
 
   if (rank === 0 && treePts < tierNeed(def)) return false;
+  // First rank requires ≥1 point in each linked previous talent.
+  if (rank === 0 && !talentPrerequisitesMet(build, talentId)) return false;
   if (treePts + cost > TALENT_TREE_CAP) return false;
   if (total + cost > TALENT_POINT_BUDGET) return false;
   if (total + cost > ownedPoints) return false;
@@ -179,7 +251,7 @@ export function canInvestTalent(
 }
 
 /**
- * Refund one rank if the remaining build still meets tier requirements.
+ * Refund one rank if the remaining build still meets tier + link requirements.
  */
 export function canRefundTalent(build: TalentBuild, talentId: string): boolean {
   const def = TALENT_CATALOG[talentId];
@@ -190,14 +262,9 @@ export function canRefundTalent(build: TalentBuild, talentId: string): boolean {
   if (rank <= 1) delete next[talentId];
   else next[talentId] = rank - 1;
 
-  const ptsAfter = treePointsSpent(next, def.tree);
-  for (const [id, r] of Object.entries(next)) {
-    if (r <= 0) continue;
-    const other = TALENT_CATALOG[id];
-    if (!other || other.tree !== def.tree) continue;
-    if (ptsAfter < tierNeed(other)) return false;
-  }
-  return true;
+  return isTalentBuildValid(next, TALENT_POINT_BUDGET, {
+    skipOwnedCap: true,
+  });
 }
 
 export function investTalent(
@@ -247,18 +314,82 @@ export function clearTree(build: TalentBuild, tree: TalentTreeId): TalentBuild {
   return next;
 }
 
-/** Sanitize a persisted build (drop unknown ids / clamp ranks). */
+/** Sanitize a persisted build (drop unknown / hidden ids / clamp ranks). */
 export function normalizeTalentBuild(raw: unknown): TalentBuild {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: TalentBuild = {};
   for (const [id, rank] of Object.entries(raw as Record<string, unknown>)) {
     const def = TALENT_CATALOG[id];
-    if (!def) continue;
+    if (!def || def.hidden) continue;
     const n = typeof rank === "number" ? rank : Number(rank);
     if (!Number.isFinite(n) || n <= 0) continue;
     out[id] = Math.min(talentMaxRank(def), Math.floor(n));
   }
   return out;
+}
+
+export type TalentBuildValidOpts = {
+  /** When true, skip owned-points / budget ceiling (refund path). */
+  skipOwnedCap?: boolean;
+};
+
+/**
+ * Full-build legality: ranks, tree/total caps, tier gates, and linked parents.
+ */
+export function isTalentBuildValid(
+  build: TalentBuild,
+  ownedPoints: number = TALENT_POINT_BUDGET,
+  opts?: TalentBuildValidOpts,
+): boolean {
+  const total = totalPointsSpent(build);
+  if (!opts?.skipOwnedCap) {
+    if (total > TALENT_POINT_BUDGET) return false;
+    if (total > ownedPoints) return false;
+  }
+
+  const treeTotals = new Map<TalentTreeId, number>();
+  for (const tree of TALENT_TREE_IDS) {
+    treeTotals.set(tree, treePointsSpent(build, tree));
+  }
+  for (const tree of TALENT_TREE_IDS) {
+    if ((treeTotals.get(tree) ?? 0) > TALENT_TREE_CAP) return false;
+  }
+
+  for (const [id, rank] of Object.entries(build)) {
+    if (rank <= 0) continue;
+    const def = TALENT_CATALOG[id];
+    if (!def || def.hidden) return false;
+    if (rank > talentMaxRank(def)) return false;
+    const others = treePointsExcluding(build, def.tree, id);
+    if (others < tierNeed(def)) return false;
+    if (!talentPrerequisitesMet(build, id)) return false;
+  }
+  return true;
+}
+
+/**
+ * Strip illegal ranks (deepest first) until the build satisfies gates.
+ * Used when loading older / forged builds.
+ */
+export function sanitizeTalentBuild(
+  build: TalentBuild,
+  ownedPoints: number = TALENT_POINT_BUDGET,
+): TalentBuild {
+  let next = clampBuildToOwned(normalizeTalentBuild(build), ownedPoints);
+  let guard = 200;
+  while (!isTalentBuildValid(next, ownedPoints) && guard-- > 0) {
+    const entries = Object.entries(next)
+      .filter(([, r]) => r > 0)
+      .map(([id, rank]) => ({ id, rank, def: TALENT_CATALOG[id] }))
+      .filter((e): e is { id: string; rank: number; def: CatalogTalentDef } => !!e.def)
+      .sort((a, b) => b.def.tier - a.def.tier || b.rank - a.rank);
+    const top = entries[0];
+    if (!top) break;
+    if (top.rank <= 1) delete next[top.id];
+    else next[top.id] = top.rank - 1;
+    next = { ...next };
+  }
+  return next;
 }
 
 /** Drop deepest investments until build fits owned + budget. */
@@ -331,6 +462,7 @@ export function talentTreeLinks(cells: TalentGridCell[]): Array<{
   }
   const rows = [...byRow.keys()].sort((a, b) => a - b);
   const links: Array<{ fromId: string; toId: string }> = [];
+  const seen = new Set<string>();
 
   for (let ri = 1; ri < rows.length; ri++) {
     const prev = byRow.get(rows[ri - 1]!) ?? [];
@@ -345,7 +477,23 @@ export function talentTreeLinks(cells: TalentGridCell[]): Array<{
           best = p;
         }
       }
-      if (best) links.push({ fromId: best.talent.id, toId: cell.talent.id });
+      if (best) {
+        const key = `${best.talent.id}->${cell.talent.id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          links.push({ fromId: best.talent.id, toId: cell.talent.id });
+        }
+      }
+    }
+  }
+
+  // Authored same-row (or extra) rails from `requires`.
+  for (const cell of cells) {
+    for (const fromId of cell.talent.requires ?? []) {
+      const key = `${fromId}->${cell.talent.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      links.push({ fromId, toId: cell.talent.id });
     }
   }
   return links;

@@ -15,7 +15,7 @@ import {
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, ProtectionBubbles, Shrooms, SpiritHusks } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, ProtectionBubbles, RiftPortals, Shrooms, SpiritHusks } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
@@ -302,6 +302,179 @@ function LocalPlayerMesh({
     );
 }
 
+const HUB_BALL_R = 0.48;
+
+function createHubBallTexture(): THREE.CanvasTexture {
+    const size = 512;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+
+    // Classic beach-ball gores (U wraps longitude).
+    const stripes = ["#f43f5e", "#fafafa", "#3b82f6", "#fafafa", "#facc15", "#fafafa"];
+    const band = size / stripes.length;
+    for (let i = 0; i < stripes.length; i++) {
+        ctx.fillStyle = stripes[i]!;
+        ctx.fillRect(i * band, 0, band + 1, size);
+    }
+
+    // Soft equator band so poles read as a beach ball too.
+    const grad = ctx.createLinearGradient(0, 0, 0, size);
+    grad.addColorStop(0, "rgba(255,255,255,0.55)");
+    grad.addColorStop(0.18, "rgba(255,255,255,0)");
+    grad.addColorStop(0.82, "rgba(255,255,255,0)");
+    grad.addColorStop(1, "rgba(255,255,255,0.55)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+
+    // Thin seam lines between panels.
+    ctx.strokeStyle = "rgba(15, 23, 42, 0.28)";
+    ctx.lineWidth = 3;
+    for (let i = 1; i < stripes.length; i++) {
+        const x = i * band;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, size);
+        ctx.stroke();
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return tex;
+}
+
+type HubBallNet = {
+    x: number;
+    z: number;
+    vx: number;
+    vz: number;
+};
+
+function HubPushBallMesh({
+    room,
+    ballId,
+    map,
+}: {
+    room: Room;
+    ballId: string;
+    map: THREE.CanvasTexture;
+}) {
+    const mesh = useRef<THREE.Mesh>(null);
+    const renderPos = useRef(new THREE.Vector3(HUB_SPAWN.x + 2.4, HUB_BALL_R, HUB_SPAWN.z + 1.6));
+    const lastPos = useRef(new THREE.Vector3());
+    const rollQ = useRef(new THREE.Quaternion());
+    const tmpAxis = useRef(new THREE.Vector3());
+    const tmpDelta = useRef(new THREE.Vector3());
+    const tmpSpin = useRef(new THREE.Quaternion());
+    const seeded = useRef(false);
+
+    useFrame((_, dt) => {
+        const m = mesh.current;
+        if (!m) return;
+        const ball = room.state?.hubBalls?.get(ballId) as HubBallNet | undefined;
+        if (!ball) {
+            m.visible = false;
+            seeded.current = false;
+            return;
+        }
+        m.visible = true;
+        const bx = ball.x ?? 0;
+        const bz = ball.z ?? 0;
+        const vx = ball.vx ?? 0;
+        const vz = ball.vz ?? 0;
+        const safeDt = Math.min(0.05, Math.max(0, dt));
+        if (!seeded.current) {
+            renderPos.current.set(bx, HUB_BALL_R, bz);
+            lastPos.current.copy(renderPos.current);
+            rollQ.current.identity();
+            seeded.current = true;
+        } else {
+            renderPos.current.x += vx * safeDt;
+            renderPos.current.z += vz * safeDt;
+            const blend = 1 - Math.exp(-14 * safeDt);
+            renderPos.current.x = THREE.MathUtils.lerp(renderPos.current.x, bx, blend);
+            renderPos.current.z = THREE.MathUtils.lerp(renderPos.current.z, bz, blend);
+        }
+
+        const delta = tmpDelta.current;
+        delta.set(
+            renderPos.current.x - lastPos.current.x,
+            0,
+            renderPos.current.z - lastPos.current.z,
+        );
+        const dist = delta.length();
+        if (dist > 1e-5) {
+            tmpAxis.current.set(-delta.z, 0, delta.x).normalize();
+            const angle = dist / HUB_BALL_R;
+            tmpSpin.current.setFromAxisAngle(tmpAxis.current, angle);
+            rollQ.current.premultiply(tmpSpin.current);
+            rollQ.current.normalize();
+        }
+        lastPos.current.copy(renderPos.current);
+
+        const speed = Math.hypot(vx, vz);
+        const bob = speed > 0.15 ? Math.sin(performance.now() * 0.018 * speed) * 0.012 : 0;
+        m.position.set(renderPos.current.x, HUB_BALL_R + bob, renderPos.current.z);
+        m.quaternion.copy(rollQ.current);
+    });
+
+    return (
+        <mesh ref={mesh} castShadow receiveShadow>
+            <sphereGeometry args={[HUB_BALL_R, 32, 24]} />
+            <meshStandardMaterial
+                map={map}
+                color="#ffffff"
+                roughness={0.38}
+                metalness={0.02}
+            />
+        </mesh>
+    );
+}
+
+function HubPushBalls({ room }: { room: Room | null }) {
+    const [ids, setIds] = useState<string[]>([]);
+    const prevKey = useRef("");
+    const map = useMemo(() => createHubBallTexture(), []);
+
+    useEffect(() => {
+        return () => {
+            map.dispose();
+        };
+    }, [map]);
+
+    useFrame(() => {
+        if (!room?.state?.hubBalls) {
+            if (prevKey.current !== "") {
+                prevKey.current = "";
+                setIds([]);
+            }
+            return;
+        }
+        const next: string[] = [];
+        room.state.hubBalls.forEach((_b: unknown, id: string) => next.push(id));
+        next.sort();
+        const key = next.join("|");
+        if (key !== prevKey.current) {
+            prevKey.current = key;
+            setIds(next);
+        }
+    });
+
+    if (!room || ids.length === 0) return null;
+    return (
+        <>
+            {ids.map((id) => (
+                <HubPushBallMesh key={id} room={room} ballId={id} map={map} />
+            ))}
+        </>
+    );
+}
+
 export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
     const aimNdc = useRef(new THREE.Vector2(0, 0));
@@ -401,8 +574,10 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
 
             <WorldTargets room={room} />
             <Decoys room={room} />
+            <HubPushBalls room={room} />
             <Volcanoes room={room} />
             <ProtectionBubbles room={room} />
+            <RiftPortals room={room} />
             <Shrooms room={room} localSessionId={localSessionId} />
             <SpiritHusks
                 room={room}

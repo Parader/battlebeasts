@@ -3,10 +3,14 @@ import {
   ARENA_ROUND_COUNTDOWN_MS,
   ARENA_ROUND_END_MS,
   ARENA_ROUNDS_TO_WIN,
+  ARENA_WIPE_EMOTE_MS,
+  CEMETERY_PLAYER_SPAWN,
+  cemeteryStaticColliders,
   DEFAULT_LOADOUT,
   MAX_TALENTS,
   PLAYER_BASE_MAX_HP,
   PVE_RECONNECT_GRACE_MS,
+  PVE_ZOMBIE_KIND,
   PVP_RECONNECT_GRACE_MS,
   RECONNECT_RESUME_GRACE_MS,
   RESPAWN_LOCK_MS,
@@ -14,6 +18,8 @@ import {
   TICK_MS,
   applyMovement,
   applyYaw,
+  emptyPlayerUnlocks,
+  getEmote,
   HAND_SHIELD_CAST,
   arenaSpawnForSlot,
   arenaSpawnsForTeam,
@@ -25,6 +31,7 @@ import {
   cosmeticsEquippedToFields,
   normalizeCosmeticsEquipped,
   normalizeLoadout,
+  ownsEmote,
   outcomeFromMatch,
   rewardRollSalt,
   STARTER_COLORS,
@@ -32,6 +39,7 @@ import {
   type MatchRewardResult,
   type MatchKind,
   type PlayerInput,
+  type PlayerUnlocks,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
@@ -39,6 +47,7 @@ import { grantPendingLoot } from "../pendingLoot.js";
 import { insertRewardGrant, loadEconomy } from "../persistence.js";
 import { bumpQuest } from "../quests.js";
 import { applyRankedMatchFinish } from "../ranked.js";
+import { WaveDirector } from "../pve/WaveDirector.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
 export type ContentJoinOptions = AuthJoinOptions & {
@@ -88,6 +97,15 @@ export class ContentRoom extends Room<BaseCityState> {
   private matchKind: MatchKind = "ranked";
   private seasonId: string | null = null;
   private rankedAppliedForGrantKey = new Set<string>();
+  /** Emote unlocks + wheel slots (loaded with economy). */
+  private unlocksBySession = new Map<string, PlayerUnlocks>();
+  private emoteUntilBySession = new Map<string, number>();
+  /** Armed when a team first wipes — delay before endRound for emotes. */
+  private wipeEndsAt = 0;
+  private wipeWinner: "a" | "b" | null = null;
+  private waveDirector: WaveDirector | null = null;
+  /** Wave Assault wipe / score screen active. */
+  private pveRunEnded = false;
 
   private matchGrantKey(): string {
     return `${this.matchId || this.roomId}:r${this.rematchIndex}`;
@@ -130,12 +148,27 @@ export class ContentRoom extends Room<BaseCityState> {
           this.onPlayerDied(sessionId, p);
         }
       },
+      onTargetKilled: (targetId, killerSessionId) => {
+        this.waveDirector?.onTargetKilled(targetId);
+        if (this.kind === "pve" && killerSessionId) {
+          const killer = this.state.players.get(killerSessionId);
+          if (killer) killer.statKills += 1;
+        }
+      },
     });
     if (this.kind === "pvp") {
       this.combat.setStaticColliders(arenaStaticColliders());
+    } else if (this.kind === "pve" && this.mode === "dungeon") {
+      this.combat.setStaticColliders(cemeteryStaticColliders());
     }
     this.setPatchRate(1000 / 30);
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
+
+    if (this.kind === "pve" && this.mode === "dungeon") {
+      this.waveDirector = new WaveDirector(this.state, this.combat, (hud) => {
+        this.broadcast("wave_hud", hud);
+      });
+    }
 
     this.onMessage("input", (client, message: { input: PlayerInput }) => {
       if (this.state.paused) return;
@@ -143,6 +176,16 @@ export class ContentRoom extends Room<BaseCityState> {
       if (!queue || !message?.input) return;
       queue.push(message.input);
       if (queue.length > 64) queue.shift();
+    });
+
+    this.onMessage("pve_pause", (client, message: { paused?: boolean }) => {
+      if (this.kind !== "pve" || !this.waveDirector) return;
+      if (this.pveRunEnded) return;
+      if (!this.state.players.has(client.sessionId)) return;
+      const pause = Boolean(message?.paused);
+      this.state.paused = pause;
+      this.state.pauseReason = pause ? "pve_manual" : "";
+      this.broadcast("pve_pause", { paused: pause });
     });
 
     this.onMessage("return_hub", (client) => {
@@ -155,7 +198,8 @@ export class ContentRoom extends Room<BaseCityState> {
     });
 
     this.onMessage("respawn", (client) => {
-      if (this.kind === "pvp") return;
+      // Wave Assault: no mid-run respawn (coop revive later).
+      if (this.kind === "pvp" || this.mode === "dungeon") return;
       const player = this.state.players.get(client.sessionId);
       if (!player || player.hp > 0) return;
       const diedAt = this.diedAtBySession.get(client.sessionId) ?? 0;
@@ -164,11 +208,63 @@ export class ContentRoom extends Room<BaseCityState> {
     });
 
     this.onMessage("rematch_vote", (client) => {
-      if (this.kind !== "pvp") return;
       const player = this.state.players.get(client.sessionId);
-      if (!player || this.state.matchPhase !== "rematch_wait") return;
+      if (!player) return;
+      if (this.kind === "pve" && this.mode === "dungeon") {
+        if (!this.pveRunEnded) return;
+        player.rematchReady = true;
+        this.tryRestartPveRun();
+        return;
+      }
+      if (this.kind !== "pvp") return;
+      if (this.state.matchPhase !== "rematch_wait") return;
+      // Spectators do not vote — they never block rematch.
+      if (player.role === "spectator") return;
       player.rematchReady = true;
       this.tryStartRematch();
+    });
+
+    this.onMessage("cast_emote", (client, message: { emoteId?: string }) => {
+      this.handleCastEmote(client, message?.emoteId ?? "");
+    });
+    this.onMessage("cancel_emote", (client) => {
+      this.handleCancelEmote(client);
+    });
+  }
+
+  private handleCastEmote(client: Client, emoteId: string) {
+    const player = this.state.players.get(client.sessionId);
+    // Arena emotes allowed alive or dead (taunts during wipe / round_end).
+    if (!player || !emoteId || player.role === "spectator") return;
+    const unlocks = this.unlocksBySession.get(client.sessionId) ?? emptyPlayerUnlocks();
+    if (!ownsEmote(unlocks.emotes, emoteId)) {
+      client.send("toast", { message: "Emote not unlocked" });
+      return;
+    }
+    if (!unlocks.emoteSlots.includes(emoteId)) {
+      client.send("toast", { message: "Emote not on wheel" });
+      return;
+    }
+    const def = getEmote(emoteId);
+    if (!def) return;
+    const now = Date.now();
+    const until = this.emoteUntilBySession.get(client.sessionId) ?? 0;
+    if (now < until - 200) return;
+    this.emoteUntilBySession.set(client.sessionId, now + def.durationMs);
+    this.broadcast("emote_fx", {
+      sessionId: client.sessionId,
+      emoteId,
+      phase: "start",
+    });
+  }
+
+  private handleCancelEmote(client: Client) {
+    if (!this.state.players.get(client.sessionId)) return;
+    this.emoteUntilBySession.delete(client.sessionId);
+    this.broadcast("emote_fx", {
+      sessionId: client.sessionId,
+      emoteId: "",
+      phase: "cancel",
     });
   }
 
@@ -247,6 +343,8 @@ export class ContentRoom extends Room<BaseCityState> {
         player.team = "";
         player.x = 0;
         player.z = 0;
+        player.invulnerable = true;
+        this.spawnBySession.set(client.sessionId, { x: 0, z: 0, yaw: player.yaw });
       } else {
         const team = options.team === "a" || options.team === "b" ? options.team : this.nextTeam;
         this.nextTeam = team === "a" ? "b" : "a";
@@ -268,15 +366,30 @@ export class ContentRoom extends Room<BaseCityState> {
         });
       }
     } else {
-      const spawnIndex = this.state.players.size;
-      const angle = (spawnIndex / Math.max(1, this.maxClients)) * Math.PI * 2;
-      player.x = Math.cos(angle) * 4;
-      player.z = Math.sin(angle) * 4;
+      // PvE / dungeon: cemetery center spawn (solo for now).
+      const spawn =
+        this.mode === "dungeon"
+          ? { ...CEMETERY_PLAYER_SPAWN }
+          : (() => {
+              const spawnIndex = this.state.players.size;
+              const angle = (spawnIndex / Math.max(1, this.maxClients)) * Math.PI * 2;
+              return {
+                x: Math.cos(angle) * 4,
+                z: Math.sin(angle) * 4,
+                yaw: 0,
+              };
+            })();
+      player.x = spawn.x;
+      player.z = spawn.z;
+      player.yaw = spawn.yaw;
       this.spawnBySession.set(client.sessionId, {
-        x: player.x,
-        z: player.z,
-        yaw: player.yaw,
+        x: spawn.x,
+        z: spawn.z,
+        yaw: spawn.yaw,
       });
+      if (this.waveDirector) {
+        this.waveDirector.start(Date.now());
+      }
     }
 
     this.state.players.set(client.sessionId, player);
@@ -304,6 +417,7 @@ export class ContentRoom extends Room<BaseCityState> {
           p.cosmeticLegs = fields.cosmeticLegs;
           p.cosmeticShoes = fields.cosmeticShoes;
         }
+        this.unlocksBySession.set(client.sessionId, eco.unlocks);
         this.combat.syncSessionKit(client.sessionId, p.loadout, p.talents, eco.talentBuild);
         const bonus = this.combat.getSessionKit(client.sessionId)?.maxHpBonus ?? 0;
         p.maxHp = PLAYER_BASE_MAX_HP + bonus;
@@ -311,6 +425,7 @@ export class ContentRoom extends Room<BaseCityState> {
       });
     } else {
       player.loadout = DEFAULT_LOADOUT.join(",");
+      this.unlocksBySession.set(client.sessionId, emptyPlayerUnlocks());
       this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents, {});
     }
 
@@ -417,6 +532,9 @@ export class ContentRoom extends Room<BaseCityState> {
     this.spawnBySession.delete(sessionId);
     this.spawnSlotBySession.delete(sessionId);
     this.diedAtBySession.delete(sessionId);
+    this.unlocksBySession.delete(sessionId);
+    this.emoteUntilBySession.delete(sessionId);
+    this.returnHubBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
   }
 
@@ -463,6 +581,83 @@ export class ContentRoom extends Room<BaseCityState> {
     if (!this.diedAtBySession.has(sessionId)) {
       this.diedAtBySession.set(sessionId, Date.now());
     }
+    if (this.mode === "dungeon") {
+      this.checkPveWipe();
+    }
+  }
+
+  private checkPveWipe() {
+    if (this.kind !== "pve" || this.mode !== "dungeon" || this.pveRunEnded) return;
+    let living = 0;
+    let present = 0;
+    this.state.players.forEach((p) => {
+      if (p.disconnected) return;
+      present += 1;
+      if (p.hp > 0) living += 1;
+    });
+    if (present > 0 && living === 0) {
+      this.finishPveRun();
+    }
+  }
+
+  private clearWaveMobs() {
+    const ids: string[] = [];
+    this.state.targets.forEach((t, id) => {
+      if (t.kind === PVE_ZOMBIE_KIND) ids.push(id);
+    });
+    for (const id of ids) {
+      this.waveDirector?.onTargetKilled(id);
+      this.state.targets.delete(id);
+    }
+  }
+
+  private finishPveRun() {
+    if (this.pveRunEnded) return;
+    this.pveRunEnded = true;
+    this.state.paused = true;
+    this.state.pauseReason = "pve_run_end";
+    this.waveDirector?.stop();
+    this.clearWaveMobs();
+    this.combat.clearRoundWorldEffects();
+
+    let kills = 0;
+    this.state.players.forEach((p) => {
+      kills += p.statKills;
+      p.rematchReady = false;
+    });
+    const wave = this.waveDirector?.getWaveIndex() ?? 0;
+    this.broadcast("pve_run_end", { kills, wave });
+    this.broadcast("pve_pause", { paused: true });
+  }
+
+  private tryRestartPveRun() {
+    if (!this.pveRunEnded || this.kind !== "pve" || this.mode !== "dungeon") return;
+    let ready = 0;
+    let total = 0;
+    this.state.players.forEach((p) => {
+      if (p.disconnected) return;
+      total += 1;
+      if (p.rematchReady) ready += 1;
+    });
+    if (total === 0 || ready < total) return;
+
+    this.pveRunEnded = false;
+    this.state.paused = false;
+    this.state.pauseReason = "";
+    this.clearWaveMobs();
+    this.combat.clearRoundWorldEffects();
+    this.state.players.forEach((p, sessionId) => {
+      p.statKills = 0;
+      p.statDamageDealt = 0;
+      p.statDamageTaken = 0;
+      p.statHealing = 0;
+      p.statShield = 0;
+      p.rematchReady = false;
+      this.softRespawnPlayer(sessionId, p);
+    });
+    this.waveDirector?.resetRun(Date.now());
+    this.broadcast("pve_run_restart", {});
+    this.broadcast("pve_pause", { paused: false });
   }
 
   private softRespawnPlayer(sessionId: string, player: PlayerState) {
@@ -501,6 +696,8 @@ export class ContentRoom extends Room<BaseCityState> {
   }
 
   private startRound(round: number) {
+    this.wipeEndsAt = 0;
+    this.wipeWinner = null;
     this.state.matchRound = round;
     if (round === 1) {
       this.state.scoreA = 0;
@@ -550,6 +747,9 @@ export class ContentRoom extends Room<BaseCityState> {
   }
 
   private endRound(winner: "a" | "b") {
+    this.wipeEndsAt = 0;
+    this.wipeWinner = null;
+    this.combat.clearRoundWorldEffects();
     if (winner === "a") this.state.scoreA += 1;
     else this.state.scoreB += 1;
     this.state.matchPhase = "round_end";
@@ -599,7 +799,8 @@ export class ContentRoom extends Room<BaseCityState> {
 
     this.state.matchPhase = "rematch_wait";
     this.state.players.forEach((p) => {
-      p.rematchReady = false;
+      // Spectators never block rematch readiness.
+      p.rematchReady = p.role === "spectator";
     });
   }
 
@@ -722,7 +923,6 @@ export class ContentRoom extends Room<BaseCityState> {
 
     if (this.kind === "pvp") {
       void bumpQuest(player.id, { type: "pvp_mode", mode: this.mode });
-      if (outcome === "win") void bumpQuest(player.id, { type: "pvp_win" });
       if (outcome !== "leave_early") {
         void bumpQuest(player.id, { type: "pvp_match_completed" });
       }
@@ -750,6 +950,7 @@ export class ContentRoom extends Room<BaseCityState> {
     let total = 0;
     this.state.players.forEach((p) => {
       if (p.disconnected) return;
+      if (p.role === "spectator") return;
       total += 1;
       if (p.rematchReady) ready += 1;
     });
@@ -769,11 +970,26 @@ export class ContentRoom extends Room<BaseCityState> {
     const livingB = this.fighters().filter((p) => p.team === "b" && !p.roundDead && p.hp > 0);
     if (livingA.length === 0 && livingB.length === 0) {
       // Simultaneous wipe (e.g. shared AoE) — nobody wins, replay the round.
+      this.wipeEndsAt = 0;
+      this.wipeWinner = null;
+      this.combat.clearRoundWorldEffects();
       this.startRound(this.state.matchRound);
-    } else if (livingA.length === 0) {
-      this.endRound("b");
+      return;
+    }
+    if (livingA.length === 0) {
+      if (!this.wipeEndsAt || this.wipeWinner !== "b") {
+        this.wipeEndsAt = now + ARENA_WIPE_EMOTE_MS;
+        this.wipeWinner = "b";
+      }
     } else if (livingB.length === 0) {
-      this.endRound("a");
+      if (!this.wipeEndsAt || this.wipeWinner !== "a") {
+        this.wipeEndsAt = now + ARENA_WIPE_EMOTE_MS;
+        this.wipeWinner = "a";
+      }
+    } else {
+      // Someone revived / unexpected — cancel pending wipe.
+      this.wipeEndsAt = 0;
+      this.wipeWinner = null;
     }
   }
 
@@ -785,6 +1001,8 @@ export class ContentRoom extends Room<BaseCityState> {
     } else if (phase === "countdown" && now >= this.state.phaseEndsAt) {
       this.state.matchPhase = "fighting";
       this.state.phaseEndsAt = 0;
+      this.wipeEndsAt = 0;
+      this.wipeWinner = null;
       this.broadcast("toast", { message: "Fight!" });
     } else if (phase === "round_end" && now >= this.state.phaseEndsAt) {
       if (this.state.scoreA >= ARENA_ROUNDS_TO_WIN) this.finishMatch("a");
@@ -792,6 +1010,14 @@ export class ContentRoom extends Room<BaseCityState> {
       else this.startRound(this.state.matchRound + 1);
     } else if (phase === "fighting") {
       this.checkRoundWipe(now);
+      if (
+        this.wipeEndsAt > 0 &&
+        this.wipeWinner &&
+        now >= this.wipeEndsAt &&
+        this.state.matchPhase === "fighting"
+      ) {
+        this.endRound(this.wipeWinner);
+      }
     }
   }
 
@@ -857,14 +1083,21 @@ export class ContentRoom extends Room<BaseCityState> {
     });
   }
 
-  private canAct(player: PlayerState): boolean {
-    if (player.hp <= 0 || player.roundDead) return false;
+  /** Fighters: act only when alive and outside countdown / round_end / match_end. */
+  private canCombat(player: PlayerState): boolean {
     if (player.role === "spectator") return false;
+    if (player.hp <= 0 || player.roundDead) return false;
     if (this.kind === "pvp") {
       const phase = this.state.matchPhase;
       if (phase === "countdown" || phase === "round_end" || phase === "match_end") return false;
     }
     return true;
+  }
+
+  /** Spectators always move; fighters use the same gates as combat. */
+  private canMove(player: PlayerState): boolean {
+    if (player.role === "spectator") return true;
+    return this.canCombat(player);
   }
 
   private tick(dtMs: number) {
@@ -884,7 +1117,9 @@ export class ContentRoom extends Room<BaseCityState> {
       while (queue.length > 0) {
         const input = queue.shift()!;
         player.lastInputSeq = input.seq;
-        if (!this.canAct(player)) continue;
+
+        const spectator = player.role === "spectator";
+        if (!this.canMove(player)) continue;
 
         const speed = this.combat.getEffectiveMoveSpeed(sessionId);
         const from = { x: player.x, z: player.z };
@@ -899,6 +1134,14 @@ export class ContentRoom extends Room<BaseCityState> {
         const next = this.combat.movePlayer(sessionId, from, desired);
         player.x = next.x;
         player.z = next.z;
+
+        // Spectators: move + look only (no casts / aim refresh / shield turn lock).
+        if (spectator) {
+          player.yaw = applyYaw(player.yaw, input.yaw, input.dt || dt);
+          continue;
+        }
+        if (!this.canCombat(player)) continue;
+
         const shieldTurning = this.combat.statuses.has(sessionId, "handShielding");
         player.yaw = applyYaw(
           player.yaw,
@@ -924,5 +1167,9 @@ export class ContentRoom extends Room<BaseCityState> {
     }
 
     this.combat.tick(dt, now);
+    this.waveDirector?.tick(dt, now);
+    if (this.kind === "pve" && this.mode === "dungeon") {
+      this.checkPveWipe();
+    }
   }
 }

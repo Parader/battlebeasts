@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { filterQuestRowsForDisplay } from "@battlebeasts/shared";
 import { GamePanelShell } from "./GamePanelShell";
 import { GameIcon } from "./GameIcon";
@@ -20,25 +20,28 @@ export type HubChestRow = {
   created_at?: string;
 };
 
-type ChestQuality = "green" | "blue" | "purple" | "legendary";
+/** Short label for chest.origin (quest / ranked / admin). */
+function formatChestSource(source: string): string {
+  if (source.startsWith("quest:")) {
+    const questId = source.slice("quest:".length).split(":")[0] ?? source;
+    return `Quest · ${questId.replace(/_/g, " ")}`;
+  }
+  if (source.startsWith("ranked_season:")) {
+    const key = source.split(":").pop() ?? "ranked";
+    return `Ranked · ${key.replace(/_/g, " ")}`;
+  }
+  if (source.startsWith("admin:")) return "Admin";
+  return source;
+}
 
 type Props = {
   open: boolean;
   onClose: () => void;
   quests: HubQuestRow[];
   chests: HubChestRow[];
-  isAdmin?: boolean;
   onOpenChest: (chestId: string) => void;
   pendingChestOpenId?: string | null;
-  onSpawnChest?: (quality: ChestQuality) => void;
-  onReplayIntro?: () => void;
-  onSoftResetCharacter?: () => void;
-  /** Admin hub practice — skip ability cooldowns. */
-  adminNoCooldown?: boolean;
-  onToggleAdminNoCooldown?: (enabled: boolean) => void;
 };
-
-const ADMIN_QUALITIES: readonly ChestQuality[] = ["green", "blue", "purple", "legendary"];
 
 /** Hub quests + closed chests (mystery until open). */
 export function QuestsPanel({
@@ -46,17 +49,9 @@ export function QuestsPanel({
   onClose,
   quests,
   chests,
-  isAdmin,
   onOpenChest,
   pendingChestOpenId = null,
-  onSpawnChest,
-  onReplayIntro,
-  onSoftResetCharacter,
-  adminNoCooldown = false,
-  onToggleAdminNoCooldown,
 }: Props) {
-  const [spawnQuality, setSpawnQuality] = useState<ChestQuality>("blue");
-
   const visible = useMemo(() => filterQuestRowsForDisplay(quests), [quests]);
   const daily = visible.filter((q) => q.type === "daily");
   const season = visible.filter((q) => q.type === "season");
@@ -71,57 +66,6 @@ export function QuestsPanel({
       onClose={onClose}
       maxHeightClass="max-h-[min(80dvh,640px)]"
     >
-      {isAdmin &&
-      (onSpawnChest || onReplayIntro || onSoftResetCharacter || onToggleAdminNoCooldown) ? (
-        <section className="mb-5 space-y-2">
-          <h3 className="bb-section-label">Admin</h3>
-          {onSpawnChest ? (
-            <div className="bb-list-row flex flex-wrap items-center gap-2">
-              <select
-                className="bb-input"
-                value={spawnQuality}
-                aria-label="Chest rarity"
-                onChange={(e) => setSpawnQuality(e.target.value as ChestQuality)}
-              >
-                {ADMIN_QUALITIES.map((q) => (
-                  <option key={q} value={q}>
-                    {q}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="bb-btn-brass"
-                onClick={() => onSpawnChest(spawnQuality)}
-              >
-                Get chest
-              </button>
-            </div>
-          ) : null}
-          <div className="bb-list-row flex flex-wrap items-center gap-2">
-            {onToggleAdminNoCooldown ? (
-              <button
-                type="button"
-                className={adminNoCooldown ? "bb-btn-brass" : "bb-btn-ink"}
-                onClick={() => onToggleAdminNoCooldown(!adminNoCooldown)}
-              >
-                {adminNoCooldown ? "Cooldowns OFF" : "Disable cooldowns"}
-              </button>
-            ) : null}
-            {onReplayIntro ? (
-              <button type="button" className="bb-btn-ink" onClick={onReplayIntro}>
-                Replay intro
-              </button>
-            ) : null}
-            {onSoftResetCharacter ? (
-              <button type="button" className="bb-btn-ink" onClick={onSoftResetCharacter}>
-                Soft reset character
-              </button>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
       <section className="mb-5 space-y-2">
         <h3 className="bb-section-label">Chests</h3>
         {chests.length === 0 ? (
@@ -130,9 +74,16 @@ export function QuestsPanel({
           <ul className="space-y-2">
             {chests.map((c) => (
               <li key={c.id} className="bb-list-row flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2 text-sm text-[var(--bb-ink)]">
-                  <GameIcon id="locked-chest" size={22} gray={0.9} title="Chest" />
-                  Chest
+                <span className="flex min-w-0 flex-col gap-0.5 text-sm text-[var(--bb-ink)]">
+                  <span className="flex items-center gap-2">
+                    <GameIcon id="locked-chest" size={22} gray={0.9} title="Chest" />
+                    Chest
+                  </span>
+                  {c.source ? (
+                    <span className="bb-meta truncate pl-7" title={c.source}>
+                      {formatChestSource(c.source)}
+                    </span>
+                  ) : null}
                 </span>
                 <button
                   type="button"

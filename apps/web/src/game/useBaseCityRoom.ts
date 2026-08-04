@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, COMBAT_ENGAGE_LINGER_MS, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, arenaStaticColliders, baseCityStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, stepYawToward, totalShieldAbsorb, unitCollidersExcept, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
+import { ABILITIES, COMBAT_ENGAGE_LINGER_MS, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, arenaStaticColliders, baseCityStaticColliders, cemeteryStaticColliders, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeLoadout, PVP_MODES, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
+import { recordWaveBestRun } from "./waveBestRun";
 import { LocalPredictor } from "./LocalPredictor";
 import type { DamagePopup } from "./CombatVfx";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
@@ -31,6 +32,8 @@ const EMPTY_STATICS: ReturnType<typeof baseCityStaticColliders> = [];
 const HUB_STATICS = baseCityStaticColliders();
 /** Desert arena walls — must match ContentRoom PvP server colliders. */
 const ARENA_STATICS = arenaStaticColliders();
+/** Cemetery Wave Assault walls — must match ContentRoom dungeon colliders. */
+const CEMETERY_STATICS = cemeteryStaticColliders();
 
 const PVP_MODE_IDS = new Set<string>(PVP_MODES.map((m) => m.id));
 
@@ -60,6 +63,11 @@ export type ActiveUi =
 
 export type SessionPhase = "hub" | "queued" | "content";
 
+/** True while still in the village room (including matchmaking queue). */
+function isHubWorld(phase: SessionPhase): boolean {
+    return phase === "hub" || phase === "queued";
+}
+
 /** Hub pad under the local player (prompt / Space interact / portal auto-open). */
 export type NearInteract = {
     id: string;
@@ -68,8 +76,9 @@ export type NearInteract = {
 } | null;
 
 function staticsForPhase(phase: SessionPhase, mode: string | null) {
-    if (phase === "hub") return HUB_STATICS;
+    if (isHubWorld(phase)) return HUB_STATICS;
     if (mode && PVP_MODE_IDS.has(mode)) return ARENA_STATICS;
+    if (mode === "dungeon") return CEMETERY_STATICS;
     return EMPTY_STATICS;
 }
 
@@ -97,19 +106,30 @@ export type ArenaHudState = {
     rematchReady: boolean;
 };
 
-/** Mirrors ContentRoom.canAct — client must not predict when the server ignores input. */
-function clientCanAct(opts: {
+/** Mirrors ContentRoom.canCombat — casts / interact / emotes. */
+function clientCanCombat(opts: {
     hp?: number;
     roundDead?: boolean;
     role?: string;
     matchPhase?: string;
 }): boolean {
+    if (opts.role === "spectator") return false;
     if (typeof opts.hp === "number" && opts.hp <= 0) return false;
     if (opts.roundDead) return false;
-    if (opts.role === "spectator") return false;
     const phase = opts.matchPhase ?? "";
     if (phase === "countdown" || phase === "round_end" || phase === "match_end") return false;
     return true;
+}
+
+/** Mirrors ContentRoom.canMove — spectators always move; fighters use combat gates. */
+function clientCanMove(opts: {
+    hp?: number;
+    roundDead?: boolean;
+    role?: string;
+    matchPhase?: string;
+}): boolean {
+    if (opts.role === "spectator") return true;
+    return clientCanCombat(opts);
 }
 
 export type MatchRecapState = {
@@ -188,6 +208,7 @@ export function useBaseCityRoom(options: Options) {
         essence: number;
         copper: number;
         lines: import("@battlebeasts/shared").ChestLootLine[];
+        awaitingLoot?: boolean;
     } | null>(null);
     const [pendingChestOpenId, setPendingChestOpenId] = useState<string | null>(null);
     /** Unseen quest completions (cleared when Quests panel opens). */
@@ -196,6 +217,20 @@ export function useBaseCityRoom(options: Options) {
     const knownChestIdsRef = useRef<Set<string>>(new Set());
     const questsHydratedRef = useRef(false);
     const [arenaHud, setArenaHud] = useState<ArenaHudState | null>(null);
+    const [waveHud, setWaveHud] = useState<{
+        wave: number;
+        phase: string;
+        alive: number;
+        goal: number;
+    } | null>(null);
+    const [pvePaused, setPvePausedLocal] = useState(false);
+    const [waveRunRecap, setWaveRunRecap] = useState<{
+        kills: number;
+        wave: number;
+        bestKills: number;
+        isNewBest: boolean;
+        retryReady: boolean;
+    } | null>(null);
     const [matchRecap, setMatchRecap] = useState<MatchRecapState | null>(null);
     const [rankedState, setRankedState] = useState<{
         season: {
@@ -291,6 +326,7 @@ export function useBaseCityRoom(options: Options) {
     /** UI overlays / death — separate from PvP phase lock so we can recompute both. */
     const uiInputLockedRef = useRef(Boolean(options.inputLocked));
     const matchPauseRef = useRef<MatchPauseInfo>(null);
+    const pvePausedRef = useRef(false);
     const activeUiRef = useRef<ActiveUi>(null);
     const transferringRef = useRef(false);
     const phaseRef = useRef<SessionPhase>("hub");
@@ -370,6 +406,8 @@ export function useBaseCityRoom(options: Options) {
             contentModeRef.current = mode ?? null;
             setActiveUi(null);
             setMatchPause(null);
+            setWaveHud(null);
+            setPvePausedLocal(false);
             emotePieOpenRef.current = false;
             setEmotePieOpen(false);
             combatOverlayRuntime.clear();
@@ -378,8 +416,11 @@ export function useBaseCityRoom(options: Options) {
             nearInteractRef.current = null;
             lastPortalAutoIdRef.current = null;
             setMatchRecap(null);
+            setWaveRunRecap(null);
             setPartyInvite(null);
-            if (nextPhase !== "hub") {
+            if (nextPhase === "hub") {
+                setIsHubAdmin(false);
+            } else {
                 setHubRoster([]);
                 setIsHubAdmin(false);
                 adminNoCooldownRef.current = false;
@@ -419,7 +460,10 @@ export function useBaseCityRoom(options: Options) {
                     setPhase("queued");
                     phaseRef.current = "queued";
                     setQueueModes(msg.modes ?? []);
-                    setActiveUi(null);
+                    // Close portal UI only — keep shop / loadout / etc. usable while searching.
+                    setActiveUi((ui) =>
+                        ui === "portal_pvp" || ui === "portal_pve" ? null : ui,
+                    );
                 } else {
                     setQueueModes([]);
                     setPhase((p) => {
@@ -484,6 +528,48 @@ export function useBaseCityRoom(options: Options) {
 
             joined.onMessage("match_resume", () => {
                 setMatchPause(null);
+            });
+
+            joined.onMessage(
+                "wave_hud",
+                (msg: { wave?: number; phase?: string; alive?: number; goal?: number }) => {
+                    setWaveHud({
+                        wave: Math.max(0, Math.floor(Number(msg.wave) || 0)),
+                        phase: typeof msg.phase === "string" ? msg.phase : "idle",
+                        alive: Math.max(0, Math.floor(Number(msg.alive) || 0)),
+                        goal: Math.max(0, Math.floor(Number(msg.goal) || 0)),
+                    });
+                },
+            );
+            joined.onMessage("pve_pause", (msg: { paused?: boolean }) => {
+                setPvePausedLocal(Boolean(msg?.paused));
+            });
+            joined.onMessage(
+                "pve_run_end",
+                (msg: { kills?: number; wave?: number }) => {
+                    const kills = Math.max(0, Math.floor(Number(msg.kills) || 0));
+                    const wave = Math.max(0, Math.floor(Number(msg.wave) || 0));
+                    const { best, isNewBest } = recordWaveBestRun(optionsRef.current.userId, {
+                        kills,
+                        wave,
+                    });
+                    setWaveRunRecap({
+                        kills,
+                        wave,
+                        bestKills: best.kills,
+                        isNewBest,
+                        retryReady: false,
+                    });
+                    setDiedAt(null);
+                    setPvePausedLocal(true);
+                },
+            );
+            joined.onMessage("pve_run_restart", () => {
+                setWaveRunRecap(null);
+                setWaveHud(null);
+                setDiedAt(null);
+                setPvePausedLocal(false);
+                clearLocalCombatCastStateRef.current();
             });
 
             joined.onMessage("hub_roster", (msg: { players?: HubRosterPlayer[] }) => {
@@ -602,13 +688,17 @@ export function useBaseCityRoom(options: Options) {
                     lines?: import("@battlebeasts/shared").ChestLootLine[];
                 }) => {
                     setPendingChestOpenId(null);
-                    if (!msg?.ok) return;
-                    setChestReveal({
-                        quality: msg.quality ?? "green",
+                    if (!msg?.ok) {
+                        setChestReveal(null);
+                        return;
+                    }
+                    setChestReveal((prev) => ({
+                        quality: msg.quality ?? prev?.quality ?? "green",
                         essence: msg.essence ?? 0,
                         copper: msg.copper ?? 0,
                         lines: Array.isArray(msg.lines) ? msg.lines : [],
-                    });
+                        awaitingLoot: false,
+                    }));
                 },
             );
 
@@ -736,6 +826,13 @@ export function useBaseCityRoom(options: Options) {
                             { x: msg.x2 ?? msg.x, z: msg.z2 ?? msg.z, y: 0.05, yaw: msg.yaw },
                             { lifeMs: 300, variant: 1 },
                         );
+                        if (isLocal && msg.abilityId === "riftFissure") {
+                            // x2/z2 is the opposite-side exit (post-shove). Snap — don't lerp from entry.
+                            const toX = msg.x2 ?? msg.x;
+                            const toZ = msg.z2 ?? msg.z;
+                            predictorRef.current.seed(toX, toZ, predictedRef.current.yaw);
+                            predictedRef.current = { ...predictorRef.current.state };
+                        }
                         if (
                             isLocal &&
                             typeof msg.cooldownMs === "number" &&
@@ -790,6 +887,11 @@ export function useBaseCityRoom(options: Options) {
                                 usesLifeLeechFx(msg.abilityId)
                             ) {
                                 cancelFollowOwnerVfx(msg.abilityId, msg.ownerId);
+                            } else if (msg.abilityId === "fireball") {
+                                // Handle may already be detached when schema hits "";
+                                // still kill the follow-owner charge mesh.
+                                cancelActiveCastHandle(msg.ownerId, "fireball");
+                                cancelFollowOwnerVfx("fireball", msg.ownerId);
                             }
                         }
                         if (isLocal) {
@@ -900,6 +1002,20 @@ export function useBaseCityRoom(options: Options) {
                     });
 
                     if (msg.kind === "hit" && typeof msg.damage === "number" && msg.damage > 0) {
+                        // Don't reveal cloaked hunters to others via floating damage.
+                        const targetId = msg.targetId;
+                        const localId = sessionIdRef.current;
+                        if (targetId && targetId !== localId && joined.state?.players) {
+                            const target = joined.state.players.get(targetId) as
+                                | { statuses?: Parameters<typeof hasStatusId>[0] }
+                                | undefined;
+                            if (
+                                hasStatusId(target?.statuses, "cloaked") ||
+                                hasStatusId(target?.statuses, "revengePhased")
+                            ) {
+                                return;
+                            }
+                        }
                         const key = ++dmgKeyRef.current;
                         const ang = Math.random() * Math.PI * 2;
                         const isHeal =
@@ -948,12 +1064,15 @@ export function useBaseCityRoom(options: Options) {
             state.listen?.("paused", (paused) => {
                 if (!paused) {
                     setMatchPause(null);
+                    setPvePausedLocal(false);
                     return;
                 }
                 syncPauseFromState(state);
+                setPvePausedLocal(state.pauseReason === "pve_manual");
             });
             state.listen?.("pauseReason", () => {
                 if (state.paused) syncPauseFromState(state);
+                setPvePausedLocal(Boolean(state.paused) && state.pauseReason === "pve_manual");
             });
             state.listen?.("reconnectUntil", () => {
                 if (state.paused) syncPauseFromState(state);
@@ -1138,12 +1257,14 @@ export function useBaseCityRoom(options: Options) {
             Boolean(options.inputLocked) ||
             activeUi !== null ||
             Boolean(matchPause) ||
+            Boolean(pvePaused) ||
             Boolean(partyInvite) ||
             diedAt != null;
         uiInputLockedRef.current = uiLocked;
         inputLockedRef.current = uiLocked;
         activeUiRef.current = activeUi;
         matchPauseRef.current = matchPause;
+        pvePausedRef.current = pvePaused;
         diedAtRef.current = diedAt;
         if (uiLocked) {
             keysRef.current = { up: false, down: false, left: false, right: false };
@@ -1158,7 +1279,15 @@ export function useBaseCityRoom(options: Options) {
         if (diedAt != null) {
             clearLocalCombatCastState();
         }
-    }, [options.inputLocked, activeUi, matchPause, partyInvite, diedAt, clearLocalCombatCastState]);
+    }, [
+        options.inputLocked,
+        activeUi,
+        matchPause,
+        pvePaused,
+        partyInvite,
+        diedAt,
+        clearLocalCombatCastState,
+    ]);
 
     useEffect(() => {
         loadoutRef.current = normalizeLoadout(economy.loadout);
@@ -1190,13 +1319,32 @@ export function useBaseCityRoom(options: Options) {
         const now = Date.now();
         const room = roomRef.current;
         const me = room?.state?.players?.get(room.sessionId) as
-            | { statuses?: Parameters<typeof hasStatusId>[0] }
+            | { statuses?: Parameters<typeof hasStatusId>[0]; role?: string }
             | undefined;
+        if (me?.role === "spectator") return;
         const spiritRecast =
             abilityId === "spiritForm" && hasStatusId(me?.statuses, "spiritFormed");
-        // Spirit Form recast ends the form while CD is already ticking — don't block.
+        // Rift Fissure: CD starts on portal A; second plant is allowed while arming.
+        const riftArmingRecast =
+            abilityId === "riftFissure" &&
+            (() => {
+                const portals = room?.state?.riftPortals as
+                    | { forEach: (cb: (raw: { ownerSessionId?: string; phase?: string; armEndsAt?: number; index?: number }) => void) => void }
+                    | undefined;
+                if (!portals || !room?.sessionId) return false;
+                let arming = false;
+                portals.forEach((raw) => {
+                    if (raw.ownerSessionId !== room.sessionId) return;
+                    if (raw.phase !== "arming") return;
+                    if ((raw.index ?? 0) !== 0) return;
+                    if ((raw.armEndsAt ?? 0) > now) arming = true;
+                });
+                return arming;
+            })();
+        // Spirit Form / Rift second plant while CD is already ticking — don't block.
         if (
             !spiritRecast &&
+            !riftArmingRecast &&
             !adminNoCooldownRef.current &&
             (cooldownUntilRef.current[abilityId] ?? 0) > now
         ) {
@@ -1325,6 +1473,9 @@ export function useBaseCityRoom(options: Options) {
                 usesLifeLeechFx(abilityId)
             ) {
                 cancelFollowOwnerVfx(abilityId, sid);
+            } else if (abilityId === "fireball") {
+                cancelActiveCastHandle(sid, "fireball");
+                cancelFollowOwnerVfx("fireball", sid);
             }
         }
         window.dispatchEvent(new CustomEvent("bb-cast-anim-cancel"));
@@ -1444,7 +1595,15 @@ export function useBaseCityRoom(options: Options) {
                     break;
                 case "KeyV":
                     if (down) {
-                        if (phaseRef.current !== "hub") break;
+                        // Hub / queue always; arena/content for fighters (including dead taunts).
+                        const phase = phaseRef.current;
+                        if (!isHubWorld(phase) && phase !== "content") break;
+                        if (phase === "content") {
+                            const me = roomRef.current?.state?.players?.get(
+                                sessionIdRef.current ?? "",
+                            ) as { role?: string } | undefined;
+                            if (me?.role === "spectator") break;
+                        }
                         e.preventDefault();
                         emotePieOpenRef.current = true;
                         setEmotePieOpen(true);
@@ -1773,6 +1932,12 @@ export function useBaseCityRoom(options: Options) {
                 const volcanoesMap = r.state?.volcanoes as
                     | Map<string, { x: number; z: number; radius?: number; phase?: string }>
                     | undefined;
+                const riftPortalsMap = r.state?.riftPortals as
+                    | Map<
+                          string,
+                          { x: number; z: number; yaw?: number; radius?: number; phase?: string }
+                      >
+                    | undefined;
                 if (playersMap) {
                     const localUserId = playersMap.get(r.sessionId)?.id ?? null;
                     const dynamics = [
@@ -1784,7 +1949,16 @@ export function useBaseCityRoom(options: Options) {
                         ),
                         ...(volcanoesMap ? volcanoColliders(volcanoesMap.entries()) : []),
                     ];
-                    const statics = staticsForPhase(phaseRef.current, contentModeRef.current);
+                    const baseStatics = staticsForPhase(phaseRef.current, contentModeRef.current);
+                    const pred = predictorRef.current.state;
+                    const riftBoxes = riftPortalsMap
+                        ? riftPortalColliders(riftPortalsMap.entries(), {
+                              x: pred.x,
+                              z: pred.z,
+                          })
+                        : [];
+                    const statics =
+                        riftBoxes.length > 0 ? [...baseStatics, ...riftBoxes] : baseStatics;
                     predictor.setWorldColliders(statics, dynamics);
                     setWorldStaticColliders(statics);
                 }
@@ -1878,16 +2052,21 @@ export function useBaseCityRoom(options: Options) {
                     predictedRef.current = { ...predictor.state };
                 }
 
-                const st = r.state as { matchPhase?: string } | undefined;
-                const canAct = clientCanAct({
+                const st = r.state as { matchPhase?: string; paused?: boolean } | undefined;
+                const gateOpts = {
                     hp: serverMe?.hp,
                     roundDead: serverMe?.roundDead,
                     role: serverMe?.role,
                     matchPhase: st?.matchPhase,
-                });
-                const locked = uiInputLockedRef.current || !canAct;
+                };
+                const simPaused = Boolean(st?.paused) || pvePausedRef.current;
+                const canMove = clientCanMove(gateOpts) && !simPaused;
+                const canCombat = clientCanCombat(gateOpts) && !simPaused;
+                const spectator = serverMe?.role === "spectator";
+                // Spectators stay free to walk; fighters lock UI when they cannot act.
+                const locked = uiInputLockedRef.current || (!canCombat && !spectator);
                 inputLockedRef.current = locked;
-                if (!canAct) {
+                if (!canMove) {
                     keysRef.current = { up: false, down: false, left: false, right: false };
                     heldCastSlotsRef.current = { mouse0: false, mouse2: false };
                     pendingCastRef.current = undefined;
@@ -1898,10 +2077,17 @@ export function useBaseCityRoom(options: Options) {
                         predictedRef.current = { ...predictor.state };
                         lastAckRef.current = serverMe.lastInputSeq;
                     }
+                } else if (!canCombat) {
+                    // Move-only (spectator, or fighter between rounds): clear cast intent.
+                    heldCastSlotsRef.current = { mouse0: false, mouse2: false };
+                    pendingCastRef.current = undefined;
+                    pendingCancelRef.current = false;
+                    pendingConfirmRef.current = false;
                 }
 
                 // Hub interact pads: Space prompt for stands/dummy; portals auto-open on enter.
-                if (phaseRef.current === "hub" && predictor.isSeeded) {
+                // Matchmaking queue still counts as hub world so shop / stands stay usable.
+                if (isHubWorld(phaseRef.current) && predictor.isSeeded) {
                     const px = predictedRef.current.x;
                     const pz = predictedRef.current.z;
                     let best: NearInteract = null;
@@ -1932,7 +2118,8 @@ export function useBaseCityRoom(options: Options) {
                             portalNear = { id: p.id, label: p.label, kind: "portal" };
                         }
                     }
-                    if (portalNear) {
+                    // Don't auto-open portals while already searching for a match.
+                    if (portalNear && phaseRef.current === "hub") {
                         if (
                             lastPortalAutoIdRef.current !== portalNear.id &&
                             activeUiRef.current == null &&
@@ -1963,11 +2150,13 @@ export function useBaseCityRoom(options: Options) {
                 const keys = keysRef.current;
                 let moveX = 0;
                 let moveZ = 0;
-                if (canAct) {
+                if (canMove) {
                     if (keys.right) moveX += 1;
                     if (keys.left) moveX -= 1;
                     if (keys.down) moveZ += 1;
                     if (keys.up) moveZ -= 1;
+                }
+                if (canCombat) {
                     // Hold-to-cast: only the active mouse hold re-fires (other was cleared on new press)
                     if (heldCastSlotsRef.current.mouse2) queueCastFromSlotInput("mouse2");
                     else if (heldCastSlotsRef.current.mouse0) queueCastFromSlotInput("mouse0");
@@ -1975,11 +2164,11 @@ export function useBaseCityRoom(options: Options) {
 
                 if (predictor.isSeeded) {
                     seqRef.current += 1;
-                    const castId = canAct ? pendingCastRef.current : undefined;
+                    const castId = canCombat ? pendingCastRef.current : undefined;
                     pendingCastRef.current = undefined;
-                    const cancelCast = canAct ? pendingCancelRef.current : false;
+                    const cancelCast = canCombat ? pendingCancelRef.current : false;
                     pendingCancelRef.current = false;
-                    const confirmCast = canAct ? pendingConfirmRef.current : false;
+                    const confirmCast = canCombat ? pendingConfirmRef.current : false;
                     pendingConfirmRef.current = false;
 
                     const input: PlayerInput = {
@@ -1991,7 +2180,7 @@ export function useBaseCityRoom(options: Options) {
                         castId,
                         cancelCast: cancelCast || undefined,
                         confirmCast: confirmCast || undefined,
-                        interactId: canAct ? pendingInteractRef.current : undefined,
+                        interactId: canCombat ? pendingInteractRef.current : undefined,
                     };
                     // Hand Shield: slow-turn the sent/predicted yaw (cursor still free).
                     {
@@ -2020,7 +2209,7 @@ export function useBaseCityRoom(options: Options) {
                     }
                     pendingInteractRef.current = undefined;
 
-                    if (canAct) {
+                    if (canMove) {
                         const predicted = predictor.predict(input);
                         predictedRef.current = predicted;
                     }
@@ -2173,7 +2362,20 @@ export function useBaseCityRoom(options: Options) {
     }, []);
 
     const returnToHub = useCallback(() => {
+        setWaveHud(null);
+        setPvePausedLocal(false);
+        setWaveRunRecap(null);
         roomRef.current?.send("return_hub");
+    }, []);
+
+    const setPvePaused = useCallback((paused: boolean) => {
+        setPvePausedLocal(paused);
+        roomRef.current?.send("pve_pause", { paused: Boolean(paused) });
+    }, []);
+
+    const voteRematch = useCallback(() => {
+        setWaveRunRecap((prev) => (prev ? { ...prev, retryReady: true } : prev));
+        roomRef.current?.send("rematch_vote");
     }, []);
 
     const requestRespawn = useCallback(() => {
@@ -2233,10 +2435,26 @@ export function useBaseCityRoom(options: Options) {
 
     const openHubChest = useCallback((chestId: string) => {
         setPendingChestOpenId(chestId);
+        // Start reveal immediately with known rarity; fill loot when server answers.
+        setHubChests((prev) => {
+            const chest = prev.find((c) => c.id === chestId);
+            setChestReveal({
+                quality: chest?.quality ?? "green",
+                essence: 0,
+                copper: 0,
+                lines: [],
+                awaitingLoot: true,
+            });
+            return prev.filter((c) => c.id !== chestId);
+        });
         roomRef.current?.send("hub_open_chest", { chestId });
         // Safety: if server never answers, unlock after a while.
         window.setTimeout(() => {
-            setPendingChestOpenId((cur) => (cur === chestId ? null : cur));
+            setPendingChestOpenId((cur) => {
+                if (cur !== chestId) return cur;
+                setChestReveal((r) => (r?.awaitingLoot ? null : r));
+                return null;
+            });
         }, 12_000);
     }, []);
 
@@ -2263,10 +2481,6 @@ export function useBaseCityRoom(options: Options) {
 
     const kickFromParty = useCallback((sessionId: string) => {
         roomRef.current?.send("party_kick", { sessionId });
-    }, []);
-
-    const voteRematch = useCallback(() => {
-        roomRef.current?.send("rematch_vote");
     }, []);
 
     const inviteToParty = useCallback((sessionId: string) => {
@@ -2364,6 +2578,10 @@ export function useBaseCityRoom(options: Options) {
         notifyFriendCodeRedeemed,
         kickFromParty,
         arenaHud,
+        waveHud,
+        pvePaused,
+        setPvePaused,
+        waveRunRecap,
         matchRecap,
         voteRematch,
         rankedState,

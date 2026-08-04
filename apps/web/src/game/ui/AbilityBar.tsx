@@ -1,27 +1,28 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ABILITIES,
   SPELL_SLOTS,
+  formatAbilityArmoryStats,
+  kitCooldownMs,
   normalizeLoadout,
+  resolveKit,
   type AbilityDef,
   type SpellSlot,
+  type TalentBuild,
   type Wallet,
 } from "@battlebeasts/shared";
+import { talentModLines } from "./abilityTalentMods";
 import { SpellSlotGlyph } from "./InputGlyph";
+import { SpellIcon } from "./SpellIcon";
 import { abilityHudRuntime } from "../abilityHudRuntime";
+import { abilityHoverRuntime } from "../abilityHoverRuntime";
 import { WalletDisplay } from "./CoinDisplay";
 
 type Props = {
   loadout: string[];
   wallet?: Pick<Wallet, "copper" | "silver" | "gold" | "essence" | "rubies">;
-};
-
-const SHAPE_TINT: Record<string, string> = {
-  projectile: "#3d8fb5",
-  melee: "#c4703a",
-  dash: "#6a9a45",
-  aoe: "#7a6aad",
-  buff: "#4a9a9a",
+  talentIds?: string[];
+  talentBuild?: TalentBuild;
 };
 
 function useNow(tick: boolean) {
@@ -45,60 +46,109 @@ function useNow(tick: boolean) {
 
 function SlotIcon({
   ability,
+  abilityId,
   slot,
   remainingMs,
   flash,
+  statsLine,
+  modLines,
+  onHover,
 }: {
   ability: AbilityDef | undefined;
+  abilityId: string | undefined;
   slot: SpellSlot;
   remainingMs: number;
   flash: boolean;
+  statsLine: string;
+  modLines: string[];
+  onHover: (id: string | null) => void;
 }) {
   const cooling = remainingMs > 0;
   const frac =
     ability && ability.cooldownMs > 0 ? Math.min(1, remainingMs / ability.cooldownMs) : 0;
-  const tint = ability ? (SHAPE_TINT[ability.shape] ?? "#6b7280") : "#3f463f";
 
   return (
     <div
-      className={["bb-ability-slot", flash ? "bb-ability-slot--flash" : ""].join(" ")}
-      style={{
-        background: `linear-gradient(165deg, ${tint}99 0%, #0c100e 58%)`,
-      }}
-      title={ability ? `${ability.name}` : slot.label}
+      className="pointer-events-auto relative"
+      onMouseEnter={() => onHover(abilityId ?? null)}
+      onMouseLeave={() => onHover(null)}
     >
-      <span className="bb-ability-slot__name">{ability?.name ?? "—"}</span>
-      {cooling && (
-        <>
-          <div
-            className="absolute inset-0 bg-[rgba(236,224,188,0.48)]"
-            style={{ clipPath: `inset(${(1 - frac) * 100}% 0 0 0)` }}
+      <div
+        className={[
+          "bb-ability-slot",
+          ability ? "bb-ability-slot--icon" : "",
+          flash ? "bb-ability-slot--flash" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        {ability ? (
+          <SpellIcon
+            abilityId={ability.id}
+            size={58}
+            className="bb-ability-slot__art"
+            alt={ability.name}
           />
-          <span
-            className="absolute inset-0 z-[1] flex items-center justify-center text-sm font-bold tabular-nums text-[var(--bb-ink)]"
-            style={{ fontFamily: "var(--bb-font-display)", textShadow: "0 1px 2px rgba(0,0,0,0.55)" }}
-          >
-            {Math.ceil(remainingMs / 1000)}
-          </span>
-        </>
-      )}
-      <span className="bb-ability-slot__glyph">
-        <SpellSlotGlyph slot={slot} size={slot.input === "space" ? 18 : 20} />
-      </span>
+        ) : null}
+        {cooling && (
+          <>
+            <div
+              className="bb-ability-slot__cd-dim"
+              aria-hidden
+            />
+            <div
+              className="bb-ability-slot__cd-sweep"
+              style={{ clipPath: `inset(${(1 - frac) * 100}% 0 0 0)` }}
+              aria-hidden
+            />
+            <span className="bb-ability-slot__cd-num">
+              {Math.ceil(remainingMs / 1000)}
+            </span>
+          </>
+        )}
+        <span className="bb-ability-slot__glyph">
+          <SpellSlotGlyph slot={slot} size={slot.input === "space" ? 18 : 20} />
+        </span>
+      </div>
+      {ability ? (
+        <div className="bb-ability-tooltip" role="tooltip">
+          <p className="bb-ability-tooltip__name">{ability.name}</p>
+          {ability.description ? (
+            <p className="bb-ability-tooltip__desc">{ability.description}</p>
+          ) : null}
+          <p className="bb-ability-tooltip__stats">{statsLine}</p>
+          {modLines.length > 0 ? (
+            <ul className="bb-ability-tooltip__mods">
+              {modLines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-export function AbilityBar({ loadout, wallet }: Props) {
+export function AbilityBar({ loadout, wallet, talentIds = [], talentBuild }: Props) {
   const slots = normalizeLoadout(loadout);
   const [cooldownUntil, setCooldownUntil] = useState(() => abilityHudRuntime.cooldownUntil);
   const [flashId, setFlashId] = useState(() => abilityHudRuntime.flashId);
+
+  const kit = useMemo(
+    () => resolveKit(slots.filter(Boolean).join(","), talentIds, talentBuild),
+    [slots, talentIds, talentBuild],
+  );
 
   useEffect(() => {
     return abilityHudRuntime.subscribe(() => {
       setCooldownUntil(abilityHudRuntime.cooldownUntil);
       setFlashId(abilityHudRuntime.flashId);
     });
+  }, []);
+
+  useEffect(() => {
+    return () => abilityHoverRuntime.clear();
   }, []);
 
   const needsTick = Object.values(cooldownUntil).some((t) => t > Date.now() - 50);
@@ -111,13 +161,26 @@ export function AbilityBar({ loadout, wallet }: Props) {
           const id = slots[i];
           const ability = id ? ABILITIES[id] : undefined;
           const until = id ? (cooldownUntil[id] ?? 0) : 0;
+          const adjustedCd = ability
+            ? kitCooldownMs(kit, ability.id, ability.cooldownMs)
+            : 0;
+          const statsLine = ability
+            ? formatAbilityArmoryStats(ability).replace(
+                /^CD [^\s]+/,
+                `CD ${(adjustedCd / 1000).toFixed(adjustedCd % 1000 === 0 ? 0 : 1)}s`,
+              )
+            : "";
           return (
             <SlotIcon
               key={slot.id}
               ability={ability}
+              abilityId={id}
               slot={slot}
               remainingMs={Math.max(0, until - now)}
               flash={Boolean(id && flashId === id)}
+              statsLine={statsLine}
+              modLines={ability ? talentModLines(ability, kit) : []}
+              onHover={(hid) => abilityHoverRuntime.setHoveredAbilityId(hid)}
             />
           );
         })}

@@ -10,6 +10,11 @@ type Props = {
   titleAside?: ReactNode;
   /** Extra controls in the header, rendered left of the close button. */
   headerActions?: ReactNode;
+  /**
+   * Render title / aside / actions / close floating above the panel box
+   * instead of inside the parchment chrome.
+   */
+  floatingHeader?: boolean;
   wide?: boolean;
   maxWidthClass?: string;
   maxHeightClass?: string;
@@ -29,6 +34,7 @@ export function GamePanelShell({
   showCloseButton = true,
   titleAside,
   headerActions,
+  floatingHeader = false,
   wide,
   maxWidthClass,
   maxHeightClass,
@@ -39,6 +45,40 @@ export function GamePanelShell({
   role = "dialog",
 }: Props) {
   const width = maxWidthClass ?? (wide ? "max-w-4xl" : "max-w-md");
+
+  const header = (
+    <header
+      className={[
+        "bb-panel-header shrink-0",
+        floatingHeader ? "bb-panel-header--float" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <div className="bb-panel-header__lead">
+        <div className="bb-panel-title-row">
+          <h2 className="bb-panel-title">{title}</h2>
+          {titleAside}
+        </div>
+        {subtitle ? <div className="bb-panel-sub">{subtitle}</div> : null}
+      </div>
+      {headerActions || (onClose && showCloseButton) ? (
+        <div className="bb-panel-header__actions">
+          {headerActions}
+          {onClose && showCloseButton ? (
+            <button
+              type="button"
+              className="bb-btn-close"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </header>
+  );
 
   return (
     <div
@@ -53,46 +93,35 @@ export function GamePanelShell({
       role="presentation"
     >
       <div
-        role={role}
-        aria-modal
-        aria-label={ariaLabel ?? title}
         className={[
-          "bb-parchment bb-book-panel relative z-10 flex w-full flex-col",
+          "relative z-10 flex w-full flex-col",
           width,
-          maxHeightClass ?? "",
+          floatingHeader ? "bb-panel-stack" : "",
+          floatingHeader ? maxHeightClass ?? "" : "",
         ]
           .filter(Boolean)
           .join(" ")}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="bb-panel-header shrink-0">
-          <div className="bb-panel-header__lead">
-            <div className="bb-panel-title-row">
-              <h2 className="bb-panel-title">{title}</h2>
-              {titleAside}
-            </div>
-            {subtitle ? <div className="bb-panel-sub">{subtitle}</div> : null}
-          </div>
-          {headerActions || (onClose && showCloseButton) ? (
-            <div className="bb-panel-header__actions">
-              {headerActions}
-              {onClose && showCloseButton ? (
-                <button
-                  type="button"
-                  className="bb-btn-close"
-                  onClick={onClose}
-                  aria-label="Close"
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </header>
+        {floatingHeader ? header : null}
+        <div
+          role={role}
+          aria-modal
+          aria-label={ariaLabel ?? title}
+          className={[
+            "bb-parchment bb-book-panel relative flex w-full flex-col min-h-0",
+            floatingHeader ? "bb-book-panel--under-float flex-1" : "",
+            floatingHeader ? "" : maxHeightClass ?? "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          {!floatingHeader ? header : null}
 
-        <div className="bb-panel-body min-h-0 flex-1 overflow-y-auto">{children}</div>
+          <div className="bb-panel-body min-h-0 flex-1 overflow-y-auto">{children}</div>
 
-        {footer ? <footer className="bb-panel-footer shrink-0">{footer}</footer> : null}
+          {footer ? <footer className="bb-panel-footer shrink-0">{footer}</footer> : null}
+        </div>
       </div>
     </div>
   );

@@ -172,38 +172,66 @@ function magmaOrbsLateral(
   };
 }
 
+/** Lateral bow scale so short / long meets still look like twin arcs. */
+export function magmaOrbsBowForRange(meetRange: number): number {
+  const mid = MAGMA_ORBS_CAST.meetRange;
+  const scale = meetRange / Math.max(0.01, mid);
+  return MAGMA_ORBS_CAST.arcBow * Math.max(0.4, Math.min(1.4, scale));
+}
+
+/** Vertical flight arc height scaled by meet distance. */
+export function magmaOrbsArcYForRange(meetRange: number): number {
+  const mid = MAGMA_ORBS_CAST.meetRange;
+  const scale = meetRange / Math.max(0.01, mid);
+  return MAGMA_ORBS_CAST.flightArcY * Math.max(0.45, Math.min(1.35, scale));
+}
+
 function magmaOrbsFlightControl(
   from: Vec2,
   collide: Vec2,
   yaw: number,
   side: -1 | 1,
+  bow: number,
 ): Vec2 {
   const f = facingVector(yaw);
   const rx = f.z;
   const rz = -f.x;
-  const bow = MAGMA_ORBS_CAST.arcBow;
+  // Push control point slightly along aim so short ranges still curve forward.
+  const along = Math.max(0.25, Math.min(0.85, bow * 0.28));
   return {
-    x: (from.x + collide.x) * 0.5 + rx * side * bow + f.x * 0.55,
-    z: (from.z + collide.z) * 0.5 + rz * side * bow + f.z * 0.55,
+    x: (from.x + collide.x) * 0.5 + rx * side * bow + f.x * along,
+    z: (from.z + collide.z) * 0.5 + rz * side * bow + f.z * along,
   };
 }
 
-/** Build flight path at launch — same pose the client freezes. */
+/**
+ * Build flight path at launch — same pose the client freezes.
+ * Pass `collideOverride` when the server already chose the meet point.
+ */
 export function buildMagmaOrbsFlightPath(
   owner: Vec2,
   yaw: number,
   meetRange = MAGMA_ORBS_CAST.meetRange,
+  collideOverride?: Vec2,
 ): MagmaOrbsFlightPath {
   const lat = MAGMA_ORBS_CAST.lateral * 1.2;
   const ahead = MAGMA_ORBS_CAST.emergeAhead;
-  const collide = pointInFront(owner, yaw, Math.max(2, meetRange));
+  const collide =
+    collideOverride ??
+    pointInFront(
+      owner,
+      yaw,
+      Math.max(MAGMA_ORBS_CAST.meetRangeMin, meetRange),
+    );
+  const actualRange = Math.hypot(collide.x - owner.x, collide.z - owner.z);
+  const bow = magmaOrbsBowForRange(actualRange);
   const left0 = magmaOrbsLateral(owner, yaw, ahead, -1, lat);
   const right0 = magmaOrbsLateral(owner, yaw, ahead, 1, lat);
   return {
     left0,
     right0,
-    ctrlL: magmaOrbsFlightControl(left0, collide, yaw, -1),
-    ctrlR: magmaOrbsFlightControl(right0, collide, yaw, 1),
+    ctrlL: magmaOrbsFlightControl(left0, collide, yaw, -1, bow),
+    ctrlR: magmaOrbsFlightControl(right0, collide, yaw, 1, bow),
     collide,
   };
 }

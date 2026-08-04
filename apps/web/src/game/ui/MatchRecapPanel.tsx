@@ -7,6 +7,8 @@ type Props = {
   recap: MatchRecapState;
   rematchReady: boolean;
   localSessionId: string | null;
+  /** Spectators cannot vote rematch. */
+  isSpectator?: boolean;
   onRematch: () => void;
   onReturnHub: () => void;
 };
@@ -41,6 +43,7 @@ export function MatchRecapPanel({
   recap,
   rematchReady,
   localSessionId,
+  isSpectator = false,
   onRematch,
   onReturnHub,
 }: Props) {
@@ -146,7 +149,7 @@ export function MatchRecapPanel({
                   <th className="pb-2 font-normal">K</th>
                   <th className="pb-2 font-normal">Dmg</th>
                   <th className="pb-2 font-normal">Taken</th>
-                  <th className="pb-2 font-normal">Loot</th>
+                  <th className="pb-2 font-normal">Heal</th>
                 </tr>
               </thead>
               <tbody>
@@ -165,11 +168,7 @@ export function MatchRecapPanel({
                       <td className="py-2 pr-2 tabular-nums">{row.kills}</td>
                       <td className="py-2 pr-2 tabular-nums">{Math.round(row.damageDealt)}</td>
                       <td className="py-2 pr-2 tabular-nums">{Math.round(row.damageTaken)}</td>
-                      <td className="py-2 tabular-nums text-[var(--bb-ink-soft)]">
-                        {row.rewards
-                          ? `${row.rewards.essence}e${row.rewards.copper ? ` ${row.rewards.copper}c` : ""}`
-                          : "—"}
-                      </td>
+                      <td className="py-2 tabular-nums">{Math.round(row.healing)}</td>
                     </tr>
                   );
                 })}
@@ -179,17 +178,21 @@ export function MatchRecapPanel({
 
           <footer className="bb-panel-footer justify-between">
             <p className="bb-meta max-w-[14rem]">
-              Rematch needs everyone. Return to city ends the match for all.
+              {isSpectator
+                ? "Spectating — rematch is decided by fighters."
+                : "Rematch needs every fighter. Return to city ends the match for all."}
             </p>
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="bb-btn-brass disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={rematchReady}
-                onClick={onRematch}
-              >
-                {rematchReady ? "Waiting…" : "Rematch"}
-              </button>
+              {!isSpectator ? (
+                <button
+                  type="button"
+                  className="bb-btn-brass disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={rematchReady}
+                  onClick={onRematch}
+                >
+                  {rematchReady ? "Waiting…" : "Rematch"}
+                </button>
+              ) : null}
               <button type="button" className="bb-btn-ink" onClick={() => setConfirmReturn(true)}>
                 Return to city
               </button>

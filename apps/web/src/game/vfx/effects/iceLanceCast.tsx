@@ -8,6 +8,7 @@ import { findHandBone } from "../attach";
 import { getCharacterRoot } from "../../characterRoots";
 import { createEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
+import { hasStatusId } from "../../StatusOrnaments";
 
 const ICE = "#7dd3fc";
 const ICE_HOT = "#e0f2fe";
@@ -32,6 +33,7 @@ type LanceProj = {
   vx?: number;
   vz?: number;
   mode?: string;
+  stuckTargetId?: string;
 };
 
 /** Aim the forward tip along `dir` (world). */
@@ -220,6 +222,20 @@ export function IceLanceCastEffect({
         aim.current.set(flightDir.current.x, 0, flightDir.current.z);
         if (aim.current.lengthSq() < 1e-6) aim.current.set(0, 0, 1);
         aimTip(g, aim.current, tmp.current);
+        // Hide stuck lance on cloaked targets for everyone except the cloaked player.
+        const stuckId = p.stuckTargetId;
+        if (stuckId && stuckId !== follow.localSessionId) {
+          const target = follow.room?.state?.players?.get(stuckId) as
+            | { statuses?: Parameters<typeof hasStatusId>[0] }
+            | undefined;
+          if (
+            hasStatusId(target?.statuses, "cloaked") ||
+            hasStatusId(target?.statuses, "revengePhased")
+          ) {
+            s.visible = false;
+            return;
+          }
+        }
       } else {
         g.position.set(p.x, 0.28, p.z);
         aim.current.set(flightDir.current.x, -0.55, flightDir.current.z);

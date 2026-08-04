@@ -11,8 +11,11 @@ import {
   PRACTICE_DUMMY_MAX_HP,
   POISON_CLOUD_CAST,
   SMOKE_BOMB_CAST,
+  HOLY_GROUND_CAST,
+  RIFT_FISSURE_CAST,
   VOLCANO_CAST,
   MAGMA_ORBS_CAST,
+  resolveMagmaOrbsMeetRange,
   FIREBALL_CAST,
   fireballCharge01,
   fireballConfirmRecoveryWallMs,
@@ -29,10 +32,12 @@ import {
   HAND_SHIELD_ARMED_MS,
   abilityEffectKind,
   abilityTriggersCounter,
+  abilityCanProcFifthCadence,
   abilityCanProcOpeningSalvo,
   abilityCanProcOpportunist,
   abilityCanProcOverflow,
   abilityCanProcProtectiveInstinct,
+  FIFTH_CADENCE_SPELL_INTERVAL,
   canInterruptOtherCast,
   canPlayerCancelCast,
   channelChargeDistance,
@@ -50,11 +55,15 @@ import {
   isComboAbility,
   isInIFrameWindow,
   kitCooldownMs,
+  kitScaledRadius,
   length2,
   meleeCenter,
   moveAndCollide,
   nextCastPhase,
   unitCollidersExcept,
+  playerCollidersExcept,
+  targetColliders,
+  riftPortalColliders,
   volcanoColliders,
   phaseDurationMs,
   pointInFront,
@@ -73,6 +82,8 @@ import {
   resolveKit,
   resolveTravel,
   resolveConeHits,
+  inFacingCone,
+  angleFromFacing,
   rollCrit,
   scaleForCrit,
   sampleTravel,
@@ -103,6 +114,7 @@ import {
   PlayerState,
   ProjectileState,
   ProtectionBubbleState,
+  RiftPortalState,
   ShroomState,
   SpiritHuskState,
   VolcanoState,
@@ -148,6 +160,8 @@ type ActiveCast = {
   /** Fireball: 0..1 charge at confirm; launch after release anim. */
   fireballCharge01?: number;
   fireballLaunchAt?: number;
+  /** Last Magma Orbs meet range broadcast via cast_phase (aim sync). */
+  magmaMeetRange?: number;
 };
 
 type PendingFireballBurn = {
@@ -170,7 +184,9 @@ export type CastBeginOpts = {
 
 /** How long the decoy clone stays in the world after spawn. */
 const DECOY_LIFE_MS = 2500;
-/** Drift speed matches walk so the clone sells the fake. */
+/** Stop when within this distance of cast-time ground aim. */
+const DECOY_ARRIVE_M = 0.35;
+/** Walk speed matches player so the clone sells the fake. */
 const DECOY_SPEED = MOVE_SPEED;
 
 type ActiveTravel = {
@@ -224,6 +240,22 @@ type PendingSpike = {
   hitIds: Set<string>;
 };
 
+/** Silence Sweep — thin blade rotates right→left across a frontal cone. */
+type PendingSilenceSweep = {
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  /** Caster facing at cast resolve. */
+  yaw: number;
+  range: number;
+  coneHalfAngle: number;
+  bladeHalfAngle: number;
+  startAt: number;
+  expiresAt: number;
+  hitIds: Set<string>;
+};
+
 type PendingFirewall = {
   ownerId: string;
   abilityId: string;
@@ -246,6 +278,16 @@ type PendingPoisonCloud = {
   nextTickAt: number;
   expiresAt: number;
   tickMs: number;
+};
+
+/** Ally buff circle at caster feet — refresh holyBlessed while standing inside. */
+type PendingHolyGround = {
+  ownerId: string;
+  abilityId: string;
+  x: number;
+  z: number;
+  radius: number;
+  expiresAt: number;
 };
 
 type PendingVolcanoRock = {
@@ -434,8 +476,26 @@ export class CombatSystem {
   private knockbacks = new Map<string, ActiveKnockback>();
   private combos = new Map<string, ActiveCombo>();
   private pendingSpikes: PendingSpike[] = [];
+  private pendingSilenceSweeps: PendingSilenceSweep[] = [];
   private pendingFirewalls: PendingFirewall[] = [];
   private pendingPoisonClouds: PendingPoisonCloud[] = [];
+  private pendingHolyGrounds: PendingHolyGround[] = [];
+  /** Bodies currently holding holyBlessed from a live Holy Ground zone. */
+  private holyBlessedBodyIds = new Set<string>();
+  /**
+   * Rift Fissure — owner → first portal while arming, or both once linked.
+   * Traveler cooldowns prevent portal ping-pong.
+   */
+  private pendingRifts = new Map<
+    string,
+    {
+      portalAId: string;
+      portalBId: string | null;
+      armEndsAt: number;
+      expiresAt: number;
+      travelerCd: Map<string, number>;
+    }
+  >();
   private pendingFireballBurns: PendingFireballBurn[] = [];
   private pendingVolcanoes: PendingVolcano[] = [];
   private pendingMagmaOrbs: PendingMagmaOrbs[] = [];
@@ -475,6 +535,14 @@ export class CombatSystem {
   >();
   /** Protective Instinct internal CD (ready-at epoch ms). */
   private protectiveInstinctReadyAt = new Map<string, number>();
+  /**
+   * Fifth Cadence — `count` = damaging spells toward next bonus (0–5);
+   * armed window applies +15% only to the 5th spell's ability id.
+   */
+  private fifthSpellBySession = new Map<
+    string,
+    { count: number; armedAbilityId: string; armedUntil: number }
+  >();
   /** Admin testing — ability CDs skipped while set. */
   private noCooldownSessions = new Set<string>();
   readonly statuses: StatusSystem;
@@ -510,11 +578,81 @@ export class CombatSystem {
   syncSessionKit(
     sessionId: string,
     loadoutCsv: string,
-    talentCsv: string,
+    talentIdsCsv: string,
     talentBuild?: TalentBuild,
   ) {
-    const talentIds = talentCsv.split(",").filter(Boolean);
-    this.kits.set(sessionId, resolveKit(loadoutCsv, talentIds, talentBuild));
+    const talentIds = talentIdsCsv.split(",").filter(Boolean);
+    const kit = resolveKit(loadoutCsv, talentIds, talentBuild);
+    this.kits.set(sessionId, kit);
+    this.syncFifthCadenceStatus(sessionId, Date.now());
+  }
+
+  /** Scale authored radii for Widened Elements (elemental AoE only). */
+  private talentRadius(sessionId: string, abilityId: string, base: number): number {
+    return kitScaledRadius(this.kits.get(sessionId), abilityId, base);
+  }
+
+  private fifthSpellState(sessionId: string) {
+    let state = this.fifthSpellBySession.get(sessionId);
+    if (!state) {
+      state = { count: 0, armedAbilityId: "", armedUntil: 0 };
+      this.fifthSpellBySession.set(sessionId, state);
+    }
+    return state;
+  }
+
+  /** Grant / refresh / clear the permanent Fifth Cadence HUD tracker. */
+  private syncFifthCadenceStatus(sessionId: string, now: number) {
+    const bonus = this.kits.get(sessionId)?.fifthSpellDmgBonus ?? 0;
+    if (!(bonus > 0)) {
+      this.statuses.remove(sessionId, "fifthSpellCadence");
+      this.fifthSpellBySession.delete(sessionId);
+      return;
+    }
+    const state = this.fifthSpellState(sessionId);
+    this.statuses.apply(sessionId, "fifthSpellCadence", sessionId, now, {
+      stacks: state.count,
+      setStacks: true,
+    });
+  }
+
+  /**
+   * Advance Fifth Cadence on damaging spell release.
+   * Only the 5th spell in the cycle gets +15%; the next cast clears the arm
+   * so damage goes back to normal until the following 5th.
+   */
+  private tryAdvanceFifthCadence(sessionId: string, abilityId: string, now: number) {
+    const bonus = this.kits.get(sessionId)?.fifthSpellDmgBonus ?? 0;
+    if (!(bonus > 0) || !abilityCanProcFifthCadence(abilityId)) return;
+    const state = this.fifthSpellState(sessionId);
+    if (state.count >= FIFTH_CADENCE_SPELL_INTERVAL) {
+      state.count = 0;
+    }
+    state.count += 1;
+    if (state.count >= FIFTH_CADENCE_SPELL_INTERVAL) {
+      // Empower only this cast's ability for a short window (delayed hits / AoE ticks).
+      state.armedAbilityId = abilityId;
+      state.armedUntil = now + 5_000;
+    } else {
+      // Back to normal — do not let a prior 5th keep boosting later casts of the same spell.
+      state.armedAbilityId = "";
+      state.armedUntil = 0;
+    }
+    this.syncFifthCadenceStatus(sessionId, now);
+  }
+
+  private peekFifthCadenceMul(
+    attackerSessionId: string,
+    abilityId: string,
+    damage: number,
+  ): number {
+    if (!(damage > 0) || !attackerSessionId) return 1;
+    const bonus = this.kits.get(attackerSessionId)?.fifthSpellDmgBonus ?? 0;
+    if (!(bonus > 0) || !abilityCanProcFifthCadence(abilityId)) return 1;
+    const state = this.fifthSpellBySession.get(attackerSessionId);
+    if (!state || state.armedAbilityId !== abilityId) return 1;
+    if (Date.now() >= state.armedUntil) return 1;
+    return 1 + bonus;
   }
 
   getSessionKit(sessionId: string): CombatSessionKit | undefined {
@@ -662,14 +800,25 @@ export class CombatSystem {
     });
   }
 
-  /** Authoritative move with player/static/volcano collision. */
+  /** Static world + live rift panes (walk-block; face approaches skip the pane). */
+  private walkStaticColliders(at?: Vec2): StaticCollider[] {
+    const rifts = riftPortalColliders(
+      this.room.state.riftPortals.entries(),
+      at ? { x: at.x, z: at.z } : undefined,
+    );
+    if (rifts.length === 0) return this.staticColliders;
+    return [...this.staticColliders, ...rifts];
+  }
+
+  /** Authoritative move with player/static/volcano/rift collision. */
   movePlayer(sessionId: string, from: Vec2, desired: Vec2): Vec2 {
     const me = this.room.state.players.get(sessionId);
+    // Sample face-open at the desired pose so you can step into the trigger.
     return moveAndCollide(
       from,
       desired,
       COLLISION.playerRadius,
-      this.staticColliders,
+      this.walkStaticColliders(desired),
       [
         ...unitCollidersExcept(
           this.room.state.players.entries(),
@@ -688,7 +837,7 @@ export class CombatSystem {
     return resolveCollisions(
       pos,
       COLLISION.playerRadius,
-      this.staticColliders,
+      this.walkStaticColliders(pos),
       [
         ...unitCollidersExcept(
           this.room.state.players.entries(),
@@ -775,6 +924,82 @@ export class CombatSystem {
     this.room.state.targets.set(t.id, t);
   }
 
+  /** PvE wave mob — dies permanently (no hub dummy respawn). */
+  spawnWaveMob(
+    id: string,
+    x: number,
+    z: number,
+    opts: { kind: string; hp: number; yaw?: number },
+  ) {
+    if (this.room.state.targets.has(id)) return;
+    this.targetSpawns.set(id, { x, z });
+    const t = new WorldTargetState();
+    t.id = id;
+    t.kind = opts.kind;
+    t.x = x;
+    t.z = z;
+    t.yaw = opts.yaw ?? 0;
+    t.hp = opts.hp;
+    t.maxHp = opts.hp;
+    this.room.state.targets.set(t.id, t);
+  }
+
+  /** Move a world target with the same collision stack as players. */
+  moveTarget(targetId: string, from: Vec2, desired: Vec2): Vec2 {
+    const otherTargets: Array<[string, { x: number; z: number; hp?: number }]> = [];
+    for (const [id, t] of this.room.state.targets.entries()) {
+      if (id === targetId) continue;
+      otherTargets.push([id, t]);
+    }
+    return moveAndCollide(
+      from,
+      desired,
+      COLLISION.dummyRadius,
+      this.walkStaticColliders(desired),
+      [
+        ...playerCollidersExcept(this.room.state.players.entries(), ""),
+        ...targetColliders(otherTargets),
+        ...volcanoColliders(this.room.state.volcanoes.entries()),
+      ],
+    );
+  }
+
+  /** Move a wave mob — players + statics; soft mob-vs-mob happens in WaveDirector. */
+  moveWaveMob(targetId: string, from: Vec2, desired: Vec2): Vec2 {
+    return moveAndCollide(
+      from,
+      desired,
+      COLLISION.dummyRadius,
+      this.walkStaticColliders(desired),
+      playerCollidersExcept(this.room.state.players.entries(), ""),
+    );
+  }
+
+  /** Direct hit from an NPC (zombie melee) onto a player. */
+  npcStrikePlayer(
+    attackerTargetId: string,
+    targetSessionId: string,
+    damage: number,
+    abilityId = "zombie_melee",
+  ) {
+    const target = this.room.state.players.get(targetSessionId);
+    const attacker = this.room.state.targets.get(attackerTargetId);
+    if (!target || !attacker || target.hp <= 0 || attacker.hp <= 0) return;
+    this.applyRawDamage(targetSessionId, damage, attackerTargetId, abilityId, {
+      triggersCounter: true,
+    });
+  }
+
+  /** Scale aura / explode footprints for Widened Elements (not contact hitbox). */
+  private applyTalentProjectileRadii(sessionId: string, sim: ProjectileSim) {
+    const mul = kitScaledRadius(this.kits.get(sessionId), sim.abilityId, 1);
+    if (mul <= 1.001) return;
+    const def = ABILITIES[sim.abilityId];
+    if (def?.aura && sim.hitRadius > 0) sim.hitRadius *= mul;
+    if (sim.slowRadius > 0) sim.slowRadius *= mul;
+    if (sim.explodeRadius > 0) sim.explodeRadius *= mul;
+  }
+
   /**
    * Spawn a projectile from an arbitrary body (e.g. practice dummy retaliation).
    * Aim with `body.yaw` (`atan2(dx, dz)` toward the target).
@@ -792,6 +1017,7 @@ export class CombatSystem {
     if (!sim) return false;
     // Owner id on the sim is body.id from createProjectile — force the dummy id.
     sim.ownerId = ownerId;
+    this.applyTalentProjectileRadii(ownerId, sim);
     this.stampProjectileBubblePass(sim, Date.now());
     this.sims.set(id, sim);
     const st = new ProjectileState();
@@ -825,12 +1051,14 @@ export class CombatSystem {
     this.kits.delete(sessionId);
     this.engageBySession.delete(sessionId);
     this.protectiveInstinctReadyAt.delete(sessionId);
+    this.fifthSpellBySession.delete(sessionId);
     this.statuses.clearTarget(sessionId);
     this.clearPendingFrostMist(sessionId);
     this.clearPendingGrooveHeal(sessionId);
     this.clearPendingHealBeam(sessionId);
     this.clearPendingLifeLeech(sessionId);
     this.clearOwnedDecoys(sessionId);
+    this.clearOwnerRifts(sessionId);
     this.clearSpiritForm(sessionId, Date.now(), false);
     this.clearSpiritReturn(sessionId);
     for (const [id, sim] of this.sims) {
@@ -839,6 +1067,25 @@ export class CombatSystem {
         this.room.state.projectiles.delete(id);
       }
     }
+  }
+
+  /** Clear ground zones / world FX that survive per-fighter clearSession (round transitions). */
+  clearRoundWorldEffects() {
+    this.pendingShrooms = [];
+    this.pendingVolcanoes = [];
+    this.pendingProtectionBubbles = [];
+    this.pendingMagmaOrbs = [];
+    this.pendingRifts.clear();
+    this.room.state.shrooms.clear();
+    this.room.state.volcanoes.clear();
+    this.room.state.protectionBubbles.clear();
+    // Drop any remaining projectiles so arena floors reset cleanly.
+    this.sims.clear();
+    this.room.state.projectiles.clear();
+    // Clear all active rift pairs.
+    const portalIds: string[] = [];
+    this.room.state.riftPortals.forEach((_, id) => portalIds.push(id));
+    for (const id of portalIds) this.room.state.riftPortals.delete(id);
   }
 
   /** Strip cloaked — called when the player casts, cancels, or interacts. */
@@ -1123,6 +1370,7 @@ export class CombatSystem {
     const def = ABILITIES[castId];
     if (!def) return reject();
     if (player.disconnected || player.hp <= 0) return reject();
+    if (player.role === "spectator") return reject();
     if (!this.statuses.canCast(sessionId)) return reject();
 
     // Spirit Form recast: snap back without needing CD ready.
@@ -1130,6 +1378,14 @@ export class CombatSystem {
       this.endSpiritForm(sessionId, now);
       return true;
     }
+
+    // Rift Fissure second plant: allow during CD while arming portal B.
+    const riftArming =
+      castId === "riftFissure" &&
+      (() => {
+        const pending = this.pendingRifts.get(sessionId);
+        return Boolean(pending && !pending.portalBId && now < pending.armEndsAt);
+      })();
 
     const existing = this.casts.get(sessionId);
     if (existing) {
@@ -1148,7 +1404,7 @@ export class CombatSystem {
     // After soft-interrupt, travel from the old cast may be gone; still block if mid-travel of same/other
     if (this.travels.has(sessionId)) return reject();
 
-    if (!this.noCooldownSessions.has(sessionId)) {
+    if (!this.noCooldownSessions.has(sessionId) && !riftArming) {
       let bag = this.cds.get(sessionId);
       if (!bag) {
         bag = new Map();
@@ -1243,6 +1499,21 @@ export class CombatSystem {
     if (!cast) return;
     cast.aimX = aimX;
     cast.aimZ = aimZ;
+
+    // Magma Orbs: rebroadcast meet range so observers track live aim (not phase-stamp only).
+    if (cast.abilityId !== "magmaOrbs") return;
+    const player = this.room.state.players.get(sessionId);
+    if (!player) return;
+    const meet = resolveMagmaOrbsMeetRange(
+      { x: player.x, z: player.z },
+      { x: aimX, z: aimZ },
+    );
+    const prev = cast.magmaMeetRange;
+    if (prev != null && Math.abs(prev - meet) < 0.12) return;
+    cast.magmaMeetRange = meet;
+    this.phaseFx(sessionId, player, "magmaOrbs", cast.phase, cast.phaseEndsAt, {
+      radius: meet,
+    });
   }
 
   tryCancelCast(sessionId: string, player: PlayerState, now: number): boolean {
@@ -1415,6 +1686,7 @@ export class CombatSystem {
       FIREBALL_CAST.burnRadiusMax,
       t,
     );
+    this.applyTalentProjectileRadii(sim.ownerId, sim);
     sim.armingIn = FIREBALL_CAST.spawnArmingMs / 1000;
 
     // createProjectile placed us forward by spawnOffset — rewrite to casting-hand side.
@@ -1481,7 +1753,7 @@ export class CombatSystem {
           ) {
             continue;
           }
-          this.statuses.applyApplications(
+          this.applyOutgoingStatusApps(
             body.id,
             def?.applyOnHit ?? [{ statusId: "burning", chance: 1 }],
             zone.ownerId,
@@ -1535,8 +1807,11 @@ export class CombatSystem {
     this.advanceCasts(now);
     this.advanceCombos(now);
     this.advancePendingSpikes(now);
+    this.advancePendingSilenceSweeps(now);
     this.advancePendingFirewalls(now);
     this.advancePendingPoisonClouds(now);
+    this.advancePendingHolyGrounds(now);
+    this.advancePendingRifts(now);
     this.advancePendingFireballBurns(now);
     this.advancePendingVolcanoes(now);
     this.advancePendingMagmaOrbs(now);
@@ -1603,7 +1878,7 @@ export class CombatSystem {
     for (const slow of slows) {
       const def = ABILITIES[slow.abilityId];
       if (def?.applyAuraSlow?.length) {
-        this.statuses.applyApplications(
+        this.applyOutgoingStatusApps(
           slow.targetId,
           def.applyAuraSlow,
           slow.ownerId,
@@ -1638,7 +1913,7 @@ export class CombatSystem {
         });
         const blastDef = ABILITIES[blast.abilityId];
         if (blastDef?.applyOnHit?.length) {
-          this.statuses.applyApplications(
+          this.applyOutgoingStatusApps(
             hit.targetId,
             blastDef.applyOnHit,
             blast.ownerId,
@@ -2079,9 +2354,21 @@ export class CombatSystem {
       player.castLockUntil = now + totalCastDurationMs(def);
     }
 
+    const magmaMeet =
+      def.id === "magmaOrbs"
+        ? resolveMagmaOrbsMeetRange(
+            { x: player.x, z: player.z },
+            cast.aimX != null && cast.aimZ != null
+              ? { x: cast.aimX, z: cast.aimZ }
+              : null,
+          )
+        : undefined;
+    if (magmaMeet != null) cast.magmaMeetRange = magmaMeet;
     this.phaseFx(sessionId, player, def.id, phase, cast.phaseEndsAt, {
       ...fxExtra,
       comboHit: player.castComboHit || fxExtra?.comboHit,
+      // Cursor-clamped meet range so clients can preview / sync curves.
+      radius: magmaMeet,
     });
   }
 
@@ -2181,12 +2468,18 @@ export class CombatSystem {
 
     if (kind === "spikeWave" && !deferHit) {
       this.scheduleSpikeWave(sessionId, ownerBody, def, now);
+    } else if (kind === "silenceSweep" && !deferHit) {
+      this.scheduleSilenceSweep(sessionId, ownerBody, def, now);
     } else if (kind === "firewall" && !deferHit) {
       this.scheduleFirewall(sessionId, ownerBody, def, now);
     } else if (kind === "poisonCloud" && !deferHit) {
       this.schedulePoisonCloud(sessionId, ownerBody, def, now);
     } else if (kind === "smokeBomb" && !deferHit) {
       this.scheduleSmokeBomb(sessionId, ownerBody, def, now);
+    } else if (kind === "holyGround" && !deferHit) {
+      this.scheduleHolyGround(sessionId, ownerBody, def, now);
+    } else if (kind === "riftFissure" && !deferHit) {
+      this.scheduleRiftFissure(sessionId, ownerBody, def, now);
     } else if (kind === "volcano" && !deferHit) {
       this.scheduleVolcano(sessionId, ownerBody, def, now);
     } else if (kind === "protectionBubble" && !deferHit) {
@@ -2223,6 +2516,8 @@ export class CombatSystem {
           if (abilityEffectKind(def) === "fireball") {
             const live = this.casts.get(sessionId);
             this.stampFireballProjectile(sim, live?.fireballCharge01 ?? 1);
+          } else {
+            this.applyTalentProjectileRadii(sessionId, sim);
           }
           this.stampProjectileBubblePass(sim, now);
           this.sims.set(id, sim);
@@ -2287,6 +2582,7 @@ export class CombatSystem {
     }
 
     this.tryProcProtectiveInstinct(sessionId, player, def.id, now);
+    this.tryAdvanceFifthCadence(sessionId, def.id, now);
   }
 
   /**
@@ -2402,8 +2698,18 @@ export class CombatSystem {
   private spawnDecoy(sessionId: string, player: PlayerState, now: number) {
     this.clearOwnedDecoys(sessionId);
     const cast = this.casts.get(sessionId);
-    const dir = normalize2(cast?.moveX ?? 0, cast?.moveZ ?? 0);
-    const drifting = length2(dir.x, dir.z) > 1e-4;
+    const aimX = cast?.aimX;
+    const aimZ = cast?.aimZ;
+    const hasAim =
+      aimX != null &&
+      aimZ != null &&
+      Number.isFinite(aimX) &&
+      Number.isFinite(aimZ);
+    const targetX = hasAim ? aimX : player.x;
+    const targetZ = hasAim ? aimZ : player.z;
+    const toAim = normalize2(targetX - player.x, targetZ - player.z);
+    const dist = Math.hypot(targetX - player.x, targetZ - player.z);
+    const drifting = dist > DECOY_ARRIVE_M && length2(toAim.x, toAim.z) > 1e-4;
     const id = `decoy_${this.nextId++}`;
     const d = new DecoyState();
     d.id = id;
@@ -2411,8 +2717,10 @@ export class CombatSystem {
     d.x = player.x;
     d.z = player.z;
     d.yaw = player.yaw;
-    d.vx = drifting ? dir.x * DECOY_SPEED : 0;
-    d.vz = drifting ? dir.z * DECOY_SPEED : 0;
+    d.targetX = targetX;
+    d.targetZ = targetZ;
+    d.vx = drifting ? toAim.x * DECOY_SPEED : 0;
+    d.vz = drifting ? toAim.z * DECOY_SPEED : 0;
     d.color = player.color || STARTER_COLORS[0]!;
     d.pattern = player.pattern || DEFAULT_COSMETIC_PATTERN;
     d.patternColor = player.patternColor || DEFAULT_COSMETIC_PATTERN_COLOR;
@@ -2428,8 +2736,16 @@ export class CombatSystem {
         return;
       }
       if (Math.abs(d.vx) < 1e-6 && Math.abs(d.vz) < 1e-6) return;
+      const toTarget = Math.hypot(d.targetX - d.x, d.targetZ - d.z);
+      if (toTarget <= DECOY_ARRIVE_M) {
+        d.vx = 0;
+        d.vz = 0;
+        return;
+      }
       const from = { x: d.x, z: d.z };
-      const desired = { x: d.x + d.vx * dt, z: d.z + d.vz * dt };
+      const step = Math.min(DECOY_SPEED * dt, Math.max(0, toTarget - DECOY_ARRIVE_M));
+      const dir = normalize2(d.targetX - d.x, d.targetZ - d.z);
+      const desired = { x: d.x + dir.x * step, z: d.z + dir.z * step };
       const next = sweepTravel(from, desired, COLLISION.playerRadius, this.staticColliders);
       // Stop if a wall fully blocked the step.
       if (length2(next.x - from.x, next.z - from.z) < 1e-5) {
@@ -2438,7 +2754,13 @@ export class CombatSystem {
       } else {
         d.x = next.x;
         d.z = next.z;
-        // Keep release-time facing — do not turn into the drift direction.
+        d.vx = dir.x * DECOY_SPEED;
+        d.vz = dir.z * DECOY_SPEED;
+        if (Math.hypot(d.targetX - d.x, d.targetZ - d.z) <= DECOY_ARRIVE_M) {
+          d.vx = 0;
+          d.vz = 0;
+        }
+        // Keep release-time facing — do not turn into the walk direction.
       }
     });
     for (const id of expired) this.room.state.decoys.delete(id);
@@ -2503,7 +2825,7 @@ export class CombatSystem {
   ) {
     const pts = spikeLinePoints(ownerBody, def);
     const stagger = Math.max(16, def.spikeStaggerMs ?? 32);
-    const radius = def.radius ?? 0.55;
+    const radius = this.talentRadius(sessionId, def.id, def.radius ?? 0.55);
     const hitIds = new Set<string>();
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i]!;
@@ -2518,6 +2840,40 @@ export class CombatSystem {
         hitIds,
       });
     }
+  }
+
+  private scheduleSilenceSweep(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const sweepMs = Math.max(120, def.sweepMs ?? 280);
+    const coneHalf = def.coneHalfAngle ?? 0.85;
+    const bladeHalf = def.sweepBladeHalfAngle ?? 0.22;
+    const range = def.range;
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: ownerBody.x,
+      z: ownerBody.z,
+      radius: range,
+      yaw: ownerBody.yaw,
+      ownerId: sessionId,
+    });
+    this.pendingSilenceSweeps.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      x: ownerBody.x,
+      z: ownerBody.z,
+      yaw: ownerBody.yaw,
+      range,
+      coneHalfAngle: coneHalf,
+      bladeHalfAngle: bladeHalf,
+      startAt: now,
+      expiresAt: now + sweepMs,
+      hitIds: new Set(),
+    });
   }
 
   private scheduleFirewall(
@@ -2542,7 +2898,7 @@ export class CombatSystem {
       ownerId: sessionId,
       abilityId: def.id,
       points: wall.points,
-      radius: def.radius ?? 0.9,
+      radius: this.talentRadius(sessionId, def.id, def.radius ?? 0.9),
       damage: def.damage,
       nextTickAt: now,
       expiresAt: now + durationMs,
@@ -2599,7 +2955,11 @@ export class CombatSystem {
       0.35,
       this.wallColliders,
     );
-    const radius = Math.max(0.8, def.radius ?? POISON_CLOUD_CAST.radius);
+    const radius = this.talentRadius(
+      sessionId,
+      def.id,
+      Math.max(0.8, def.radius ?? POISON_CLOUD_CAST.radius),
+    );
     const durationMs = Math.max(800, def.zoneDurationMs ?? POISON_CLOUD_CAST.zoneDurationMs);
     const tickMs = Math.max(120, def.tickMs ?? POISON_CLOUD_CAST.tickMs);
 
@@ -2699,7 +3059,7 @@ export class CombatSystem {
           ) {
             continue;
           }
-          this.statuses.applyApplications(
+          this.applyOutgoingStatusApps(
             body.id,
             def?.applyOnHit ?? [
               { statusId: "poisoned", chance: 1 },
@@ -2744,6 +3104,522 @@ export class CombatSystem {
     this.pendingPoisonClouds = remain;
   }
 
+  /** Self-centered holy circle — ally buff while standing inside. */
+  private scheduleHolyGround(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const pos = { x: ownerBody.x, z: ownerBody.z };
+    const radius = Math.max(1.2, def.radius ?? HOLY_GROUND_CAST.radius);
+    const durationMs = Math.max(800, def.zoneDurationMs ?? HOLY_GROUND_CAST.zoneDurationMs);
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      x2: pos.x,
+      z2: pos.z,
+      radius,
+      yaw: cast?.yaw ?? ownerBody.yaw,
+      ownerId: sessionId,
+    });
+
+    this.pendingHolyGrounds.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      x: pos.x,
+      z: pos.z,
+      radius,
+      expiresAt: now + durationMs,
+    });
+  }
+
+  private advancePendingHolyGrounds(now: number) {
+    if (this.pendingHolyGrounds.length === 0 && this.holyBlessedBodyIds.size === 0) {
+      return;
+    }
+    const bodies = this.collectBodies();
+    const remain: PendingHolyGround[] = [];
+    const blessed = new Set<string>();
+
+    for (const zone of this.pendingHolyGrounds) {
+      if (now >= zone.expiresAt) continue;
+      const remainMs = Math.max(180, zone.expiresAt - now);
+      for (const body of bodies) {
+        if (body.hp <= 0) continue;
+        if (!this.canHealTarget(zone.ownerId, body.id, { allowSelf: true })) continue;
+        if (
+          !circlesOverlap(
+            zone.x,
+            zone.z,
+            zone.radius,
+            body.x,
+            body.z,
+            COMBAT.playerHitRadius,
+          )
+        ) {
+          continue;
+        }
+        blessed.add(body.id);
+        this.statuses.applyApplications(
+          body.id,
+          [{ statusId: "holyBlessed", durationMs: remainMs, chance: 1 }],
+          zone.ownerId,
+          now,
+        );
+      }
+      remain.push(zone);
+    }
+
+    for (const id of this.holyBlessedBodyIds) {
+      if (blessed.has(id)) continue;
+      this.statuses.remove(id, "holyBlessed");
+    }
+    this.holyBlessedBodyIds = blessed;
+    this.pendingHolyGrounds = remain;
+  }
+
+  /** True while this session is mid-cast on Rift Fissure (any phase). */
+  private isCastingRiftFissure(sessionId: string): boolean {
+    const cast = this.casts.get(sessionId);
+    return Boolean(cast && cast.abilityId === "riftFissure");
+  }
+
+  /** Plant portal A (arm window) or B (link pair) in front of the caster. */
+  private scheduleRiftFissure(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const pending = this.pendingRifts.get(sessionId);
+    // If the second cast was started in the arm window, always finish as B —
+    // even when the arm timer elapsed during the cast animation.
+    if (pending && !pending.portalBId) {
+      this.plantRiftPortalB(sessionId, ownerBody, def, pending, now);
+      return;
+    }
+    // Fresh pair — clear any leftover portals from this owner.
+    this.clearOwnerRifts(sessionId);
+    this.plantRiftPortalA(sessionId, ownerBody, def, now);
+  }
+
+  private plantRiftPortalA(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const pos = this.findRiftPlantPos(sessionId, ownerBody);
+    const radius = Math.max(0.35, def.radius ?? RIFT_FISSURE_CAST.mouthRadius);
+    const armEndsAt = now + RIFT_FISSURE_CAST.armMs;
+    const id = `rift_${this.nextId++}`;
+
+    const st = new RiftPortalState();
+    st.id = id;
+    st.ownerSessionId = sessionId;
+    st.pairId = "";
+    st.index = 0;
+    st.x = pos.x;
+    st.z = pos.z;
+    st.yaw = ownerBody.yaw;
+    st.radius = radius;
+    st.phase = "arming";
+    st.armEndsAt = armEndsAt;
+    // Pair lifetime starts only when B is planted — not during the arm window.
+    st.expiresAt = 0;
+    this.room.state.riftPortals.set(id, st);
+
+    this.pendingRifts.set(sessionId, {
+      portalAId: id,
+      portalBId: null,
+      armEndsAt,
+      expiresAt: 0,
+      travelerCd: new Map(),
+    });
+  }
+
+  private plantRiftPortalB(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    pending: {
+      portalAId: string;
+      portalBId: string | null;
+      armEndsAt: number;
+      expiresAt: number;
+      travelerCd: Map<string, number>;
+    },
+    now: number,
+  ) {
+    const pos = this.findRiftPlantPos(sessionId, ownerBody);
+    const radius = Math.max(0.35, def.radius ?? RIFT_FISSURE_CAST.mouthRadius);
+    const expiresAt = now + (def.zoneDurationMs ?? RIFT_FISSURE_CAST.pairDurationMs);
+    const id = `rift_${this.nextId++}`;
+
+    const st = new RiftPortalState();
+    st.id = id;
+    st.ownerSessionId = sessionId;
+    st.pairId = pending.portalAId;
+    st.index = 1;
+    st.x = pos.x;
+    st.z = pos.z;
+    st.yaw = ownerBody.yaw;
+    st.radius = radius;
+    st.phase = "open";
+    st.armEndsAt = 0;
+    st.expiresAt = expiresAt;
+    this.room.state.riftPortals.set(id, st);
+
+    const a = this.room.state.riftPortals.get(pending.portalAId);
+    if (a) {
+      a.pairId = id;
+      a.phase = "open";
+      a.armEndsAt = 0;
+      a.expiresAt = expiresAt;
+    }
+
+    pending.portalBId = id;
+    pending.expiresAt = expiresAt;
+  }
+
+  /**
+   * Prefer forward plant; if an enemy occupies the spot (or wall blocks),
+   * fan out to side / closer candidates.
+   */
+  private findRiftPlantPos(sessionId: string, ownerBody: CombatBody): Vec2 {
+    const yaw = ownerBody.yaw;
+    const origin = { x: ownerBody.x, z: ownerBody.z };
+    const forward = RIFT_FISSURE_CAST.placeForward;
+    const side = 1.4;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const rx = Math.cos(yaw);
+    const rz = -Math.sin(yaw);
+
+    const candidates: Vec2[] = [
+      { x: origin.x + fx * forward, z: origin.z + fz * forward },
+      { x: origin.x + fx * forward + rx * side, z: origin.z + fz * forward + rz * side },
+      { x: origin.x + fx * forward - rx * side, z: origin.z + fz * forward - rz * side },
+      { x: origin.x + fx * (forward * 0.55), z: origin.z + fz * (forward * 0.55) },
+      {
+        x: origin.x + fx * (forward * 0.55) + rx * side,
+        z: origin.z + fz * (forward * 0.55) + rz * side,
+      },
+      {
+        x: origin.x + fx * (forward * 0.55) - rx * side,
+        z: origin.z + fz * (forward * 0.55) - rz * side,
+      },
+      { x: origin.x + fx * 1.2, z: origin.z + fz * 1.2 },
+      { x: origin.x + rx * side, z: origin.z + rz * side },
+      { x: origin.x - rx * side, z: origin.z - rz * side },
+    ];
+
+    const mouthR = RIFT_FISSURE_CAST.mouthRadius;
+    for (const ideal of candidates) {
+      const swept = this.sweepPlayerPos(sessionId, origin, ideal);
+      if (this.riftPosOverlapsEnemy(sessionId, swept, mouthR)) continue;
+      return swept;
+    }
+    // Last resort — clamp beside the caster.
+    return this.clampPlayerPos(sessionId, {
+      x: origin.x + fx * 1.1,
+      z: origin.z + fz * 1.1,
+    });
+  }
+
+  private riftPosOverlapsEnemy(ownerId: string, pos: Vec2, radius: number): boolean {
+    for (const body of this.collectBodies()) {
+      if (body.hp <= 0) continue;
+      if (!this.canHurt(ownerId, body.id)) continue;
+      if (
+        circlesOverlap(
+          pos.x,
+          pos.z,
+          radius,
+          body.x,
+          body.z,
+          COMBAT.playerHitRadius,
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private clearOwnerRifts(sessionId: string) {
+    const pending = this.pendingRifts.get(sessionId);
+    if (pending) {
+      this.room.state.riftPortals.delete(pending.portalAId);
+      if (pending.portalBId) this.room.state.riftPortals.delete(pending.portalBId);
+      this.pendingRifts.delete(sessionId);
+    }
+    // Sweep any orphans for this owner.
+    const drop: string[] = [];
+    this.room.state.riftPortals.forEach((p, id) => {
+      if (p.ownerSessionId === sessionId) drop.push(id);
+    });
+    for (const id of drop) this.room.state.riftPortals.delete(id);
+  }
+
+  private advancePendingRifts(now: number) {
+    if (this.pendingRifts.size === 0) return;
+    for (const [ownerId, pending] of [...this.pendingRifts]) {
+      // Arm window expired without B — drop A (CD already started on plant).
+      // Hold A while the owner is casting the second plant so a last-second
+      // cast cannot despawn A and resolve as a free fresh portal A.
+      if (
+        !pending.portalBId &&
+        now >= pending.armEndsAt &&
+        !this.isCastingRiftFissure(ownerId)
+      ) {
+        this.room.state.riftPortals.delete(pending.portalAId);
+        this.pendingRifts.delete(ownerId);
+        continue;
+      }
+      // Pair lifetime ended.
+      if (pending.portalBId && now >= pending.expiresAt) {
+        this.room.state.riftPortals.delete(pending.portalAId);
+        this.room.state.riftPortals.delete(pending.portalBId);
+        this.pendingRifts.delete(ownerId);
+        continue;
+      }
+      if (!pending.portalBId) continue;
+
+      const a = this.room.state.riftPortals.get(pending.portalAId);
+      const b = this.room.state.riftPortals.get(pending.portalBId);
+      if (!a || !b) {
+        this.clearOwnerRifts(ownerId);
+        continue;
+      }
+      this.tryRiftTravels(ownerId, pending, a, b, now);
+    }
+  }
+
+  /**
+   * Face-only enter volume: thin oriented slab + bias so left/right edge scrapes
+   * do not count (must approach through the portal front/back).
+   */
+  private riftMouthContains(
+    portal: RiftPortalState,
+    x: number,
+    z: number,
+    bodyRadius = COMBAT.playerHitRadius,
+  ): boolean {
+    const radius = Math.max(0.35, portal.radius);
+    const yaw = portal.yaw;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const rx = Math.cos(yaw);
+    const rz = -Math.sin(yaw);
+    const dx = x - portal.x;
+    const dz = z - portal.z;
+    const alongFwd = dx * fx + dz * fz;
+    const alongSide = dx * rx + dz * rz;
+    const sideHalf = radius * RIFT_FISSURE_CAST.enterSideHalf + bodyRadius * 0.35;
+    const depthHalf = radius * RIFT_FISSURE_CAST.enterDepthHalf + bodyRadius * 0.35;
+    if (Math.abs(alongSide) > sideHalf) return false;
+    if (Math.abs(alongFwd) > depthHalf) return false;
+    // Reject side-dominated contact (walking into the oval's left/right edge).
+    if (Math.abs(alongFwd) < Math.abs(alongSide) * RIFT_FISSURE_CAST.enterFaceBias) {
+      return false;
+    }
+    return true;
+  }
+
+  private tryRiftTravels(
+    ownerId: string,
+    pending: {
+      portalAId: string;
+      portalBId: string | null;
+      armEndsAt: number;
+      expiresAt: number;
+      travelerCd: Map<string, number>;
+    },
+    a: RiftPortalState,
+    b: RiftPortalState,
+    now: number,
+  ) {
+    for (const body of this.collectBodies()) {
+      if (body.hp <= 0) continue;
+      // Players only (allies + enemies + owner); skip practice dummies.
+      if (!this.room.state.players.has(body.id)) continue;
+      const cdUntil = pending.travelerCd.get(body.id) ?? 0;
+      if (cdUntil > now) continue;
+
+      const inA = this.riftMouthContains(a, body.x, body.z);
+      const inB = this.riftMouthContains(b, body.x, body.z);
+      if (inA === inB) continue; // neither, or both (rare) — skip
+
+      const entry = inA ? a : b;
+      const exit = inA ? b : a;
+      const player = this.room.state.players.get(body.id);
+      if (!player) continue;
+      const fromX = player.x;
+      const fromZ = player.z;
+      // Portal forward (yaw) = Front; opposite = Back.
+      // Enter Front → exit Back (and vice versa), along each mouth's own facing.
+      const enterFace = this.riftMouthFace(entry, fromX, fromZ);
+      const landed = this.riftExitPos(body.id, entry, exit, fromX, fromZ, enterFace);
+      // Refuse travel if no safe landing (wall/OOB) or still in exit mouth.
+      if (!landed || this.riftMouthContains(exit, landed.x, landed.z)) {
+        continue;
+      }
+      player.x = landed.x;
+      player.z = landed.z;
+      // Keep traveler yaw (do not reorient).
+      // Shove further out along the exit face so you can't immediately walk back through.
+      const shoveTo = this.riftExitShoveTo(body.id, exit, landed, enterFace);
+      this.knockbacks.set(body.id, {
+        targetId: body.id,
+        kind: "player",
+        fromX: landed.x,
+        fromZ: landed.z,
+        toX: shoveTo.x,
+        toZ: shoveTo.z,
+        startAt: now,
+        endAt: now + RIFT_FISSURE_CAST.exitShoveMs,
+      });
+      this.travels.delete(body.id);
+      pending.travelerCd.set(
+        body.id,
+        now +
+          Math.max(
+            RIFT_FISSURE_CAST.travelerCooldownMs,
+            RIFT_FISSURE_CAST.exitShoveMs + 250,
+          ),
+      );
+      this.fx({
+        kind: "portal",
+        abilityId: "riftFissure",
+        x: fromX,
+        z: fromZ,
+        x2: shoveTo.x,
+        z2: shoveTo.z,
+        yaw: player.yaw,
+        ownerId: ownerId,
+        phaseEndsAt: now + RIFT_FISSURE_CAST.exitShoveMs,
+        radius: RIFT_FISSURE_CAST.exitShove,
+      });
+    }
+  }
+
+  /**
+   * Which labelled face the traveler is on.
+   * Plant yaw forward = Front (+alongFwd); opposite = Back.
+   */
+  private riftMouthFace(
+    portal: RiftPortalState,
+    x: number,
+    z: number,
+  ): "front" | "back" {
+    const fx = Math.sin(portal.yaw);
+    const fz = Math.cos(portal.yaw);
+    const alongFwd = (x - portal.x) * fx + (z - portal.z) * fz;
+    return alongFwd >= 0 ? "front" : "back";
+  }
+
+  /**
+   * Exit face is the other label: enter Front → leave through Back.
+   * Sign is along exit portal forward (+ = Front half-space).
+   */
+  private riftExitFaceSign(enterFace: "front" | "back"): number {
+    return enterFace === "front" ? -1 : 1;
+  }
+
+  /** Destination of the post-teleport shove along the exit face outward. */
+  private riftExitShoveTo(
+    travelerId: string,
+    exit: RiftPortalState,
+    landed: Vec2,
+    enterFace: "front" | "back",
+  ): Vec2 {
+    const sign = this.riftExitFaceSign(enterFace);
+    const fx = Math.sin(exit.yaw);
+    const fz = Math.cos(exit.yaw);
+    const ideal = {
+      x: landed.x + fx * sign * RIFT_FISSURE_CAST.exitShove,
+      z: landed.z + fz * sign * RIFT_FISSURE_CAST.exitShove,
+    };
+    return this.sweepPlayerPos(travelerId, landed, ideal);
+  }
+
+  /**
+   * Land on the linked face of the exit mouth (Front↔Back), preserving lateral
+   * offset in each portal's local frame. When the face line is blocked (wall),
+   * fall back to side offsets like Revenge — never clamp through geometry/OOB.
+   */
+  private riftExitPos(
+    travelerId: string,
+    entry: RiftPortalState,
+    exit: RiftPortalState,
+    fromX: number,
+    fromZ: number,
+    enterFace: "front" | "back",
+  ): Vec2 | null {
+    const minClear = exit.radius + COMBAT.playerHitRadius + 0.12;
+    const push = Math.max(RIFT_FISSURE_CAST.exitPush, minClear);
+    const origin = { x: exit.x, z: exit.z };
+
+    const erx = Math.cos(entry.yaw);
+    const erz = -Math.sin(entry.yaw);
+    const alongSide = (fromX - entry.x) * erx + (fromZ - entry.z) * erz;
+
+    const xfx = Math.sin(exit.yaw);
+    const xfz = Math.cos(exit.yaw);
+    const xrx = Math.cos(exit.yaw);
+    const xrz = -Math.sin(exit.yaw);
+    const throughSign = this.riftExitFaceSign(enterFace);
+
+    const candidates: Vec2[] = [];
+    // Prefer intended face + lateral preserve, then stepped outward distances.
+    for (const d of [push, push * 0.75, push * 0.55, push + 0.35, push + 0.7]) {
+      candidates.push({
+        x: exit.x + xfx * throughSign * d + xrx * alongSide,
+        z: exit.z + xfz * throughSign * d + xrz * alongSide,
+      });
+      candidates.push({
+        x: exit.x + xfx * throughSign * d,
+        z: exit.z + xfz * throughSign * d,
+      });
+    }
+    // Side offsets when the face line is jammed against a wall.
+    for (const d of [push * 0.85, push * 0.55, push * 0.4]) {
+      for (const side of [-1, 1]) {
+        const lat = alongSide + side * (COMBAT.playerHitRadius * 1.15);
+        candidates.push({
+          x: exit.x + xfx * throughSign * d + xrx * lat,
+          z: exit.z + xfz * throughSign * d + xrz * lat,
+        });
+        candidates.push({
+          x: exit.x + xfx * throughSign * d + xrx * side * (COMBAT.playerHitRadius * 1.4),
+          z: exit.z + xfz * throughSign * d + xrz * side * (COMBAT.playerHitRadius * 1.4),
+        });
+      }
+    }
+
+    for (const ideal of candidates) {
+      const swept = this.sweepPlayerPos(travelerId, origin, ideal);
+      const next = this.clampPlayerPos(travelerId, swept);
+      const dist = Math.hypot(next.x - origin.x, next.z - origin.z);
+      if (dist + 0.05 < minClear) continue;
+      if (this.riftMouthContains(exit, next.x, next.z)) continue;
+      const alongExitFwd = (next.x - exit.x) * xfx + (next.z - exit.z) * xfz;
+      if (alongExitFwd * throughSign < minClear * 0.55) continue;
+      // Reject if clamp barely moved toward ideal (stuck / through-wall failure).
+      const toIdeal = Math.hypot(ideal.x - next.x, ideal.z - next.z);
+      const fromIdeal = Math.hypot(ideal.x - origin.x, ideal.z - origin.z);
+      if (toIdeal + 0.05 >= fromIdeal && dist < minClear + 0.2) continue;
+      return next;
+    }
+    return null;
+  }
+
   /**
    * Magma Orbs — at launch (impact), freeze flight path, burn on contact in air.
    * Each orb stops independently on walls. One arrival = half blast; both = full.
@@ -2756,9 +3632,17 @@ export class CombatSystem {
   ) {
     const cast = this.casts.get(sessionId);
     const yaw = cast?.yaw ?? ownerBody.yaw;
-    const meetRange = Math.max(2, def.range > 0 ? def.range : MAGMA_ORBS_CAST.meetRange);
+    const aim =
+      cast?.aimX != null && cast?.aimZ != null
+        ? { x: cast.aimX, z: cast.aimZ }
+        : null;
+    const meetRange = resolveMagmaOrbsMeetRange(ownerBody, aim);
     const path = buildMagmaOrbsFlightPath(ownerBody, yaw, meetRange);
-    const blastRadius = Math.max(0.8, def.radius ?? MAGMA_ORBS_CAST.blastRadius);
+    const blastRadius = this.talentRadius(
+      sessionId,
+      def.id,
+      Math.max(0.8, def.radius ?? MAGMA_ORBS_CAST.blastRadius),
+    );
     const flightMs = Math.max(16, phaseDurationMs(def, "impact"));
     const explodeAt = now + flightMs;
     const flightHitRadius = MAGMA_ORBS_CAST.flightHitRadius;
@@ -2776,6 +3660,7 @@ export class CombatSystem {
       z: path.collide.z,
       x2: ownerBody.x,
       z2: ownerBody.z,
+      // Blast radius for impact; meet range also encoded via collide point.
       radius: blastRadius,
       yaw,
       ownerId: sessionId,
@@ -2884,7 +3769,7 @@ export class CombatSystem {
           if (!hit) continue;
           orb.pathHitIds.add(body.id);
           if (burn?.length) {
-            this.statuses.applyApplications(body.id, burn, orb.ownerId, now);
+            this.applyOutgoingStatusApps(body.id, burn, orb.ownerId, now);
           }
         }
         remain.push(orb);
@@ -3087,17 +3972,41 @@ export class CombatSystem {
         zone.phase = "fading";
         if (st) st.phase = "fading";
       }
-      if (zone.phase === "active" && zone.shieldGranted < cap) {
-        while (zone.nextShieldAt <= now && zone.shieldGranted < cap) {
-          const add = Math.min(perTick, cap - zone.shieldGranted);
-          const current = this.statuses.getStacks(zone.ownerId, "bubbleShield");
-          this.statuses.apply(zone.ownerId, "bubbleShield", zone.ownerId, now, {
-            durationMs: Math.max(500, zone.activeEndsAt - now + 500),
-            stacks: current + add,
-            setStacks: true,
+      if (zone.phase === "active") {
+        while (zone.nextShieldAt <= now) {
+          const add = perTick;
+          const durationMs = Math.max(500, zone.activeEndsAt - now + 500);
+          const recipients: string[] = [];
+          const owner = this.room.state.players.get(zone.ownerId);
+          if (owner) {
+            const odx = owner.x - zone.x;
+            const odz = owner.z - zone.z;
+            if (odx * odx + odz * odz <= zone.radius * zone.radius) {
+              recipients.push(zone.ownerId);
+            }
+          }
+          this.room.state.players.forEach((p, id) => {
+            if (id === zone.ownerId) return;
+            if (p.disconnected || p.invulnerable) return;
+            // Ally = cannot hurt each other (same team / hub friendly).
+            if (this.canHurt(zone.ownerId, id)) return;
+            const dx = p.x - zone.x;
+            const dz = p.z - zone.z;
+            if (dx * dx + dz * dz > zone.radius * zone.radius) return;
+            recipients.push(id);
           });
-          zone.shieldGranted += add;
+          for (const targetId of recipients) {
+            const current = this.statuses.getStacks(targetId, "bubbleShield");
+            if (current >= cap) continue;
+            this.statuses.apply(targetId, "bubbleShield", zone.ownerId, now, {
+              durationMs,
+              stacks: Math.min(cap, current + add),
+              setStacks: true,
+            });
+          }
+          zone.shieldGranted = Math.min(cap, zone.shieldGranted + add);
           zone.nextShieldAt += tickMs;
+          if (zone.nextShieldAt > zone.activeEndsAt) break;
         }
       }
       remain.push(zone);
@@ -3130,8 +4039,12 @@ export class CombatSystem {
       aim,
       def.range > 0 ? def.range : SHROOM_CAST.range,
     );
-    const triggerRadius = Math.max(0.35, def.radius ?? SHROOM_CAST.triggerRadius);
-    const blastRadius = SHROOM_CAST.blastRadius;
+    const triggerRadius = this.talentRadius(
+      sessionId,
+      def.id,
+      Math.max(0.35, def.radius ?? SHROOM_CAST.triggerRadius),
+    );
+    const blastRadius = this.talentRadius(sessionId, def.id, SHROOM_CAST.blastRadius);
     const id = `shroom_${this.nextId++}`;
     const variant = this.nextId % 2;
     const expiresAt = now + Math.max(3000, def.zoneDurationMs ?? SHROOM_CAST.maxLifeMs);
@@ -3292,7 +4205,7 @@ export class CombatSystem {
         ) {
           continue;
         }
-        this.statuses.applyApplications(
+        this.applyOutgoingStatusApps(
           body.id,
           [{ statusId: "poisoned", chance: 1 }],
           zone.ownerId,
@@ -3396,8 +4309,12 @@ export class CombatSystem {
       0.35,
       this.wallColliders,
     );
-    const collideRadius = Math.max(0.5, def.radius ?? VOLCANO_CAST.collideRadius);
-    const blastRadius = VOLCANO_CAST.rockBlastRadius;
+    const collideRadius = this.talentRadius(
+      sessionId,
+      def.id,
+      Math.max(0.5, def.radius ?? VOLCANO_CAST.collideRadius),
+    );
+    const blastRadius = this.talentRadius(sessionId, def.id, VOLCANO_CAST.rockBlastRadius);
     const durationMs = Math.max(1000, def.zoneDurationMs ?? VOLCANO_CAST.zoneDurationMs);
     const rockIntervalMs = Math.max(120, def.tickMs ?? VOLCANO_CAST.rockIntervalMs);
     const telegraphMs = VOLCANO_CAST.telegraphMs;
@@ -3534,7 +4451,7 @@ export class CombatSystem {
             ) {
               continue;
             }
-            this.statuses.applyApplications(body.id, burn, zone.ownerId, now);
+            this.applyOutgoingStatusApps(body.id, burn, zone.ownerId, now);
           }
         }
         zone.nextContactTickAt += zone.contactTickMs;
@@ -3631,7 +4548,7 @@ export class CombatSystem {
     const ticks = Math.max(1, Math.floor(def.mistTicks ?? 14));
     const tickMs = Math.max(80, def.tickMs ?? 250);
     const growMs = Math.max(120, def.mistGrowMs ?? 180);
-    const endRange = Math.max(2, def.range);
+    const endRange = this.talentRadius(sessionId, def.id, Math.max(2, def.range));
     const startRange = Math.min(endRange, def.mistStartRange ?? endRange * 0.3);
     const halfEnd = def.coneHalfAngle ?? 0.7;
     this.pendingFrostMist.push({
@@ -3816,6 +4733,7 @@ export class CombatSystem {
     const now = Date.now();
     this.tryProcOverflow(casterId, casterId, heal - restored, caster.maxHp, abilityId, now);
     if (restored > 0) {
+      caster.statHealing += restored;
       this.fx({
         kind: "hit",
         abilityId,
@@ -3982,6 +4900,46 @@ export class CombatSystem {
       }
     }
     this.pendingSpikes = remain;
+  }
+
+  private advancePendingSilenceSweeps(now: number) {
+    if (this.pendingSilenceSweeps.length === 0) return;
+    const remain: PendingSilenceSweep[] = [];
+    const bodies = this.collectBodies();
+    for (const sweep of this.pendingSilenceSweeps) {
+      if (now >= sweep.expiresAt) continue;
+      const dur = Math.max(1, sweep.expiresAt - sweep.startAt);
+      // Right (−half) → left (+half): angleFromFacing is positive to the left.
+      const u = Math.min(1, Math.max(0, (now - sweep.startAt) / dur));
+      const bladeYaw = sweep.yaw + sweep.coneHalfAngle * (2 * u - 1);
+      const origin = { x: sweep.x, z: sweep.z };
+      const def = ABILITIES[sweep.abilityId];
+      const apps = def?.applyOnHit;
+      if (!apps?.length) {
+        remain.push(sweep);
+        continue;
+      }
+      for (const body of bodies) {
+        if (body.id === sweep.ownerId) continue;
+        if (body.vulnerable === false) continue;
+        if (body.hp <= 0) continue;
+        if (!this.canHurt(sweep.ownerId, body.id)) continue;
+        if (sweep.hitIds.has(body.id)) continue;
+        if (!inFacingCone(origin, sweep.yaw, sweep.range, sweep.coneHalfAngle, body)) {
+          continue;
+        }
+        if (!inFacingCone(origin, bladeYaw, sweep.range, sweep.bladeHalfAngle, body)) {
+          continue;
+        }
+        // Extra guard: keep hits inside the authored frontal cone by facing angle.
+        const ang = angleFromFacing(origin, sweep.yaw, body);
+        if (Math.abs(ang) > sweep.coneHalfAngle + 0.2) continue;
+        sweep.hitIds.add(body.id);
+        this.applyOutgoingStatusApps(body.id, apps, sweep.ownerId, now);
+      }
+      remain.push(sweep);
+    }
+    this.pendingSilenceSweeps = remain;
   }
 
   private advancePendingFrostMist(now: number) {
@@ -4186,6 +5144,7 @@ export class CombatSystem {
     const healed = caster.hp - before;
     this.tryProcOverflow(casterId, casterId, selfHeal - healed, caster.maxHp, abilityId, now);
     if (healed > 0) {
+      caster.statHealing += healed;
       this.fx({
         kind: "hit",
         abilityId,
@@ -4373,7 +5332,7 @@ export class CombatSystem {
 
     const nx = dx / len;
     const nz = dz / len;
-    const travel = Math.min(distance, Math.max(0, len - minDist));
+    const travel = Math.max(0, len - minDist);
     if (travel < 0.05) return;
 
     const from = { x: owner.x, z: owner.z };
@@ -4402,8 +5361,21 @@ export class CombatSystem {
     if (!dealt) return;
     const def = ABILITIES[abilityId];
     if (def?.applyOnHit?.length) {
-      this.statuses.applyApplications(targetId, def.applyOnHit, attackerSessionId, now);
+      this.applyOutgoingStatusApps(targetId, def.applyOnHit, attackerSessionId, now);
     }
+  }
+
+  /** Apply enemy debuffs with Intensified Elements potency when the source has the talent. */
+  private applyOutgoingStatusApps(
+    targetId: string,
+    apps: Parameters<StatusSystem["applyApplications"]>[1],
+    sourceId: string,
+    now: number,
+  ) {
+    const mul = this.kits.get(sourceId)?.secondaryEffectMul ?? 1;
+    this.statuses.applyApplications(targetId, apps, sourceId, now, {
+      effectMul: mul,
+    });
   }
 
   /** HP change + hit FX. Returns post-resist damage applied (0 if blocked / invuln / countered). */
@@ -4419,7 +5391,8 @@ export class CombatSystem {
     const dealtMul = this.statuses.getDamageDealtMul(attackerSessionId);
     const salvoMul = this.peekOpeningSalvoMul(attackerSessionId, abilityId, damage, now);
     const oppMul = this.peekOpportunistMul(attackerSessionId, targetId, abilityId, damage);
-    const scaledIn = damage > 0 ? damage * dealtMul * salvoMul * oppMul : damage;
+    const fifthMul = this.peekFifthCadenceMul(attackerSessionId, abilityId, damage);
+    const scaledIn = damage > 0 ? damage * dealtMul * salvoMul * oppMul * fifthMul : damage;
     const allowCounter = opts?.triggersCounter !== false;
 
     // Armed Counter / Revenge: deny the next melee / direct projectile.
@@ -4427,7 +5400,7 @@ export class CombatSystem {
       allowCounter &&
       scaledIn > 0 &&
       this.room.state.players.has(targetId) &&
-      abilityTriggersCounter(atkDef)
+      abilityTriggersCounter(atkDef, abilityId)
     ) {
       if (this.statuses.has(targetId, "counterArmed")) {
         this.procCounter(targetId, now);
@@ -4464,11 +5437,14 @@ export class CombatSystem {
     }
 
     // Crit once at the gate — before resist/shields — so every damage path shares one RNG.
+    const atkKit = this.kits.get(attackerSessionId);
     const crit =
       scaledIn > 0 &&
-      rollCrit(this.kits.get(attackerSessionId)?.critChance ?? COMBAT.critChance);
+      rollCrit(atkKit?.critChance ?? COMBAT.critChance);
+    const critMult =
+      COMBAT.critMultiplier * (1 + (atkKit?.critDamageBonus ?? 0));
     const resistMul = this.statuses.getDamageTakenMul(targetId);
-    let dealt = Math.max(0, Math.round(scaleForCrit(scaledIn, crit) * resistMul));
+    let dealt = Math.max(0, Math.round(scaleForCrit(scaledIn, crit, critMult) * resistMul));
     const damageForLeech = dealt;
     dealt = this.statuses.absorbWithShields(targetId, dealt);
 
@@ -4539,17 +5515,25 @@ export class CombatSystem {
       });
       if (target.hp <= 0) {
         this.hooks.onTargetKilled?.(targetId, attackerSessionId);
-        target.hp = target.maxHp;
-        target.statuses.clear();
-        this.knockbacks.delete(targetId);
-        const spawn = this.targetSpawns.get(targetId);
-        if (spawn) {
-          target.x = spawn.x;
-          target.z = spawn.z;
+        // Hub practice dummies refill; wave mobs are removed.
+        if (target.kind === "dummy") {
+          target.hp = target.maxHp;
+          target.statuses.clear();
+          this.knockbacks.delete(targetId);
+          const spawn = this.targetSpawns.get(targetId);
+          if (spawn) {
+            target.x = spawn.x;
+            target.z = spawn.z;
+          }
+          target.castAbilityId = "";
+          target.castPhase = "";
+          target.castLockUntil = 0;
+        } else {
+          target.statuses.clear();
+          this.knockbacks.delete(targetId);
+          this.targetSpawns.delete(targetId);
+          this.room.state.targets.delete(targetId);
         }
-        target.castAbilityId = "";
-        target.castPhase = "";
-        target.castLockUntil = 0;
       }
       return damageForLeech;
     }
@@ -4585,6 +5569,12 @@ export class CombatSystem {
       });
     };
 
+    const creditHealing = (healed: number) => {
+      if (!(healed > 0)) return;
+      const healer = this.room.state.players.get(healerId);
+      if (healer) healer.statHealing += healed;
+    };
+
     const player = this.room.state.players.get(targetId);
     if (player) {
       if (player.disconnected || player.hp <= 0) return 0;
@@ -4592,6 +5582,7 @@ export class CombatSystem {
       player.hp = Math.min(player.maxHp, player.hp + healFor);
       const healed = player.hp - before;
       emit(player.x, player.z, healed);
+      creditHealing(healed);
       this.tryProcOverflow(healerId, targetId, healFor - healed, player.maxHp, abilityId, now);
       return healed;
     }
@@ -4603,6 +5594,7 @@ export class CombatSystem {
       target.hp = Math.min(target.maxHp, target.hp + healFor);
       const healed = target.hp - before;
       emit(target.x, target.z, healed);
+      creditHealing(healed);
       this.tryProcOverflow(healerId, targetId, healFor - healed, target.maxHp, abilityId, now);
       return healed;
     }
@@ -4822,7 +5814,7 @@ export class CombatSystem {
     abilityId: string,
     phase: CombatFxEvent["phase"],
     phaseEndsAt: number,
-    extra?: { cooldownMs?: number; comboHit?: number },
+    extra?: { cooldownMs?: number; comboHit?: number; radius?: number },
   ) {
     this.fx({
       kind: "cast_phase",
@@ -4834,6 +5826,7 @@ export class CombatSystem {
       phaseEndsAt,
       cooldownMs: extra?.cooldownMs,
       comboHit: extra?.comboHit,
+      radius: extra?.radius,
     });
   }
 
@@ -4877,6 +5870,12 @@ export class CombatSystem {
    * Returns cooldownMs when CD started, else undefined.
    */
   private onEffectResolved(sessionId: string, def: AbilityDef, now: number): number | undefined {
+    // Rift Fissure: CD starts on first plant; second plant must not refresh it.
+    if (abilityEffectKind(def) === "riftFissure") {
+      const until = this.cds.get(sessionId)?.get(def.id) ?? 0;
+      if (until > now) return until - now;
+      return this.startCooldown(sessionId, def.id, now);
+    }
     if (!isComboAbility(def) || !def.combo) {
       return this.startCooldown(sessionId, def.id, now);
     }

@@ -146,6 +146,7 @@ export type AbilityEffectKind =
   | "standard"
   | "spikeWave"
   | "coneChannel"
+  | "silenceSweep"
   | "pulseHeal"
   | "healBeam"
   | "lifeLeech"
@@ -154,10 +155,12 @@ export type AbilityEffectKind =
   | "volcano"
   | "poisonCloud"
   | "smokeBomb"
+  | "holyGround"
   | "magmaOrbs"
   | "protectionBubble"
   | "shrooms"
   | "spiritForm"
+  | "riftFissure"
   | "fireball";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
@@ -336,7 +339,7 @@ export interface AbilityDef {
    * Ticks `damage` every `tickMs` while active.
    */
   zoneDurationMs?: number;
-  /** Frost Mist: half-angle of the spray cone (radians). */
+  /** Frost Mist / Silence Sweep: half-angle of the spray cone (radians). */
   coneHalfAngle?: number;
   /** Frost Mist: starting cone length before it expands to `range`. */
   mistStartRange?: number;
@@ -344,6 +347,10 @@ export interface AbilityDef {
   mistTicks?: number;
   /** Frost Mist: ms to ease cone from mistStartRange → range. */
   mistGrowMs?: number;
+  /** Silence Sweep: how long the R→L blade travels across the cone (ms). */
+  sweepMs?: number;
+  /** Silence Sweep: half-angle of the thin leading blade (radians). */
+  sweepBladeHalfAngle?: number;
   /**
    * Hold-to-confirm: impact is a channel; effect fires on `confirmCast` (key release),
    * not automatically when impact begins.
@@ -364,11 +371,12 @@ export interface AbilityDef {
 
 export const LOADOUT_SIZE = SPELL_SLOTS.length;
 
+/** Baseline ~40% cast slow; per-spell timing overrides vary lightly by commitment. */
 const DEFAULT_MOVE = {
-  anticipation: 0.75,
-  cast: 0.45,
-  impact: 0.25,
-  recovery: 0.85,
+  anticipation: 0.7,
+  cast: 0.6,
+  impact: 0.55,
+  recovery: 0.9,
 } as const;
 
 /**
@@ -473,6 +481,68 @@ function barrierRecoveryWallMs(): number {
 }
 
 /**
+ * Rift Fissure (Space) — Standing 1H Cast Spell 01 (same clip as Barrier).
+ * First cast plants portal A (CD starts); 5s to plant B; pair lasts 10s.
+ */
+export const RIFT_FISSURE_CAST = {
+  fps: BARRIER_CAST.fps,
+  releaseFrame: BARRIER_CAST.releaseFrame,
+  clipDurationSec: BARRIER_CAST.clipDurationSec,
+  playbackRate: 1.25,
+  unlockCostEssence: 120,
+  /** Longer than Portal / Dash. */
+  cooldownMs: 26000,
+  /** Forward plant distance from caster feet. */
+  placeForward: 2.1,
+  /** Trigger / mouth radius — keep tight so you walk into the oval. */
+  mouthRadius: 0.45,
+  /** Enter slab half-width along portal right (× mouthRadius). */
+  enterSideHalf: 1.0,
+  /** Enter slab half-depth along portal facing (× mouthRadius) — thin face. */
+  enterDepthHalf: 0.5,
+  /**
+   * Face-entry bias: require |alongFwd| >= |alongSide| * this so side scrapes
+   * (walking into the left/right edge) do not teleport.
+   */
+  enterFaceBias: 0.85,
+  /**
+   * Walk-block pane half-depth along facing (× mouthRadius). Thin enough that
+   * face entry still reaches the trigger before getting stuck; blocks side pass-through.
+   */
+  colliderDepthHalf: 0.2,
+  /** Time after A to plant B. */
+  armMs: 5000,
+  /** Pair lifetime once B is planted (both mouths share this clock). */
+  pairDurationMs: 10000,
+  /**
+   * Exit distance from mouth center along the exit face (Front↔Back link).
+   * Must clear mouthRadius + playerHitRadius so the traveler does not
+   * immediately re-trigger the exit portal.
+   */
+  exitPush: 1.2,
+  /** Extra shove away from the exit mouth after landing. */
+  exitShove: 0.45,
+  /** Duration of the exit shove (ms). */
+  exitShoveMs: 200,
+  /** Per-traveler gate after a teleport (safety against ping-pong). */
+  travelerCooldownMs: 750,
+  recoveryMs: 160,
+} as const;
+
+function riftFissureReleaseWallMs(): number {
+  return (
+    (RIFT_FISSURE_CAST.releaseFrame /
+      RIFT_FISSURE_CAST.fps /
+      RIFT_FISSURE_CAST.playbackRate) *
+    1000
+  );
+}
+
+function riftFissureRecoveryWallMs(): number {
+  return RIFT_FISSURE_CAST.recoveryMs;
+}
+
+/**
  * Spore Shrooms (LMB) — Standing 1H Cast Spell 01 @ 30fps.
  * Frame 18: shroom begins emerging. Frame 36: armed and triggerable.
  */
@@ -532,8 +602,8 @@ export const BOLT_CAST = {
   fps: 30,
   releaseFrame: 26,
   clipDurationSec: 2.333333,
-  /** Compress windup→punch into a readable combat window (same idea as Spikes). */
-  playbackRate: 1.4,
+  /** Faster poke — windup→punch compressed for M1 tempo. */
+  playbackRate: 1.95,
   /** Forward from caster — muzzle flash + projectile spawn share this. */
   spawnOffset: 0.95,
   /** World Y for muzzle flash. */
@@ -547,7 +617,7 @@ function boltReleaseWallMs(): number {
 }
 
 function boltRecoveryWallMs(): number {
-  return 100;
+  return 70;
 }
 
 /**
@@ -603,6 +673,42 @@ function poisonDartReleaseWallMs(): number {
 
 function poisonDartRecoveryWallMs(): number {
   return 90;
+}
+
+/**
+ * Silence Sweep (E) — Right Hook slash of cursed shadow.
+ * Blade rotates right→left across a mid-range frontal cone.
+ */
+export const SILENCE_SWEEP_CAST = {
+  unlockCostEssence: 90,
+  cooldownMs: 11000,
+  /** Mid-close frontal reach (shorter than Grasp / Frost Mist). */
+  range: 5.5,
+  /** Full frontal cone half-angle (~80°). */
+  coneHalfAngle: 0.7,
+  /** Thin leading blade half-angle. */
+  sweepBladeHalfAngle: 0.2,
+  /** True sweep travel time (R→L). */
+  sweepMs: 280,
+  silenceDurationMs: 3000,
+  /** Reuse Right Hook release timing. */
+  fps: POISON_DART_CAST.fps,
+  releaseFrame: POISON_DART_CAST.releaseFrame,
+  clipDurationSec: POISON_DART_CAST.clipDurationSec,
+  playbackRate: POISON_DART_CAST.playbackRate,
+} as const;
+
+function silenceSweepReleaseWallMs(): number {
+  return (
+    (SILENCE_SWEEP_CAST.releaseFrame /
+      SILENCE_SWEEP_CAST.fps /
+      SILENCE_SWEEP_CAST.playbackRate) *
+    1000
+  );
+}
+
+function silenceSweepRecoveryWallMs(): number {
+  return 110;
 }
 
 /**
@@ -705,6 +811,24 @@ export const SMOKE_BOMB_CAST = {
 } as const;
 
 /**
+ * Holy Ground (R) — Standing 2H Magic Area Attack 01 (same clip as Firewall).
+ * Consecrates a circle at your feet @ frame 42; allies inside gain resist + damage.
+ */
+export const HOLY_GROUND_CAST = {
+  fps: FIREWALL_CAST.fps,
+  releaseFrame: FIREWALL_CAST.releaseFrame,
+  clipDurationSec: FIREWALL_CAST.clipDurationSec,
+  playbackRate: FIREWALL_CAST.playbackRate,
+  /** Shorter than CD so only one zone is live at a time. */
+  zoneDurationMs: 6500,
+  tickMs: 400,
+  radius: 4.5,
+  recoveryMs: 420,
+  unlockCostEssence: 120,
+  cooldownMs: 14000,
+} as const;
+
+/**
  * Volcano (F) — same Standing 2H Magic Area Attack 01 clip as Firewall.
  * Erupts at frame 42; rocks barrage for `zoneDurationMs` after emerge.
  */
@@ -768,8 +892,11 @@ export const MAGMA_ORBS_CAST = {
   explodeFrame: 88,
   clipDurationSec: 3.566667,
   playbackRate: 1.55,
-  /** Collision / detonation distance along aim. */
+  /** Default meet distance when cursor aim is missing (mid of min/max). */
   meetRange: 7.5,
+  /** Cursor distance clamped to this band — meet point follows aim. */
+  meetRangeMin: 3.5,
+  meetRangeMax: 9,
   /** How far ahead of the caster the orbs erupt (0 = hip line; negative = behind). */
   emergeAhead: -0.15,
   /** Left/right offset from the aim midline at emerge. */
@@ -791,6 +918,28 @@ function magmaOrbsFrameWallMs(frame: number): number {
   return (
     (frame / MAGMA_ORBS_CAST.fps / MAGMA_ORBS_CAST.playbackRate) * 1000
   );
+}
+
+/**
+ * Meet distance from cursor ground aim, clamped to [meetRangeMin, meetRangeMax].
+ * Degenerate / missing aim falls back to the mid default.
+ */
+export function resolveMagmaOrbsMeetRange(
+  owner: { x: number; z: number },
+  aim?: { x: number; z: number } | null,
+): number {
+  const min = MAGMA_ORBS_CAST.meetRangeMin;
+  const max = MAGMA_ORBS_CAST.meetRangeMax;
+  if (
+    !aim ||
+    !Number.isFinite(aim.x) ||
+    !Number.isFinite(aim.z)
+  ) {
+    return MAGMA_ORBS_CAST.meetRange;
+  }
+  const dist = Math.hypot(aim.x - owner.x, aim.z - owner.z);
+  if (dist < 0.05) return min;
+  return Math.min(max, Math.max(min, dist));
 }
 
 function magmaOrbsEmergeWallMs(): number {
@@ -856,7 +1005,7 @@ export const HAND_SHIELD_CAST = {
   cooldownMs: 7000,
   unlockCostEssence: 100,
   /** Move mul while raising / holding the shield. */
-  channelMoveMul: 0.45,
+  channelMoveMul: 0.55,
   /** Max turn rate while shielding (~63°/s) — slow aim, still steerable. */
   yawTurnRate: 1.1,
 } as const;
@@ -911,6 +1060,19 @@ function smokeBombRecoveryWallMs(): number {
   return SMOKE_BOMB_CAST.recoveryMs;
 }
 
+function holyGroundReleaseWallMs(): number {
+  return (
+    (HOLY_GROUND_CAST.releaseFrame /
+      HOLY_GROUND_CAST.fps /
+      HOLY_GROUND_CAST.playbackRate) *
+    1000
+  );
+}
+
+function holyGroundRecoveryWallMs(): number {
+  return HOLY_GROUND_CAST.recoveryMs;
+}
+
 function volcanoReleaseWallMs(): number {
   return (
     (VOLCANO_CAST.releaseFrame /
@@ -953,7 +1115,7 @@ export const BLOOD_RUSH_CAST = {
   /** Sweep radius along the path. */
   hitRadius: 0.75,
   /** Execute (remaining HP) when target is at/below this fraction. */
-  executeBelowHpFrac: 0.25,
+  executeBelowHpFrac: 0.2,
   unlockCostEssence: 100,
   cooldownMs: 20000,
 } as const;
@@ -1295,12 +1457,12 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "bolt",
     name: "Bolt",
     description: "Fast single-target magic bolt. Low cooldown primary poke.",
-    cooldownMs: 350,
+    cooldownMs: 300,
     range: 12,
     shape: "projectile",
     effectKind: "standard",
     tags: ["Projectile", "Damage", "SingleTarget", "Cast"],
-    damage: combatMag(13),
+    damage: combatMag(11),
     speed: 22,
     spawnOffset: BOLT_CAST.spawnOffset,
     allowedSlots: ["m1"],
@@ -1310,10 +1472,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, boltReleaseWallMs() - 80)),
       impactMs: authoredForWallMs(80),
       recoveryMs: authoredForWallMs(boltRecoveryWallMs()),
-      anticipationMoveMul: 0.9,
+      anticipationMoveMul: 0.75,
       castMoveMul: 0.65,
       impactMoveMul: 0.7,
-      recoveryMoveMul: 1,
+      recoveryMoveMul: 0.95,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -1356,9 +1518,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
       ),
       impactMs: authoredForWallMs(100),
       recoveryMs: authoredForWallMs(shroomRecoveryWallMs()),
-      anticipationMoveMul: 0.7,
-      castMoveMul: 0.45,
-      impactMoveMul: 0.65,
+      anticipationMoveMul: 0.75,
+      castMoveMul: 0.65,
+      impactMoveMul: 0.7,
       recoveryMoveMul: 0.95,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
@@ -1396,10 +1558,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(iceLanceReleaseWallMs() - iceLanceSpawnWallMs()),
       impactMs: authoredForWallMs(80),
       recoveryMs: authoredForWallMs(iceLanceRecoveryWallMs()),
-      anticipationMoveMul: 0.85,
-      castMoveMul: 0.55,
+      anticipationMoveMul: 0.75,
+      castMoveMul: 0.65,
       impactMoveMul: 0.7,
-      recoveryMoveMul: 1,
+      recoveryMoveMul: 0.95,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -1416,7 +1578,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "melee",
     effectKind: "standard",
     tags: ["Melee", "Damage", "MultiHit", "Combo", "Instant"],
-    damage: combatMag(12),
+    damage: combatMag(11),
     /** Tight frontal slash — was 2.0 and felt like a wide AoE. */
     radius: 1.15,
     allowedSlots: ["m1"],
@@ -1424,8 +1586,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     combo: {
       hits: 3,
       continueWindowMs: 220,
-      moveMul: 0.72,
-      damageByHit: [combatMag(9), combatMag(9), combatMag(12)],
+      moveMul: 0.65,
+      damageByHit: [combatMag(7), combatMag(7), combatMag(11)],
     },
     timing: {
       anticipationMs: 110,
@@ -1442,12 +1604,12 @@ export const ABILITIES: Record<string, AbilityDef> = {
     description:
       "Leap to your aim and slam the ground. Airborne iframes; stuns enemies on landing.",
     cooldownMs: 7000,
-    range: 2.8,
+    range: 4.0,
     shape: "aoe",
     effectKind: "standard",
     tags: ["Area", "Damage", "Movement", "Stun", "Control", "Cast"],
     damage: combatMag(12),
-    radius: 3.1,
+    radius: 2.2,
     allowedSlots: ["m2"],
     // Windup start→19 (fast), air 19→54 (unchanged rate), then 150ms pose hold.
     timing: {
@@ -1476,7 +1638,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
     travel: {
       mode: "translate",
-      distance: 2.8,
+      distance: 4.0,
       takeoffDelayMs: 0,
       durationMs: authoredForWallMs(
         smashSegmentWallMs(
@@ -1533,10 +1695,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, frostBallReleaseWallMs() - 100)),
       impactMs: authoredForWallMs(80),
       recoveryMs: authoredForWallMs(frostBallRecoveryWallMs()),
-      anticipationMoveMul: 0.55,
-      castMoveMul: 0.35,
-      impactMoveMul: 0.45,
-      recoveryMoveMul: 0.95,
+      anticipationMoveMul: 0.65,
+      castMoveMul: 0.55,
+      impactMoveMul: 0.5,
+      recoveryMoveMul: 0.85,
       canCancelAnticipation: true,
       /** Cancel through windup until the ball spawns at impact. */
       cancelUntilPhase: "cast",
@@ -1568,27 +1730,28 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, poisonDartReleaseWallMs() - 50)),
       impactMs: authoredForWallMs(80),
       recoveryMs: authoredForWallMs(poisonDartRecoveryWallMs()),
-      anticipationMoveMul: 0.85,
-      castMoveMul: 0.7,
-      impactMoveMul: 0.8,
-      recoveryMoveMul: 1,
+      anticipationMoveMul: 0.75,
+      castMoveMul: 0.65,
+      impactMoveMul: 0.7,
+      recoveryMoveMul: 0.95,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
     applyOnHit: [{ statusId: "poisoned", chance: 1 }],
   },
   /**
-   * Magma Orbs (RMB) — twin fireballs erupt, rise, then arc to a fixed-range
-   * meet point and explode. Prep slows movement but does not root.
+   * Magma Orbs (RMB) — twin fireballs erupt, rise, then arc to a cursor-ranged
+   * meet point (clamped) and explode. Prep slows movement but does not root.
    */
   magmaOrbs: {
     id: "magmaOrbs",
     unlockCostEssence: MAGMA_ORBS_CAST.unlockCostEssence,
     name: "Magma Orbs",
     description:
-      "Smash the earth and raise two magma orbs. They loft, then swing on curved paths — stopped by walls, enemies clipped in flight catch fire. One orb reaching the meet point deals a half blast; both colliding deals full damage.",
+      "Smash the earth and raise two magma orbs. They loft, then swing on curved paths to your cursor (within range) — stopped by walls, enemies clipped in flight catch fire. One orb reaching the meet point deals a half blast; both colliding deals full damage.",
     cooldownMs: MAGMA_ORBS_CAST.cooldownMs,
-    range: MAGMA_ORBS_CAST.meetRange,
+    /** Max meet distance (cursor aim clamped to min..max). */
+    range: MAGMA_ORBS_CAST.meetRangeMax,
     shape: "aoe",
     effectKind: "magmaOrbs",
     tags: ["Projectile", "Explosion", "Area", "Damage", "Debuff", "Cast"],
@@ -1605,8 +1768,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
       ),
       recoveryMs: authoredForWallMs(magmaOrbsRecoveryWallMs()),
       /** Prep slows — never roots. */
-      anticipationMoveMul: 0.78,
-      castMoveMul: 0.62,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
       impactMoveMul: 0.55,
       recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
@@ -1636,10 +1799,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: 90,
       impactMs: 60,
       recoveryMs: 100,
-      anticipationMoveMul: 0.9,
-      castMoveMul: 0.85,
-      impactMoveMul: 1,
-      recoveryMoveMul: 1,
+      anticipationMoveMul: 0.75,
+      castMoveMul: 0.65,
+      impactMoveMul: 0.7,
+      recoveryMoveMul: 0.95,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -1668,10 +1831,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: 80,
       impactMs: 120,
       recoveryMs: 100,
-      anticipationMoveMul: 0.4,
-      castMoveMul: 0.2,
-      impactMoveMul: 1,
-      recoveryMoveMul: 1,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -1690,6 +1853,39 @@ export const ABILITIES: Record<string, AbilityDef> = {
     iFrames: {
       startMs: 0,
       durationMs: SPIRIT_FORM_CAST.snapIframeMs,
+    },
+    interruptsOtherCasts: true,
+  },
+  /**
+   * Rift Fissure (Space) — plant two linked walk-through portals.
+   * Anim: Standing 1H Cast Spell 01. CD starts on first plant; 5s to place the second.
+   */
+  riftFissure: {
+    id: "riftFissure",
+    unlockCostEssence: RIFT_FISSURE_CAST.unlockCostEssence,
+    name: "Rift Fissure",
+    description:
+      "Tear open a rift in front of you, then a second within 5 seconds. Walking into either portal exits the other — allies and enemies alike. Portals stay open for 10 seconds.",
+    cooldownMs: RIFT_FISSURE_CAST.cooldownMs,
+    range: RIFT_FISSURE_CAST.placeForward,
+    shape: "aoe",
+    effectKind: "riftFissure",
+    tags: ["Blink", "Area", "GroundEffect", "Persistent", "Cast", "Movement"],
+    damage: 0,
+    radius: RIFT_FISSURE_CAST.mouthRadius,
+    zoneDurationMs: RIFT_FISSURE_CAST.pairDurationMs,
+    allowedSlots: ["space"],
+    timing: {
+      anticipationMs: authoredForWallMs(80),
+      castMs: authoredForWallMs(Math.max(16, riftFissureReleaseWallMs() - 80)),
+      impactMs: authoredForWallMs(120),
+      recoveryMs: authoredForWallMs(riftFissureRecoveryWallMs()),
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
     },
     interruptsOtherCasts: true,
   },
@@ -1755,10 +1951,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, barrierReleaseWallMs() - 90)),
       impactMs: authoredForWallMs(100),
       recoveryMs: authoredForWallMs(barrierRecoveryWallMs()),
-      anticipationMoveMul: 0.75,
-      castMoveMul: 0.45,
-      impactMoveMul: 0.7,
-      recoveryMoveMul: 0.95,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       /** Locked cast — no cancel through windup/release. */
       canCancelAnticipation: false,
     },
@@ -1885,13 +2081,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
     interruptsOtherCasts: true,
   },
   /**
-   * Portal (Space) — hold to channel a blink. Landing circle pushes out with charge;
+   * Teleport (Space) — hold to channel a blink. Landing circle pushes out with charge;
    * release confirms. At max range, 1s grace then cancel. CD only on teleport.
    */
   portal: {
     id: "portal",
     unlockCostEssence: 120,
-    name: "Portal",
+    name: "Teleport",
     description:
       "Hold Space to plant and channel. A landing marker slides farther with charge — release to blink there. At max range you have a second to confirm or the cast cancels. Cooldown starts on any successful blink.",
     cooldownMs: 11000,
@@ -1939,7 +2135,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 100,
     name: "Decoy",
     description:
-      "Spawn an identical clone that drifts with your move (or stands still), then cloak for a short time. Invisible to enemies / ghost to yourself. Casting or interacting reveals you; you can still take damage.",
+      "Spawn an identical clone that walks to your aim point (or stands still), then cloak for a short time. Invisible to enemies / ghost to yourself. Casting or interacting reveals you; you can still take damage.",
     cooldownMs: 14000,
     range: 0,
     shape: "buff",
@@ -1953,22 +2149,22 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: 420,
       impactMs: 100,
       recoveryMs: 180,
-      anticipationMoveMul: 0.55,
-      castMoveMul: 0.35,
-      impactMoveMul: 0.45,
-      recoveryMoveMul: 0.75,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: false,
     },
     applyOnSelf: [{ statusId: "cloaked", durationMs: 2000 }],
   },
   /**
-   * Gust — circular push wave. Equippable on Q.
+   * Push Back — circular push wave. Equippable on Q.
    * Hits shove targets outward, then slow them briefly.
    */
   gust: {
     id: "gust",
     unlockCostEssence: 80,
-    name: "Gust",
+    name: "Push Back",
     description:
       "Circular push wave at your feet. Knocks enemies outward, then slows them briefly.",
     cooldownMs: 10000,
@@ -1977,7 +2173,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "standard",
     tags: ["Area", "Nova", "Damage", "Knockback", "Debuff", "Control", "Cast"],
     damage: combatMag(12),
-    radius: 3.5,
+    radius: 5.0,
     knockback: 9.5,
     knockbackMs: 320,
     allowedSlots: ["q"],
@@ -1989,10 +2185,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       ),
       impactMs: authoredForWallMs(gustImpactHoldWallMs()),
       recoveryMs: authoredForWallMs(gustRecoveryWallMs()),
-      anticipationMoveMul: 0.25,
-      castMoveMul: 0.1,
-      impactMoveMul: 0,
-      recoveryMoveMul: 0.55,
+      anticipationMoveMul: 0.65,
+      castMoveMul: 0.55,
+      impactMoveMul: 0.5,
+      recoveryMoveMul: 0.85,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -2026,10 +2222,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: 180,
       impactMs: 200,
       recoveryMs: 280,
-      anticipationMoveMul: 0.55,
-      castMoveMul: 0.35,
-      impactMoveMul: 0.4,
-      recoveryMoveMul: 0.85,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -2061,10 +2257,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, lifeLeechReleaseWallMs() - 90)),
       impactMs: authoredForWallMs(lifeLeechChannelWallMs()),
       recoveryMs: authoredForWallMs(160),
-      anticipationMoveMul: 0.8,
-      castMoveMul: 0.75,
-      impactMoveMul: 0.75,
-      recoveryMoveMul: 0.95,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "impact",
     },
@@ -2102,10 +2298,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: 180,
       impactMs: 200,
       recoveryMs: 280,
-      anticipationMoveMul: 0.55,
-      castMoveMul: 0.35,
-      impactMoveMul: 0.4,
-      recoveryMoveMul: 0.85,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -2122,7 +2318,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Spikes",
     description:
       "Venomous spikes erupt from the ground in a fast staggered line. Narrow path, long reach; applies Poisoned (stacks with Poison Dart).",
-    cooldownMs: 9000,
+    cooldownMs: 4000,
     range: 10,
     shape: "aoe",
     effectKind: "spikeWave",
@@ -2140,10 +2336,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, spikesReleaseWallMs() - 70)),
       impactMs: authoredForWallMs(220),
       recoveryMs: authoredForWallMs(140),
-      anticipationMoveMul: 0.55,
-      castMoveMul: 0.35,
-      impactMoveMul: 0.45,
-      recoveryMoveMul: 0.95,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -2185,9 +2381,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, poisonCloudReleaseWallMs() - 80)),
       impactMs: authoredForWallMs(160),
       recoveryMs: authoredForWallMs(poisonCloudRecoveryWallMs()),
-      anticipationMoveMul: 0.5,
-      castMoveMul: 0.3,
-      impactMoveMul: 0.4,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
       recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
@@ -2195,6 +2391,46 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnHit: [
       { statusId: "poisoned", chance: 1 },
       { statusId: "poisonMiasma", chance: 1 },
+    ],
+  },
+  /**
+   * Silence (E) — Right Hook cursed-shadow arc.
+   * Thin blade sweeps right→left across a mid-range cone; silence only (no damage).
+   */
+  silenceSweep: {
+    id: "silenceSweep",
+    unlockCostEssence: SILENCE_SWEEP_CAST.unlockCostEssence,
+    name: "Silence",
+    description:
+      "Hook a crescent of cursed shadow across the field in front of you. Enemies caught in the sweep are Silenced — casts interrupt and stay blocked for a few seconds.",
+    cooldownMs: SILENCE_SWEEP_CAST.cooldownMs,
+    range: SILENCE_SWEEP_CAST.range,
+    shape: "aoe",
+    effectKind: "silenceSweep",
+    tags: ["Cone", "Silence", "Debuff", "Control", "CrowdControl", "Area", "Interrupt", "Cast"],
+    damage: 0,
+    coneHalfAngle: SILENCE_SWEEP_CAST.coneHalfAngle,
+    sweepMs: SILENCE_SWEEP_CAST.sweepMs,
+    sweepBladeHalfAngle: SILENCE_SWEEP_CAST.sweepBladeHalfAngle,
+    allowedSlots: ["e"],
+    timing: {
+      anticipationMs: authoredForWallMs(50),
+      castMs: authoredForWallMs(Math.max(16, silenceSweepReleaseWallMs() - 50)),
+      impactMs: authoredForWallMs(SILENCE_SWEEP_CAST.sweepMs),
+      recoveryMs: authoredForWallMs(silenceSweepRecoveryWallMs()),
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [
+      {
+        statusId: "silenced",
+        durationMs: SILENCE_SWEEP_CAST.silenceDurationMs,
+        chance: 1,
+      },
     ],
   },
   /**
@@ -2231,16 +2467,60 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, smokeBombReleaseWallMs() - 80)),
       impactMs: authoredForWallMs(160),
       recoveryMs: authoredForWallMs(smokeBombRecoveryWallMs()),
-      anticipationMoveMul: 0.45,
-      castMoveMul: 0.25,
-      impactMoveMul: 0.35,
-      recoveryMoveMul: 0.85,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
     applyOnHit: [{ statusId: "weakened", chance: 1 }],
     /** Cloak duration is driven by the live smoke zone (see CombatSystem). */
     applyOnSelf: [{ statusId: "cloaked" }],
+  },
+  /**
+   * Holy Ground (R) — consecrate a circle at your feet.
+   * Anim: Standing 2H Magic Area Attack 01 — lands @ frame 42 (cancel before).
+   * Allies (and you) standing in it gain +60% resistance and +30% damage.
+   */
+  holyGround: {
+    id: "holyGround",
+    unlockCostEssence: HOLY_GROUND_CAST.unlockCostEssence,
+    name: "Holy Ground",
+    description:
+      "Consecrate the ground beneath you. Allies standing in the circle gain 60% damage resistance and deal 30% more damage for as long as they remain inside.",
+    cooldownMs: HOLY_GROUND_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "holyGround",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "Buff",
+      "Ally",
+      "Self",
+      "Persistent",
+      "Cast",
+      "Nova",
+    ],
+    damage: 0,
+    radius: HOLY_GROUND_CAST.radius,
+    tickMs: HOLY_GROUND_CAST.tickMs,
+    zoneDurationMs: HOLY_GROUND_CAST.zoneDurationMs,
+    allowedSlots: ["r"],
+    timing: {
+      anticipationMs: authoredForWallMs(100),
+      castMs: authoredForWallMs(Math.max(16, holyGroundReleaseWallMs() - 100)),
+      impactMs: authoredForWallMs(180),
+      recoveryMs: authoredForWallMs(holyGroundRecoveryWallMs()),
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
+      canCancelAnticipation: true,
+      cancelUntilPhase: "cast",
+    },
+    applyOnHit: [{ statusId: "holyBlessed", chance: 1 }],
   },
   /**
    * Firewall (R) — stationary fire wall perpendicular to aim.
@@ -2275,9 +2555,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, firewallReleaseWallMs() - 100)),
       impactMs: authoredForWallMs(180),
       recoveryMs: authoredForWallMs(firewallRecoveryWallMs()),
-      anticipationMoveMul: 0.45,
-      castMoveMul: 0.25,
-      impactMoveMul: 0.4,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
       recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       /** Locked once the wall ignites (impact). */
@@ -2337,9 +2617,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
       impactMs: authoredForWallMs(fireballChargeWindowWallMs()),
       recoveryMs: authoredForWallMs(fireballRecoveryWallMs()),
       anticipationMoveMul: 0.7,
-      castMoveMul: 0.55,
-      impactMoveMul: 0.5,
-      recoveryMoveMul: 0.85,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: false,
       cancelUntilPhase: "impact",
     },
@@ -2374,9 +2654,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, volcanoReleaseWallMs() - 100)),
       impactMs: authoredForWallMs(180),
       recoveryMs: authoredForWallMs(volcanoRecoveryWallMs()),
-      anticipationMoveMul: 0.45,
-      castMoveMul: 0.25,
-      impactMoveMul: 0.4,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
       recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
@@ -2393,12 +2673,12 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: PROTECTION_BUBBLE_CAST.unlockCostEssence,
     name: "Protection Bubble",
     description:
-      "Weave a large dome at your feet. While it stands, enemy projectiles shatter on the outside and you gain absorb over time — you can still cast out from within. Locked cast; the shield forms where you started the spell.",
+      "Weave a large dome at your feet. While it stands, enemy projectiles shatter on the outside and you and allies inside gain absorb over time — you can still cast out from within. Locked cast; the shield forms where you started the spell.",
     cooldownMs: PROTECTION_BUBBLE_CAST.cooldownMs,
     range: 0,
     shape: "aoe",
     effectKind: "protectionBubble",
-    tags: ["Area", "Defense", "Barrier", "Persistent", "Cast", "Self"],
+    tags: ["Area", "Defense", "Barrier", "Persistent", "Cast", "Self", "Ally"],
     damage: 0,
     radius: PROTECTION_BUBBLE_CAST.radius,
     zoneDurationMs: PROTECTION_BUBBLE_CAST.zoneDurationMs,
@@ -2408,9 +2688,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, protectionBubbleReleaseWallMs() - 100)),
       impactMs: authoredForWallMs(180),
       recoveryMs: authoredForWallMs(protectionBubbleRecoveryWallMs()),
-      anticipationMoveMul: 0.4,
-      castMoveMul: 0.2,
-      impactMoveMul: 0.35,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
       recoveryMoveMul: 0.9,
       /** Locked — cannot cancel once started. */
       canCancelAnticipation: false,
@@ -2442,10 +2722,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(BLOOD_RUSH_CAST.chargeMs * 0.75),
       impactMs: authoredForWallMs(BLOOD_RUSH_CAST.travelMs),
       recoveryMs: authoredForWallMs(BLOOD_RUSH_CAST.recoveryMs),
-      anticipationMoveMul: 0.05,
-      castMoveMul: 0,
-      impactMoveMul: 0,
-      recoveryMoveMul: 0.85,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
@@ -2491,10 +2771,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, frostMistReleaseWallMs() - 90)),
       impactMs: authoredForWallMs(frostMistSprayWallMs()),
       recoveryMs: authoredForWallMs(160),
-      anticipationMoveMul: 0.5,
-      castMoveMul: 0.4,
-      impactMoveMul: 0.35,
-      recoveryMoveMul: 0.8,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "impact",
     },
@@ -2526,10 +2806,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       castMs: authoredForWallMs(Math.max(16, healBeamReleaseWallMs() - 90)),
       impactMs: authoredForWallMs(healBeamChannelWallMs()),
       recoveryMs: authoredForWallMs(160),
-      anticipationMoveMul: 0.55,
-      castMoveMul: 0.4,
-      impactMoveMul: 0.35,
-      recoveryMoveMul: 0.85,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.55,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "impact",
     },
@@ -2567,7 +2847,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       anticipationMoveMul: 0.7,
       castMoveMul: 0.6,
       impactMoveMul: 0.55,
-      recoveryMoveMul: 0.85,
+      recoveryMoveMul: 0.9,
       canCancelAnticipation: true,
       cancelUntilPhase: "impact",
     },
@@ -2606,10 +2886,16 @@ export function abilityEffectKind(def: AbilityDef | undefined): AbilityEffectKin
 
 /**
  * Hits that can trigger an armed Counter.
- * Melee (crescent) and contact projectiles yes; ground AoE / aura ticks no.
+ * Melee (crescent) and contact projectiles yes; Jump Slam yes; other ground AoE / aura ticks no.
  */
-export function abilityTriggersCounter(def: AbilityDef | undefined): boolean {
+export function abilityTriggersCounter(
+  def: AbilityDef | undefined,
+  abilityId?: string,
+): boolean {
+  // NPC melee (Wave Assault zombies) — no AbilityDef, still count as direct hits.
+  if (abilityId === "zombie_melee") return true;
   if (!def || !(def.damage > 0)) return false;
+  if (def.id === "smash") return true;
   if (def.shape === "melee") return true;
   if (def.shape === "projectile" && !def.aura) return true;
   return false;
@@ -2755,12 +3041,9 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
 }
 
 function defaultAbilityForSlot(slotId: SpellSlotId): string {
-  const preferred = Object.values(ABILITIES).find(
-    (a) => a.defaultSlot === slotId && a.allowedSlots.includes(slotId),
-  );
-  if (preferred) return preferred.id;
-  const any = abilitiesForSlot(slotId)[0];
-  return any?.id ?? "bolt";
+  /** First entry in the Armoury list for this slot. */
+  const first = abilitiesForSlot(slotId)[0];
+  return first?.id ?? "bolt";
 }
 
 /**

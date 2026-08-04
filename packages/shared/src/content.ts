@@ -68,10 +68,26 @@ export const PVE_CONTENTS: readonly {
   label: string;
   room: (typeof ROOM)[keyof typeof ROOM];
   description: string;
+  enabled: boolean;
 }[] = [
-  { id: "dungeon", label: "Dungeon", room: ROOM.DUNGEON, description: "Short coop instance stub" },
-  { id: "boss", label: "Boss", room: ROOM.BOSS, description: "Single encounter stub" },
+  {
+    id: "dungeon",
+    label: "Wave Assault",
+    room: ROOM.DUNGEON,
+    description: "Cemetery waves — survive escalating zombies",
+    enabled: true,
+  },
+  {
+    id: "boss",
+    label: "Boss",
+    room: ROOM.BOSS,
+    description: "Single encounter (coming soon)",
+    enabled: false,
+  },
 ] as const;
+
+/** Modes selectable in the PvE portal. */
+export const PVE_PORTAL_CONTENTS = PVE_CONTENTS.filter((c) => c.enabled);
 
 export const PVE_MODIFIERS: readonly { id: string; label: string }[] = [
   { id: "hard", label: "Hard" },
@@ -80,6 +96,8 @@ export const PVE_MODIFIERS: readonly { id: string; label: string }[] = [
 
 /** Round countdown before fighting (ms). */
 export const ARENA_ROUND_COUNTDOWN_MS = 3000;
+/** After last living fighter on a team dies — emote window before round_end. */
+export const ARENA_WIPE_EMOTE_MS = 4000;
 /** Beat between rounds (ms) — long enough to read the kill / death pose. */
 export const ARENA_ROUND_END_MS = 4500;
 /** First team to this many round wins takes the match. */

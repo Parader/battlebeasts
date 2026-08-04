@@ -52,6 +52,12 @@ export const COSMETIC_CATALOG: Record<string, CosmeticItemDef> = {
     name: "Shoulder Set 1",
     meshNames: ["Shoulder set 1 - 1", "Shoulder set 1 - 2"],
   },
+  chest_set_1: {
+    id: "chest_set_1",
+    slot: "chest",
+    name: "Chest Set 1",
+    meshName: "Chest Set 1",
+  },
   /**
    * Boots → Set 1: one skinned mesh per foot.
    */
@@ -61,13 +67,22 @@ export const COSMETIC_CATALOG: Record<string, CosmeticItemDef> = {
     name: "Boot Set 1",
     meshNames: ["Boot1", "Boot2"],
   },
+  /**
+   * Bracers → Set 1: single skinned mesh covering both forearms.
+   */
+  bracers_set_1: {
+    id: "bracers_set_1",
+    slot: "gloves",
+    name: "Bracer Set 1",
+    meshName: "Bracers set 1",
+  },
 };
 
 export const COSMETIC_SLOT_LABELS: Record<CosmeticSlot, string> = {
   hat: "Hat",
   shoulders: "Shoulders",
   chest: "Chest",
-  gloves: "Gloves",
+  gloves: "Bracers",
   belt: "Belt",
   legs: "Legs",
   shoes: "Boots",

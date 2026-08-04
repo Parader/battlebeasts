@@ -10,10 +10,14 @@ import {
   readBurningBadge,
   readPoisonBadge,
   readRejuvenationBadge,
+  readSilenceBadge,
+  readHolyBadge,
   syncBleedingBadge,
   syncBurningBadge,
   syncPoisonBadge,
   syncRejuvenationBadge,
+  syncSilenceBadge,
+  syncHolyBadge,
   type StatusRowLite,
 } from "./StatusHpBadgeStack";
 import { isRevengeVanished } from "./revengeVanishRuntime";
@@ -23,15 +27,30 @@ type Props = {
   sessionId: string | null;
   /** Height above the character root. */
   y?: number;
+  /**
+   * When true, show whenever alive and not stealthed (PvP enemies).
+   * Default keeps hub/self bars gated to combat engage to reduce clutter.
+   */
+  alwaysVisible?: boolean;
+  /** HP fill color (ally green / enemy red). */
+  fillColor?: string;
 };
 
 /**
  * Camera-facing HP (+ optional shield) bar above a player.
  * Visible while in combat (damaged / casting / DoT / linger); hidden out of combat.
+ * Pass `alwaysVisible` for opposing players so enemies stay readable in fights.
  */
-export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
+export function PlayerHpBillboard({
+  room,
+  sessionId,
+  y = 2.2,
+  alwaysVisible = false,
+  fillColor = "#4ade80",
+}: Props) {
   const root = useRef<THREE.Group>(null);
   const fill = useRef<THREE.Mesh>(null);
+  const fillMat = useRef<THREE.MeshBasicMaterial>(null);
   const shield = useRef<THREE.Mesh>(null);
   const poisonBadge = useRef<HTMLDivElement>(null);
   const poisonStacksEl = useRef<HTMLSpanElement>(null);
@@ -44,8 +63,13 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
   const rejuvenationBadge = useRef<HTMLDivElement>(null);
   const rejuvenationStacksEl = useRef<HTMLSpanElement>(null);
   const rejuvenationRing = useRef<SVGCircleElement>(null);
+  const silenceBadge = useRef<HTMLDivElement>(null);
+  const silenceRing = useRef<SVGCircleElement>(null);
+  const holyBadge = useRef<HTMLDivElement>(null);
+  const holyRing = useRef<SVGCircleElement>(null);
   const lingerUntil = useRef(0);
   const prevHp = useRef<number | null>(null);
+  const lastFillColor = useRef(fillColor);
   const lastPoisonStacks = useRef(0);
   const lastBleedingStacks = useRef(0);
   const lastRejuvenationStacks = useRef(0);
@@ -58,12 +82,16 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
     const burnBadge = burningBadge.current;
     const bleedBadge = bleedingBadge.current;
     const rejBadge = rejuvenationBadge.current;
+    const silBadge = silenceBadge.current;
+    const hlyBadge = holyBadge.current;
     if (!g || !m || !sessionId || !room) {
       if (g) g.visible = false;
       if (badge) badge.style.display = "none";
       if (burnBadge) burnBadge.style.display = "none";
       if (bleedBadge) bleedBadge.style.display = "none";
       if (rejBadge) rejBadge.style.display = "none";
+      if (silBadge) silBadge.style.display = "none";
+      if (hlyBadge) hlyBadge.style.display = "none";
       return;
     }
     const p = room.state?.players?.get(sessionId) as
@@ -83,6 +111,8 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       if (burnBadge) burnBadge.style.display = "none";
       if (bleedBadge) bleedBadge.style.display = "none";
       if (rejBadge) rejBadge.style.display = "none";
+      if (silBadge) silBadge.style.display = "none";
+      if (hlyBadge) hlyBadge.style.display = "none";
       prevHp.current = p?.hp ?? null;
       lastPoisonStacks.current = 0;
       lastBleedingStacks.current = 0;
@@ -91,15 +121,19 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
     }
 
     let revengePhased = false;
+    let cloaked = false;
     p.statuses?.forEach((row) => {
       if (row?.statusId === "revengePhased") revengePhased = true;
+      if (row?.statusId === "cloaked") cloaked = true;
     });
-    if (isRevengeVanished(sessionId) || revengePhased) {
+    if (isRevengeVanished(sessionId) || revengePhased || cloaked) {
       g.visible = false;
       if (badge) badge.style.display = "none";
       if (burnBadge) burnBadge.style.display = "none";
       if (bleedBadge) bleedBadge.style.display = "none";
       if (rejBadge) rejBadge.style.display = "none";
+      if (silBadge) silBadge.style.display = "none";
+      if (hlyBadge) hlyBadge.style.display = "none";
       return;
     }
 
@@ -118,21 +152,21 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
     const burning = readBurningBadge(rows);
     const bleeding = readBleedingBadge(rows);
     const rejuvenation = readRejuvenationBadge(rows);
+    const silence = readSilenceBadge(rows);
+    const holy = readHolyBadge(rows);
     const poisoned = poison.stacks > 0;
     const isBurning = burning.stacks > 0;
     const isBleeding = bleeding.stacks > 0;
     const rejuvenating = rejuvenation.stacks > 0;
+    const isSilenced = silence.stacks > 0;
+    const isHoly = holy.stacks > 0;
 
     if (prevHp.current != null && p.hp < prevHp.current - 0.05) {
       lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
     }
     prevHp.current = p.hp;
 
-    if (damaged || shieldRatio > 0 || casting || poisoned || isBurning || isBleeding || rejuvenating) {
-      lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
-    }
-
-    const show =
+    if (
       damaged ||
       shieldRatio > 0 ||
       casting ||
@@ -140,6 +174,23 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       isBurning ||
       isBleeding ||
       rejuvenating ||
+      isSilenced ||
+      isHoly
+    ) {
+      lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
+    }
+
+    const show =
+      alwaysVisible ||
+      damaged ||
+      shieldRatio > 0 ||
+      casting ||
+      poisoned ||
+      isBurning ||
+      isBleeding ||
+      rejuvenating ||
+      isSilenced ||
+      isHoly ||
       now < lingerUntil.current;
 
     g.visible = show;
@@ -148,6 +199,8 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       if (burnBadge) burnBadge.style.display = "none";
       if (bleedBadge) bleedBadge.style.display = "none";
       if (rejBadge) rejBadge.style.display = "none";
+      if (silBadge) silBadge.style.display = "none";
+      if (hlyBadge) hlyBadge.style.display = "none";
       lastPoisonStacks.current = 0;
       lastBleedingStacks.current = 0;
       lastRejuvenationStacks.current = 0;
@@ -184,22 +237,46 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
       rejuvenation,
       lastRejuvenationStacks,
     );
+    syncSilenceBadge(silBadge, silenceRing.current, silence);
+    syncHolyBadge(hlyBadge, holyRing.current, holy);
+
+    const mat = fillMat.current;
+    if (mat && lastFillColor.current !== fillColor) {
+      lastFillColor.current = fillColor;
+      mat.color.set(fillColor);
+    }
   });
 
   return (
-    <Billboard position={[0, y, 0]} follow>
-      <group ref={root} visible={false}>
-        <mesh>
+    <Billboard position={[0, y, 0]} follow renderOrder={1000}>
+      <group ref={root} visible={false} renderOrder={1000}>
+        <mesh renderOrder={1000}>
           <planeGeometry args={[1.05, 0.08]} />
-          <meshBasicMaterial color="#111827" depthTest={false} toneMapped={false} />
+          <meshBasicMaterial
+            color="#111827"
+            depthTest={false}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
-        <mesh ref={fill} position={[0, 0, 0.01]}>
+        <mesh ref={fill} position={[0, 0, 0.01]} renderOrder={1001}>
           <planeGeometry args={[1, 0.055]} />
-          <meshBasicMaterial color="#4ade80" depthTest={false} toneMapped={false} />
+          <meshBasicMaterial
+            ref={fillMat}
+            color={fillColor}
+            depthTest={false}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
-        <mesh ref={shield} position={[0, 0, 0.02]} visible={false}>
+        <mesh ref={shield} position={[0, 0, 0.02]} visible={false} renderOrder={1002}>
           <planeGeometry args={[1, 0.055]} />
-          <meshBasicMaterial color="#60a5fa" depthTest={false} toneMapped={false} />
+          <meshBasicMaterial
+            color="#60a5fa"
+            depthTest={false}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
         <StatusHpBadgeStack
           poisonBadgeRef={poisonBadge}
@@ -213,6 +290,10 @@ export function PlayerHpBillboard({ room, sessionId, y = 2.2 }: Props) {
           rejuvenationBadgeRef={rejuvenationBadge}
           rejuvenationStacksRef={rejuvenationStacksEl}
           rejuvenationRingRef={rejuvenationRing}
+          silenceBadgeRef={silenceBadge}
+          silenceRingRef={silenceRing}
+          holyBadgeRef={holyBadge}
+          holyRingRef={holyRing}
         />
       </group>
     </Billboard>

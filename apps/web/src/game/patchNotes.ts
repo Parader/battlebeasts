@@ -14,6 +14,16 @@ export type PatchNote = {
  */
 export const PATCH_NOTES: readonly PatchNote[] = [
   {
+    id: "2026-08-03-wave-assault",
+    title: "Wave Assault (PvE)",
+    date: "2026-08-03",
+    highlights: [
+      "PvE portal: Wave Assault — cemetery map with escalating zombie waves",
+      "Seeking melee fodder, wave HUD, pause / leave mid-run",
+      "Solo for now — coop and boss encounters come later",
+    ],
+  },
+  {
     id: "2026-08-01-smoke-ranked-polish",
     title: "Smoke Bomb, ranked LP & combat polish",
     date: "2026-08-01",

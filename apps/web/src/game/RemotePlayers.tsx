@@ -29,6 +29,7 @@ import { PlayerCastChannelBar } from "./PlayerCastChannelBar";
 import { PlayerNameBillboard } from "./PlayerNameBillboard";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
 import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
+import { RiftArmRing } from "./vfx/effects/riftArmRing";
 import { registerCharacterRoot } from "./characterRoots";
 import { isRevengeVanished } from "./revengeVanishRuntime";
 
@@ -56,13 +57,28 @@ type RemotePlayerState = {
   statuses?: Parameters<typeof hasStatusId>[0];
 };
 
+function resolveAimRelation(
+  localTeam: string | undefined,
+  remoteTeam: string | undefined,
+  fallback: AimRelation,
+): AimRelation {
+  if (localTeam && remoteTeam) {
+    if (remoteTeam === localTeam) return "ally";
+    if (remoteTeam === "a" || remoteTeam === "b") return "enemy";
+    return "neutral";
+  }
+  return fallback;
+}
+
 function RemotePlayerAvatar({
   room,
   sessionId,
-  relation,
+  localSessionId,
+  relation: fallbackRelation,
 }: {
   room: Room;
   sessionId: string;
+  localSessionId: string | null;
   relation: AimRelation;
 }) {
   const group = useRef<THREE.Group>(null);
@@ -72,6 +88,8 @@ function RemotePlayerAvatar({
   const lastCastId = useRef("");
   const comboAnimHoldUntil = useRef(0);
   const lastEmoteId = useRef<string | null>(null);
+  const relationRef = useRef<AimRelation>(fallbackRelation);
+  const [relation, setRelation] = useState<AimRelation>(fallbackRelation);
   const aimColor = AIM_RELATION_COLORS[relation];
 
   const renderPos = useRef(new THREE.Vector3());
@@ -119,7 +137,15 @@ function RemotePlayerAvatar({
   }, [scene, animations]);
 
   useFrame((_, dt) => {
-    const p = room.state?.players?.get(sessionId) as RemotePlayerState | undefined;
+    const p = room.state?.players?.get(sessionId) as (RemotePlayerState & { team?: string }) | undefined;
+    const local = localSessionId
+      ? (room.state?.players?.get(localSessionId) as { team?: string } | undefined)
+      : undefined;
+    const nextRel = resolveAimRelation(local?.team, p?.team, fallbackRelation);
+    if (nextRel !== relationRef.current) {
+      relationRef.current = nextRel;
+      setRelation(nextRel);
+    }
     const g = group.current;
     const controller = controllerRef.current;
     if (!p || !g || !controller || p.disconnected) {
@@ -229,6 +255,18 @@ function RemotePlayerAvatar({
       renderPos.current.z,
     );
     const aim = aimRef.current;
+
+    // Match / Wave Assault pause: snap to authority and hold pose.
+    if ((room.state as { paused?: boolean } | undefined)?.paused) {
+      renderPos.current.set(p.x, 0, p.z);
+      vel.current.set(0, 0, 0);
+      renderYaw.current = p.yaw;
+      g.position.set(p.x, smashHopOffsetY(p) + deathSinkOffsetY(deathSinkRef.current), p.z);
+      if (bodyRef.current) bodyRef.current.rotation.y = renderYaw.current;
+      if (aim) aim.rotation.y = 0;
+      return;
+    }
+
     if (cloaked) {
       renderYaw.current = p.yaw;
       if (bodyRef.current) bodyRef.current.rotation.y = renderYaw.current;
@@ -261,6 +299,16 @@ function RemotePlayerAvatar({
       yawLocked.current = true;
       if (bodyRef.current) bodyRef.current.rotation.y = renderYaw.current;
       if (aim) aim.rotation.y = p.yaw - renderYaw.current;
+      // Arena taunts after death / wipe window.
+      const activeEmoteId = getActiveEmote(sessionId);
+      if (activeEmoteId) {
+        if (lastEmoteId.current !== activeEmoteId) {
+          lastEmoteId.current = activeEmoteId;
+          playEmoteAnimation(controller, activeEmoteId);
+        }
+      } else if (lastEmoteId.current) {
+        lastEmoteId.current = null;
+      }
       controller.setMovement({
         worldVelocity: zeroVel.current,
         facingYaw: p.yaw,
@@ -347,6 +395,13 @@ function RemotePlayerAvatar({
             const p = room.state?.players?.get(sessionId) as
               | { statuses?: Parameters<typeof collectStatusRows>[0] }
               | undefined;
+            // Html ornaments ignore mesh visibility — hide while stealthed.
+            if (
+              hasStatusId(p?.statuses, "cloaked") ||
+              hasStatusId(p?.statuses, "revengePhased")
+            ) {
+              return [];
+            }
             return collectStatusRows(p?.statuses);
           }}
         />
@@ -357,8 +412,14 @@ function RemotePlayerAvatar({
         </group>
       </group>
       {/* HP/name stay on non-rotated root so spin doesn't ghost a second bar. */}
-      <PlayerHpBillboard room={room} sessionId={sessionId} />
+      <PlayerHpBillboard
+        room={room}
+        sessionId={sessionId}
+        alwaysVisible={relation === "enemy"}
+        fillColor={relation === "enemy" ? "#f87171" : "#4ade80"}
+      />
       <PlayerCastChannelBar room={room} sessionId={sessionId} />
+      <RiftArmRing room={room} sessionId={sessionId} />
       <PlayerNameBillboard room={room} sessionId={sessionId} />
     </group>
   );
@@ -393,13 +454,17 @@ export function RemotePlayers({
         (room.state.players.get(localSessionId) as { id?: string } | undefined)?.id) ||
       "";
     const next: string[] = [];
-    room.state.players.forEach((p: { disconnected?: boolean; id?: string }, id: string) => {
-      if (id === localSessionId) return;
-      if (p?.disconnected) return;
-      // Same hunter, older seat (match-return ghost) — never render as a remote.
-      if (localUserId && p?.id && p.id === localUserId) return;
-      next.push(id);
-    });
+    room.state.players.forEach(
+      (p: { disconnected?: boolean; id?: string; role?: string }, id: string) => {
+        if (id === localSessionId) return;
+        if (p?.disconnected) return;
+        // Arena spectators are move-only ghosts — no character mesh.
+        if (p?.role === "spectator") return;
+        // Same hunter, older seat (match-return ghost) — never render as a remote.
+        if (localUserId && p?.id && p.id === localUserId) return;
+        next.push(id);
+      },
+    );
     next.sort();
     const key = `${room.roomId}:${next.join("|")}`;
     if (key !== prevKey.current) {
@@ -420,13 +485,16 @@ export function RemotePlayers({
     <>
       {remoteIds.map((id) => {
         const p = room.state?.players?.get(id) as { team?: string } | undefined;
-        let rel: AimRelation = relation;
-        if (localTeam && p?.team) {
-          if (p.team === localTeam) rel = "ally";
-          else if (p.team === "a" || p.team === "b") rel = "enemy";
-          else rel = "neutral";
-        }
-        return <RemotePlayerAvatar key={id} room={room} sessionId={id} relation={rel} />;
+        const rel = resolveAimRelation(localTeam, p?.team, relation);
+        return (
+          <RemotePlayerAvatar
+            key={id}
+            room={room}
+            sessionId={id}
+            localSessionId={localSessionId}
+            relation={rel}
+          />
+        );
       })}
     </>
   );

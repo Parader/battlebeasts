@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
@@ -15,6 +15,8 @@ export type ChestRevealState = {
   essence: number;
   copper: number;
   lines: ChestLootLine[];
+  /** True until server returns loot — animation starts immediately. */
+  awaitingLoot?: boolean;
 };
 
 type Props = {
@@ -34,7 +36,7 @@ const LID_OPEN_RAD = -Math.PI * 0.62;
 
 const SPIKE_COUNT = 16;
 
-/** Timeline (ms) — shake / suspense before rarity + lid. */
+/** Timeline (ms) — shake, then lid + loot. */
 const SHAKE_MS = 1100;
 const OPEN_MS = 950;
 const LOOT_DELAY_MS = 180;
@@ -98,15 +100,18 @@ function createSoftGlowMaterial(colorHex: string) {
 function ChestModel({
   openProgress,
   shake,
+  onReady,
 }: {
   openProgress: number;
   shake: number;
+  onReady?: () => void;
 }) {
   const group = useRef<THREE.Group>(null);
   const shakeRef = useRef<THREE.Group>(null);
   const lidRef = useRef<THREE.Object3D | null>(null);
   const lidRestX = useRef(0);
   const framedRef = useRef(false);
+  const readySent = useRef(false);
   const { camera, size: viewSize } = useThree();
   const gltf = useGLTF(CHEST_GLB_URL);
 
@@ -142,6 +147,17 @@ function ChestModel({
     camera.lookAt(0, 0.04, 0);
     framedRef.current = true;
   }, [scene, camera, viewSize.width, viewSize.height]);
+
+  // Fire after Suspense resolves + first layout so the shake isn't eaten by GLB/Canvas boot.
+  useEffect(() => {
+    if (readySent.current) return;
+    const id = requestAnimationFrame(() => {
+      if (readySent.current) return;
+      readySent.current = true;
+      onReady?.();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [onReady]);
 
   useFrame(({ clock }) => {
     const lid = lidRef.current;
@@ -394,9 +410,11 @@ function LootOverlayLine({ line }: { line: ChestLootLine }) {
 function ChestScene({
   anim,
   rarityHex,
+  onChestReady,
 }: {
   anim: AnimState;
   rarityHex: string;
+  onChestReady: () => void;
 }) {
   return (
     <>
@@ -406,7 +424,7 @@ function ChestScene({
       <Suspense fallback={null}>
         <AnticipationGlow shake={anim.shake * (1 - anim.rarity)} />
         <RarityBackGlow colorHex={rarityHex} rarity={anim.rarity} />
-        <ChestModel openProgress={anim.open} shake={anim.shake} />
+        <ChestModel openProgress={anim.open} shake={anim.shake} onReady={onChestReady} />
         <ChestInteriorBurst openProgress={anim.open} />
       </Suspense>
     </>
@@ -416,15 +434,28 @@ function ChestScene({
 /** Full-screen chest open — shake → rarity bloom → lid + spikes → loot. */
 export function ChestRevealPanel({ reveal, onClose }: Props) {
   const [anim, setAnim] = useState<AnimState>(ZERO_ANIM);
-  const [showLoot, setShowLoot] = useState(false);
+  const [timelineReady, setTimelineReady] = useState(false);
+  const [animStarted, setAnimStarted] = useState(false);
+  const readyOnce = useRef(false);
   const rarityHex = RARITY_HEX[reveal.quality] ?? RARITY_HEX.blue;
+  const lootReady = !reveal.awaitingLoot;
+  const showLoot = timelineReady && lootReady;
 
+  const onChestReady = useCallback(() => {
+    if (readyOnce.current) return;
+    readyOnce.current = true;
+    setAnimStarted(true);
+  }, []);
+
+  // Start the timeline only once the chest mesh is framed and visible —
+  // otherwise Canvas/GLB load eats the shake and the open feels rushed.
   useEffect(() => {
+    if (!animStarted) return;
     setAnim(ZERO_ANIM);
-    setShowLoot(false);
+    setTimelineReady(false);
     const start = performance.now();
     let raf = 0;
-    let lootShown = false;
+    let ready = false;
 
     const tick = (now: number) => {
       const elapsed = now - start;
@@ -447,9 +478,9 @@ export function ChestRevealPanel({ reveal, onClose }: Props) {
 
       setAnim({ shake, open, rarity, elapsed });
 
-      if (!lootShown && elapsed >= SHAKE_MS + OPEN_MS + LOOT_DELAY_MS) {
-        lootShown = true;
-        setShowLoot(true);
+      if (!ready && elapsed >= SHAKE_MS + OPEN_MS + LOOT_DELAY_MS) {
+        ready = true;
+        setTimelineReady(true);
       }
 
       if (elapsed < SHAKE_MS + OPEN_MS + LOOT_DELAY_MS + 400) {
@@ -459,7 +490,7 @@ export function ChestRevealPanel({ reveal, onClose }: Props) {
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [reveal]);
+  }, [animStarted]);
 
   return (
     <div
@@ -474,7 +505,7 @@ export function ChestRevealPanel({ reveal, onClose }: Props) {
           gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
           style={{ width: "100%", height: "100%", display: "block", background: "transparent" }}
         >
-          <ChestScene anim={anim} rarityHex={rarityHex} />
+          <ChestScene anim={anim} rarityHex={rarityHex} onChestReady={onChestReady} />
         </Canvas>
       </div>
 

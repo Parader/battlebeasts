@@ -15,7 +15,7 @@ type Props = {
  * Camera-projected display name above other hunters (sits above the HP bar).
  * Hidden while cloaked — Html ignores parent mesh visibility.
  */
-export function PlayerNameBillboard({ room, sessionId, y = 2.48 }: Props) {
+export function PlayerNameBillboard({ room, sessionId, y = 3.2 }: Props) {
   const label = useRef<HTMLDivElement>(null);
   const lastName = useRef("");
 
@@ -56,7 +56,7 @@ export function PlayerNameBillboard({ room, sessionId, y = 2.48 }: Props) {
       position={[0, y, 0]}
       center
       style={{ pointerEvents: "none" }}
-      zIndexRange={[35, 0]}
+      zIndexRange={[20, 0]}
     >
       <div ref={label} className="bb-nameplate" style={{ visibility: "hidden" }} />
     </Html>

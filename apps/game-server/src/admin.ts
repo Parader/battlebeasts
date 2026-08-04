@@ -1,6 +1,6 @@
-/** Server-side admin allowlist for testing grants. */
+import { isAdminEmail as sharedIsAdminEmail } from "@battlebeasts/shared";
 
-const DEFAULT_ADMIN_EMAILS = ["derick0232@gmail.com"];
+/** Server-side admin allowlist for testing grants (DEFAULT + ADMIN_EMAILS env). */
 
 function parseEnvEmails(): string[] {
   const raw = process.env.ADMIN_EMAILS?.trim();
@@ -11,13 +11,8 @@ function parseEnvEmails(): string[] {
     .filter(Boolean);
 }
 
-const ADMIN_SET = new Set(
-  [...DEFAULT_ADMIN_EMAILS, ...parseEnvEmails()].map((e) => e.toLowerCase()),
-);
-
 export function isAdminEmail(email: string | undefined | null): boolean {
-  if (!email) return false;
-  return ADMIN_SET.has(email.trim().toLowerCase());
+  return sharedIsAdminEmail(email, parseEnvEmails());
 }
 
 export const ADMIN_GRANT_MAX_PER_FIELD = 100_000;

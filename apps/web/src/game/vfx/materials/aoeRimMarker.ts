@@ -3,7 +3,7 @@ import * as THREE from "three";
 /**
  * Soft AoE ground marker — bright energetic rim + faint center wash.
  * Tint with `uColor` / `uHot` for fire, ice, poison, etc.
- * `uShape`: 0 = circle, 1 = capsule (stadium / corridor).
+ * `uShape`: 0 = circle, 1 = capsule (stadium / corridor), 2 = cone (pie slice).
  */
 const VERT = /* glsl */ `
 varying vec2 vUv;
@@ -25,6 +25,10 @@ uniform float uNoise;
 uniform float uShape;
 /** Capsule: half-length / half-width (plane local). Circle unused. */
 uniform float uAspect;
+/** Cone: half-angle in radians from forward (−Y in plane / +Z world). */
+uniform float uHalfAngle;
+/** Outer radius as 0..1 of mesh extent (circle / cone grow). Capsule ignores. */
+uniform float uProgress;
 varying vec2 vUv;
 
 float hash(vec2 p) {
@@ -51,20 +55,29 @@ float fbm(vec2 p) {
   return v;
 }
 
-/** Signed distance: <0 inside, 0 on rim. Circle unit disc or stadium. */
+/** Signed distance: <0 inside, 0 on rim. Circle, stadium, or cone pie. */
 float rimDistance(vec2 p) {
+  float edge = max(0.02, uProgress);
   if (uShape < 0.5) {
-    return length(p) - 1.0;
+    return length(p) - edge;
   }
-  // Capsule in local space: half-width = 1, half-length = uAspect.
-  float h = max(0.0, uAspect - 1.0);
-  vec2 q = vec2(p.x - clamp(p.x, -h, h), p.y);
-  return length(q) - 1.0;
+  if (uShape < 1.5) {
+    // Capsule in local space: half-width = 1, half-length = uAspect.
+    float h = max(0.0, uAspect - 1.0);
+    vec2 q = vec2(p.x - clamp(p.x, -h, h), p.y);
+    return length(q) - 1.0;
+  }
+  // Cone pie: apex at origin, forward along −Y (matches GroundDecal cone).
+  float r = length(p);
+  float ang = atan(p.x, -p.y);
+  float dR = r - edge;
+  float dA = (abs(ang) - uHalfAngle) * max(r, 0.05);
+  return max(dR, dA);
 }
 
 void main() {
   vec2 p = (vUv - 0.5) * 2.0;
-  if (uShape > 0.5) {
+  if (uShape > 0.5 && uShape < 1.5) {
     p.x *= uAspect;
   }
 
@@ -105,7 +118,7 @@ void main() {
 }
 `;
 
-export type AoeRimShape = "circle" | "capsule";
+export type AoeRimShape = "circle" | "capsule" | "cone";
 
 export type AoeRimMarkerMaterialOpts = {
   color?: string;
@@ -123,7 +136,15 @@ export type AoeRimMarkerMaterialOpts = {
    * Circle ignores this.
    */
   aspect?: number;
+  /** Cone only: half-angle from facing (radians). */
+  halfAngle?: number;
 };
+
+function shapeId(shape?: AoeRimShape): number {
+  if (shape === "capsule") return 1;
+  if (shape === "cone") return 2;
+  return 0;
+}
 
 export function createAoeRimMarkerMaterial(
   opts: AoeRimMarkerMaterialOpts = {},
@@ -132,7 +153,6 @@ export function createAoeRimMarkerMaterial(
   const hot = opts.hotColor
     ? new THREE.Color(opts.hotColor)
     : color.clone().lerp(new THREE.Color("#fff7ed"), 0.65);
-  const shape = opts.shape === "capsule" ? 1 : 0;
   return new THREE.ShaderMaterial({
     uniforms: {
       uColor: { value: color },
@@ -143,8 +163,10 @@ export function createAoeRimMarkerMaterial(
       uGlowWidth: { value: opts.glowWidth ?? 0.07 },
       uTime: { value: 0 },
       uNoise: { value: opts.noise ?? 0.3 },
-      uShape: { value: shape },
+      uShape: { value: shapeId(opts.shape) },
       uAspect: { value: Math.max(1, opts.aspect ?? 1) },
+      uHalfAngle: { value: Math.max(0.05, opts.halfAngle ?? 0.7) },
+      uProgress: { value: 1 },
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -175,6 +197,20 @@ export function tintAoeRimMarkerMaterial(
 
 export function setAoeRimMarkerAspect(mat: THREE.ShaderMaterial, aspect: number): void {
   mat.uniforms.uAspect!.value = Math.max(1, aspect);
+}
+
+export function setAoeRimMarkerHalfAngle(
+  mat: THREE.ShaderMaterial,
+  halfAngle: number,
+): void {
+  mat.uniforms.uHalfAngle!.value = Math.max(0.05, halfAngle);
+}
+
+export function setAoeRimMarkerProgress(
+  mat: THREE.ShaderMaterial,
+  progress: number,
+): void {
+  mat.uniforms.uProgress!.value = Math.max(0.02, Math.min(1, progress));
 }
 
 export function tickAoeRimMarkerMaterial(mat: THREE.ShaderMaterial, dt: number): void {

@@ -164,6 +164,12 @@ const SMOKE_BOMB: AbilityVfxProfile = {
   combatFx: { onAoe: "smokeBomb", skipLegacyBurst: true },
 };
 
+const HOLY_GROUND: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "holyGround", skipLegacyBurst: true },
+};
+
 const VOLCANO: AbilityVfxProfile = {
   castEngine: "combatFxOnly",
   projectile: "none",
@@ -178,6 +184,13 @@ const PROTECTION_BUBBLE: AbilityVfxProfile = {
 };
 
 const SHROOMS: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { skipLegacyBurst: true },
+};
+
+const RIFT_FISSURE: AbilityVfxProfile = {
+  // Schema mesh (RiftPortals) owns the mouths; travel uses combat_fx portal.
   castEngine: "combatFxOnly",
   projectile: "none",
   combatFx: { skipLegacyBurst: true },
@@ -198,6 +211,14 @@ const FROST_MIST: AbilityVfxProfile = {
   castEngine: "combatFxOnly",
   projectile: "none",
   combatFx: { onAoe: "channelOnce", skipLegacyBurst: true },
+};
+
+const SILENCE_SWEEP: AbilityVfxProfile = {
+  /** Start with the punch windup so the swoop leads impact (not waiting on aoe FX). */
+  castEngine: "bridgedAoe",
+  bridgedAoe: { lifePadMs: 240, y: 0.04 },
+  projectile: "none",
+  combatFx: { skipLegacyBurst: true },
 };
 
 const GROOVE: AbilityVfxProfile = {
@@ -255,9 +276,11 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
   firewall: FIREWALL,
   poisonCloud: POISON_CLOUD,
   smokeBomb: SMOKE_BOMB,
+  holyGround: HOLY_GROUND,
   volcano: VOLCANO,
   protectionBubble: PROTECTION_BUBBLE,
   shrooms: SHROOMS,
+  riftFissure: RIFT_FISSURE,
   magmaOrbs: MAGMA_ORBS,
   bloodRush: {
     castEngine: "none",
@@ -266,6 +289,7 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
     combatFx: { onHit: "sfxOnly", skipLegacyBurst: true },
   },
   frostMist: FROST_MIST,
+  silenceSweep: SILENCE_SWEEP,
   groove: GROOVE,
   healBeam: HEAL_BEAM,
   lifeLeech: LIFE_LEECH,

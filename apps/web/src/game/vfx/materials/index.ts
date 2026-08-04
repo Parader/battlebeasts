@@ -23,5 +23,7 @@ export {
   tickAoeRimMarkerMaterial,
   setAoeRimMarkerOpacity,
   setAoeRimMarkerAspect,
+  setAoeRimMarkerHalfAngle,
+  setAoeRimMarkerProgress,
 } from "./aoeRimMarker";
 export type { AoeRimMarkerMaterialOpts, AoeRimShape } from "./aoeRimMarker";

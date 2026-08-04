@@ -11,11 +11,13 @@ export type CombatFxHitMode = "catalogImpact" | "sfxOnly" | "none";
 export type CombatFxAoeMode =
   | "catalogImpact"
   | "channelOnce"
+  | "silenceSweep"
   | "groundCrack"
   | "spikes"
   | "firewall"
   | "poisonCloud"
   | "smokeBomb"
+  | "holyGround"
   | "fireballBurn"
   | "iceLanceExplode"
   | "groove"

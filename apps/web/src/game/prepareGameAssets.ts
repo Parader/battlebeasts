@@ -1,7 +1,8 @@
 import { useGLTF, useTexture } from "@react-three/drei";
-import { ARENA_SCENE_URL, HUB_SCENE_URL } from "@battlebeasts/shared";
+import { ARENA_SCENE_URL, CEMETERY_SCENE_URL, HUB_SCENE_URL } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
 import { CHARACTER_URL } from "./characterVisual";
+import { ZOMBIE_URL } from "./zombieAsset";
 import { preloadArenaMusic, preloadVillageMusic } from "./gameMusic";
 import { preloadArenaAmbiance, preloadVillageAmbiance } from "./gameAmbiance";
 import { preloadCombatSfx } from "./gameSfx";
@@ -26,6 +27,10 @@ function hubSceneUrl(): string {
 
 function arenaSceneUrl(): string {
   return assetUrl(ARENA_SCENE_URL.replace(/^\//, ""));
+}
+
+function cemeterySceneUrl(): string {
+  return assetUrl(CEMETERY_SCENE_URL.replace(/^\//, ""));
 }
 
 async function ensureFetched(url: string): Promise<void> {
@@ -107,7 +112,7 @@ export async function preloadHubAssets(
   );
 }
 
-/** Warm desert arena + full spell/combat bundle (safe if hub already cached). */
+/** Warm desert + cemetery + zombie + combat bundle (safe if hub already cached). */
 export async function preloadArenaAssets(
   onProgress?: (p: AssetProgress) => void,
 ): Promise<void> {
@@ -115,6 +120,8 @@ export async function preloadArenaAssets(
     [
       () => preloadGltf(CHARACTER_URL),
       () => preloadGltf(arenaSceneUrl()),
+      () => preloadGltf(cemeterySceneUrl()),
+      () => preloadGltf(ZOMBIE_URL),
       () => preloadSpellGlbs(),
       () => preloadSpellVfxTextures(),
       () => preloadCombatSfx(),

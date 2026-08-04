@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Room } from "colyseus.js";
 import {
-  ABILITIES,
   COSMETIC_COLORS,
   COSMETIC_PATTERN_COLORS,
   COSMETIC_PATTERNS,
@@ -10,18 +9,14 @@ import {
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
   EMOTES,
-  EMOTE_PIE_SLOT_COUNT,
-  LOADOUT_SIZE,
   SPELL_SLOTS,
-  abilitiesForSlot,
-  abilityUnlockCostEssence,
-  canAffordShopCost,
   canEquipInSlot,
   cosmeticsEquippedFromFields,
   cosmeticsForSlot,
+  cosmeticColorName,
   cosmeticMeshName,
+  cosmeticPatternColorName,
   emptyPlayerUnlocks,
-  formatAbilityArmoryStats,
   getCosmeticItem,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
@@ -39,14 +34,15 @@ import {
   type PlayerUnlocks,
   type TalentBuild,
 } from "@battlebeasts/shared";
-import { SpellSlotGlyph } from "./InputGlyph";
 import { AppearancePreview } from "./AppearancePreview";
+import { EmotePieEditor } from "./EmotePieHud";
 import { GameIcon } from "./GameIcon";
 import { GEAR_SLOT_ICONS } from "./gameIcons";
 import { GamePanelShell } from "./GamePanelShell";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { appearanceFromPlayer, MerchantPanel } from "./MerchantShop";
 import { WalletDisplay } from "./CoinDisplay";
+import { SpellArmoury, SpellArmouryHeaderExtras } from "./SpellArmoury";
 import { TalentTreePanel } from "./TalentTreePanel";
 import { loadStandMenuMemory, saveStandMenuMemory } from "../standMenuMemory";
 import { getCreaturePatternTexture } from "../creaturePatterns";
@@ -162,6 +158,7 @@ function AppearanceEditor({
     cosmeticsEquippedFromFields(me ?? {}),
   );
   const [selectedEmoteId, setSelectedEmoteId] = useState<string | null>(null);
+  const [previewEmoteId, setPreviewEmoteId] = useState<string | null>(null);
   const [emoteSlots, setEmoteSlots] = useState<(string | null)[]>(() =>
     normalizeEmoteSlots(unlocks.emoteSlots, unlocks.emotes),
   );
@@ -212,23 +209,52 @@ function AppearanceEditor({
     () => Object.values(EMOTES).filter((e) => ownsEmote(unlocks.emotes, e.id)),
     [unlocks.emotes],
   );
-  const savedEmoteSlots = useMemo(
-    () => normalizeEmoteSlots(unlocks.emoteSlots, unlocks.emotes),
-    [unlocks.emoteSlots, unlocks.emotes],
-  );
-  const emoteSlotsDirty = emoteSlots.some((id, i) => id !== savedEmoteSlots[i]);
-
   const setCosmetic = (slot: CosmeticSlot, itemId: string | null) => {
     setEquipped((prev) => normalizeCosmeticsEquipped({ ...prev, [slot]: itemId }));
     room?.send("set_cosmetic", { slot, itemId });
   };
 
+  const commitEmoteSlots = (next: (string | null)[]) => {
+    setEmoteSlots(next);
+    room?.send("set_emote_loadout", { emoteSlots: next });
+  };
+
+  const placeEmoteInSlot = (i: number, emoteId: string) => {
+    const next = [...emoteSlots];
+    next[i] = emoteId;
+    commitEmoteSlots(next);
+    setSelectedEmoteId(null);
+    setPreviewEmoteId(emoteId);
+  };
+
+  const clearEmoteSlot = (i: number) => {
+    const removed = emoteSlots[i];
+    const next = [...emoteSlots];
+    next[i] = null;
+    commitEmoteSlots(next);
+    if (removed) {
+      setPreviewEmoteId((cur) => (cur === removed ? null : cur));
+    }
+  };
+
   const handleEmoteSlotClick = (i: number) => {
-    setEmoteSlots((prev) => {
-      const next = [...prev];
-      next[i] = selectedEmoteId ? (next[i] === selectedEmoteId ? null : selectedEmoteId) : null;
-      return next;
-    });
+    if (selectedEmoteId) {
+      placeEmoteInSlot(i, selectedEmoteId);
+      return;
+    }
+    const id = emoteSlots[i];
+    if (id) setPreviewEmoteId(id);
+  };
+
+  const handleEmoteSlotDrop = (i: number, emoteId: string, fromSlot?: number) => {
+    const next = [...emoteSlots];
+    if (typeof fromSlot === "number" && fromSlot !== i) {
+      next[fromSlot] = next[i] ?? null;
+    }
+    next[i] = emoteId;
+    commitEmoteSlots(next);
+    setSelectedEmoteId(null);
+    setPreviewEmoteId(emoteId);
   };
 
   return (
@@ -293,11 +319,12 @@ function AppearanceEditor({
                         " ",
                       )}
                       style={{ backgroundColor: c }}
+                      title={cosmeticColorName(c)}
                       onClick={() => {
                         setColor(c);
                         room?.send("set_color", { color: c });
                       }}
-                      aria-label={`Body color ${c}`}
+                      aria-label={`Body color ${cosmeticColorName(c)}`}
                       aria-pressed={on}
                     />
                   );
@@ -318,11 +345,12 @@ function AppearanceEditor({
                         " ",
                       )}
                       style={{ backgroundColor: c }}
+                      title={cosmeticPatternColorName(c)}
                       onClick={() => {
                         setPatternColor(c);
                         room?.send("set_pattern_color", { patternColor: c });
                       }}
-                      aria-label={`Pattern color ${c}`}
+                      aria-label={`Pattern color ${cosmeticPatternColorName(c)}`}
                       aria-pressed={on}
                       disabled={pattern === "plain"}
                     />
@@ -457,9 +485,10 @@ function AppearanceEditor({
             </div>
           </div>
         ) : (
-          <div className="bb-appearance__pane" role="tabpanel">
+          <div className="bb-appearance__pane bb-appearance__pane--emotes" role="tabpanel">
             <p className="bb-muted">
-              Pick an emote, then click a wheel slot to place it. Click a filled slot to clear it.
+              Select or drag an emote onto the wheel. Click a filled wedge to preview it;
+              right-click to clear.
             </p>
 
             <div>
@@ -474,10 +503,20 @@ function AppearanceEditor({
                       <button
                         key={e.id}
                         type="button"
-                        className={["bb-choice !w-auto !p-2 text-sm", on ? "bb-choice--on" : ""].join(
-                          " ",
-                        )}
-                        onClick={() => setSelectedEmoteId((prev) => (prev === e.id ? null : e.id))}
+                        draggable
+                        className={[
+                          "bb-choice bb-emote-chip !w-auto !p-2 text-sm",
+                          on ? "bb-choice--on" : "",
+                        ].join(" ")}
+                        onClick={() => {
+                          setSelectedEmoteId((prev) => (prev === e.id ? null : e.id));
+                          setPreviewEmoteId(e.id);
+                        }}
+                        onDragStart={(ev) => {
+                          ev.dataTransfer.setData("application/x-bb-emote", e.id);
+                          ev.dataTransfer.effectAllowed = "copyMove";
+                          setSelectedEmoteId(e.id);
+                        }}
                         aria-pressed={on}
                       >
                         {e.name}
@@ -489,35 +528,15 @@ function AppearanceEditor({
             </div>
 
             <div>
-              <p className="bb-section-label">Emote wheel ({EMOTE_PIE_SLOT_COUNT} slots)</p>
-              <div className="bb-emote-slots">
-                {emoteSlots.map((id, i) => {
-                  const emote = id ? EMOTES[id] : undefined;
-                  return (
-                    <button
-                      key={i}
-                      type="button"
-                      className={[
-                        "bb-emote-slot",
-                        emote ? "bb-emote-slot--filled" : "",
-                      ].join(" ")}
-                      onClick={() => handleEmoteSlotClick(i)}
-                    >
-                      {emote?.name ?? "Empty"}
-                    </button>
-                  );
-                })}
-              </div>
+              <p className="bb-section-label">Emote wheel</p>
+              <EmotePieEditor
+                slots={emoteSlots}
+                selectedEmoteId={selectedEmoteId}
+                onSlotClick={handleEmoteSlotClick}
+                onSlotClear={clearEmoteSlot}
+                onSlotDrop={handleEmoteSlotDrop}
+              />
             </div>
-
-            <button
-              type="button"
-              className="bb-btn-brass self-start disabled:opacity-40"
-              disabled={!emoteSlotsDirty}
-              onClick={() => room?.send("set_emote_loadout", { emoteSlots })}
-            >
-              Save emote wheel
-            </button>
           </div>
         )}
       </div>
@@ -528,6 +547,7 @@ function AppearanceEditor({
           pattern={pattern}
           patternColor={patternColor}
           cosmeticsEquipped={equipped}
+          previewEmoteId={tab === "emotes" ? previewEmoteId : null}
         />
       </div>
     </div>
@@ -562,12 +582,6 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional key-based sync
   }, [serverLoadoutKey, economy.activeLoadoutSlot]);
 
-  const selectedSlotDef = SPELL_SLOTS[selectedSlot];
-  const slotPool = useMemo(
-    () => (selectedSlotDef ? abilitiesForSlot(selectedSlotDef.id) : []),
-    [selectedSlotDef],
-  );
-
   const assignAbility = (abilityId: string) => {
     const slot = SPELL_SLOTS[selectedSlot];
     if (!slot || !canEquipInSlot(abilityId, slot.id)) return;
@@ -587,6 +601,17 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
     if (preset) setDraftLoadout(normalizeLoadout(preset.abilityIds));
   };
 
+  const armouryHeader =
+    kind === "build"
+      ? SpellArmouryHeaderExtras({
+          essence: economy.essence,
+          loadoutPresets: economy.loadoutPresets,
+          activeLoadoutSlot: economy.activeLoadoutSlot,
+          loadoutSlotCount: unlocks.loadoutSlotCount,
+          onSelectPreset: selectPreset,
+        })
+      : null;
+
   let body: ReactNode = null;
   let footer: ReactNode = null;
 
@@ -594,169 +619,22 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
     body = <AppearanceEditor room={room} localSessionId={localSessionId} unlocks={unlocks} />;
   } else if (kind === "build") {
     body = (
-      <>
-        <div className="bb-loadout-presets" role="tablist" aria-label="Loadout presets">
-          {Array.from({ length: unlocks.loadoutSlotCount }, (_, i) => i).map((i) => {
-            const preset = economy.loadoutPresets.find((p) => p.slotIndex === i);
-            const active = economy.activeLoadoutSlot === i;
-            return (
-              <button
-                key={i}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                className={["bb-slot-chip", active ? "bb-slot-chip--on" : ""].join(" ")}
-                onClick={() => selectPreset(i)}
-              >
-                {preset?.name ?? `Loadout ${i + 1}`}
-              </button>
-            );
-          })}
-        </div>
-        <div className="bb-loadout">
-          <aside className="bb-loadout__rail">
-            <div className="bb-loadout__rail-head">
-              <p className="bb-section-label mb-0">Loadout</p>
-              <span className="bb-meta">
-                {draftLoadout.filter(Boolean).length}/{LOADOUT_SIZE}
-              </span>
-            </div>
-            <div className="bb-loadout__slots" role="listbox" aria-label="Spell slots">
-              {SPELL_SLOTS.map((slot, i) => {
-                const id = draftLoadout[i];
-                const ability = id ? ABILITIES[id] : undefined;
-                const active = selectedSlot === i;
-                const empty = !ability;
-                return (
-                  <button
-                    key={slot.id}
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    onClick={() => {
-                      setSelectedSlot(i);
-                      saveStandMenuMemory({ spellSlot: i });
-                    }}
-                    className={[
-                      "bb-loadout-slot",
-                      active ? "bb-loadout-slot--on" : "",
-                      empty ? "bb-loadout-slot--empty" : "",
-                    ].join(" ")}
-                  >
-                    <span className="bb-loadout-slot__bind">
-                      <SpellSlotGlyph slot={slot} size={slot.input === "space" ? 22 : 28} />
-                    </span>
-                    <span className="bb-loadout-slot__meta">
-                      <p className="bb-loadout-slot__key">{slot.label}</p>
-                      <p className="bb-loadout-slot__name">{ability?.name ?? "Empty"}</p>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </aside>
-
-          <section className="bb-loadout__pool" aria-label="Spell pool">
-            <header className="bb-loadout__pool-head">
-              {selectedSlotDef ? (
-                <SpellSlotGlyph
-                  slot={selectedSlotDef}
-                  size={selectedSlotDef.input === "space" ? 22 : 26}
-                />
-              ) : null}
-              <div>
-                <h3 className="bb-loadout__pool-title">
-                  {selectedSlotDef?.label ?? "Slot"} spells
-                </h3>
-                <p className="bb-meta mt-1">
-                  {selectedSlotDef?.hint} · {slotPool.length} available — click to equip
-                  (autosaves)
-                </p>
-              </div>
-            </header>
-
-            <ul className="bb-loadout__pool-list">
-              {slotPool.length === 0 ? (
-                <li className="bb-muted py-8 text-center">No spells in this pool yet.</li>
-              ) : (
-                slotPool.map((a) => {
-                  const owned = ownsAbility(unlocks.abilities, a.id);
-                  const equipped = draftLoadout[selectedSlot] === a.id;
-
-                  if (!owned) {
-                    const cost = abilityUnlockCostEssence(a.id);
-                    const afford = canAffordShopCost(wallet, { kind: "essence", amount: cost });
-                    return (
-                      <li key={a.id}>
-                        <div className="bb-loadout-card bb-loadout-card--locked">
-                          <div className="bb-loadout-card__main">
-                            <div className="bb-loadout-card__top">
-                              <span className="bb-loadout-card__name">{a.name}</span>
-                              <span className="bb-loadout-card__shape">{a.shape}</span>
-                            </div>
-                            <p className="bb-loadout-card__stats">
-                              {formatAbilityArmoryStats(a)}
-                            </p>
-                            {a.description ? (
-                              <p className="bb-loadout-card__desc">{a.description}</p>
-                            ) : null}
-                          </div>
-                          <button
-                            type="button"
-                            className="bb-btn-brass !min-w-[7rem] !px-3 !py-1.5 !text-xs disabled:opacity-40"
-                            disabled={!afford}
-                            onClick={() =>
-                              setUnlockConfirm({ abilityId: a.id, name: a.name, cost })
-                            }
-                          >
-                            Unlock · {cost} essence
-                          </button>
-                        </div>
-                      </li>
-                    );
-                  }
-
-                  return (
-                    <li key={a.id}>
-                      <button
-                        type="button"
-                        onClick={() => assignAbility(a.id)}
-                        className={[
-                          "bb-loadout-card",
-                          equipped ? "bb-loadout-card--on" : "",
-                        ].join(" ")}
-                      >
-                        <div className="bb-loadout-card__main">
-                          <div className="bb-loadout-card__top">
-                            <span className="bb-loadout-card__name">{a.name}</span>
-                            <span className="bb-loadout-card__shape">{a.shape}</span>
-                          </div>
-                          <p className="bb-loadout-card__stats">{formatAbilityArmoryStats(a)}</p>
-                          {a.description ? (
-                            <p className="bb-loadout-card__desc">{a.description}</p>
-                          ) : null}
-                          {a.tags?.length ? (
-                            <div className="bb-loadout-card__tags">
-                              {a.tags.slice(0, 6).map((tag) => (
-                                <span key={tag} className="bb-tag">
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                        <span className="bb-loadout-card__action">
-                          {equipped ? "Equipped" : "Equip"}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })
-              )}
-            </ul>
-          </section>
-        </div>
-      </>
+      <SpellArmoury
+        draftLoadout={draftLoadout}
+        selectedSlot={selectedSlot}
+        onSelectSlot={(i) => {
+          setSelectedSlot(i);
+          saveStandMenuMemory({ spellSlot: i });
+        }}
+        onEquip={assignAbility}
+        onRequestUnlock={(abilityId, name, cost) =>
+          setUnlockConfirm({ abilityId, name, cost })
+        }
+        unlocks={unlocks}
+        essence={economy.essence}
+        talentIds={economy.talents}
+        talentBuild={economy.talentBuild}
+      />
     );
   } else if (kind === "talent") {
     body = (
@@ -812,9 +690,16 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
       />
       <GamePanelShell
       title={TITLES[kind]}
-      subtitle={<WalletDisplay wallet={economy} />}
+      subtitle={kind === "build" ? undefined : <WalletDisplay wallet={economy} />}
       onClose={onClose}
-      titleAside={kind === "talent" ? talentHeaderActions : undefined}
+      floatingHeader={kind === "build"}
+      titleAside={
+        kind === "talent"
+          ? talentHeaderActions
+          : kind === "build"
+            ? armouryHeader?.titleAside
+            : undefined
+      }
       headerActions={
         kind === "shop" ? (
           <label className="bb-shop__hide-owned">
@@ -825,6 +710,8 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
             />
             Hide owned
           </label>
+        ) : kind === "build" ? (
+          armouryHeader?.headerActions
         ) : undefined
       }
       wide={
@@ -833,18 +720,22 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
       maxWidthClass={
         kind === "talent"
           ? "max-w-6xl"
-          : kind === "build" || kind === "customization"
-            ? "max-w-5xl"
-            : kind === "shop"
+          : kind === "build"
+            ? "max-w-6xl"
+            : kind === "customization"
               ? "max-w-5xl"
-              : undefined
+              : kind === "shop"
+                ? "max-w-5xl"
+                : undefined
       }
       maxHeightClass={
         kind === "talent"
           ? "h-[min(96dvh,62rem)] max-h-[min(96dvh,62rem)]"
-          : kind === "customization"
-            ? "h-[min(94dvh,58rem)] max-h-[min(94dvh,58rem)]"
-            : "max-h-[min(92dvh,54rem)]"
+          : kind === "build"
+            ? "h-[min(88dvh,52rem)] max-h-[min(88dvh,52rem)]"
+            : kind === "customization"
+              ? "h-[min(94dvh,58rem)] max-h-[min(94dvh,58rem)]"
+              : "max-h-[min(92dvh,54rem)]"
       }
       footer={footer}
     >

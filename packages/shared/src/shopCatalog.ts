@@ -3,21 +3,27 @@
  * `"parchments"` reserved for future PvE run modifiers (no items in v1).
  */
 
-import { COPPER_PER_SILVER, type ShopCost } from "./resources";
+import { COPPER_PER_GOLD, COPPER_PER_SILVER, type ShopCost } from "./resources";
 import { HEALTH_TONIC_HEAL } from "./combatMagnitude";
-import { COSMETIC_CATALOG } from "./cosmetics";
+import { COSMETIC_CATALOG, COSMETIC_SLOT_LABELS } from "./cosmetics";
 import { EMOTES } from "./emotes";
 import {
   COSMETIC_COLORS,
   COSMETIC_PATTERN_COLORS,
   COSMETIC_PATTERNS,
+  cosmeticColorName,
+  cosmeticPatternColorName,
 } from "./stands";
 import { STARTER_COLORS, STARTER_PATTERN_COLORS, STARTER_PATTERNS } from "./playerUnlocks";
+
+/** Max beach balls a lobby owner can place in their hub. */
+export const MAX_LOBBY_BEACH_BALLS = 2;
 
 export type ShopCategory =
   | "cosmetics"
   | "emotes"
   | "loadouts"
+  | "lobby"
   | "consumables"
   | "parchments";
 
@@ -28,6 +34,7 @@ export type ShopGrant =
   | { kind: "pattern_color"; hex: string }
   | { kind: "emote"; emoteId: string }
   | { kind: "loadout_slot"; toCount: number }
+  | { kind: "lobby_beach_ball"; toCount: number }
   | { kind: "consumable"; effect: "health_tonic" | "copper_pouch" }
   | { kind: "item_stack"; itemId: string; qty: number };
 
@@ -72,6 +79,24 @@ export const SHOP_ITEMS: Record<string, ShopItemDef> = {
     grant: { kind: "loadout_slot", toCount: 2 },
     description: "Unlock a second saved spell loadout",
   },
+  /** First beach ball for your own lobby plaza. */
+  beach_ball: {
+    id: "beach_ball",
+    name: "Beach Ball",
+    category: "lobby",
+    cost: coins(50 * COPPER_PER_SILVER),
+    grant: { kind: "lobby_beach_ball", toCount: 1 },
+    description: "Place a beach ball in your lobby. Own lobby only.",
+  },
+  /** Second beach ball — gold tier. */
+  beach_ball_2: {
+    id: "beach_ball_2",
+    name: "Second Beach Ball",
+    category: "lobby",
+    cost: coins(COPPER_PER_GOLD),
+    grant: { kind: "lobby_beach_ball", toCount: 2 },
+    description: "Add a second beach ball to your lobby. Requires the first ball. Own lobby only.",
+  },
 };
 
 // Body colors (skip starters)
@@ -80,10 +105,11 @@ for (const hex of COSMETIC_COLORS) {
   const id = `color_${hex.slice(1)}`;
   SHOP_ITEMS[id] = {
     id,
-    name: `Body Color ${hex}`,
+    name: cosmeticColorName(hex),
     category: "cosmetics",
     cost: coins(90),
     grant: { kind: "color", hex },
+    description: "Body hide tint.",
   };
 }
 
@@ -92,10 +118,11 @@ for (const hex of COSMETIC_PATTERN_COLORS) {
   const id = `ink_${hex.slice(1)}`;
   SHOP_ITEMS[id] = {
     id,
-    name: `Pattern Ink ${hex}`,
+    name: `${cosmeticPatternColorName(hex)} Ink`,
     category: "cosmetics",
     cost: coins(70),
     grant: { kind: "pattern_color", hex },
+    description: "Pattern marking color.",
   };
 }
 
@@ -120,7 +147,7 @@ for (const item of Object.values(COSMETIC_CATALOG)) {
     category: "cosmetics",
     cost: coins(280),
     grant: { kind: "cosmetic", itemId: item.id },
-    description: item.slot,
+    description: COSMETIC_SLOT_LABELS[item.slot],
   };
 }
 
@@ -144,13 +171,14 @@ export const SHOP_UI_CATEGORIES: readonly ShopCategory[] = [
   "cosmetics",
   "emotes",
   "loadouts",
-  "consumables",
+  "lobby",
 ] as const;
 
 export const SHOP_CATEGORY_LABELS: Record<ShopCategory, string> = {
   cosmetics: "Cosmetics",
   emotes: "Emotes",
   loadouts: "Loadouts",
+  lobby: "Lobby",
   consumables: "Consumables",
   parchments: "Parchments",
 };

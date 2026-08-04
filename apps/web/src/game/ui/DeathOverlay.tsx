@@ -9,6 +9,8 @@ type Props = {
   onRespawn: () => void;
   /** Arena mid-round: show death banner but no respawn button. */
   allowRespawn?: boolean;
+  /** Optional subtitle when respawn is disabled (e.g. Wave Assault). */
+  fallenHint?: string;
 };
 
 /**
@@ -20,6 +22,7 @@ export function DeathOverlay({
   animDurationMs = 3000,
   onRespawn,
   allowRespawn = true,
+  fallenHint,
 }: Props) {
   const [now, setNow] = useState(() => Date.now());
   const [showBanner, setShowBanner] = useState(false);
@@ -79,7 +82,7 @@ export function DeathOverlay({
               ? unlocked
                 ? "Ready to return to the fight."
                 : `Respawn in ${leftSec}s`
-              : "Spectating until the round ends."}
+              : fallenHint ?? "Spectating until the round ends."}
           </p>
           {allowRespawn ? (
             <button

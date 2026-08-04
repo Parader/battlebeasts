@@ -29,7 +29,9 @@ import { PlayerCastChannelBar } from "./PlayerCastChannelBar";
 import { InteractPromptBillboard } from "./InteractPromptBillboard";
 import { resetFootsteps, tickFootsteps } from "./gameSfx";
 import { PortalChannelAura } from "./vfx/effects/portalChannel";
+import { RiftArmRing } from "./vfx/effects/riftArmRing";
 import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
+import { AbilityHoverTelegraph } from "./vfx/AbilityHoverTelegraph";
 import { isRevengeVanished } from "./revengeVanishRuntime";
 
 useGLTF.preload(CHARACTER_URL);
@@ -213,6 +215,18 @@ export function CharacterAvatar({
     if (bodyRef.current) bodyRef.current.visible = !revengeVanishedEarly;
     if (aim) aim.visible = !revengeVanishedEarly;
 
+    // Match / Wave Assault pause: hold pose (don't advance the mixer).
+    if ((room?.state as { paused?: boolean } | undefined)?.paused) {
+      if (!seededMove.current) {
+        prevPos.current.set(p.x, 0, p.z);
+        visualYaw.current = p.yaw;
+        seededMove.current = true;
+      }
+      body.rotation.y = visualYaw.current;
+      if (aim) aim.rotation.y = p.yaw - visualYaw.current;
+      return;
+    }
+
     if (!seededMove.current) {
       prevPos.current.set(p.x, 0, p.z);
       visualYaw.current = p.yaw;
@@ -240,12 +254,22 @@ export function CharacterAvatar({
     }
 
     // Keep sink applied every frame while dead (position set above uses current sink).
+    // Still allow emotes (arena taunts after wipe).
     if (dead) {
       g.position.set(p.x, smashHopOffsetY(me) + deathSinkOffsetY(deathSinkRef.current), p.z);
       velocity.current.set(0, 0, 0);
       prevPos.current.set(p.x, 0, p.z);
       yawLocked.current = true;
       resetFootsteps();
+      const activeEmoteId = localSessionId ? getActiveEmote(localSessionId) : null;
+      if (activeEmoteId) {
+        if (lastEmoteId.current !== activeEmoteId) {
+          lastEmoteId.current = activeEmoteId;
+          playEmoteAnimation(controller, activeEmoteId);
+        }
+      } else if (lastEmoteId.current) {
+        lastEmoteId.current = null;
+      }
       controller.setMovement({
         worldVelocity: velocity.current,
         facingYaw: visualYaw.current,
@@ -408,6 +432,12 @@ export function CharacterAvatar({
             const me = room.state?.players?.get(localSessionId) as
               | { statuses?: Parameters<typeof collectStatusRows>[0] }
               | undefined;
+            if (
+              hasStatusId(me?.statuses, "cloaked") ||
+              hasStatusId(me?.statuses, "revengePhased")
+            ) {
+              return [];
+            }
             return collectStatusRows(me?.statuses);
           }}
         />
@@ -420,9 +450,13 @@ export function CharacterAvatar({
       </group>
       <group ref={aimRef}>
         <AimIndicator color={AIM_RELATION_COLORS.self} />
+        <AbilityHoverTelegraph />
       </group>
       <PlayerHpBillboard room={room} sessionId={localSessionId} />
       <PlayerCastChannelBar room={room} sessionId={localSessionId} />
+      {room && localSessionId ? (
+        <RiftArmRing room={room} sessionId={localSessionId} />
+      ) : null}
       <InteractPromptBillboard />
     </group>
   );

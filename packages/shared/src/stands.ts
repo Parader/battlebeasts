@@ -187,18 +187,63 @@ export const COSMETIC_COLORS = [
   "#171717", // black
 ] as const;
 
+/** Display names for body hide tints (keyed by hex). */
+export const COSMETIC_COLOR_NAMES: Record<(typeof COSMETIC_COLORS)[number], string> = {
+  "#f8fafc": "Frost",
+  "#e7e5e4": "Bone",
+  "#fcd34d": "Sand",
+  "#fb923c": "Amber",
+  "#ef4444": "Crimson",
+  "#f472b6": "Blossom",
+  "#c084fc": "Violet",
+  "#60a5fa": "Sky",
+  "#22d3ee": "Aqua",
+  "#4ade80": "Moss",
+  "#a3e635": "Lime",
+  "#84cc16": "Leaf",
+  "#2dd4bf": "Teal",
+  "#94a3b8": "Slate",
+  "#a8a29e": "Stone",
+  "#78716c": "Clay",
+  "#171717": "Black",
+};
+
+export function cosmeticColorName(hex: string): string {
+  return (COSMETIC_COLOR_NAMES as Record<string, string>)[hex] ?? hex;
+}
+
 /** Ink / marking colors for creature patterns (independent of hide tint). */
 export const COSMETIC_PATTERN_COLORS = [
-  "#f8fafc", // chalk / white (starter)
-  "#1f2937", // charcoal
-  "#7f1d1d",
-  "#1e3a8a",
-  "#14532d",
-  "#78350f",
-  "#4c1d95",
-  "#0f766e",
-  "#a16207",
+  "#1f2937", // charcoal (starter)
+  "#f8fafc", // chalk / white (shop)
+  "#7f1d1d", // maroon
+  "#1e3a8a", // navy
+  "#14532d", // forest
+  "#78350f", // walnut
+  "#4c1d95", // indigo
+  "#0f766e", // tide
+  "#a16207", // ochre
 ] as const;
+
+/** Display names for pattern ink (keyed by hex). */
+export const COSMETIC_PATTERN_COLOR_NAMES: Record<
+  (typeof COSMETIC_PATTERN_COLORS)[number],
+  string
+> = {
+  "#1f2937": "Charcoal",
+  "#f8fafc": "Chalk",
+  "#7f1d1d": "Maroon",
+  "#1e3a8a": "Navy",
+  "#14532d": "Forest",
+  "#78350f": "Walnut",
+  "#4c1d95": "Indigo",
+  "#0f766e": "Tide",
+  "#a16207": "Ochre",
+};
+
+export function cosmeticPatternColorName(hex: string): string {
+  return (COSMETIC_PATTERN_COLOR_NAMES as Record<string, string>)[hex] ?? hex;
+}
 
 export const DEFAULT_COSMETIC_PATTERN_COLOR = COSMETIC_PATTERN_COLORS[0];
 

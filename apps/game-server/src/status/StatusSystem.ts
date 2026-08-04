@@ -5,6 +5,7 @@ import {
   combineStatusMoveMul,
   combineStatusSlowPercent,
   getStatus,
+  isElementalSecondaryStatus,
   isHardCrowdControlStatus,
   rollStatusChance,
   statusesBlockCast,
@@ -90,13 +91,39 @@ export class StatusSystem {
     apps: StatusApplication[] | undefined,
     sourceId: string,
     now: number,
+    opts?: {
+      /**
+       * Intensified Elements — scale DoT/slow duration and stackable slow stacks
+       * (1.05 / 1.10 / 1.15). Buffs / self apps should leave this at 1.
+       */
+      effectMul?: number;
+    },
   ) {
     if (!apps?.length) return;
+    const effectMul =
+      typeof opts?.effectMul === "number" && opts.effectMul > 0 ? opts.effectMul : 1;
     for (const app of apps) {
       if (!rollStatusChance(app.chance ?? 1)) continue;
+      const def = getStatus(app.statusId);
+      let durationMs = app.durationMs;
+      let stacks = app.stacks ?? 1;
+      if (def && effectMul !== 1 && isElementalSecondaryStatus(def)) {
+        const baseDur = durationMs ?? def.durationMs;
+        durationMs = Math.max(1, Math.round(baseDur * effectMul));
+        // Harder slows: bump stackable chill / slow stacks.
+        if (
+          (def.mechanic === "slow" || (typeof def.moveMul === "number" && def.moveMul < 1)) &&
+          (def.maxStacks ?? 1) > 1
+        ) {
+          stacks = Math.min(
+            def.maxStacks ?? 1,
+            Math.max(1, Math.ceil(stacks * effectMul)),
+          );
+        }
+      }
       this.apply(targetId, app.statusId, sourceId, now, {
-        durationMs: app.durationMs,
-        stacks: app.stacks ?? 1,
+        durationMs,
+        stacks,
       });
     }
   }
@@ -118,6 +145,8 @@ export class StatusSystem {
     }
 
     const duration = opts?.durationMs ?? def.durationMs;
+    const permanent = def.permanent === true || duration <= 0;
+    const expiresAt = permanent ? Number.MAX_SAFE_INTEGER : now + duration;
     const requested = opts?.stacks ?? 1;
     const maxStacks = def.maxStacks ?? 1;
     const rule = def.stackRule ?? "refresh";
@@ -125,20 +154,20 @@ export class StatusSystem {
 
     if (opts?.setStacks) {
       const stacks = Math.min(maxStacks, Math.max(0, requested));
-      if (stacks <= 0) {
+      if (stacks <= 0 && !permanent) {
         if (existing) host.statuses.delete(statusId);
         return false;
       }
       if (existing) {
         existing.stacks = stacks;
-        existing.expiresAt = now + duration;
+        existing.expiresAt = expiresAt;
         existing.sourceId = sourceId;
         if (def.tickMs) existing.nextTickAt = Math.min(existing.nextTickAt || now + def.tickMs, now + def.tickMs);
       } else {
         const row = new StatusInstanceState();
         row.id = statusId;
         row.statusId = statusId;
-        row.expiresAt = now + duration;
+        row.expiresAt = expiresAt;
         row.stacks = stacks;
         row.sourceId = sourceId;
         row.nextTickAt = def.tickMs ? now + def.tickMs : 0;
@@ -155,21 +184,21 @@ export class StatusSystem {
     if (existing) {
       if (rule === "ignore") return false;
       if (rule === "refresh") {
-        existing.expiresAt = now + duration;
+        existing.expiresAt = expiresAt;
         existing.sourceId = sourceId;
         // Re-apply replaces stack count (e.g. Barrier refills absorb HP).
         existing.stacks = Math.min(maxStacks, addStacks);
         if (def.tickMs) existing.nextTickAt = Math.min(existing.nextTickAt || now + def.tickMs, now + def.tickMs);
       } else if (rule === "stack") {
         existing.stacks = Math.min(maxStacks, existing.stacks + addStacks);
-        existing.expiresAt = now + duration;
+        existing.expiresAt = expiresAt;
         existing.sourceId = sourceId;
       }
     } else {
       const row = new StatusInstanceState();
       row.id = statusId;
       row.statusId = statusId;
-      row.expiresAt = now + duration;
+      row.expiresAt = expiresAt;
       row.stacks = Math.min(maxStacks, addStacks);
       row.sourceId = sourceId;
       row.nextTickAt = def.tickMs ? now + def.tickMs : 0;
@@ -251,7 +280,11 @@ export class StatusSystem {
     const toRemove: string[] = [];
     host.statuses.forEach((row, key) => {
       const def = STATUSES[row.statusId];
-      if (!def || now >= row.expiresAt) {
+      if (!def) {
+        toRemove.push(key);
+        return;
+      }
+      if (!def.permanent && now >= row.expiresAt) {
         toRemove.push(key);
         return;
       }

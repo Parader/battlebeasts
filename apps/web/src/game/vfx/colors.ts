@@ -14,6 +14,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   chainJump: "#a8a8b0",
   spikes: "#166534",
   frostMist: "#7dd3fc",
+  silenceSweep: "#a78bfa",
   decoy: "#94a3b8",
   groove: "#6ee7b7",
   healBeam: "#6ee7b7",
@@ -25,6 +26,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   firewall: "#f97316",
   poisonCloud: "#84cc16",
   smokeBomb: "#94a3b8",
+  holyGround: "#eab308",
   fireball: "#f97316",
   volcano: "#ea580c",
   magmaOrbs: "#f97316",
@@ -32,6 +34,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   shrooms: "#4ade80",
   bloodRush: "#f87171",
   spiritForm: "#a5b4fc",
+  riftFissure: "#a78bfa",
 };
 
 export function abilityVfxColor(abilityId: string, fallback = "#38bdf8"): string {

@@ -249,13 +249,23 @@ function TreeBoard({
         {links.map((link) => {
           const a = cellCenter(link.fromId);
           const b = cellCenter(link.toId);
-          const active = isTalentTaken(build, link.fromId) && isTalentTaken(build, link.toId);
+          // Lit when the previous node has a point (path unlocked), brighter when both taken.
+          const fromOn = isTalentTaken(build, link.fromId);
+          const toOn = isTalentTaken(build, link.toId);
+          const active = fromOn && toOn;
+          const unlocked = fromOn && !toOn;
           const midY = (a.y + b.y) / 2;
           return (
             <path
               key={`${link.fromId}-${link.toId}`}
               d={`M ${a.x} ${a.y + CELL / 2 - 2} L ${a.x} ${midY} L ${b.x} ${midY} L ${b.x} ${b.y - CELL / 2 + 2}`}
-              className={active ? "bb-talent-link bb-talent-link--on" : "bb-talent-link"}
+              className={
+                active
+                  ? "bb-talent-link bb-talent-link--on"
+                  : unlocked
+                    ? "bb-talent-link bb-talent-link--open"
+                    : "bb-talent-link"
+              }
               fill="none"
             />
           );
@@ -398,6 +408,7 @@ export function TalentTreePanel({
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmSaveRespec, setConfirmSaveRespec] = useState(false);
   const [confirmBuyPoints, setConfirmBuyPoints] = useState(false);
+  const [buyPointQty, setBuyPointQty] = useState(1);
   const stageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -425,9 +436,24 @@ export function TalentTreePanel({
   const owned = talentPoints;
   const spendable = Math.max(0, owned - spent);
   const atPointCap = owned >= TALENT_POINT_BUDGET;
-  const canBuy = !atPointCap && essence >= ESSENCE_PER_TALENT_POINT;
+  const roomForPoints = Math.max(0, TALENT_POINT_BUDGET - owned);
+  const maxBuyByEssence = Math.floor(essence / ESSENCE_PER_TALENT_POINT);
+  /** Server also caps a single purchase at 20. */
+  const maxBuyPoints = Math.max(0, Math.min(20, roomForPoints, maxBuyByEssence));
+  const canBuy = !atPointCap && maxBuyPoints >= 1;
+  const buyCost = buyPointQty * ESSENCE_PER_TALENT_POINT;
   const canSave = dirty && (respecCost <= 0 || essence >= respecCost);
   const canResetTree = savedTreeSpent > 0 && essence >= resetTreeCost;
+
+  useEffect(() => {
+    if (!confirmBuyPoints) return;
+    setBuyPointQty((q) => Math.min(Math.max(1, q), Math.max(1, maxBuyPoints)));
+  }, [confirmBuyPoints, maxBuyPoints]);
+
+  const openBuyPoints = () => {
+    setBuyPointQty(1);
+    setConfirmBuyPoints(true);
+  };
 
   const roomRef = useRef(room);
   roomRef.current = room;
@@ -446,16 +472,16 @@ export function TalentTreePanel({
             title={
               essence < ESSENCE_PER_TALENT_POINT
                 ? `Need ${ESSENCE_PER_TALENT_POINT} essence`
-                : `Buy 1 point (−${ESSENCE_PER_TALENT_POINT} essence)`
+                : `Buy talent points (−${ESSENCE_PER_TALENT_POINT} essence each, up to ${maxBuyPoints})`
             }
-            onClick={() => setConfirmBuyPoints(true)}
+            onClick={openBuyPoints}
           >
             Buy
           </button>
         ) : null}
       </div>,
     );
-  }, [onHeaderActions, spendable, atPointCap, canBuy, essence]);
+  }, [onHeaderActions, spendable, atPointCap, canBuy, essence, maxBuyPoints]);
 
   useEffect(() => {
     return () => onHeaderActions?.(null);
@@ -491,15 +517,44 @@ export function TalentTreePanel({
     <div className="bb-talent-panel">
       <ConfirmDialog
         open={confirmBuyPoints}
-        title="Buy talent point?"
+        title="Buy talent points?"
         message={
-          <>
-            Spend <strong>{ESSENCE_PER_TALENT_POINT} essence</strong> to buy 1 talent point?
-          </>
+          <span className="bb-talent-buy-confirm">
+            <span>
+              Each point costs <strong>{ESSENCE_PER_TALENT_POINT} essence</strong>.
+              You can buy up to <strong>{maxBuyPoints}</strong> right now.
+            </span>
+            <span className="bb-talent-buy-qty" role="group" aria-label="Quantity">
+              <button
+                type="button"
+                className="bb-talent-buy-qty__btn"
+                disabled={buyPointQty <= 1}
+                aria-label="Fewer points"
+                onClick={() => setBuyPointQty((q) => Math.max(1, q - 1))}
+              >
+                −
+              </button>
+              <span className="bb-talent-buy-qty__value">{buyPointQty}</span>
+              <button
+                type="button"
+                className="bb-talent-buy-qty__btn"
+                disabled={buyPointQty >= maxBuyPoints}
+                aria-label="More points"
+                onClick={() => setBuyPointQty((q) => Math.min(maxBuyPoints, q + 1))}
+              >
+                +
+              </button>
+            </span>
+            <span>
+              Total: <strong>{buyCost} essence</strong>
+              {buyPointQty > 1 ? ` for ${buyPointQty} points` : " for 1 point"}
+            </span>
+          </span>
         }
-        confirmLabel={`Buy (−${ESSENCE_PER_TALENT_POINT})`}
+        confirmLabel={`Buy ${buyPointQty} (−${buyCost})`}
         onConfirm={() => {
-          roomRef.current?.send("buy_talent_points", { count: 1 });
+          const count = Math.min(Math.max(1, buyPointQty), maxBuyPoints);
+          if (count >= 1) roomRef.current?.send("buy_talent_points", { count });
           setConfirmBuyPoints(false);
         }}
         onCancel={() => setConfirmBuyPoints(false)}

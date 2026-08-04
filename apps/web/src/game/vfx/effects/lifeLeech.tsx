@@ -46,9 +46,18 @@ function collectOccludeBodies(
   const room = follow?.room;
   if (!room?.state) return [];
   const out: OccludeBody[] = [];
-  const players = room.state.players as Map<string, { x?: number; z?: number; hp?: number }> | undefined;
+  const players = room.state.players as
+    | Map<string, { x?: number; z?: number; hp?: number; team?: string }>
+    | undefined;
+  const ownerTeam =
+    ownerId && players
+      ? (players.get(ownerId) as { team?: string } | undefined)?.team
+      : undefined;
   players?.forEach((p, id) => {
     if (ownerId && id === ownerId) return;
+    // Allies soft-stop the ray for length, but must not trigger green "leeching" return.
+    // Keep them out of the hit list used for green motes.
+    if (ownerTeam && p.team && p.team === ownerTeam) return;
     out.push({ id, x: p.x ?? 0, z: p.z ?? 0, hp: p.hp });
   });
   const targets = room.state.targets as

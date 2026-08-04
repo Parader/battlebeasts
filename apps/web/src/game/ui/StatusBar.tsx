@@ -53,9 +53,12 @@ export function StatusBar({ room, sessionId }: { room: Room | null; sessionId: s
         {rows.map((row) => {
           const def = STATUSES[row.statusId];
           if (!def) return null;
-          const left = Math.max(0, row.expiresAt - now);
+          const permanent = def.permanent === true || def.durationMs <= 0;
+          const left = permanent ? 0 : Math.max(0, row.expiresAt - now);
           const total = Math.max(1, def.durationMs);
-          const frac = Math.min(1, left / total);
+          const frac = permanent ? 0 : Math.min(1, left / total);
+          const showStacks =
+            row.statusId === "fifthSpellCadence" || row.stacks > 1;
           return (
             <div
               key={row.statusId}
@@ -66,18 +69,24 @@ export function StatusBar({ room, sessionId }: { room: Room | null; sessionId: s
                 borderRadius: 3,
                 fontFamily: "var(--bb-font-display)",
               }}
-              title={`${def.name}${row.stacks > 1 ? ` x${row.stacks}` : ""}`}
+              title={
+                row.statusId === "fifthSpellCadence"
+                  ? `${def.name} ${row.stacks}/5`
+                  : `${def.name}${row.stacks > 1 ? ` x${row.stacks}` : ""}`
+              }
             >
               <span className="text-[10px] font-bold text-[#f3e6c0] drop-shadow">{def.tag}</span>
-              {row.stacks > 1 && (
+              {showStacks && (
                 <span className="absolute right-0.5 top-0 text-[9px] font-bold text-[#f3e6c0]">
                   {row.stacks}
                 </span>
               )}
-              <div
-                className="absolute bottom-0 left-0 h-0.5 bg-[#c9b27a]"
-                style={{ width: `${frac * 100}%` }}
-              />
+              {!permanent && (
+                <div
+                  className="absolute bottom-0 left-0 h-0.5 bg-[#c9b27a]"
+                  style={{ width: `${frac * 100}%` }}
+                />
+              )}
             </div>
           );
         })}

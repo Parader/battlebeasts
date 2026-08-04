@@ -52,13 +52,17 @@ export function KeyGlyph({
   label,
   size = 22,
   wide = false,
+  /** Light keycap (white + gold) for Armoury; dark for in-game HUD. */
+  tone = "dark",
 }: {
   label: string;
   size?: number;
   wide?: boolean;
+  tone?: "dark" | "light";
 }) {
   const w = wide ? size * 2.15 : size;
   const fontSize = wide ? 7.5 : label.length > 1 ? 8 : 11;
+  const light = tone === "light";
   return (
     <svg
       width={w}
@@ -72,28 +76,41 @@ export function KeyGlyph({
         y="0.75"
         width={wide ? 46.5 : 20.5}
         height="20.5"
-        rx="3.5"
-        fill="#1a1f1c"
-        stroke="#c9b27a"
-        strokeWidth="1.4"
+        rx="4"
+        fill={light ? "#f4f1ea" : "#1a1f1c"}
+        stroke={light ? "#c9b27a" : "#c9b27a"}
+        strokeWidth="1.5"
       />
-      <rect
-        x="2.4"
-        y="2.2"
-        width={wide ? 43.2 : 17.2}
-        height="14.5"
-        rx="2.2"
-        fill="#2a322c"
-        stroke="#8a7a4e"
-        strokeWidth="0.7"
-        opacity="0.9"
-      />
+      {!light ? (
+        <rect
+          x="2.4"
+          y="2.2"
+          width={wide ? 43.2 : 17.2}
+          height="14.5"
+          rx="2.2"
+          fill="#2a322c"
+          stroke="#8a7a4e"
+          strokeWidth="0.7"
+          opacity="0.9"
+        />
+      ) : (
+        <rect
+          x="2.2"
+          y="2"
+          width={wide ? 43.6 : 17.6}
+          height="15"
+          rx="2.5"
+          fill="#fffef9"
+          stroke="#e4d4a8"
+          strokeWidth="0.6"
+        />
+      )}
       <text
         x={wide ? 24 : 11}
-        y={wide ? 12.2 : 13.2}
+        y={wide ? 12.4 : 13.4}
         textAnchor="middle"
-        fill="#f3e6c0"
-        fontFamily="Cinzel, Georgia, serif"
+        fill={light ? "#b8860b" : "#f3e6c0"}
+        fontFamily="Elms Sans, Segoe UI, system-ui, sans-serif"
         fontSize={fontSize}
         fontWeight="700"
         style={{ letterSpacing: wide ? "0.04em" : "0" }}
@@ -108,12 +125,14 @@ export function KeyGlyph({
 export function SpellSlotGlyph({
   slot,
   size = 20,
+  tone = "dark",
 }: {
   slot: SpellSlot;
   size?: number;
+  tone?: "dark" | "light";
 }) {
   if (slot.input === "mouse0") return <MouseGlyph button="left" size={size} />;
   if (slot.input === "mouse2") return <MouseGlyph button="right" size={size} />;
-  if (slot.input === "space") return <KeyGlyph label="SPACE" size={size} wide />;
-  return <KeyGlyph label={slot.label} size={size} />;
+  if (slot.input === "space") return <KeyGlyph label="Space" size={size} wide tone={tone} />;
+  return <KeyGlyph label={slot.label} size={size} tone={tone} />;
 }

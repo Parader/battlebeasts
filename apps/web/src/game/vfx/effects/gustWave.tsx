@@ -1,7 +1,7 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { GUST_AOE_CAST } from "@battlebeasts/shared";
+import { ABILITIES, GUST_AOE_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { GroundDecal } from "../components/GroundDecal";
@@ -60,6 +60,16 @@ export function GustWaveEffect({
   follow?: VfxFollowContext;
 }) {
   const smoke = groundPresets.windSmoke;
+  const radius = Math.max(
+    2.5,
+    (typeof shot.radius === "number" && shot.radius > 0
+      ? shot.radius
+      : null) ??
+      ABILITIES.gust.radius ??
+      smoke.radius,
+  );
+  /** Sheets were tuned for ~3.5r — scale so they still reach the hit edge. */
+  const sheetSpeedMul = radius / 3.5;
   const root = useRef<THREE.Group>(null);
   const progress = useRef(0);
   const opacity = useRef(0);
@@ -170,7 +180,7 @@ export function GustWaveEffect({
       }
 
       const life = Math.min(1, (t * 1000) / sheetLifeMs);
-      const dist = AIR_START_DIST + t * b.speed;
+      const dist = AIR_START_DIST + t * b.speed * sheetSpeedMul;
       const yaw = b.angle + b.curl * life;
       const sx = Math.sin(yaw);
       const sz = Math.cos(yaw);
@@ -197,7 +207,7 @@ export function GustWaveEffect({
         x={0}
         z={0}
         y={0.04}
-        radius={smoke.radius}
+        radius={radius}
         growExpand
         progressRef={progress}
         opacityMulRef={opacity}

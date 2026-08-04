@@ -1,12 +1,20 @@
 import { useFrame, useThree } from "@react-three/fiber";
-import { Html, useGLTF } from "@react-three/drei";
+import { Html, useGLTF, Billboard } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
-import { HUB_PRACTICE_DUMMIES, MOVE_SPEED, STARTER_COLORS, totalShieldAbsorb, type CosmeticsEquipped } from "@battlebeasts/shared";
+import {
+  HUB_PRACTICE_DUMMIES,
+  MOVE_SPEED,
+  PVE_ZOMBIE_KIND,
+  STARTER_COLORS,
+  totalShieldAbsorb,
+  type CosmeticsEquipped,
+} from "@battlebeasts/shared";
 import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, ChainJumpProjectileEffect, PoisonDartProjectileEffect, hasCatalogProjectile, isOwnedByCastProjectile } from "./vfx";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
+import { ZOMBIE_URL, zombieAnimationConfig } from "./zombieAsset";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
 import {
   StatusHpBadgeStack,
@@ -14,10 +22,14 @@ import {
   readBurningBadge,
   readPoisonBadge,
   readRejuvenationBadge,
+  readSilenceBadge,
+  readHolyBadge,
   syncBleedingBadge,
   syncBurningBadge,
   syncPoisonBadge,
   syncRejuvenationBadge,
+  syncSilenceBadge,
+  syncHolyBadge,
   type StatusRowLite,
 } from "./StatusHpBadgeStack";
 import { syncAbilityCast } from "./syncPlayerCast";
@@ -26,14 +38,19 @@ import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { playBoltCastSfx } from "./gameSfx";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
-import { PlayerHpBillboard } from "./PlayerHpBillboard";
 
 export { Volcanoes } from "./vfx/Volcanoes";
 export { ProtectionBubbles } from "./vfx/ProtectionBubbles";
+export { RiftPortals } from "./vfx/RiftPortals";
 export { Shrooms } from "./vfx/Shrooms";
 export { SpiritHusks } from "./vfx/SpiritHusks";
 
 useGLTF.preload(CHARACTER_URL);
+useGLTF.preload(ZOMBIE_URL);
+
+const _zombieVel = new THREE.Vector3();
+/** Same grey as hub practice dummies. */
+const DUMMY_COLOR = "#9ca3af";
 
 function LegacyProjectileMesh({ room, id }: { room: Room; id: string }) {
     const mesh = useRef<THREE.Mesh>(null);
@@ -360,13 +377,186 @@ export function DamagePopups() {
 }
 
 export function WorldTargets({ room }: { room: Room | null }) {
-    return (
-        <>
-            {HUB_PRACTICE_DUMMIES.map((d) => (
-                <PracticeDummyAvatar key={d.id} room={room} targetId={d.id} />
-            ))}
-        </>
+  const [ids, setIds] = useState<string[]>([]);
+
+  useFrame(() => {
+    const map = room?.state?.targets as Map<string, { kind?: string }> | undefined;
+    if (!map) {
+      // Hub first paint: fall back to known dummy ids until schema syncs.
+      const hub = HUB_PRACTICE_DUMMIES.map((d) => d.id);
+      if (ids.length !== hub.length || ids.some((id, i) => id !== hub[i])) setIds(hub);
+      return;
+    }
+    const next: string[] = [];
+    map.forEach((_t, id) => next.push(id));
+    next.sort();
+    if (next.length !== ids.length || next.some((id, i) => id !== ids[i])) setIds(next);
+  });
+
+  return (
+    <>
+      {ids.map((id) => {
+        const kind =
+          (room?.state?.targets?.get(id) as { kind?: string } | undefined)?.kind ?? "dummy";
+        if (kind === PVE_ZOMBIE_KIND) {
+          return <ZombieAvatar key={id} room={room} targetId={id} />;
+        }
+        return <PracticeDummyAvatar key={id} room={room} targetId={id} />;
+      })}
+    </>
+  );
+}
+
+function ZombieHpBar({ frac, y = 2.05 }: { frac: number; y?: number }) {
+  const f = Math.max(0, Math.min(1, frac));
+  return (
+    <Billboard position={[0, y, 0]} follow lockX={false} lockY={false} lockZ={false}>
+      <mesh position={[0, 0, 0.01]} renderOrder={40}>
+        <planeGeometry args={[0.9, 0.1]} />
+        <meshBasicMaterial
+          color="#1f2937"
+          depthTest={false}
+          depthWrite={false}
+          transparent
+          opacity={0.85}
+        />
+      </mesh>
+      <mesh position={[-(0.88 * (1 - f)) / 2, 0, 0.02]} renderOrder={41}>
+        <planeGeometry args={[Math.max(0.001, 0.88 * f), 0.06]} />
+        <meshBasicMaterial color="#86efac" depthTest={false} depthWrite={false} toneMapped={false} />
+      </mesh>
+    </Billboard>
+  );
+}
+
+function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string }) {
+  const root = useRef<THREE.Group>(null);
+  const body = useRef<THREE.Group>(null);
+  const controllerRef = useRef<CharacterAnimationController | null>(null);
+  const lastXZ = useRef({ x: 0, z: 0 });
+  const seeded = useRef(false);
+  const lastAttackKey = useRef("");
+  const hpFrac = useRef(1);
+  const [barFrac, setBarFrac] = useState(1);
+  const gltf = useGLTF(ZOMBIE_URL);
+  const scene = useMemo(() => {
+    const idle =
+      gltf.animations.find((c) => c.name === zombieAnimationConfig.idle) ??
+      gltf.animations[0] ??
+      null;
+    const rootScene = prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
+    rootScene.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map((m) => m.clone())
+        : mesh.material.clone();
+    });
+    tintCharacterSurface(rootScene, DUMMY_COLOR);
+    return rootScene;
+  }, [gltf.scene, gltf.animations]);
+
+  useEffect(() => {
+    const controller = new CharacterAnimationController(
+      scene,
+      gltf.animations,
+      zombieAnimationConfig,
     );
+    controllerRef.current = controller;
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+    };
+  }, [scene, gltf.animations]);
+
+  useFrame((_, dt) => {
+    const paused = Boolean((room?.state as { paused?: boolean } | undefined)?.paused);
+    const t = room?.state?.targets?.get(targetId) as
+      | {
+          x: number;
+          z: number;
+          yaw?: number;
+          hp: number;
+          maxHp: number;
+          castAbilityId?: string;
+          castPhase?: string;
+        }
+      | undefined;
+    const g = root.current;
+    if (!t || !g) {
+      if (g) g.visible = false;
+      return;
+    }
+    g.visible = true;
+    g.position.set(t.x, 0, t.z);
+    const yaw = t.yaw ?? 0;
+    if (body.current) body.current.rotation.y = yaw;
+
+    // Match paused: hold pose + animation clock (server also freezes AI).
+    if (paused) {
+      const nextFrac = t.maxHp > 0 ? t.hp / t.maxHp : 1;
+      if (Math.abs(nextFrac - hpFrac.current) > 0.01) {
+        hpFrac.current = nextFrac;
+        setBarFrac(nextFrac);
+      }
+      return;
+    }
+
+    let moving = false;
+    if (!seeded.current) {
+      lastXZ.current = { x: t.x, z: t.z };
+      seeded.current = true;
+    } else {
+      const dx = t.x - lastXZ.current.x;
+      const dz = t.z - lastXZ.current.z;
+      moving = dx * dx + dz * dz > 0.00005;
+      lastXZ.current = { x: t.x, z: t.z };
+    }
+
+    const controller = controllerRef.current;
+    if (controller) {
+      const attacking = t.castAbilityId === "zombie_melee" && t.castPhase === "impact";
+      const attackKey = attacking ? `${targetId}:${t.castAbilityId}:${t.castPhase}` : "";
+      if (attacking && attackKey !== lastAttackKey.current) {
+        lastAttackKey.current = attackKey;
+        // Full-body Mixamo attack — upper-body mask is for the hero skeleton.
+        const played =
+          controller.playFullBodyAction("attack", { fadeIn: 0.1 }) ||
+          controller.playUpperBodyAction("castMelee", { fadeIn: 0.1 });
+        if (!played) {
+          controller.playFullBodyAction("castMelee", { fadeIn: 0.1 });
+        }
+      } else if (!attacking) {
+        lastAttackKey.current = "";
+      }
+
+      if (!attacking) {
+        if (moving) {
+          _zombieVel.set(Math.sin(yaw), 0, Math.cos(yaw));
+          controller.setMovementFromYaw(_zombieVel, yaw, MOVE_SPEED);
+        } else {
+          _zombieVel.set(0, 0, 0);
+          controller.setMovementFromYaw(_zombieVel, yaw, MOVE_SPEED);
+        }
+      }
+      controller.update(Math.min(0.05, Math.max(0, dt)));
+    }
+
+    const nextFrac = t.maxHp > 0 ? t.hp / t.maxHp : 1;
+    if (Math.abs(nextFrac - hpFrac.current) > 0.01) {
+      hpFrac.current = nextFrac;
+      setBarFrac(nextFrac);
+    }
+  });
+
+  return (
+    <group ref={root}>
+      <group ref={body}>
+        <primitive object={scene} />
+      </group>
+      <ZombieHpBar frac={barFrac} />
+    </group>
+  );
 }
 
 type DecoyNet = {
@@ -381,6 +571,27 @@ type DecoyNet = {
     ownerSessionId?: string;
     expiresAt: number;
 };
+
+/** Always-visible 1-HP decoy bar (not gated on owner cloak). */
+function DecoyHpBillboard({ y = 2.15 }: { y?: number }) {
+    return (
+        <Billboard position={[0, y, 0]} follow lockX={false} lockY={false} lockZ={false}>
+            <mesh position={[0, 0, 0.01]} renderOrder={40}>
+                <planeGeometry args={[0.95, 0.11]} />
+                <meshBasicMaterial color="#1f2937" depthTest={false} depthWrite={false} transparent opacity={0.85} />
+            </mesh>
+            <mesh position={[0, 0, 0.02]} renderOrder={41}>
+                <planeGeometry args={[0.88, 0.07]} />
+                <meshBasicMaterial
+                    color="#4ade80"
+                    depthTest={false}
+                    depthWrite={false}
+                    toneMapped={false}
+                />
+            </mesh>
+        </Billboard>
+    );
+}
 
 function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
     const group = useRef<THREE.Group>(null);
@@ -503,17 +714,14 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
         controller.update(safeDt);
     });
 
-    const d0 = room.state?.decoys?.get(decoyId) as { ownerSessionId?: string } | undefined;
-    const ownerId = d0?.ownerSessionId ?? null;
-
     return (
         <group ref={group}>
             <group ref={bodyRef}>
                 <primitive object={scene} />
                 <EquippedCosmetics characterRoot={scene} equipped={equipped} />
             </group>
-            {/* Owner combat HP on the decoy — shows when owner is engaged. */}
-            <PlayerHpBillboard room={room} sessionId={ownerId} />
+            {/* Dedicated decoy HP — always visible; not tied to owner cloak. */}
+            <DecoyHpBillboard />
         </group>
     );
 }
@@ -545,7 +753,6 @@ export function Decoys({ room }: { room: Room | null }) {
     );
 }
 
-const DUMMY_COLOR = "#9ca3af";
 const _down = new THREE.Vector3(0, -1, 0);
 const _origin = new THREE.Vector3();
 const _box = new THREE.Box3();
@@ -759,6 +966,10 @@ function HpBillboard({
     const rejuvenationBadge = useRef<HTMLDivElement>(null);
     const rejuvenationStacksEl = useRef<HTMLSpanElement>(null);
     const rejuvenationRing = useRef<SVGCircleElement>(null);
+    const silenceBadge = useRef<HTMLDivElement>(null);
+    const silenceRing = useRef<SVGCircleElement>(null);
+    const holyBadge = useRef<HTMLDivElement>(null);
+    const holyRing = useRef<SVGCircleElement>(null);
     const lastPoisonStacks = useRef(0);
     const lastBleedingStacks = useRef(0);
     const lastRejuvenationStacks = useRef(0);
@@ -798,6 +1009,14 @@ function HpBillboard({
                 { stacks: 0, expiresAt: 0 },
                 lastRejuvenationStacks,
             );
+            syncSilenceBadge(silenceBadge.current, silenceRing.current, {
+                stacks: 0,
+                expiresAt: 0,
+            });
+            syncHolyBadge(holyBadge.current, holyRing.current, {
+                stacks: 0,
+                expiresAt: 0,
+            });
             return;
         }
         const maxHp = Math.max(1, t.maxHp);
@@ -842,6 +1061,8 @@ function HpBillboard({
             readRejuvenationBadge(rows),
             lastRejuvenationStacks,
         );
+        syncSilenceBadge(silenceBadge.current, silenceRing.current, readSilenceBadge(rows));
+        syncHolyBadge(holyBadge.current, holyRing.current, readHolyBadge(rows));
     });
     return (
         <group position={[0, y, 0]}>
@@ -869,6 +1090,10 @@ function HpBillboard({
                 rejuvenationBadgeRef={rejuvenationBadge}
                 rejuvenationStacksRef={rejuvenationStacksEl}
                 rejuvenationRingRef={rejuvenationRing}
+                silenceBadgeRef={silenceBadge}
+                silenceRingRef={silenceRing}
+                holyBadgeRef={holyBadge}
+                holyRingRef={holyRing}
             />
         </group>
     );

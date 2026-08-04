@@ -11,8 +11,9 @@ export const groundPresets = {
     noiseScale: 6.8,
     breakup: 0.9,
     opacity: 1,
-    radius: 2.75,
-    lifeMs: 1800,
+    /** Matches Jump Slam hit radius (`ABILITIES.smash.radius`). */
+    radius: 2.2,
+    lifeMs: 900,
     ringWidth: 0.11,
     softness: 0.04,
     innerRatio: 0.15,
@@ -135,7 +136,8 @@ export const groundPresets = {
     noiseScale: 7.5,
     breakup: 0.55,
     opacity: 0.38,
-    radius: 3.5,
+    /** Matches `ABILITIES.gust.radius`. */
+    radius: 5.0,
     lifeMs: 700,
     ringWidth: 0.14,
     softness: 0.08,
@@ -158,6 +160,26 @@ export const groundPresets = {
     ringWidth: 0.1,
     softness: 0.11,
     spin: 0.25,
+  },
+  /** Rift Fissure mouth fill — held while the portal is alive. */
+  riftPortal: {
+    element: "ice",
+    shape: "circle",
+    colorCore: "#ede9fe",
+    colorMid: "#a78bfa",
+    colorEdge: "#4c1d95",
+    noiseScale: 7.2,
+    breakup: 0.62,
+    opacity: 0.78,
+    additive: true,
+    radius: 1,
+    lifeMs: 10000,
+    ringWidth: 0.12,
+    softness: 0.07,
+    innerRatio: 0.12,
+    spin: 0.55,
+    appearEnd: 0.04,
+    fadeStart: 0.92,
   },
 } as const satisfies Record<string, GroundDecalPreset>;
 

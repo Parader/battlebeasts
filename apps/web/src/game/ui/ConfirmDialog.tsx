@@ -42,7 +42,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p className="bb-muted">{message}</p>
+      <div className="bb-muted">{message}</div>
     </GamePanelShell>
   );
 }

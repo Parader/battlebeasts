@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Room } from "colyseus.js";
 import {
   COSMETIC_SLOTS,
@@ -19,7 +19,6 @@ import {
   ownsPattern,
   ownsPatternColor,
   STARTER_COLORS,
-  formatShopCost,
   shopItemsForCategory,
   type CosmeticSlot,
   type CosmeticsEquipped,
@@ -29,7 +28,6 @@ import {
 } from "@battlebeasts/shared";
 import { AppearancePreview } from "./AppearancePreview";
 import { ShopCostDisplay } from "./CoinDisplay";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { ShopItemThumb } from "./ShopGrantThumb";
 import { GameIcon } from "./GameIcon";
 import {
@@ -38,7 +36,13 @@ import {
   SHOP_CATEGORY_ICONS,
 } from "./gameIcons";
 
-function ownsShopItem(unlocks: PlayerUnlocks, item: ShopItemDef): boolean {
+const HOLD_BUY_MS = 900;
+
+function ownsShopItem(
+  unlocks: PlayerUnlocks,
+  item: ShopItemDef,
+  beachBallCount = 0,
+): boolean {
   const grant = item.grant;
   switch (grant.kind) {
     case "color":
@@ -53,6 +57,8 @@ function ownsShopItem(unlocks: PlayerUnlocks, item: ShopItemDef): boolean {
       return ownsEmote(unlocks.emotes, grant.emoteId);
     case "loadout_slot":
       return unlocks.loadoutSlotCount >= grant.toCount;
+    case "lobby_beach_ball":
+      return beachBallCount >= grant.toCount;
     default:
       return false;
   }
@@ -168,7 +174,13 @@ export function MerchantPanel({
   const [category, setCategory] = useState<ShopCategory>(SHOP_UI_CATEGORIES[0]!);
   const [cosmeticSub, setCosmeticSub] = useState<CosmeticSub>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [buyConfirm, setBuyConfirm] = useState<ShopItemDef | null>(null);
+  const [holdBuyFrac, setHoldBuyFrac] = useState(0);
+  const [holdBuyUiId, setHoldBuyUiId] = useState<string | null>(null);
+  const [beachBallCount, setBeachBallCount] = useState(0);
+  const [isOwnLobby, setIsOwnLobby] = useState(true);
+  const holdBuyRaf = useRef<number | null>(null);
+  const holdBuyStart = useRef(0);
+  const holdBuyItemId = useRef<string | null>(null);
 
   useEffect(() => {
     setCosmeticSub(null);
@@ -178,6 +190,49 @@ export function MerchantPanel({
   useEffect(() => {
     setSelectedId(null);
   }, [cosmeticSub]);
+
+  useEffect(() => {
+    if (!room) {
+      setBeachBallCount(0);
+      setIsOwnLobby(true);
+      return;
+    }
+    const sync = () => {
+      const st = room.state as
+        | {
+            beachBallCount?: number;
+            hubOwnerUserId?: string;
+            players?: { get: (id: string) => { id?: string } | undefined };
+          }
+        | undefined;
+      setBeachBallCount(Math.max(0, Math.floor(st?.beachBallCount ?? 0)));
+      const ownerId = st?.hubOwnerUserId ?? "";
+      const me = room.sessionId ? st?.players?.get(room.sessionId) : undefined;
+      setIsOwnLobby(!ownerId || Boolean(me?.id && me.id === ownerId));
+    };
+    sync();
+    const id = window.setInterval(sync, 250);
+    return () => window.clearInterval(id);
+  }, [room]);
+
+  const clearHoldBuy = () => {
+    if (holdBuyRaf.current != null) {
+      cancelAnimationFrame(holdBuyRaf.current);
+      holdBuyRaf.current = null;
+    }
+    holdBuyStart.current = 0;
+    holdBuyItemId.current = null;
+    setHoldBuyUiId(null);
+    setHoldBuyFrac(0);
+  };
+
+  useEffect(() => () => clearHoldBuy(), []);
+
+  // Stable end handler — avoid clearing mid-hold when React re-renders on select.
+  const endHoldBuy = () => {
+    if (holdBuyItemId.current == null) return;
+    clearHoldBuy();
+  };
 
   const topItems = useMemo(() => shopItemsForCategory(category), [category]);
 
@@ -189,9 +244,9 @@ export function MerchantPanel({
     } else {
       items = topItems;
     }
-    if (hideOwned) items = items.filter((item) => !ownsShopItem(unlocks, item));
+    if (hideOwned) items = items.filter((item) => !ownsShopItem(unlocks, item, beachBallCount));
     return items;
-  }, [category, cosmeticSub, topItems, hideOwned, unlocks]);
+  }, [category, cosmeticSub, topItems, hideOwned, unlocks, beachBallCount]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -201,7 +256,7 @@ export function MerchantPanel({
   const ownershipOf = (items: ShopItemDef[]) => {
     let owned = 0;
     for (const item of items) {
-      if (ownsShopItem(unlocks, item)) owned += 1;
+      if (ownsShopItem(unlocks, item, beachBallCount)) owned += 1;
     }
     const total = items.length;
     return { total, owned, available: total - owned };
@@ -213,7 +268,7 @@ export function MerchantPanel({
   const categoryOwnership = useMemo(() => {
     if (category === "cosmetics" || category === "consumables") return null;
     return ownershipOf(topItems);
-  }, [category, topItems, unlocks]);
+  }, [category, topItems, unlocks, beachBallCount]);
 
   const gearSlotsWithItems = useMemo(() => {
     const slots = new Set<CosmeticSlot>();
@@ -244,10 +299,24 @@ export function MerchantPanel({
     (category === "cosmetics" && cosmeticSub != null && cosmeticSub !== "gear") ||
     category === "emotes" ||
     category === "loadouts" ||
+    category === "lobby" ||
     category === "consumables";
 
-  const selectedOwned = selectedItem ? ownsShopItem(unlocks, selectedItem) : false;
-  const selectedAfford = selectedItem ? canAffordShopCost(wallet, selectedItem.cost) : false;
+  const selectedOwned = selectedItem
+    ? ownsShopItem(unlocks, selectedItem, beachBallCount)
+    : false;
+  const selectedNeedsOwnLobby =
+    selectedItem?.grant.kind === "lobby_beach_ball" && !isOwnLobby;
+  const canBuySelected =
+    selectedItem != null &&
+    !selectedOwned &&
+    !selectedNeedsOwnLobby &&
+    canAffordShopCost(wallet, selectedItem.cost);
+  const selectedCosmetic =
+    selectedItem?.grant.kind === "cosmetic" ? getCosmeticItem(selectedItem.grant.itemId) : undefined;
+  const selectedCosmeticEquipped =
+    selectedCosmetic != null &&
+    appearanceBase.cosmeticsEquipped[selectedCosmetic.slot] === selectedCosmetic.id;
   const gearSlotBrowse =
     category === "cosmetics" &&
     cosmeticSub != null &&
@@ -255,27 +324,53 @@ export function MerchantPanel({
       ? (cosmeticSub as CosmeticSlot)
       : null;
 
+  const canHoldBuyItem = (item: ShopItemDef) =>
+    canAffordShopCost(wallet, item.cost) &&
+    !ownsShopItem(unlocks, item, beachBallCount) &&
+    !(item.grant.kind === "lobby_beach_ball" && !isOwnLobby);
+
+  const commitShopBuy = (item: ShopItemDef) => {
+    room?.send("shop_buy", { itemId: item.id });
+    clearHoldBuy();
+  };
+
+  const beginHoldBuy = (item: ShopItemDef, e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return;
+    if (!canHoldBuyItem(item)) return;
+    e.preventDefault();
+    clearHoldBuy();
+    holdBuyItemId.current = item.id;
+    holdBuyStart.current = performance.now();
+    setHoldBuyUiId(item.id);
+    setHoldBuyFrac(0);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore — capture is optional; pointerup still ends the hold */
+    }
+    const tick = (now: number) => {
+      if (holdBuyItemId.current !== item.id) return;
+      const frac = Math.min(1, (now - holdBuyStart.current) / HOLD_BUY_MS);
+      setHoldBuyFrac(frac);
+      if (frac >= 1) {
+        commitShopBuy(item);
+        return;
+      }
+      holdBuyRaf.current = requestAnimationFrame(tick);
+    };
+    holdBuyRaf.current = requestAnimationFrame(tick);
+  };
+
+  const equipSelectedCosmetic = () => {
+    if (!selectedCosmetic) return;
+    if (selectedCosmeticEquipped) {
+      room?.send("set_cosmetic", { slot: selectedCosmetic.slot, itemId: null });
+    } else {
+      room?.send("set_cosmetic", { slot: selectedCosmetic.slot, itemId: selectedCosmetic.id });
+    }
+  };
+
   return (
-    <>
-      <ConfirmDialog
-        open={Boolean(buyConfirm)}
-        title="Buy item?"
-        message={
-          buyConfirm ? (
-            <>
-              Buy <strong>{buyConfirm.name}</strong> for{" "}
-              <strong>{formatShopCost(buyConfirm.cost)}</strong>?
-            </>
-          ) : null
-        }
-        confirmLabel={buyConfirm ? `Buy (−${formatShopCost(buyConfirm.cost)})` : "Buy"}
-        onConfirm={() => {
-          if (!buyConfirm) return;
-          room?.send("shop_buy", { itemId: buyConfirm.id });
-          setBuyConfirm(null);
-        }}
-        onCancel={() => setBuyConfirm(null)}
-      />
     <div className={["bb-shop", showCharacterPreview ? "bb-shop--preview" : ""].join(" ")}>
       <div className="bb-appearance-tabs" role="tablist" aria-label="Merchant categories">
         {SHOP_UI_CATEGORIES.map((cat) => {
@@ -404,33 +499,60 @@ export function MerchantPanel({
                   </li>
                 ) : (
                   browseItems.map((item) => {
-                    const owned = ownsShopItem(unlocks, item);
+                    const owned = ownsShopItem(unlocks, item, beachBallCount);
                     const selected = selectedItem?.id === item.id;
+                    const holding = holdBuyUiId === item.id;
+                    const buyable = canHoldBuyItem(item);
+                    const needsOwnLobby =
+                      item.grant.kind === "lobby_beach_ball" && !isOwnLobby;
                     return (
                       <li key={item.id}>
                         <button
                           type="button"
                           role="option"
                           aria-selected={selected}
+                          aria-label={item.name}
                           className={[
                             "bb-loadout-card bb-shop__card bb-shop__card--select",
                             owned ? "bb-loadout-card--on" : "",
                             selected ? "bb-shop__card--focus" : "",
+                            holding ? "bb-shop__card--holding" : "",
+                            buyable ? "bb-shop__card--buyable" : "",
                           ].join(" ")}
-                          onClick={() =>
-                            setSelectedId((prev) => (prev === item.id ? null : item.id))
-                          }
+                          onPointerDown={(e) => {
+                            setSelectedId(item.id);
+                            beginHoldBuy(item, e);
+                          }}
+                          onPointerUp={endHoldBuy}
+                          onPointerCancel={endHoldBuy}
+                          onContextMenu={(e) => e.preventDefault()}
                         >
+                          <span
+                            className="bb-shop__card__hold-fill"
+                            style={{
+                              transform: `scaleX(${holding ? holdBuyFrac : 0})`,
+                            }}
+                            aria-hidden
+                          />
                           <ShopItemThumb item={item} />
                           <div className="bb-loadout-card__main">
                             <div className="bb-loadout-card__top">
                               <span className="bb-loadout-card__name">{item.name}</span>
                               <span className="bb-loadout-card__shape">
-                                {owned ? "Owned" : <ShopCostDisplay cost={item.cost} />}
+                                {owned ? (
+                                  "Owned"
+                                ) : needsOwnLobby ? (
+                                  "Own lobby"
+                                ) : (
+                                  <ShopCostDisplay cost={item.cost} />
+                                )}
                               </span>
                             </div>
                             {item.description ? (
                               <p className="bb-loadout-card__desc">{item.description}</p>
+                            ) : null}
+                            {!owned && buyable ? (
+                              <p className="bb-shop__card__hold-hint">Hold to buy</p>
                             ) : null}
                           </div>
                         </button>
@@ -462,13 +584,25 @@ export function MerchantPanel({
             {selectedItem ? (
               <div className="bb-shop__buy-row">
                 {selectedOwned ? (
-                  <span className="bb-loadout-card__action">Owned</span>
+                  selectedCosmetic ? (
+                    <button
+                      type="button"
+                      className="bb-btn-brass w-full"
+                      onClick={equipSelectedCosmetic}
+                    >
+                      {selectedCosmeticEquipped ? "Unequip" : "Equip"}
+                    </button>
+                  ) : (
+                    <span className="bb-loadout-card__action">Owned</span>
+                  )
+                ) : selectedNeedsOwnLobby ? (
+                  <p className="bb-meta text-center">Buy beach balls in your own lobby.</p>
                 ) : (
                   <button
                     type="button"
                     className="bb-btn-brass w-full disabled:opacity-40"
-                    disabled={!selectedAfford}
-                    onClick={() => setBuyConfirm(selectedItem)}
+                    disabled={!canBuySelected}
+                    onClick={() => commitShopBuy(selectedItem)}
                   >
                     Buy · <ShopCostDisplay cost={selectedItem.cost} />
                   </button>
@@ -478,20 +612,29 @@ export function MerchantPanel({
           </div>
         ) : null}
 
+        {!showCharacterPreview && selectedItem && selectedOwned ? (
+          <div className="bb-shop__buy-row bb-shop__buy-row--solo">
+            <span className="bb-loadout-card__action">Owned</span>
+          </div>
+        ) : null}
+
         {!showCharacterPreview && selectedItem && !selectedOwned ? (
           <div className="bb-shop__buy-row bb-shop__buy-row--solo">
-            <button
-              type="button"
-              className="bb-btn-brass w-full disabled:opacity-40"
-              disabled={!selectedAfford}
-              onClick={() => setBuyConfirm(selectedItem)}
-            >
-              Buy {selectedItem.name} · <ShopCostDisplay cost={selectedItem.cost} />
-            </button>
+            {selectedNeedsOwnLobby ? (
+              <p className="bb-meta text-center">Buy beach balls in your own lobby.</p>
+            ) : (
+              <button
+                type="button"
+                className="bb-btn-brass w-full disabled:opacity-40"
+                disabled={!canBuySelected}
+                onClick={() => commitShopBuy(selectedItem)}
+              >
+                Buy {selectedItem.name} · <ShopCostDisplay cost={selectedItem.cost} />
+              </button>
+            )}
           </div>
         ) : null}
       </div>
     </div>
-    </>
   );
 }

@@ -51,6 +51,8 @@ export function warmSpellMaterials(
   // Bolt / crescent / frost energy + ice-lance explode shards
   addMesh(createEnergyBallMaterial("#93c5fd"));
   addMesh(createEnergyBallMaterial("#e0f2fe"));
+  addMesh(createEnergyBallMaterial("#f97316")); // magma / fireball
+  addMesh(createEnergyBallMaterial("#4ade80")); // life leech / heal
   addMesh(createEnergyRingMaterial("#7dd3fc"));
   addMesh(createGroundDecalMaterial(groundPresets.iceFrost, "circle"));
   addMesh(

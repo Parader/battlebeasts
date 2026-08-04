@@ -177,25 +177,11 @@ export type QuestDef = {
 
 export const QUEST_CATALOG: readonly QuestDef[] = [
   {
-    id: "daily_ranked_play_2",
-    type: "daily",
-    target: 2,
-    chest: "any",
-    label: "Play 2 ranked matches today",
-  },
-  {
-    id: "daily_ranked_win_2",
-    type: "daily",
-    target: 2,
-    chest: "any",
-    label: "Win 2 ranked matches today",
-  },
-  {
-    id: "daily_win_3",
+    id: "daily_ranked_play_3",
     type: "daily",
     target: 3,
     chest: "any",
-    label: "Win 3 ranked matches today",
+    label: "Play 3 ranked matches today",
   },
   {
     id: "daily_modes_3",
