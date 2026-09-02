@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { formatRankLabel, type RankSnapshot } from "@battlebeasts/shared";
+import {
+  formatLeaderboardRank,
+  formatRankLabel,
+  normalizeRankSnapshot,
+  type RankSnapshot,
+} from "@battlebeasts/shared";
 import { GamePanelShell } from "./GamePanelShell";
 
 export type HubRankedSeason = {
@@ -48,11 +53,11 @@ export function RankPanel({
 
   if (!open) return null;
 
+  const snap = rating ? normalizeRankSnapshot(rating) : null;
   const display =
+    (snap ? formatRankLabel(snap) : null) ??
     label ??
-    (rating
-      ? formatRankLabel(rating)
-      : "Unranked");
+    "Unranked";
 
   return (
     <GamePanelShell
@@ -82,16 +87,19 @@ export function RankPanel({
         <div className="space-y-4">
           <div className="bb-list-row bb-list-row--stack">
             <p className="bb-panel-title !text-2xl">{display}</p>
-            {rating ? (
+            {snap ? (
               <>
                 <p className="bb-meta tabular-nums">
-                  {rating.wins}W · {rating.losses}L · {rating.lp} LP
+                  {snap.wins}W · {snap.losses}L
+                  {snap.peakTier && snap.peakTier !== snap.tier
+                    ? ` · Peak ${snap.peakTier.charAt(0).toUpperCase()}${snap.peakTier.slice(1)}`
+                    : ""}
                 </p>
-                {rating.tier !== "master" && rating.tier !== "grandmaster" ? (
+                {snap.tier !== "master" && snap.tier !== "grandmaster" ? (
                   <div className="mt-2 h-2 w-full overflow-hidden rounded bg-[var(--bb-panel-line)]">
                     <div
                       className="h-full bg-[var(--bb-brass)]"
-                      style={{ width: `${Math.max(0, Math.min(100, rating.lp))}%` }}
+                      style={{ width: `${Math.max(0, Math.min(100, snap.lp))}%` }}
                     />
                   </div>
                 ) : null}
@@ -111,7 +119,7 @@ export function RankPanel({
                 <span className="tabular-nums text-[var(--bb-ink-soft)]">#{row.rank}</span>
                 <span className="min-w-0 flex-1 truncate text-[var(--bb-ink)]">{row.displayName}</span>
                 <span className="tabular-nums text-sm text-[var(--bb-ink-soft)]">
-                  {row.tier} · {row.lp} LP
+                  {formatLeaderboardRank(row)}
                 </span>
               </div>
             ))

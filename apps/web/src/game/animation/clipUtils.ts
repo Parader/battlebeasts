@@ -138,6 +138,21 @@ export function createUpperBodyClip(clip: THREE.AnimationClip): THREE.AnimationC
   return filterClipTracks(clip, (t) => isUpperBodyTrack(t.name), "::upper");
 }
 
+/** Cached upper-body cast masks — survive CharacterAvatar remounts / new mixers. */
+const upperCastClipCache = new WeakMap<THREE.AnimationClip, THREE.AnimationClip>();
+
+/**
+ * Upper-body cast clip from a source Mixamo clip.
+ * Cached by source identity so hub↔content remounts skip track filtering.
+ */
+export function getCachedUpperCastClip(src: THREE.AnimationClip): THREE.AnimationClip {
+  let cached = upperCastClipCache.get(src);
+  if (cached) return cached;
+  cached = createUpperBodyClip(src);
+  upperCastClipCache.set(src, cached);
+  return cached;
+}
+
 /** Normalized name is exactly `spine1` (not spine / spine2). */
 export function isExactSpine1Bone(normalizedBone: string): boolean {
   return normalizedBone === "spine1";

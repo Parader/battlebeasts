@@ -1,8 +1,12 @@
 import { ABILITIES, MAGMA_ORBS_CAST, travelDistance, type AbilityDef } from "./abilities";
 import { length2, normalize2 } from "./sim";
 import type { Vec2 } from "./protocol";
-import type { WallCollider, ProtectionBubbleCollider } from "./collision";
-import { lastFreeTBeforeWalls, projectileHitsWalls, projectileHitsProtectionBubbles } from "./collision";
+import type { WallCollider, ProtectionBubbleCollider, CircleCollider, BoxCollider } from "./collision";
+import {
+  lastFreeTBeforeWalls,
+  projectileHitsSolids,
+  projectileHitsProtectionBubbles,
+} from "./collision";
 
 /** Angular pie slices for cone wall occlusion (Frost Mist). */
 export const CONE_OCCLUSION_SECTORS = 24;
@@ -46,7 +50,21 @@ export type CombatBody = {
   maxHp: number;
   /** When false, body cannot be damaged (e.g. disconnected). */
   vulnerable?: boolean;
+  /**
+   * Hit footprint, when it differs from a player's.
+   *
+   * Players, decoys and dummies are all one size, so this stays absent for
+   * them and every hit test reads the same constant it always did. Attackable
+   * map props are not: a barn and a fencepost cannot both be a 0.55m circle
+   * without one being unmissable and the other unhittable.
+   */
+  radius?: number;
 };
+
+/** A body's hit footprint, defaulting to player size. */
+export function hitRadiusOf(body: Pick<CombatBody, "radius">): number {
+  return body.radius ?? COMBAT.playerHitRadius;
+}
 
 export type ProjectileSim = {
   id: string;
@@ -263,8 +281,8 @@ export function sampleMagmaOrbsFlight(
 }
 
 /**
- * Earliest Bezier parameter t∈[0,1] along one orb path before a wall blocks it.
- * Returns 1 when the full path is clear (walls only — not units).
+ * Earliest Bezier parameter t∈[0,1] along one orb path before a solid blocks it.
+ * Returns 1 when the full path is clear (walls + props — not units).
  */
 export function magmaOrbMaxFlightT(
   p0: Vec2,
@@ -272,16 +290,18 @@ export function magmaOrbMaxFlightT(
   end: Vec2,
   walls: readonly WallCollider[],
   wallRadius: number,
+  circles: readonly CircleCollider[] = [],
+  boxes: readonly BoxCollider[] = [],
   steps = 48,
 ): number {
-  if (!walls.length) return 1;
-  if (projectileHitsWalls(p0.x, p0.z, p0.x, p0.z, wallRadius, walls)) return 0;
+  if (!walls.length && !circles.length && !boxes.length) return 1;
+  if (projectileHitsSolids(p0.x, p0.z, p0.x, p0.z, wallRadius, walls, circles, boxes)) return 0;
 
   let prev = p0;
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const cur = quadBezier2(p0, ctrl, end, t);
-    if (!projectileHitsWalls(prev.x, prev.z, cur.x, cur.z, wallRadius, walls)) {
+    if (!projectileHitsSolids(prev.x, prev.z, cur.x, cur.z, wallRadius, walls, circles, boxes)) {
       prev = cur;
       continue;
     }
@@ -291,7 +311,7 @@ export function magmaOrbMaxFlightT(
       const mid = (lo + hi) * 0.5;
       const a = quadBezier2(p0, ctrl, end, lo);
       const m = quadBezier2(p0, ctrl, end, mid);
-      if (projectileHitsWalls(a.x, a.z, m.x, m.z, wallRadius, walls)) hi = mid;
+      if (projectileHitsSolids(a.x, a.z, m.x, m.z, wallRadius, walls, circles, boxes)) hi = mid;
       else lo = mid;
     }
     return lo;
@@ -299,15 +319,17 @@ export function magmaOrbMaxFlightT(
   return 1;
 }
 
-/** Max flight t for both Magma Orbs against world walls. */
+/** Max flight t for both Magma Orbs against world walls + solid props. */
 export function magmaOrbsMaxFlightTs(
   path: MagmaOrbsFlightPath,
   walls: readonly WallCollider[],
   wallRadius = MAGMA_ORBS_CAST.flightHitRadius,
+  circles: readonly CircleCollider[] = [],
+  boxes: readonly BoxCollider[] = [],
 ): { left: number; right: number } {
   return {
-    left: magmaOrbMaxFlightT(path.left0, path.ctrlL, path.collide, walls, wallRadius),
-    right: magmaOrbMaxFlightT(path.right0, path.ctrlR, path.collide, walls, wallRadius),
+    left: magmaOrbMaxFlightT(path.left0, path.ctrlL, path.collide, walls, wallRadius, circles, boxes),
+    right: magmaOrbMaxFlightT(path.right0, path.ctrlR, path.collide, walls, wallRadius, circles, boxes),
   };
 }
 
@@ -482,7 +504,7 @@ export function inFacingCone(
   length: number,
   halfAngle: number,
   target: Vec2,
-  targetRadius = COMBAT.playerHitRadius,
+  targetRadius: number = COMBAT.playerHitRadius,
 ): boolean {
   const dx = target.x - origin.x;
   const dz = target.z - origin.z;
@@ -539,6 +561,8 @@ export function coneSectorRanges(
   walls: readonly WallCollider[],
   sectors = CONE_OCCLUSION_SECTORS,
   wallRadius = COMBAT.projectileHitRadius,
+  circles: readonly CircleCollider[] = [],
+  boxes: readonly BoxCollider[] = [],
 ): Float32Array {
   const ranges = new Float32Array(sectors);
   const len = Math.max(0, length);
@@ -549,7 +573,7 @@ export function coneSectorRanges(
       x: origin.x + Math.sin(ang) * len,
       z: origin.z + Math.cos(ang) * len,
     };
-    const t = lastFreeTBeforeWalls(origin, to, wallRadius, walls);
+    const t = lastFreeTBeforeWalls(origin, to, wallRadius, walls, circles, boxes);
     ranges[i] = t == null ? len : len * Math.max(0, t);
   }
   return ranges;
@@ -571,6 +595,10 @@ export function coneRayMaxLength(
     bodyRadius?: number;
     /** Skip this body as a soft occluder (the intended hit target). */
     excludeId?: string | null;
+    /** Solid round props, which hard-clip exactly like walls. */
+    circles?: readonly CircleCollider[];
+    /** Oriented prop boxes, which hard-clip exactly like walls. */
+    boxes?: readonly BoxCollider[];
   },
 ): number {
   const len = Math.max(0, length);
@@ -582,7 +610,7 @@ export function coneRayMaxLength(
     x: origin.x + Math.sin(rayYaw) * len,
     z: origin.z + Math.cos(rayYaw) * len,
   };
-  const t = lastFreeTBeforeWalls(origin, to, wallRadius, walls);
+  const t = lastFreeTBeforeWalls(origin, to, wallRadius, walls, opts?.circles ?? [], opts?.boxes ?? []);
   let max = t == null ? len : len * Math.max(0, t);
 
   const nx = Math.sin(rayYaw);
@@ -622,7 +650,6 @@ export function coneRaySoftOccluded(
   if (distT < 1e-4) return false;
   const nx = dx / distT;
   const nz = dz / distT;
-  const R = COMBAT.playerHitRadius;
 
   for (const b of bodies) {
     if (b.id === targetId || b.id === ownerId) continue;
@@ -632,13 +659,18 @@ export function coneRaySoftOccluded(
     const along = bx * nx + bz * nz;
     if (along <= 0 || along >= distT - softEpsilon) continue;
     const perp = Math.abs(bx * nz - bz * nx);
-    if (perp <= R) return true;
+    // Per-body: a barn-sized target casts a barn-sized shadow.
+    if (perp <= hitRadiusOf(b)) return true;
   }
   return false;
 }
 
 export type ResolveConeHitsOpts = {
   walls?: readonly WallCollider[];
+  /** Solid round props, which block a cone exactly as walls do. */
+  circles?: readonly CircleCollider[];
+  /** Oriented prop boxes, which block a cone exactly as walls do. */
+  boxes?: readonly BoxCollider[];
   /** Soft unit cover (front takes hit, behind safe). Default false. */
   softOcclude?: boolean;
 };
@@ -659,8 +691,10 @@ export function resolveConeHits(
   opts?: ResolveConeHitsOpts,
 ): { targetId: string; damage: number; hpAfter: number }[] {
   const walls = opts?.walls ?? [];
+  const circles = opts?.circles ?? [];
+  const boxes = opts?.boxes ?? [];
   const softOcclude = opts?.softOcclude === true;
-  const occlude = walls.length > 0 || softOcclude;
+  const occlude = walls.length > 0 || circles.length > 0 || boxes.length > 0 || softOcclude;
 
   const hits: { targetId: string; damage: number; hpAfter: number }[] = [];
   for (const body of bodies) {
@@ -668,7 +702,7 @@ export function resolveConeHits(
     if (body.vulnerable === false) continue;
     if (body.hp <= 0) continue;
     if (!canHurt(ownerId, body.id)) continue;
-    if (!inFacingCone(origin, yaw, length, halfAngle, body, COMBAT.playerHitRadius)) {
+    if (!inFacingCone(origin, yaw, length, halfAngle, body, hitRadiusOf(body))) {
       continue;
     }
 
@@ -685,16 +719,67 @@ export function resolveConeHits(
         walls,
         softOcclude ? bodies : [],
         ownerId,
-        { excludeId: body.id },
+        { excludeId: body.id, circles, boxes },
       );
       // Reach must overlap the target circle — same footprint the VFX soft-stops at.
-      if (dist > maxLen + COMBAT.playerHitRadius) continue;
+      if (dist > maxLen + hitRadiusOf(body)) continue;
     }
 
     const nextHp = Math.max(0, body.hp - damage);
     hits.push({ targetId: body.id, damage, hpAfter: nextHp });
   }
   return hits;
+}
+
+/**
+ * First (nearest) body along a facing ray/cone — used by Arc Thread acquisition.
+ */
+export function resolveFirstRayHit(
+  origin: Vec2,
+  yaw: number,
+  length: number,
+  halfAngle: number,
+  ownerId: string,
+  bodies: CombatBody[],
+  canHurt: (ownerId: string, targetId: string) => boolean,
+  opts?: ResolveConeHitsOpts,
+): { targetId: string; dist: number } | null {
+  let best: { targetId: string; dist: number } | null = null;
+  for (const body of bodies) {
+    if (body.id === ownerId) continue;
+    if (body.vulnerable === false) continue;
+    if (body.hp <= 0) continue;
+    if (!canHurt(ownerId, body.id)) continue;
+    if (!inFacingCone(origin, yaw, length, halfAngle, body, hitRadiusOf(body))) {
+      continue;
+    }
+
+    const walls = opts?.walls ?? [];
+    const circles = opts?.circles ?? [];
+    const boxes = opts?.boxes ?? [];
+    const softOcclude = opts?.softOcclude === true;
+    const occlude = walls.length > 0 || circles.length > 0 || boxes.length > 0 || softOcclude;
+    const dx = body.x - origin.x;
+    const dz = body.z - origin.z;
+    const dist = Math.hypot(dx, dz);
+
+    if (occlude) {
+      const rayYaw = dist > 1e-6 ? Math.atan2(dx, dz) : yaw;
+      const maxLen = coneRayMaxLength(
+        origin,
+        rayYaw,
+        length,
+        walls,
+        softOcclude ? bodies : [],
+        ownerId,
+        { excludeId: body.id, circles, boxes },
+      );
+      if (dist > maxLen + hitRadiusOf(body)) continue;
+    }
+
+    if (!best || dist < best.dist) best = { targetId: body.id, dist };
+  }
+  return best;
 }
 
 export function resolveInstantHits(
@@ -711,7 +796,7 @@ export function resolveInstantHits(
     if (body.vulnerable === false) continue;
     if (body.hp <= 0) continue;
     if (!canHurt(ownerId, body.id)) continue;
-    if (!circlesOverlap(center.x, center.z, radius, body.x, body.z, COMBAT.playerHitRadius)) {
+    if (!circlesOverlap(center.x, center.z, radius, body.x, body.z, hitRadiusOf(body))) {
       continue;
     }
     const nextHp = Math.max(0, body.hp - damage);
@@ -757,6 +842,13 @@ export type ProjectileWallHitEvent = {
   abilityId: string;
   x: number;
   z: number;
+  /** Protection / Hand Shield collider id when blocked by a disc (not a world wall). */
+  blockBubbleId?: string;
+  /**
+   * Fuse projectiles that plant on the disc instead of shattering —
+   * still counts as a Hand Shield block for retaliate.
+   */
+  detonatedOnBlock?: boolean;
 };
 
 export type ProjectileTickResult = {
@@ -795,6 +887,15 @@ export function tickProjectiles(
   walls: readonly WallCollider[] = [],
   detonateDelaySecByAbility: (abilityId: string) => number = () => 0,
   protectionBubbles: readonly ProtectionBubbleCollider[] = [],
+  /**
+   * Solid round props -- rocks, pillars, tree trunks.
+   *
+   * Separate from `walls` because the two come from different sources, but
+   * both stop a shot. Projectiles used to test walls only, so every circular
+   * prop in every map was transparent to fire.
+   */
+  circles: readonly CircleCollider[] = [],
+  boxes: readonly BoxCollider[] = [],
 ): ProjectileTickResult {
   const removedIds: string[] = [];
   const hits: ProjectileHitEvent[] = [];
@@ -858,25 +959,38 @@ export function tickProjectiles(
     }
 
     const hitWall =
-      walls.length > 0 &&
-      projectileHitsWalls(fromX, fromZ, p.x, p.z, p.wallRadius, walls);
+      (walls.length > 0 || circles.length > 0 || boxes.length > 0) &&
+      projectileHitsSolids(fromX, fromZ, p.x, p.z, p.wallRadius, walls, circles, boxes);
     const hitBubble =
       !hitWall &&
-      protectionBubbles.length > 0 &&
-      projectileHitsProtectionBubbles(
-        fromX,
-        fromZ,
-        p.x,
-        p.z,
-        p.wallRadius,
-        protectionBubbles,
-        p.passBubbleIds,
-      );
+      protectionBubbles.length > 0
+        ? projectileHitsProtectionBubbles(
+            fromX,
+            fromZ,
+            p.x,
+            p.z,
+            p.wallRadius,
+            protectionBubbles,
+            p.passBubbleIds,
+          )
+        : null;
     if (hitWall || hitBubble) {
       if (canDetonate) {
         p.x = fromX;
         p.z = fromZ;
         armDetonate(p, fuseSec, "grounded", null);
+        // Hand Shield still retaliates when a fuse projectile plants on the disc.
+        if (hitBubble?.id) {
+          wallHits.push({
+            projectileId: p.id,
+            ownerId: p.ownerId,
+            abilityId: p.abilityId,
+            x: fromX,
+            z: fromZ,
+            blockBubbleId: hitBubble.id,
+            detonatedOnBlock: true,
+          });
+        }
       } else {
         removedIds.push(p.id);
         wallHits.push({
@@ -885,6 +999,7 @@ export function tickProjectiles(
           abilityId: p.abilityId,
           x: fromX,
           z: fromZ,
+          blockBubbleId: hitBubble?.id,
         });
       }
       continue;
@@ -950,7 +1065,7 @@ export function tickProjectiles(
       if (p.hitIds.has(body.id)) continue;
       if (body.vulnerable === false || body.hp <= 0) continue;
       if (!canHurt(p.ownerId, body.id)) continue;
-      if (!circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, COMBAT.playerHitRadius)) {
+      if (!circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, hitRadiusOf(body))) {
         continue;
       }
       p.hitIds.add(body.id);

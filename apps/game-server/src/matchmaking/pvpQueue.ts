@@ -3,7 +3,9 @@ import { matchMaker } from "@colyseus/core";
 import {
   MMR_MIDPOINT,
   PVP_MODES,
+  isPvpFfaTriosMode,
   mmrBandForWaitMs,
+  pvpModeFighterCount,
   resolvePvpTransfer,
   type MatchKind,
   type PvpModeId,
@@ -70,12 +72,22 @@ function partyWaitMs(entry: PvpQueueEntry, now: number): number {
  * Find a set of whole parties that fill both teams and whose team avg MMR
  * differ by at most the progressive band (based on max wait in the set).
  */
+/**
+ * Find a set of whole parties that fill the mode and whose side avg MMR
+ * differ by at most the progressive band (based on max wait in the set).
+ */
 function selectEntriesForMode(modeId: string, now: number): PvpQueueEntry[] | null {
+  const mode = modeConfig(modeId);
+  if (!mode || mode.noQueue) return null;
+  const ffa = isPvpFfaTriosMode(modeId);
   const teamSize = teamSizeForMode(modeId);
-  const need = teamSize * 2;
+  const need = pvpModeFighterCount(modeId) || teamSize * 2;
   const maxSpectators = maxSpectatorsForMode(modeId);
   const candidates = queue
     .filter((e) => e.modes.includes(modeId))
+    // FFA: a party cannot bring more fighters than sides remaining in a solo FFA
+    // (max 2 queued together looking for a third; full 3 goes direct-start).
+    .filter((e) => !ffa || fighterCount(e) <= Math.max(1, need - 1))
     .sort((a, b) => a.enqueuedAt - b.enqueuedAt);
 
   type Pack = { entries: PvpQueueEntry[]; fighters: number };
@@ -108,29 +120,33 @@ function selectEntriesForMode(modeId: string, now: number): PvpQueueEntry[] | nu
     const maxWait = Math.max(...pack.entries.map((e) => partyWaitMs(e, now)));
     const band = mmrBandForWaitMs(maxWait);
 
-    // Split into two teams for gap estimate (same assignTeams heuristic).
-    const assignments = assignTeams(pack.entries, teamSize);
-    let sumA = 0;
-    let nA = 0;
-    let sumB = 0;
-    let nB = 0;
+    const assignments = assignTeams(pack.entries, teamSize, modeId as PvpModeId);
+    const sideSum = { a: 0, b: 0, c: 0 };
+    const sideN = { a: 0, b: 0, c: 0 };
     for (const entry of pack.entries) {
       for (const member of entry.members) {
         if (member.seat === "spectator") continue;
         const a = assignments.get(member.key);
         if (!a || a.role !== "fighter") continue;
-        const mmr = entry.avgMmr; // party-level approx; good enough for banding
-        if (a.team === "a") {
-          sumA += mmr;
-          nA++;
-        } else {
-          sumB += mmr;
-          nB++;
-        }
+        const team = a.team;
+        if (team !== "a" && team !== "b" && team !== "c") continue;
+        const mmr = entry.avgMmr;
+        sideSum[team] += mmr;
+        sideN[team]++;
       }
     }
-    if (nA !== teamSize || nB !== teamSize) continue;
-    const gap = Math.abs(sumA / nA - sumB / nB);
+
+    if (ffa) {
+      if (sideN.a !== 1 || sideN.b !== 1 || sideN.c !== 1) continue;
+      const avgs = [sideSum.a, sideSum.b, sideSum.c];
+      const gap = Math.max(...avgs) - Math.min(...avgs);
+      if (gap > band) continue;
+      if (!best || gap < best.gap) best = { entries: pack.entries, gap };
+      continue;
+    }
+
+    if (sideN.a !== teamSize || sideN.b !== teamSize) continue;
+    const gap = Math.abs(sideSum.a / sideN.a - sideSum.b / sideN.b);
     if (gap > band) continue;
     if (!best || gap < best.gap) best = { entries: pack.entries, gap };
   }
@@ -152,22 +168,56 @@ function selectEntriesForMode(modeId: string, now: number): PvpQueueEntry[] | nu
 
 /**
  * Assign sides for a match. Multi-fighter parties stay together on one side when they fit;
- * leftover solos fill empty slots. Explicit teamA/teamB seats are preferred when packing
+ * leftover solos fill empty slots. Explicit teamA/teamB/teamC seats are preferred when packing
  * a single pre-balanced party, otherwise seats are remapped.
  */
 function assignTeams(
   selected: PvpQueueEntry[],
   teamSize: number,
-): Map<string, { team: "a" | "b" | ""; role: "fighter" | "spectator"; spawnSlot: number }> {
-  const out = new Map<string, { team: "a" | "b" | ""; role: "fighter" | "spectator"; spawnSlot: number }>();
+  modeId: PvpModeId,
+): Map<string, { team: "a" | "b" | "c" | ""; role: "fighter" | "spectator"; spawnSlot: number }> {
+  const out = new Map<string, { team: "a" | "b" | "c" | ""; role: "fighter" | "spectator"; spawnSlot: number }>();
   let slotA = 0;
   let slotB = 0;
+  let slotC = 0;
   let slotSpec = 0;
 
-  const placeFighter = (member: PvpPartyMember, team: "a" | "b") => {
-    const spawnSlot = team === "a" ? slotA++ : slotB++;
+  const placeFighter = (member: PvpPartyMember, team: "a" | "b" | "c") => {
+    const spawnSlot =
+      team === "a" ? slotA++ : team === "b" ? slotB++ : slotC++;
     out.set(member.key, { team, role: "fighter", spawnSlot });
   };
+
+  if (isPvpFfaTriosMode(modeId)) {
+    const used = new Set<"a" | "b" | "c">();
+    const pending: PvpPartyMember[] = [];
+
+    for (const entry of selected) {
+      for (const member of entry.members) {
+        if (member.seat === "spectator") {
+          out.set(member.key, { team: "", role: "spectator", spawnSlot: slotSpec++ });
+          continue;
+        }
+        const prefer =
+          member.seat === "teamC" ? "c" : member.seat === "teamB" ? "b" : member.seat === "teamA" ? "a" : null;
+        if (prefer && !used.has(prefer)) {
+          placeFighter(member, prefer);
+          used.add(prefer);
+        } else {
+          pending.push(member);
+        }
+      }
+    }
+
+    for (const member of pending) {
+      const team =
+        !used.has("a") ? "a" : !used.has("b") ? "b" : !used.has("c") ? "c" : null;
+      if (!team) continue;
+      placeFighter(member, team);
+      used.add(team);
+    }
+    return out;
+  }
 
   if (selected.length === 1) {
     const entry = selected[0]!;
@@ -243,7 +293,7 @@ async function createMatch(
     seasonId: season?.id ?? null,
   });
 
-  const assignments = assignTeams(selected, teamSize);
+  const assignments = assignTeams(selected, teamSize, modeId);
 
   for (const entry of selected) {
     for (const member of entry.members) {
@@ -254,11 +304,14 @@ async function createMatch(
       };
 
       member.client.send("queue_status", { queued: false });
+      const label = isPvpFfaTriosMode(modeId)
+        ? "1v1v1"
+        : `${teamSize}v${teamSize}`;
       member.client.send("toast", {
         message:
           matchKind === "ranked"
-            ? `Ranked match — ${modeId} (${teamSize}v${teamSize})`
-            : `Unranked match — ${modeId} (${teamSize}v${teamSize})`,
+            ? `Ranked match — ${modeId} (${label})`
+            : `Unranked match — ${modeId} (${label})`,
       });
       member.client.send("transfer", {
         room: transfer.room,

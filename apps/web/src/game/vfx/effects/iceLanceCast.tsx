@@ -6,9 +6,11 @@ import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { findHandBone } from "../attach";
 import { getCharacterRoot } from "../../characterRoots";
-import { createEnergyBallMaterial } from "../materials/energyBall";
+import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { hasStatusId } from "../../StatusOrnaments";
+import { GEO_LANCE_SHAFT, GEO_LANCE_TIP } from "../sharedGeo";
+import { useSpellLight } from "../spellLights";
 
 const ICE = "#7dd3fc";
 const ICE_HOT = "#e0f2fe";
@@ -18,9 +20,7 @@ const ICE_DEEP = "#0c4a6e";
 const TIP_LOCAL = new THREE.Vector3(0, -1, 0);
 
 const TIP_LEN = 0.2;
-const TIP_R = 0.034;
 const SHAFT_LEN = 0.1;
-const SHAFT_R = 0.018;
 
 const SPAWN_SEC =
   ICE_LANCE_CAST.spawnFrame / ICE_LANCE_CAST.fps / ICE_LANCE_CAST.playbackRate;
@@ -59,24 +59,18 @@ function LanceMesh({
   const tipY = TIP_LEN * 0.5 + SHAFT_LEN * 0.5;
   return (
     <>
-      <mesh rotation={[Math.PI, 0, 0]} position={[0, -tipY, 0]} material={coreMat}>
-        <coneGeometry args={[TIP_R, TIP_LEN, 5]} />
-      </mesh>
-      <mesh rotation={[Math.PI, 0, 0]} position={[0, -tipY, 0]} scale={1.2} material={glowMat}>
-        <coneGeometry args={[TIP_R, TIP_LEN, 5]} />
-      </mesh>
-      <mesh position={[0, tipY, 0]} material={coreMat}>
-        <coneGeometry args={[TIP_R, TIP_LEN, 5]} />
-      </mesh>
-      <mesh position={[0, tipY, 0]} scale={1.2} material={glowMat}>
-        <coneGeometry args={[TIP_R, TIP_LEN, 5]} />
-      </mesh>
-      <mesh material={coreMat}>
-        <cylinderGeometry args={[SHAFT_R, SHAFT_R, SHAFT_LEN, 5]} />
-      </mesh>
-      <mesh scale={[1.25, 1, 1.25]} material={glowMat}>
-        <cylinderGeometry args={[SHAFT_R, SHAFT_R, SHAFT_LEN, 5]} />
-      </mesh>
+      <mesh rotation={[Math.PI, 0, 0]} position={[0, -tipY, 0]} material={coreMat} geometry={GEO_LANCE_TIP} />
+      <mesh
+        rotation={[Math.PI, 0, 0]}
+        position={[0, -tipY, 0]}
+        scale={1.2}
+        material={glowMat}
+        geometry={GEO_LANCE_TIP}
+      />
+      <mesh position={[0, tipY, 0]} material={coreMat} geometry={GEO_LANCE_TIP} />
+      <mesh position={[0, tipY, 0]} scale={1.2} material={glowMat} geometry={GEO_LANCE_TIP} />
+      <mesh material={coreMat} geometry={GEO_LANCE_SHAFT} />
+      <mesh scale={[1.25, 1, 1.25]} material={glowMat} geometry={GEO_LANCE_SHAFT} />
     </>
   );
 }
@@ -94,9 +88,10 @@ export function IceLanceCastEffect({
 }) {
   const root = useRef<THREE.Group>(null);
   const lance = useRef<THREE.Group>(null);
-  const coreMat = useMemo(() => createEnergyBallMaterial(ICE_HOT, 0.95), []);
-  const glowMat = useMemo(() => createEnergyBallMaterial(ICE, 0.45), []);
-  const light = useRef<THREE.PointLight>(null);
+  const coreMat = useMemo(() => acquireEnergyBallMaterial(ICE_HOT, 0.95), []);
+  const glowMat = useMemo(() => acquireEnergyBallMaterial(ICE, 0.45), []);
+  const lightAt = useRef<THREE.Object3D>(null);
+  const light = useSpellLight();
   const phase = useRef<"wait" | "hand" | "flight" | "done">("wait");
   const projId = useRef<string | null>(null);
   /** Stuck/grounded lances already planted when this cast VFX spawned. */
@@ -256,7 +251,7 @@ export function IceLanceCastEffect({
     s.scale.setScalar(0.55 + grow * 0.45);
     coreMat.opacity = grow;
     glowMat.opacity = grow * 0.5;
-    if (light.current) light.current.intensity = grow * 1.35;
+    light.emitAt(lightAt.current, ICE, grow * 1.35, 2.6);
 
     const charRoot = getCharacterRoot(shot.followOwnerId);
     const hand = (charRoot && findHandBone(charRoot, "right")) || null;
@@ -306,7 +301,7 @@ export function IceLanceCastEffect({
     <group ref={root} position={[shot.x, shot.y, shot.z]}>
       <group ref={lance} visible={false}>
         <LanceMesh coreMat={coreMat} glowMat={glowMat} />
-        <pointLight ref={light} color={ICE} intensity={0} distance={2.6} decay={2} />
+        <object3D ref={lightAt} />
         <AdditiveParticleBurst
           color={ICE_DEEP}
           origin={[0, 0, 0]}

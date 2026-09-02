@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -6,7 +7,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
-  type RefObject,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { Room } from "colyseus.js";
@@ -15,8 +16,8 @@ import {
   ESSENCE_PER_TALENT_REFUND,
   TALENT_CATALOG,
   TALENT_POINT_BUDGET,
+  TALENT_TREE_ACCENT,
   TALENT_TREE_CAP,
-  TALENT_TREE_COLUMNS,
   TALENT_TREE_IDS,
   canInvestTalent,
   canRefundTalent,
@@ -24,7 +25,7 @@ import {
   investTalent,
   isCatalogTalentImplemented,
   isTalentTaken,
-  layoutTalentTree,
+  layoutTalentConstellation,
   normalizeTalentBuild,
   refundTalent,
   talentMaxRank,
@@ -32,10 +33,11 @@ import {
   talentRank,
   talentRankCost,
   talentRefundEssenceCost,
-  talentTreeLinks,
   totalPointsSpent,
   treePointsSpent,
   type CatalogTalentDef,
+  type ConstellationNode,
+  type SpellUnlockPlaceholder,
   type TalentBuild,
   type TalentTreeId,
 } from "@battlebeasts/shared";
@@ -46,26 +48,37 @@ import { GameIcon } from "./GameIcon";
 import { TALENT_TREE_ICONS } from "./gameIcons";
 import { loadStandMenuMemory, saveStandMenuMemory } from "../standMenuMemory";
 
-const TREE_ACCENT: Record<TalentTreeId, string> = {
-  Destruction: "#b45309",
-  Guardian: "#57534e",
-  Control: "#0e7490",
-  Flow: "#4d7c0f",
-  Harmony: "#a16207",
-};
+const NODE_SIZE = 56;
+const HUB_SIZE = 88;
+const CORE_SIZE = 96;
+const SPELL_SIZE = 48;
+const ZOOM_MIN = 0.22;
+const ZOOM_MAX = 1.65;
 
-/** Natural board size — scaled up to fill the stage, never down below readable. */
-const CELL = 76;
-const GAP_X = 40;
-const GAP_Y = 52;
-const PAD = 36;
-
-type TipState = {
-  talent: CatalogTalentDef;
-  rank: number;
-  nodeState: "locked" | "available" | "learned";
-  anchor: DOMRect;
-};
+type TipState =
+  | {
+      kind: "talent";
+      talent: CatalogTalentDef;
+      rank: number;
+      nodeState: "locked" | "available" | "learned";
+      anchor: DOMRect;
+    }
+  | {
+      kind: "spell";
+      spell: SpellUnlockPlaceholder;
+      anchor: DOMRect;
+    }
+  | {
+      kind: "hub";
+      tree: TalentTreeId;
+      pts: number;
+      anchor: DOMRect;
+    }
+  | {
+      kind: "core";
+      spent: number;
+      anchor: DOMRect;
+    };
 
 function TalentTooltipBody({
   talent,
@@ -127,7 +140,6 @@ function TalentTooltipBody({
   );
 }
 
-/** Fixed-position tip outside overflow/scaled boards so top-row hovers stay readable. */
 function TalentFloatingTip({ tip }: { tip: TipState | null }) {
   const tipRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<CSSProperties>({
@@ -180,201 +192,163 @@ function TalentFloatingTip({ tip }: { tip: TipState | null }) {
       role="tooltip"
       style={pos}
     >
-      <TalentTooltipBody talent={tip.talent} rank={tip.rank} state={tip.nodeState} />
+      {tip.kind === "talent" ? (
+        <TalentTooltipBody talent={tip.talent} rank={tip.rank} state={tip.nodeState} />
+      ) : tip.kind === "spell" ? (
+        <>
+          <div className="bb-talent-tip__name">{tip.spell.label}</div>
+          <div className="bb-talent-tip__meta">{tip.spell.tree} · spell path</div>
+          <p className="bb-talent-tip__body">{tip.spell.lockedNote}</p>
+          <p className="bb-talent-tip__hint">Placeholder — unlock wiring comes later</p>
+        </>
+      ) : tip.kind === "hub" ? (
+        <>
+          <div className="bb-talent-tip__name">{tip.tree}</div>
+          <div className="bb-talent-tip__meta">
+            {tip.pts}/{TALENT_TREE_CAP} points in tree
+          </div>
+          <p className="bb-talent-tip__hint">Click to center this branch</p>
+        </>
+      ) : (
+        <>
+          <div className="bb-talent-tip__name">Hunter</div>
+          <div className="bb-talent-tip__meta">
+            {tip.spent}/{TALENT_POINT_BUDGET} points invested
+          </div>
+          <p className="bb-talent-tip__hint">Drag to pan · scroll to zoom</p>
+        </>
+      )}
     </div>,
     document.body,
   );
 }
 
-function TreeBoard({
-  tree,
-  build,
-  ownedPoints,
-  onChange,
-  onHoverTip,
-}: {
-  tree: TalentTreeId;
-  build: TalentBuild;
-  ownedPoints: number;
-  onChange: (next: TalentBuild) => void;
-  onHoverTip: (tip: TipState | null) => void;
-}) {
-  const { cells, rowCount } = useMemo(() => layoutTalentTree(tree), [tree]);
-  const links = useMemo(() => talentTreeLinks(cells), [cells]);
-  const byId = useMemo(() => {
-    const m = new Map<string, (typeof cells)[number]>();
-    for (const c of cells) m.set(c.talent.id, c);
-    return m;
-  }, [cells]);
-
-  const width = PAD * 2 + TALENT_TREE_COLUMNS * CELL + (TALENT_TREE_COLUMNS - 1) * GAP_X;
-  const height = PAD * 2 + Math.max(1, rowCount) * CELL + Math.max(0, rowCount - 1) * GAP_Y;
-  const accent = TREE_ACCENT[tree];
-
-  const cellCenter = (id: string) => {
-    const c = byId.get(id);
-    if (!c) return { x: 0, y: 0 };
-    return {
-      x: PAD + c.col * (CELL + GAP_X) + CELL / 2,
-      y: PAD + c.row * (CELL + GAP_Y) + CELL / 2,
-    };
-  };
-
-  const showTip = (
-    talent: CatalogTalentDef,
-    rank: number,
-    nodeState: TipState["nodeState"],
-    el: HTMLElement,
-  ) => {
-    onHoverTip({
-      talent,
-      rank,
-      nodeState,
-      anchor: el.getBoundingClientRect(),
-    });
-  };
-
-  return (
-    <div
-      className="bb-talent-board"
-      style={
-        {
-          "--bb-talent-accent": accent,
-          width,
-          height,
-        } as CSSProperties
-      }
-    >
-      <svg className="bb-talent-board__links" width={width} height={height} aria-hidden>
-        {links.map((link) => {
-          const a = cellCenter(link.fromId);
-          const b = cellCenter(link.toId);
-          // Lit when the previous node has a point (path unlocked), brighter when both taken.
-          const fromOn = isTalentTaken(build, link.fromId);
-          const toOn = isTalentTaken(build, link.toId);
-          const active = fromOn && toOn;
-          const unlocked = fromOn && !toOn;
-          const midY = (a.y + b.y) / 2;
-          return (
-            <path
-              key={`${link.fromId}-${link.toId}`}
-              d={`M ${a.x} ${a.y + CELL / 2 - 2} L ${a.x} ${midY} L ${b.x} ${midY} L ${b.x} ${b.y - CELL / 2 + 2}`}
-              className={
-                active
-                  ? "bb-talent-link bb-talent-link--on"
-                  : unlocked
-                    ? "bb-talent-link bb-talent-link--open"
-                    : "bb-talent-link"
-              }
-              fill="none"
-            />
-          );
-        })}
-      </svg>
-
-      <div className="bb-talent-board__nodes" style={{ width, height }}>
-        {cells.map(({ talent, col, row }) => {
-          const rank = talentRank(build, talent.id);
-          const maxRank = talentMaxRank(talent);
-          const canUp = canInvestTalent(build, talent.id, ownedPoints);
-          const canDown = canRefundTalent(build, talent.id);
-          const implemented = isCatalogTalentImplemented(talent);
-          const state: "locked" | "available" | "learned" =
-            rank > 0 ? "learned" : canUp ? "available" : "locked";
-
-          return (
-            <button
-              key={talent.id}
-              type="button"
-              aria-label={talent.name}
-              className={[
-                "bb-talent-node",
-                state === "learned" ? "bb-talent-node--learned" : "",
-                state === "available" ? "bb-talent-node--available" : "",
-                state === "locked" ? "bb-talent-node--locked" : "",
-                !implemented ? "bb-talent-node--wip" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              style={{
-                left: PAD + col * (CELL + GAP_X),
-                top: PAD + row * (CELL + GAP_Y),
-                width: CELL,
-                height: CELL,
-              }}
-              onMouseEnter={(e) => showTip(talent, rank, state, e.currentTarget)}
-              onMouseLeave={() => onHoverTip(null)}
-              onFocus={(e) => showTip(talent, rank, state, e.currentTarget)}
-              onBlur={() => onHoverTip(null)}
-              onClick={() => {
-                if (canUp) onChange(investTalent(build, talent.id, ownedPoints));
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                if (canDown) onChange(refundTalent(build, talent.id));
-              }}
-            >
-              <span className="bb-talent-node__glyph" aria-hidden>
-                <TalentNatureIcon tags={talent.affectedTags} size={34} />
-              </span>
-              {!implemented ? <span className="bb-talent-node__wip">WIP</span> : null}
-              {maxRank > 1 ? (
-                <span className="bb-talent-node__rank">
-                  {rank}/{maxRank}
-                </span>
-              ) : (
-                <span className="bb-talent-node__cost">{talentRankCost(talent)}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function boardMetrics(tree: TalentTreeId) {
-  const { rowCount } = layoutTalentTree(tree);
-  return {
-    width: PAD * 2 + TALENT_TREE_COLUMNS * CELL + (TALENT_TREE_COLUMNS - 1) * GAP_X,
-    height: PAD * 2 + Math.max(1, rowCount) * CELL + Math.max(0, rowCount - 1) * GAP_Y,
-  };
-}
-
-/** Scale board to fill the stage; prefer growing up, never crush below ~85% of natural size when stage is small. */
-function useFitScale(
-  stageRef: RefObject<HTMLElement | null>,
-  boardSize: { width: number; height: number },
+function useConstellationCamera(
+  viewportRef: React.RefObject<HTMLElement | null>,
+  world: { width: number; height: number; centerX: number; centerY: number },
 ) {
-  const [scale, setScale] = useState(1);
+  const [cam, setCam] = useState({ x: 0, y: 0, zoom: 0.42 });
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const camRef = useRef(cam);
+  camRef.current = cam;
+
+  const fitOverview = useCallback(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 40 || rect.height < 40) return;
+    const pad = 48;
+    const zx = (rect.width - pad * 2) / world.width;
+    const zy = (rect.height - pad * 2) / world.height;
+    const zoom = Math.min(Math.max(Math.min(zx, zy), ZOOM_MIN), 0.55);
+    setCam({
+      x: rect.width / 2 - world.centerX * zoom,
+      y: rect.height / 2 - world.centerY * zoom,
+      zoom,
+    });
+  }, [viewportRef, world.width, world.height, world.centerX, world.centerY]);
 
   useLayoutEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-
-    const measure = () => {
-      const rect = stage.getBoundingClientRect();
-      const availW = rect.width - 24;
-      const availH = rect.height - 24;
-      // Wait until the stage actually has layout height — avoid 0→tiny scale trap.
-      if (availW < 80 || availH < 120 || boardSize.width <= 0 || boardSize.height <= 0) {
-        return;
-      }
-      const fit = Math.min(availW / boardSize.width, availH / boardSize.height);
-      // Fill the stage (upscale when there is room). Exact fit — never crush via bad measure.
-      const next = Math.min(fit, 1.85);
-      setScale(Number.isFinite(next) && next > 0 ? next : 1);
-    };
-
-    measure();
-    const ro = new ResizeObserver(() => {
-      requestAnimationFrame(measure);
-    });
-    ro.observe(stage);
+    fitOverview();
+    const el = viewportRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => fitOverview());
+    ro.observe(el);
     return () => ro.disconnect();
-  }, [stageRef, boardSize.width, boardSize.height]);
+  }, [fitOverview, viewportRef]);
 
-  return scale;
+  // Non-passive so we can preventDefault and keep page scroll locked while zooming.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const { x, y, zoom } = camRef.current;
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const worldX = (mx - x) / zoom;
+      const worldY = (my - y) / zoom;
+      const factor = e.deltaY > 0 ? 0.9 : 1.11;
+      const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor));
+      setCam({
+        zoom: nextZoom,
+        x: mx - worldX * nextZoom,
+        y: my - worldY * nextZoom,
+      });
+    };
+    el.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelNative);
+  }, [viewportRef]);
+
+  const centerOn = useCallback(
+    (wx: number, wy: number, zoom = camRef.current.zoom) => {
+      const el = viewportRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
+      setCam({
+        x: rect.width / 2 - wx * z,
+        y: rect.height / 2 - wy * z,
+        zoom: z,
+      });
+    },
+    [viewportRef],
+  );
+
+  const onPointerDown = useCallback((e: ReactPointerEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (
+      target.closest(
+        "button.bb-constel-node, button.bb-constel-hub, button.bb-constel-core, button.bb-constel-spell",
+      )
+    ) {
+      return;
+    }
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: camRef.current.x,
+      originY: camRef.current.y,
+    };
+  }, []);
+
+  const onPointerMove = useCallback((e: ReactPointerEvent) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    setCam((c) => ({ ...c, x: d.originX + dx, y: d.originY + dy }));
+  }, []);
+
+  const onPointerUp = useCallback((e: ReactPointerEvent) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  return {
+    cam,
+    fitOverview,
+    centerOn,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+  };
 }
 
 type Props = {
@@ -386,7 +360,6 @@ type Props = {
   activeLoadoutSlot: number;
   loadoutSlotCount: number;
   onSelectPreset: (slotIndex: number) => void;
-  /** Points + Buy controls for the stand panel header. */
   onHeaderActions?: (node: ReactNode | null) => void;
 };
 
@@ -401,7 +374,9 @@ export function TalentTreePanel({
   onSelectPreset,
   onHeaderActions,
 }: Props) {
-  const [tree, setTree] = useState<TalentTreeId>(() => loadStandMenuMemory().talentTree);
+  const [focusTree, setFocusTree] = useState<TalentTreeId>(
+    () => loadStandMenuMemory().talentTree,
+  );
   const [build, setBuild] = useState<TalentBuild>(() => normalizeTalentBuild(talentBuild));
   const [dirty, setDirty] = useState(false);
   const [hoverTip, setHoverTip] = useState<TipState | null>(null);
@@ -409,27 +384,24 @@ export function TalentTreePanel({
   const [confirmSaveRespec, setConfirmSaveRespec] = useState(false);
   const [confirmBuyPoints, setConfirmBuyPoints] = useState(false);
   const [buyPointQty, setBuyPointQty] = useState(1);
-  const stageRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  const layout = useMemo(() => layoutTalentConstellation(), []);
+  const camera = useConstellationCamera(viewportRef, layout);
 
   useEffect(() => {
     if (!dirty) setBuild(normalizeTalentBuild(talentBuild));
   }, [talentBuild, dirty]);
 
   useEffect(() => {
-    setHoverTip(null);
-  }, [tree]);
-
-  useEffect(() => {
-    // Switching loadout pulls a different talent build from the server.
     setDirty(false);
     setBuild(normalizeTalentBuild(talentBuild));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- slot change is the intentional trigger
   }, [activeLoadoutSlot]);
 
   const spent = totalPointsSpent(build);
-  const treeSpent = treePointsSpent(build, tree);
   const savedBuild = normalizeTalentBuild(talentBuild);
-  const savedTreeSpent = treePointsSpent(savedBuild, tree);
+  const savedTreeSpent = treePointsSpent(savedBuild, focusTree);
   const respecPoints = talentPointsRemoved(savedBuild, build);
   const respecCost = talentRefundEssenceCost(respecPoints);
   const resetTreeCost = talentRefundEssenceCost(savedTreeSpent);
@@ -438,7 +410,6 @@ export function TalentTreePanel({
   const atPointCap = owned >= TALENT_POINT_BUDGET;
   const roomForPoints = Math.max(0, TALENT_POINT_BUDGET - owned);
   const maxBuyByEssence = Math.floor(essence / ESSENCE_PER_TALENT_POINT);
-  /** Server also caps a single purchase at 20. */
   const maxBuyPoints = Math.max(0, Math.min(20, roomForPoints, maxBuyByEssence));
   const canBuy = !atPointCap && maxBuyPoints >= 1;
   const buyCost = buyPointQty * ESSENCE_PER_TALENT_POINT;
@@ -464,6 +435,9 @@ export function TalentTreePanel({
       <div className="bb-talent-header-pts">
         <span className="bb-talent-header-pts__label">Points</span>
         <span className="bb-talent-header-pts__value">{spendable}</span>
+        <span className="bb-talent-header-pts__budget tabular-nums">
+          {spent}/{TALENT_POINT_BUDGET}
+        </span>
         {!atPointCap ? (
           <button
             type="button"
@@ -481,7 +455,7 @@ export function TalentTreePanel({
         ) : null}
       </div>,
     );
-  }, [onHeaderActions, spendable, atPointCap, canBuy, essence, maxBuyPoints]);
+  }, [onHeaderActions, spendable, spent, atPointCap, canBuy, essence, maxBuyPoints]);
 
   useEffect(() => {
     return () => onHeaderActions?.(null);
@@ -492,9 +466,6 @@ export function TalentTreePanel({
     [],
   );
   const catalogCount = Object.keys(TALENT_CATALOG).length;
-
-  const size = useMemo(() => boardMetrics(tree), [tree]);
-  const scale = useFitScale(stageRef, size);
 
   const updateBuild = (next: TalentBuild) => {
     setBuild(next);
@@ -508,13 +479,28 @@ export function TalentTreePanel({
   };
 
   const commitResetTree = () => {
-    room?.send("reset_talent_tree", { tree });
+    room?.send("reset_talent_tree", { tree: focusTree });
     setDirty(false);
     setConfirmReset(false);
   };
 
+  const selectTree = (tree: TalentTreeId, center = true) => {
+    setFocusTree(tree);
+    saveStandMenuMemory({ talentTree: tree });
+    if (center) {
+      const hub = layout.nodes.find((n) => n.kind === "treeHub" && n.tree === tree);
+      if (hub) camera.centerOn(hub.x, hub.y, Math.max(camera.cam.zoom, 0.7));
+    }
+  };
+
+  const posById = useMemo(() => {
+    const m = new Map<string, ConstellationNode>();
+    for (const n of layout.nodes) m.set(n.id, n);
+    return m;
+  }, [layout.nodes]);
+
   return (
-    <div className="bb-talent-panel">
+    <div className="bb-talent-panel bb-talent-panel--constel">
       <ConfirmDialog
         open={confirmBuyPoints}
         title="Buy talent points?"
@@ -561,7 +547,7 @@ export function TalentTreePanel({
       />
       <ConfirmDialog
         open={confirmReset}
-        title={`Reset ${tree}?`}
+        title={`Reset ${focusTree}?`}
         message={
           <>
             Respeccing this tree removes <strong>{savedTreeSpent}</strong> talent point
@@ -589,49 +575,8 @@ export function TalentTreePanel({
         onCancel={() => setConfirmSaveRespec(false)}
       />
       <TalentFloatingTip tip={hoverTip} />
-      <aside className="bb-talent-rail">
-        <p className="bb-section-label bb-talent-rail__trees-label">
-          <span>Trees</span>
-          <span className="bb-talent-rail__budget tabular-nums">
-            {spent}/{TALENT_POINT_BUDGET}
-          </span>
-        </p>
-        <div className="bb-talent-rail__tabs" role="tablist" aria-label="Talent trees">
-          {TALENT_TREE_IDS.map((id) => {
-            const pts = treePointsSpent(build, id);
-            const on = tree === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={on}
-                className={["bb-talent-rail__tab", on ? "bb-talent-rail__tab--on" : ""].join(" ")}
-                style={{ "--bb-talent-accent": TREE_ACCENT[id] } as CSSProperties}
-                onClick={() => {
-                  setTree(id);
-                  saveStandMenuMemory({ talentTree: id });
-                }}
-              >
-                <span className="bb-talent-rail__tab-main">
-                  <GameIcon
-                    id={TALENT_TREE_ICONS[id]}
-                    size={22}
-                    gray={on ? 0.95 : 0.72}
-                    className="bb-talent-rail__tab-icon"
-                  />
-                  <span className="bb-talent-rail__tab-name">{id}</span>
-                </span>
-                <span className="bb-talent-rail__tab-pts">
-                  {pts}/{TALENT_TREE_CAP}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </aside>
 
-      <div className="bb-talent-main">
+      <div className="bb-constel-chrome">
         <div className="bb-loadout-presets" role="tablist" aria-label="Loadout presets">
           {Array.from({ length: loadoutSlotCount }, (_, i) => i).map((i) => {
             const preset = loadoutPresets.find((p) => p.slotIndex === i);
@@ -651,55 +596,59 @@ export function TalentTreePanel({
           })}
         </div>
 
-        <section
-          className="bb-talent-stage"
-          style={{ "--bb-talent-accent": TREE_ACCENT[tree] } as CSSProperties}
-          aria-label={`${tree} talent tree`}
-        >
-          <div className="bb-talent-stage__label">
-            <h3 className="bb-talent-stage__title">{tree}</h3>
-            <span className="bb-meta">
-              {treeSpent}/{TALENT_TREE_CAP} in tree · click invest · right-click refund (
-              {ESSENCE_PER_TALENT_REFUND} essence/pt on save)
-              {implementedCount < catalogCount
-                ? ` · ${implementedCount}/${catalogCount} live`
-                : ""}
-            </span>
-          </div>
+        <div className="bb-constel-legend" role="tablist" aria-label="Talent trees">
+          {TALENT_TREE_IDS.map((id) => {
+            const pts = treePointsSpent(build, id);
+            const on = focusTree === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                className={["bb-constel-legend__chip", on ? "bb-constel-legend__chip--on" : ""].join(
+                  " ",
+                )}
+                style={{ "--bb-talent-accent": TALENT_TREE_ACCENT[id] } as CSSProperties}
+                onClick={() => selectTree(id, true)}
+              >
+                <GameIcon
+                  id={TALENT_TREE_ICONS[id]}
+                  size={18}
+                  gray={on ? 0.95 : 0.7}
+                  className="bb-constel-legend__icon"
+                />
+                <span className="bb-constel-legend__name">{id}</span>
+                <span className="bb-constel-legend__pts">
+                  {pts}/{TALENT_TREE_CAP}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
-          <div className="bb-talent-stage__fit" ref={stageRef}>
-            <div
-              className="bb-talent-stage__board"
-              style={{
-                width: size.width,
-                height: size.height,
-                transform: `translate(-50%, -50%) scale(${scale})`,
-              }}
-            >
-              <TreeBoard
-                tree={tree}
-                build={build}
-                ownedPoints={owned}
-                onChange={updateBuild}
-                onHoverTip={setHoverTip}
-              />
-            </div>
-          </div>
-        </section>
-
-        <footer className="bb-talent-bar bb-talent-bar--foot">
+        <div className="bb-constel-chrome__actions">
+          <button
+            type="button"
+            className="bb-btn-ink"
+            title="Fit all trees in view"
+            onClick={() => camera.fitOverview()}
+          >
+            Overview
+          </button>
           <button
             type="button"
             className="bb-btn-ink disabled:opacity-40"
             disabled={!canResetTree}
             title={
               savedTreeSpent <= 0
-                ? "Nothing invested in this tree"
+                ? `Nothing invested in ${focusTree}`
                 : `Costs ${resetTreeCost} essence (${savedTreeSpent} pt × ${ESSENCE_PER_TALENT_REFUND})`
             }
             onClick={() => setConfirmReset(true)}
           >
-            Reset tree{savedTreeSpent > 0 ? ` (−${resetTreeCost})` : ""}
+            Reset {focusTree}
+            {savedTreeSpent > 0 ? ` (−${resetTreeCost})` : ""}
           </button>
           <button
             type="button"
@@ -721,8 +670,263 @@ export function TalentTreePanel({
           >
             Save build{respecCost > 0 ? ` (−${respecCost})` : ""}
           </button>
-        </footer>
+        </div>
       </div>
+
+      <div
+        ref={viewportRef}
+        className="bb-constel-viewport"
+        aria-label="Talent constellation"
+        onPointerDown={camera.onPointerDown}
+        onPointerMove={camera.onPointerMove}
+        onPointerUp={camera.onPointerUp}
+        onPointerCancel={camera.onPointerUp}
+      >
+        <div
+          className="bb-constel-world"
+          style={{
+            width: layout.width,
+            height: layout.height,
+            transform: `translate(${camera.cam.x}px, ${camera.cam.y}px) scale(${camera.cam.zoom})`,
+          }}
+        >
+          <div className="bb-constel-field" aria-hidden />
+
+          <svg
+            className="bb-constel-links"
+            width={layout.width}
+            height={layout.height}
+            aria-hidden
+          >
+            {layout.links.map((link) => {
+              const a = posById.get(link.fromId);
+              const b = posById.get(link.toId);
+              if (!a || !b) return null;
+              const fromOn =
+                link.fromId === "CORE" ||
+                link.fromId.startsWith("HUB_") ||
+                isTalentTaken(build, link.fromId);
+              const toOn =
+                link.toId.startsWith("HUB_") ||
+                link.toId.startsWith("SPELL_") ||
+                isTalentTaken(build, link.toId);
+              const accent = TALENT_TREE_ACCENT[link.tree];
+              const active = fromOn && toOn;
+              const unlocked = fromOn && !toOn;
+              return (
+                <line
+                  key={`${link.fromId}-${link.toId}`}
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  className={
+                    active
+                      ? "bb-constel-link bb-constel-link--on"
+                      : unlocked
+                        ? "bb-constel-link bb-constel-link--open"
+                        : "bb-constel-link"
+                  }
+                  style={{ "--bb-talent-accent": accent } as CSSProperties}
+                />
+              );
+            })}
+          </svg>
+
+          {layout.nodes.map((node) => {
+            if (node.kind === "core") {
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  className="bb-constel-core"
+                  style={{
+                    left: node.x - CORE_SIZE / 2,
+                    top: node.y - CORE_SIZE / 2,
+                    width: CORE_SIZE,
+                    height: CORE_SIZE,
+                  }}
+                  aria-label="Hunter core"
+                  onMouseEnter={(e) =>
+                    setHoverTip({
+                      kind: "core",
+                      spent,
+                      anchor: e.currentTarget.getBoundingClientRect(),
+                    })
+                  }
+                  onMouseLeave={() => setHoverTip(null)}
+                  onClick={() => camera.centerOn(node.x, node.y, 0.55)}
+                >
+                  <span className="bb-constel-core__label">Hunter</span>
+                  <span className="bb-constel-core__pts">
+                    {spent}/{TALENT_POINT_BUDGET}
+                  </span>
+                </button>
+              );
+            }
+
+            if (node.kind === "treeHub" && node.tree) {
+              const tree = node.tree;
+              const pts = treePointsSpent(build, tree);
+              const on = focusTree === tree;
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  className={["bb-constel-hub", on ? "bb-constel-hub--on" : ""].join(" ")}
+                  style={
+                    {
+                      left: node.x - HUB_SIZE / 2,
+                      top: node.y - HUB_SIZE / 2,
+                      width: HUB_SIZE,
+                      height: HUB_SIZE,
+                      "--bb-talent-accent": TALENT_TREE_ACCENT[tree],
+                    } as CSSProperties
+                  }
+                  aria-label={`${tree} tree`}
+                  onMouseEnter={(e) =>
+                    setHoverTip({
+                      kind: "hub",
+                      tree,
+                      pts,
+                      anchor: e.currentTarget.getBoundingClientRect(),
+                    })
+                  }
+                  onMouseLeave={() => setHoverTip(null)}
+                  onClick={() => selectTree(tree, true)}
+                >
+                  <GameIcon id={TALENT_TREE_ICONS[tree]} size={36} gray={0.95} />
+                  <span className="bb-constel-hub__name">{tree}</span>
+                  <span className="bb-constel-hub__pts">
+                    {pts}/{TALENT_TREE_CAP}
+                  </span>
+                </button>
+              );
+            }
+
+            if (node.kind === "spellUnlock" && node.spell) {
+              const spell = node.spell;
+              const accent = node.tree ? TALENT_TREE_ACCENT[node.tree] : undefined;
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  className="bb-constel-spell"
+                  style={
+                    {
+                      left: node.x - SPELL_SIZE / 2,
+                      top: node.y - SPELL_SIZE / 2,
+                      width: SPELL_SIZE,
+                      height: SPELL_SIZE,
+                      "--bb-talent-accent": accent,
+                    } as CSSProperties
+                  }
+                  aria-label={spell.label}
+                  onMouseEnter={(e) =>
+                    setHoverTip({
+                      kind: "spell",
+                      spell,
+                      anchor: e.currentTarget.getBoundingClientRect(),
+                    })
+                  }
+                  onMouseLeave={() => setHoverTip(null)}
+                >
+                  <span className="bb-constel-spell__glyph" aria-hidden>
+                    ✦
+                  </span>
+                  <span className="bb-constel-spell__lock">?</span>
+                </button>
+              );
+            }
+
+            if (node.kind === "talent" && node.talent) {
+              const talent = node.talent;
+              const rank = talentRank(build, talent.id);
+              const maxRank = talentMaxRank(talent);
+              const canUp = canInvestTalent(build, talent.id, owned);
+              const canDown = canRefundTalent(build, talent.id);
+              const implemented = isCatalogTalentImplemented(talent);
+              const state: "locked" | "available" | "learned" =
+                rank > 0 ? "learned" : canUp ? "available" : "locked";
+              const accent = TALENT_TREE_ACCENT[talent.tree];
+
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  aria-label={talent.name}
+                  className={[
+                    "bb-constel-node",
+                    state === "learned" ? "bb-constel-node--learned" : "",
+                    state === "available" ? "bb-constel-node--available" : "",
+                    state === "locked" ? "bb-constel-node--locked" : "",
+                    !implemented ? "bb-constel-node--wip" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  style={
+                    {
+                      left: node.x - NODE_SIZE / 2,
+                      top: node.y - NODE_SIZE / 2,
+                      width: NODE_SIZE,
+                      height: NODE_SIZE,
+                      "--bb-talent-accent": accent,
+                    } as CSSProperties
+                  }
+                  onMouseEnter={(e) =>
+                    setHoverTip({
+                      kind: "talent",
+                      talent,
+                      rank,
+                      nodeState: state,
+                      anchor: e.currentTarget.getBoundingClientRect(),
+                    })
+                  }
+                  onMouseLeave={() => setHoverTip(null)}
+                  onFocus={(e) =>
+                    setHoverTip({
+                      kind: "talent",
+                      talent,
+                      rank,
+                      nodeState: state,
+                      anchor: e.currentTarget.getBoundingClientRect(),
+                    })
+                  }
+                  onBlur={() => setHoverTip(null)}
+                  onClick={() => {
+                    if (canUp) updateBuild(investTalent(build, talent.id, owned));
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (canDown) updateBuild(refundTalent(build, talent.id));
+                  }}
+                >
+                  <span className="bb-constel-node__glyph" aria-hidden>
+                    <TalentNatureIcon tags={talent.affectedTags} size={28} />
+                  </span>
+                  {!implemented ? <span className="bb-constel-node__wip">WIP</span> : null}
+                  {maxRank > 1 ? (
+                    <span className="bb-constel-node__rank">
+                      {rank}/{maxRank}
+                    </span>
+                  ) : (
+                    <span className="bb-constel-node__cost">{talentRankCost(talent)}</span>
+                  )}
+                </button>
+              );
+            }
+
+            return null;
+          })}
+        </div>
+      </div>
+
+      <p className="bb-constel-hint bb-meta">
+        Drag to pan · scroll to zoom · left-click invest · right-click refund
+        {implementedCount < catalogCount
+          ? ` · ${implementedCount}/${catalogCount} live`
+          : ""}
+      </p>
     </div>
   );
 }

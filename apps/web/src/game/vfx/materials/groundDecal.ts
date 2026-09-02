@@ -270,6 +270,11 @@ export function createGroundDecalMaterial(
     transparent: true,
     blending: preset.additive ? THREE.AdditiveBlending : THREE.NormalBlending,
     depthWrite: false,
+    depthTest: true,
+    // Bias above terrain so large additive cones don't z-fight / clip through ground.
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
     side: THREE.DoubleSide,
     toneMapped: false,
   });

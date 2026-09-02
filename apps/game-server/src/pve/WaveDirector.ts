@@ -8,6 +8,7 @@ import {
   PVE_ZOMBIE_MELEE_COOLDOWN_MS,
   PVE_ZOMBIE_MELEE_RANGE,
   PVE_ZOMBIE_RETARGET_MS,
+  clampPvePartySize,
   pveWaveDamage,
   pveWaveEnemyCount,
   pveWaveHp,
@@ -35,7 +36,7 @@ type PendingSpawn = {
 };
 
 /**
- * Cemetery Wave Assault — spawn seeking zombies, scale by wave, clear → next.
+ * Cemetery Wave Assault — spawn seeking zombies, scale by wave + party size, clear → next.
  */
 export class WaveDirector {
   waveIndex = 0;
@@ -51,12 +52,16 @@ export class WaveDirector {
   private nextSpawnAt = 0;
   private waveGoal = 0;
   private started = false;
+  private readonly partySize: number;
 
   constructor(
     private readonly state: BaseCityState,
     private readonly combat: CombatSystem,
     private readonly broadcastHud: (hud: WaveHud) => void,
-  ) {}
+    partySize = 1,
+  ) {
+    this.partySize = clampPvePartySize(partySize);
+  }
 
   start(now: number) {
     if (this.started) return;
@@ -127,10 +132,10 @@ export class WaveDirector {
   private beginWave(now: number) {
     this.waveIndex += 1;
     this.phase = "fighting";
-    const count = pveWaveEnemyCount(this.waveIndex);
+    const count = pveWaveEnemyCount(this.waveIndex, this.partySize);
     this.waveGoal = count;
-    const hp = pveWaveHp(this.waveIndex);
-    const dmg = pveWaveDamage(this.waveIndex);
+    const hp = pveWaveHp(this.waveIndex, this.partySize);
+    const dmg = pveWaveDamage(this.waveIndex, this.partySize);
     const speed = pveWaveSpeed(this.waveIndex);
     const spots = this.pickSpawns(count);
     this.pendingSpawns = spots.map((spot, i) => ({

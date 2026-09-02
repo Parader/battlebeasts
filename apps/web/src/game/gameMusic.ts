@@ -147,7 +147,13 @@ async function preloadTrack(id: MusicTrackId): Promise<void> {
       cleanup();
       reject(new Error(`Failed to load ${MUSIC_URLS[id]}`));
     };
+    const timer = window.setTimeout(() => {
+      cleanup();
+      // Don't soft-lock play if the browser never fires canplaythrough.
+      resolve();
+    }, 8_000);
     const cleanup = () => {
+      window.clearTimeout(timer);
       t.el.removeEventListener("canplaythrough", onReady);
       t.el.removeEventListener("error", onError);
     };

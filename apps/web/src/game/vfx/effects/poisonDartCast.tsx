@@ -7,8 +7,10 @@ import type { VfxFollowContext } from "../catalog";
 import { softEnvelope } from "../easing";
 import { findBone } from "../attach";
 import { getCharacterRoot } from "../../characterRoots";
-import { createEnergyBallMaterial } from "../materials/energyBall";
+import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
+import { GEO_SPHERE_LO, GEO_SPHERE_MD } from "../sharedGeo";
+import { useSpellLight } from "../spellLights";
 
 const POISON = "#4d7c0f";
 const POISON_DARK = "#1a2e05";
@@ -27,9 +29,10 @@ export function PoisonDartCastEffect({
 }) {
   const root = useRef<THREE.Group>(null);
   const group = useRef<THREE.Group>(null);
-  const coreMat = useMemo(() => createEnergyBallMaterial(POISON_HOT, 0), []);
-  const glowMat = useMemo(() => createEnergyBallMaterial(POISON_DARK, 0), []);
-  const light = useRef<THREE.PointLight>(null);
+  const coreMat = useMemo(() => acquireEnergyBallMaterial(POISON_HOT, 0), []);
+  const glowMat = useMemo(() => acquireEnergyBallMaterial(POISON_DARK, 0), []);
+  const lightAt = useRef<THREE.Object3D>(null);
+  const light = useSpellLight();
   const worldPos = useRef(new THREE.Vector3());
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: shot.y });
 
@@ -91,21 +94,15 @@ export function PoisonDartCastEffect({
     g.scale.setScalar(0.1 + amp * 0.45);
     coreMat.opacity = amp * 0.75;
     glowMat.opacity = amp * 0.45;
-    if (light.current) light.current.intensity = amp * 1.4;
+    light.emitAt(lightAt.current, POISON, amp * 1.4, 2.8);
   });
 
   return (
     <group ref={root} position={[shot.x, shot.y, shot.z]}>
       <group ref={group} scale={0.1}>
-        <mesh>
-          <sphereGeometry args={[0.1, 10, 10]} />
-          <primitive object={coreMat} attach="material" />
-        </mesh>
-        <mesh scale={1.8}>
-          <sphereGeometry args={[0.1, 8, 8]} />
-          <primitive object={glowMat} attach="material" />
-        </mesh>
-        <pointLight ref={light} color={POISON} intensity={0} distance={2.8} decay={2} />
+        <mesh scale={0.1} geometry={GEO_SPHERE_MD} material={coreMat} />
+        <mesh scale={0.1 * 1.8} geometry={GEO_SPHERE_LO} material={glowMat} />
+        <object3D ref={lightAt} />
         <AdditiveParticleBurst
           color={POISON_DARK}
           origin={[0, 0, 0]}

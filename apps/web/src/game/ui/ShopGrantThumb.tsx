@@ -83,6 +83,13 @@ export function ShopGrantThumb({
       </span>
     );
   }
+  if (grant.kind === "flex_slot") {
+    return (
+      <span className="bb-shop__thumb bb-shop__thumb--icon" aria-hidden>
+        <GameIcon id="skills" size={22} gray={0.82} />
+      </span>
+    );
+  }
   if (grant.kind === "loadout_slot") {
     return (
       <span className="bb-shop__thumb bb-shop__thumb--icon" aria-hidden>

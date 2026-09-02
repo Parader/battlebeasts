@@ -10,7 +10,10 @@ export const VFX_CHAIN_URL = assetUrl("assets/vfx/chain-strip.png");
 /** Chest reveal mesh (match end / hub rewards). */
 export const CHEST_GLB_URL = assetUrl("assets/vfx/chest.glb");
 
-/** Every spell/ground VFX texture that must be decoded before play. */
+/**
+ * @deprecated Prefer `collectSpellVfxAssets().textures` from `spellVfxAssets.ts`
+ * — kept for call sites that still import the constant list.
+ */
 export const SPELL_VFX_TEXTURE_URLS = [
   VFX_FIRE_URL,
   VFX_SMOKE_URL,

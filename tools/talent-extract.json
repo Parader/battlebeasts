@@ -1,0 +1,1651 @@
+﻿{
+  "total": 100,
+  "visible": 93,
+  "hidden": 7,
+  "implemented": 11,
+  "byTree": {
+    "Destruction": {
+      "visible": 13,
+      "implemented": 7,
+      "talents": [
+        {
+          "id": "DES_08",
+          "tree": "Destruction",
+          "tier": 1,
+          "name": "Opening Salvo",
+          "pointCost": 1,
+          "layoutOrder": 0,
+          "requiredPoints": 0,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage"
+          ],
+          "exactEffect": "When you initiate combat, damaging spells deal +8% damage (8s cooldown). Being hit first or while already in combat withholds the bonus until you leave combat.",
+          "balanceNote": "Engagement opener ΓÇö CD matches leave-combat linger (8s)."
+        },
+        {
+          "id": "DES_01",
+          "tree": "Destruction",
+          "tier": 1,
+          "name": "Unstable Magic",
+          "pointCost": 1,
+          "layoutOrder": 1,
+          "requiredPoints": 0,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage"
+          ],
+          "exactEffect": "Critical strikes deal +9% more damage.",
+          "balanceNote": "Scales crit multiplier ΓÇö 3 / 6 / 9% across ranks."
+        },
+        {
+          "id": "DES_02",
+          "tree": "Destruction",
+          "tier": 1,
+          "name": "Intensified Elements",
+          "pointCost": 1,
+          "layoutOrder": 2,
+          "requiredPoints": 0,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage",
+            "DamageOverTime"
+          ],
+          "exactEffect": "Elemental secondary effects are 15% stronger (longer burns, poisons, and bleeds; harder slows).",
+          "balanceNote": "Duration + slow stack potency ΓÇö 5 / 10 / 15% across ranks."
+        },
+        {
+          "id": "DES_09",
+          "tree": "Destruction",
+          "tier": 2,
+          "name": "Fifth Cadence",
+          "pointCost": 1,
+          "maxRank": 1,
+          "layoutOrder": 0,
+          "requiredPoints": 3,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage"
+          ],
+          "exactEffect": "Every 5th damaging spell deals +15% damage.",
+          "balanceNote": "Tracked above the spellbar; resets after the empowered cast."
+        },
+        {
+          "id": "DES_10",
+          "tree": "Destruction",
+          "tier": 2,
+          "name": "Critical Focus",
+          "pointCost": 1,
+          "maxRank": 3,
+          "layoutOrder": 1,
+          "requiredPoints": 3,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage"
+          ],
+          "exactEffect": "Critical strike chance increased by 6%.",
+          "balanceNote": "Additive crit chance ΓÇö 2 / 4 / 6% across ranks."
+        },
+        {
+          "id": "DES_11",
+          "tree": "Destruction",
+          "tier": 2,
+          "name": "Elemental Quickness",
+          "pointCost": 1,
+          "maxRank": 3,
+          "layoutOrder": 2,
+          "requiredPoints": 3,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage",
+            "DamageOverTime"
+          ],
+          "exactEffect": "Elemental spell cooldowns reduced by 15%.",
+          "balanceNote": "Fire / frost / poison / bleed kits ΓÇö 5 / 10 / 15% across ranks."
+        },
+        {
+          "id": "DES_12",
+          "tree": "Destruction",
+          "tier": 2,
+          "name": "Widened Elements",
+          "pointCost": 1,
+          "maxRank": 1,
+          "layoutOrder": 3,
+          "requiredPoints": 3,
+          "implemented": true,
+          "hidden": false,
+          "requires": [
+            "DES_11"
+          ],
+          "affectedTags": [
+            "Area",
+            "Nova",
+            "Cone",
+            "Explosion"
+          ],
+          "exactEffect": "Elemental area spells have 10% larger radius.",
+          "balanceNote": "Requires Elemental Quickness; only Area / Nova / Cone / Explosion."
+        },
+        {
+          "id": "DES_15",
+          "tree": "Destruction",
+          "tier": 3,
+          "name": "Arcane Echo",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [],
+          "exactEffect": "Every fourth projectile cast creates a second projectile dealing 60% damage.",
+          "balanceNote": "Echo cannot trigger on echoes."
+        },
+        {
+          "id": "DES_16",
+          "tree": "Destruction",
+          "tier": 3,
+          "name": "Executioner",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage"
+          ],
+          "exactEffect": "Deal +10% damage to enemies below 25% health.",
+          "balanceNote": "Does not improve healing or shields."
+        },
+        {
+          "id": "DES_17",
+          "tree": "Destruction",
+          "tier": 3,
+          "name": "Overload",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage",
+            "Combo"
+          ],
+          "exactEffect": "After casting 3 different damaging spell slots within 5s, gain 12% haste for 3s.",
+          "balanceNote": "8s internal cooldown."
+        },
+        {
+          "id": "DES_18",
+          "tree": "Destruction",
+          "tier": 3,
+          "name": "Rupture",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Debuff",
+            "Damage"
+          ],
+          "exactEffect": "Damaging an enemy with 3 different mechanics applies Vulnerable: +7% damage taken for 3s.",
+          "balanceNote": "10s per-target cooldown."
+        },
+        {
+          "id": "DES_19",
+          "tree": "Destruction",
+          "tier": 4,
+          "name": "Glass Cannon",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage"
+          ],
+          "exactEffect": "Damage dealt +15%; maximum health -12%; healing received -8%.",
+          "balanceNote": "Keystone trade-off."
+        },
+        {
+          "id": "DES_20",
+          "tree": "Destruction",
+          "tier": 4,
+          "name": "Cataclysm",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Explosion",
+            "Area"
+          ],
+          "exactEffect": "Every 18s, your next Explosion or Area damage spell gains +25% radius and +12% damage.",
+          "balanceNote": "Visible ready indicator required."
+        }
+      ]
+    },
+    "Guardian": {
+      "visible": 20,
+      "implemented": 1,
+      "talents": [
+        {
+          "id": "GUA_08",
+          "tree": "Guardian",
+          "tier": 1,
+          "name": "Protective Instinct",
+          "pointCost": 1,
+          "layoutOrder": 0,
+          "requiredPoints": 0,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Defense",
+            "Ally"
+          ],
+          "exactEffect": "Using a Defense spell grants the nearest ally 6% damage reduction for 3s (6s cooldown). Alone, the buff applies to you.",
+          "balanceNote": "2% DR per rank (2 / 4 / 6). Nearest friendly player, else self."
+        },
+        {
+          "id": "GUA_01",
+          "tree": "Guardian",
+          "tier": 1,
+          "name": "Thick Skin",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "DamageOverTime",
+            "Defense"
+          ],
+          "exactEffect": "Damage-over-time damage taken -15%.",
+          "balanceNote": "Narrow defensive counter."
+        },
+        {
+          "id": "GUA_02",
+          "tree": "Guardian",
+          "tier": 1,
+          "name": "Unshaken",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Knockback",
+            "Pull",
+            "Knockup"
+          ],
+          "exactEffect": "Displacement distance received -25%.",
+          "balanceNote": "Does not reduce stun duration."
+        },
+        {
+          "id": "GUA_03",
+          "tree": "Guardian",
+          "tier": 1,
+          "name": "Recovery",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Self"
+          ],
+          "exactEffect": "After 5s without taking damage, regenerate 1.25% max health per second.",
+          "balanceNote": "Stops immediately on damage."
+        },
+        {
+          "id": "GUA_04",
+          "tree": "Guardian",
+          "tier": 1,
+          "name": "Brace",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Cast",
+            "Channel"
+          ],
+          "exactEffect": "Take 8% less damage while casting or channeling.",
+          "balanceNote": "Not active during instant spells."
+        },
+        {
+          "id": "GUA_05",
+          "tree": "Guardian",
+          "tier": 1,
+          "name": "Lasting Guard",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Shield"
+          ],
+          "exactEffect": "Shields on you last 25% longer.",
+          "balanceNote": "Amount unchanged."
+        },
+        {
+          "id": "GUA_06",
+          "tree": "Guardian",
+          "tier": 1,
+          "name": "Steadfast",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Defense"
+          ],
+          "exactEffect": "While above 70% health, gain 5% damage reduction.",
+          "balanceNote": "Provides stable frontline value."
+        },
+        {
+          "id": "GUA_07",
+          "tree": "Guardian",
+          "tier": 1,
+          "name": "Emergency Step",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Movement",
+            "Defense"
+          ],
+          "exactEffect": "Using a movement spell below 35% health grants a shield equal to 5% max health for 3s.",
+          "balanceNote": "15s cooldown."
+        },
+        {
+          "id": "GUA_09",
+          "tree": "Guardian",
+          "tier": 2,
+          "name": "Reinforced Barrier",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Shield"
+          ],
+          "exactEffect": "Shield strength +14%.",
+          "balanceNote": "Applies to self and ally shields."
+        },
+        {
+          "id": "GUA_10",
+          "tree": "Guardian",
+          "tier": 2,
+          "name": "Iron Will",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Stun",
+            "Root",
+            "Silence",
+            "Fear"
+          ],
+          "exactEffect": "The first hard CC received every 18s has 35% shorter duration.",
+          "balanceNote": "Hard CC list should be explicit."
+        },
+        {
+          "id": "GUA_11",
+          "tree": "Guardian",
+          "tier": 2,
+          "name": "Reflective Shield",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Shield",
+            "Damage"
+          ],
+          "exactEffect": "When one of your shields is fully destroyed, deal damage equal to 20% of its original value in 3m.",
+          "balanceNote": "12s cooldown."
+        },
+        {
+          "id": "GUA_12",
+          "tree": "Guardian",
+          "tier": 2,
+          "name": "Delayed Pain",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Defense"
+          ],
+          "exactEffect": "20% of direct damage taken is delayed over 3s.",
+          "balanceNote": "Delayed portion cannot be delayed again."
+        },
+        {
+          "id": "GUA_13",
+          "tree": "Guardian",
+          "tier": 2,
+          "name": "Counterguard",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Defense",
+            "Damage"
+          ],
+          "exactEffect": "After blocking, absorbing, or becoming immune to damage, your next damaging spell within 4s deals +8%.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "GUA_14",
+          "tree": "Guardian",
+          "tier": 2,
+          "name": "Grounded",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "GroundEffect",
+            "Defense"
+          ],
+          "exactEffect": "While inside one of your persistent areas, take 7% less damage.",
+          "balanceNote": "One instance only."
+        },
+        {
+          "id": "GUA_15",
+          "tree": "Guardian",
+          "tier": 3,
+          "name": "Last Stand",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Defense"
+          ],
+          "exactEffect": "Below 30% health, gain 12% damage reduction until above 45%.",
+          "balanceNote": "20s cooldown after ending."
+        },
+        {
+          "id": "GUA_16",
+          "tree": "Guardian",
+          "tier": 3,
+          "name": "Battle Hardened",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Defense",
+            "Cooldown"
+          ],
+          "exactEffect": "Taking damage equal to 20% max health within 3s reduces Defensive-slot cooldown by 12%.",
+          "balanceNote": "10s cooldown."
+        },
+        {
+          "id": "GUA_17",
+          "tree": "Guardian",
+          "tier": 3,
+          "name": "Shared Bulwark",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Shield",
+            "Ally"
+          ],
+          "exactEffect": "15% of shields you grant yourself are also granted to the nearest ally.",
+          "balanceNote": "Ally shield lasts max 4s."
+        },
+        {
+          "id": "GUA_18",
+          "tree": "Guardian",
+          "tier": 3,
+          "name": "Guardian's Challenge",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Debuff",
+            "Ally"
+          ],
+          "exactEffect": "Damaging an enemy marks them for 4s; they deal 6% less damage to your allies.",
+          "balanceNote": "No reduction against you; 8s per target."
+        },
+        {
+          "id": "GUA_19",
+          "tree": "Guardian",
+          "tier": 4,
+          "name": "Living Fortress",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Defense"
+          ],
+          "exactEffect": "After standing still for 1.5s: +12% damage reduction, +20% displacement resistance, +10% shield power. Ends on movement.",
+          "balanceNote": "Keystone; clear stance feedback."
+        },
+        {
+          "id": "GUA_20",
+          "tree": "Guardian",
+          "tier": 4,
+          "name": "Unbreakable",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Defense"
+          ],
+          "exactEffect": "Lethal damage instead leaves you at 1 health and grants 20% max-health shield for 2s.",
+          "balanceNote": "90s cooldown."
+        }
+      ]
+    },
+    "Control": {
+      "visible": 20,
+      "implemented": 1,
+      "talents": [
+        {
+          "id": "CON_03",
+          "tree": "Control",
+          "tier": 1,
+          "name": "Opportunist",
+          "pointCost": 1,
+          "layoutOrder": 0,
+          "requiredPoints": 0,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "CrowdControl",
+            "Damage"
+          ],
+          "exactEffect": "Damaging spells deal +6% damage to enemies currently stunned, rooted, or silenced by you.",
+          "balanceNote": "Hard CC only (stun / root / silence) ΓÇö not slows or DoTs. Source must be you."
+        },
+        {
+          "id": "CON_01",
+          "tree": "Control",
+          "tier": 1,
+          "name": "Lasting Effects",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Slow"
+          ],
+          "exactEffect": "Slow duration +20%.",
+          "balanceNote": "Does not increase strength."
+        },
+        {
+          "id": "CON_02",
+          "tree": "Control",
+          "tier": 1,
+          "name": "Tactical Vision",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "CrowdControl",
+            "Reveal"
+          ],
+          "exactEffect": "Enemies you control remain revealed for 2s after the effect ends.",
+          "balanceNote": "Useful against stealth and fog."
+        },
+        {
+          "id": "CON_04",
+          "tree": "Control",
+          "tier": 1,
+          "name": "Sticky Ground",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "GroundEffect",
+            "Persistent"
+          ],
+          "exactEffect": "Non-damaging ground effects last 15% longer.",
+          "balanceNote": "Damage duration unchanged."
+        },
+        {
+          "id": "CON_05",
+          "tree": "Control",
+          "tier": 1,
+          "name": "Suppressive Magic",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Debuff"
+          ],
+          "exactEffect": "Debuffs you apply last 12% longer.",
+          "balanceNote": "Excludes hard CC."
+        },
+        {
+          "id": "CON_06",
+          "tree": "Control",
+          "tier": 1,
+          "name": "Spatial Control",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Wall",
+            "Obstacle"
+          ],
+          "exactEffect": "Walls and obstacles last 15% longer and gain 12% health.",
+          "balanceNote": "Map clutter cap required."
+        },
+        {
+          "id": "CON_07",
+          "tree": "Control",
+          "tier": 1,
+          "name": "Crippling Chill",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Slow",
+            "Movement"
+          ],
+          "exactEffect": "Slowed enemies receive 10% less movement from movement-speed bonuses.",
+          "balanceNote": "Does not disable movement spells."
+        },
+        {
+          "id": "CON_08",
+          "tree": "Control",
+          "tier": 1,
+          "name": "Watchful",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Interrupt"
+          ],
+          "exactEffect": "Successful interrupts reveal the target and their cooldown indicators for 3s.",
+          "balanceNote": "Information talent."
+        },
+        {
+          "id": "CON_09",
+          "tree": "Control",
+          "tier": 2,
+          "name": "Frozen Momentum",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Root",
+            "Slow"
+          ],
+          "exactEffect": "When your root ends, apply a 25% slow for 1.5s.",
+          "balanceNote": "Does not trigger when cleansed."
+        },
+        {
+          "id": "CON_10",
+          "tree": "Control",
+          "tier": 2,
+          "name": "Crushing Force",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Knockback",
+            "Knockup"
+          ],
+          "exactEffect": "Displacement applies a 20% slow for 1.25s.",
+          "balanceNote": "Once per cast."
+        },
+        {
+          "id": "CON_11",
+          "tree": "Control",
+          "tier": 2,
+          "name": "Unstable Ground",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Area",
+            "GroundEffect"
+          ],
+          "exactEffect": "Area control spells leave a 2s zone that slows by 15%.",
+          "balanceNote": "6s per-spell cooldown."
+        },
+        {
+          "id": "CON_12",
+          "tree": "Control",
+          "tier": 2,
+          "name": "Silencing Pressure",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Interrupt",
+            "Silence"
+          ],
+          "exactEffect": "Interrupting a spell silences the target for 0.5s.",
+          "balanceNote": "12s per-target cooldown."
+        },
+        {
+          "id": "CON_13",
+          "tree": "Control",
+          "tier": 2,
+          "name": "No Escape",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "CrowdControl",
+            "Movement"
+          ],
+          "exactEffect": "Enemies using a movement spell while affected by your slow or debuff are slowed by 30% for 1s afterward.",
+          "balanceNote": "8s per target."
+        },
+        {
+          "id": "CON_14",
+          "tree": "Control",
+          "tier": 2,
+          "name": "Control Chain",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "CrowdControl",
+            "Combo"
+          ],
+          "exactEffect": "Applying a different CC category within 3s increases the second effect's duration by 12%.",
+          "balanceNote": "Hard cap +0.3s."
+        },
+        {
+          "id": "CON_15",
+          "tree": "Control",
+          "tier": 3,
+          "name": "Tactical Reset",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "CrowdControl",
+            "Movement"
+          ],
+          "exactEffect": "Controlling two different enemies within 4s reduces Movement-slot cooldown by 15%.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "CON_16",
+          "tree": "Control",
+          "tier": 3,
+          "name": "Interrupt Master",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Interrupt",
+            "Resource"
+          ],
+          "exactEffect": "Successful interrupts restore 10% maximum resource.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "CON_17",
+          "tree": "Control",
+          "tier": 3,
+          "name": "Zone Mastery",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Area",
+            "Persistent"
+          ],
+          "exactEffect": "Persistent control areas gain +12% radius but deal 8% less damage.",
+          "balanceNote": "Trade-off."
+        },
+        {
+          "id": "CON_18",
+          "tree": "Control",
+          "tier": 3,
+          "name": "Diminishing Pressure",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Debuff"
+          ],
+          "exactEffect": "Enemies affected by 2+ of your debuffs deal 7% less damage to you.",
+          "balanceNote": "Personal protection only."
+        },
+        {
+          "id": "CON_19",
+          "tree": "Control",
+          "tier": 4,
+          "name": "Domination",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "CrowdControl",
+            "Combo"
+          ],
+          "exactEffect": "Applying 3 different CC categories within 8s creates a 3.5m field for 3s: enemies are slowed 25% and deal 8% less damage.",
+          "balanceNote": "18s cooldown."
+        },
+        {
+          "id": "CON_20",
+          "tree": "Control",
+          "tier": 4,
+          "name": "Time Lock",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Control",
+            "Cooldown",
+            "Debuff"
+          ],
+          "exactEffect": "Every 20s, your next hard CC pauses 25% of the target's current basic cooldown recovery for 2s.",
+          "balanceNote": "Does not affect ultimate cooldown."
+        }
+      ]
+    },
+    "Flow": {
+      "visible": 20,
+      "implemented": 1,
+      "talents": [
+        {
+          "id": "FLO_01",
+          "tree": "Flow",
+          "tier": 1,
+          "name": "Sprinter",
+          "pointCost": 1,
+          "layoutOrder": 0,
+          "requiredPoints": 0,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Movement"
+          ],
+          "exactEffect": "Movement speed +6%.",
+          "balanceNote": "2% per rank (2 / 4 / 6). Passive ΓÇö always on."
+        },
+        {
+          "id": "FLO_02",
+          "tree": "Flow",
+          "tier": 1,
+          "name": "Spell Rhythm",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Combo",
+            "SpellSlot"
+          ],
+          "exactEffect": "Casting 3 different spell slots within 5s grants 8% movement speed for 3s.",
+          "balanceNote": "6s cooldown."
+        },
+        {
+          "id": "FLO_03",
+          "tree": "Flow",
+          "tier": 1,
+          "name": "Resource Cycle",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Movement",
+            "Resource"
+          ],
+          "exactEffect": "Movement-slot spells restore 6% maximum resource.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "FLO_04",
+          "tree": "Flow",
+          "tier": 1,
+          "name": "Fluid Casting",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Cast",
+            "Movement"
+          ],
+          "exactEffect": "Moving during a cast reduces the movement penalty by 25%.",
+          "balanceNote": "Only spells permitting movement."
+        },
+        {
+          "id": "FLO_05",
+          "tree": "Flow",
+          "tier": 1,
+          "name": "Quick Recovery",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Cooldown"
+          ],
+          "exactEffect": "Missing an aimed spell refunds 5% of its base cooldown.",
+          "balanceNote": "Does not apply to ultimate; once per cast."
+        },
+        {
+          "id": "FLO_06",
+          "tree": "Flow",
+          "tier": 1,
+          "name": "Close the Gap",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage",
+            "Movement"
+          ],
+          "exactEffect": "Damaging an enemy over 8m away grants 8% movement speed toward them for 2s.",
+          "balanceNote": "4s cooldown."
+        },
+        {
+          "id": "FLO_07",
+          "tree": "Flow",
+          "tier": 1,
+          "name": "Evasive Casting",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Movement",
+            "Defense"
+          ],
+          "exactEffect": "For 1s after a movement spell, take 6% less damage.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "FLO_08",
+          "tree": "Flow",
+          "tier": 1,
+          "name": "Efficient Sequence",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Combo",
+            "Resource"
+          ],
+          "exactEffect": "Casting two different spell slots consecutively reduces the second spell's resource cost by 8%.",
+          "balanceNote": "Repeating a slot resets sequence."
+        },
+        {
+          "id": "FLO_09",
+          "tree": "Flow",
+          "tier": 2,
+          "name": "Afterimage",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Movement",
+            "Explosion"
+          ],
+          "exactEffect": "Movement spells leave an afterimage that explodes after 0.65s for 450 base damage in 2.25m.",
+          "balanceNote": "8s cooldown; scale with standard power."
+        },
+        {
+          "id": "FLO_10",
+          "tree": "Flow",
+          "tier": 2,
+          "name": "Combo Engine",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Combo",
+            "Cooldown"
+          ],
+          "exactEffect": "Casting Movement ΓåÆ Primary ΓåÆ Secondary within 5s reduces remaining non-ultimate cooldowns by 7%.",
+          "balanceNote": "10s cooldown."
+        },
+        {
+          "id": "FLO_11",
+          "tree": "Flow",
+          "tier": 2,
+          "name": "Chaser",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Damage",
+            "Movement"
+          ],
+          "exactEffect": "Gain 12% movement speed while moving toward an enemy you damaged in the last 2s.",
+          "balanceNote": "Ends when facing away."
+        },
+        {
+          "id": "FLO_12",
+          "tree": "Flow",
+          "tier": 2,
+          "name": "Slipstream",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Movement",
+            "Ally"
+          ],
+          "exactEffect": "Passing within 2m of an ally after a movement spell grants both 8% movement speed for 2s.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "FLO_13",
+          "tree": "Flow",
+          "tier": 2,
+          "name": "Adaptive Casting",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "SpellSlot",
+            "Cooldown"
+          ],
+          "exactEffect": "After casting a spell slot, the next different slot gains 8% cooldown recovery for 3s.",
+          "balanceNote": "One spell consumed."
+        },
+        {
+          "id": "FLO_14",
+          "tree": "Flow",
+          "tier": 2,
+          "name": "Overflowing Energy",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Resource",
+            "Shield"
+          ],
+          "exactEffect": "Resource gained above maximum becomes a shield at 50% efficiency, capped at 6% max health.",
+          "balanceNote": "Shield lasts 4s."
+        },
+        {
+          "id": "FLO_15",
+          "tree": "Flow",
+          "tier": 3,
+          "name": "Adrenaline",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Combo",
+            "Haste"
+          ],
+          "exactEffect": "Casting 4 spells within 6s grants 12% haste for 3s.",
+          "balanceNote": "12s cooldown."
+        },
+        {
+          "id": "FLO_16",
+          "tree": "Flow",
+          "tier": 3,
+          "name": "Phase Step",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Movement",
+            "Cleanse"
+          ],
+          "exactEffect": "Movement-slot spells remove slows and grant slow immunity for 0.75s.",
+          "balanceNote": "14s cooldown."
+        },
+        {
+          "id": "FLO_17",
+          "tree": "Flow",
+          "tier": 3,
+          "name": "Tempo Shift",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Cooldown",
+            "Combo"
+          ],
+          "exactEffect": "Casting a spell with 8s+ base cooldown reduces the next spell below 8s by 10%.",
+          "balanceNote": "6s cooldown."
+        },
+        {
+          "id": "FLO_18",
+          "tree": "Flow",
+          "tier": 3,
+          "name": "Arcane Momentum",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "SpellSlot",
+            "Combo"
+          ],
+          "exactEffect": "Casting without repeating a spell slot grants 1 Momentum; at 4, restore 8% resource and reduce cooldowns by 5%.",
+          "balanceNote": "Repeating resets stacks."
+        },
+        {
+          "id": "FLO_19",
+          "tree": "Flow",
+          "tier": 4,
+          "name": "Perfect Flow",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "SpellSlot",
+            "Haste"
+          ],
+          "exactEffect": "Each different spell slot cast grants 2% haste for 5s, max 5 stacks. Repeating a slot removes all stacks.",
+          "balanceNote": "Keystone."
+        },
+        {
+          "id": "FLO_20",
+          "tree": "Flow",
+          "tier": 4,
+          "name": "Untouchable Rhythm",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Movement",
+            "Defense"
+          ],
+          "exactEffect": "After casting 3 different slots within 4s, become untargetable by homing effects and gain 15% movement speed for 1.5s.",
+          "balanceNote": "15s cooldown."
+        }
+      ]
+    },
+    "Harmony": {
+      "visible": 20,
+      "implemented": 1,
+      "talents": [
+        {
+          "id": "HAR_01",
+          "tree": "Harmony",
+          "tier": 1,
+          "name": "Overflow",
+          "pointCost": 1,
+          "layoutOrder": 0,
+          "requiredPoints": 0,
+          "implemented": true,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "HealOverTime",
+            "Shield"
+          ],
+          "exactEffect": "40% of overhealing (including HoTs) becomes a shield lasting 5s, capped at 8% target max health.",
+          "balanceNote": "Ranks scale conversion + cap (13.3/26.7/40% convert, 2.7/5.3/8% cap). Spells and HoTs; self and allies."
+        },
+        {
+          "id": "HAR_02",
+          "tree": "Harmony",
+          "tier": 1,
+          "name": "Encouragement",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Ally"
+          ],
+          "exactEffect": "Healing an ally grants them 10% movement speed for 2s.",
+          "balanceNote": "6s per target."
+        },
+        {
+          "id": "HAR_03",
+          "tree": "Harmony",
+          "tier": 1,
+          "name": "Shared Strength",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Shield",
+            "Ally"
+          ],
+          "exactEffect": "Granting an ally a shield also shields you for 15% of that amount.",
+          "balanceNote": "4s cooldown."
+        },
+        {
+          "id": "HAR_04",
+          "tree": "Harmony",
+          "tier": 1,
+          "name": "Spiritual Focus",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Resource"
+          ],
+          "exactEffect": "Healing an ally restores 3% maximum resource.",
+          "balanceNote": "6s cooldown."
+        },
+        {
+          "id": "HAR_05",
+          "tree": "Harmony",
+          "tier": 1,
+          "name": "Lingering Care",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "HealOverTime",
+            "Buff"
+          ],
+          "exactEffect": "Heal-over-time and beneficial buff durations +15%.",
+          "balanceNote": "Total HoT healing rises accordingly."
+        },
+        {
+          "id": "HAR_06",
+          "tree": "Harmony",
+          "tier": 1,
+          "name": "Gentle Current",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing"
+          ],
+          "exactEffect": "Healing projectiles gain +20% speed and +10% size.",
+          "balanceNote": "No healing amount increase."
+        },
+        {
+          "id": "HAR_07",
+          "tree": "Harmony",
+          "tier": 1,
+          "name": "Mutual Aid",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Ally",
+            "Healing"
+          ],
+          "exactEffect": "When an ally heals or shields you, your next support spell within 4s is 6% stronger.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "HAR_08",
+          "tree": "Harmony",
+          "tier": 1,
+          "name": "Battlefield Medic",
+          "pointCost": 1,
+          "requiredPoints": 0,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing"
+          ],
+          "exactEffect": "Healing allies who took damage in the last 2s is increased by 6%.",
+          "balanceNote": "Does not affect self-healing."
+        },
+        {
+          "id": "HAR_09",
+          "tree": "Harmony",
+          "tier": 2,
+          "name": "Guardian Angel",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Ally"
+          ],
+          "exactEffect": "Healing allies below 30% health is increased by 18%.",
+          "balanceNote": "Emergency specialization."
+        },
+        {
+          "id": "HAR_10",
+          "tree": "Harmony",
+          "tier": 2,
+          "name": "Purification",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Cleanse",
+            "Buff"
+          ],
+          "exactEffect": "Cleansing an ally grants 20% slow resistance and 10% movement speed for 2s.",
+          "balanceNote": "10s per target."
+        },
+        {
+          "id": "HAR_11",
+          "tree": "Harmony",
+          "tier": 2,
+          "name": "Resonance",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Combo"
+          ],
+          "exactEffect": "Healing two different allies within 4s empowers your next heal by 12%.",
+          "balanceNote": "6s cooldown after consumption."
+        },
+        {
+          "id": "HAR_12",
+          "tree": "Harmony",
+          "tier": 2,
+          "name": "Protective Bloom",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Shield",
+            "Area"
+          ],
+          "exactEffect": "When an ally shield expires naturally, nearby allies receive 12% of its original amount.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "HAR_13",
+          "tree": "Harmony",
+          "tier": 2,
+          "name": "Inspiration",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Buff",
+            "Cooldown"
+          ],
+          "exactEffect": "Applying a beneficial buff to an ally reduces your longest non-ultimate cooldown by 5%.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "HAR_14",
+          "tree": "Harmony",
+          "tier": 2,
+          "name": "Life Link",
+          "pointCost": 2,
+          "requiredPoints": 4,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Ally"
+          ],
+          "exactEffect": "20% of self-healing also heals the lowest-health ally within 8m.",
+          "balanceNote": "Excludes regeneration talents."
+        },
+        {
+          "id": "HAR_15",
+          "tree": "Harmony",
+          "tier": 3,
+          "name": "Shared Recovery",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Area"
+          ],
+          "exactEffect": "Directly healing yourself emits a heal equal to 15% of the amount to allies within 4m.",
+          "balanceNote": "8s cooldown."
+        },
+        {
+          "id": "HAR_16",
+          "tree": "Harmony",
+          "tier": 3,
+          "name": "Bolstering Aid",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Buff"
+          ],
+          "exactEffect": "Healing an ally grants them 5% damage reduction for 2s.",
+          "balanceNote": "8s per target."
+        },
+        {
+          "id": "HAR_17",
+          "tree": "Harmony",
+          "tier": 3,
+          "name": "Clean Momentum",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Cleanse",
+            "Cooldown"
+          ],
+          "exactEffect": "Successful cleanse reduces Movement-slot cooldown by 15%.",
+          "balanceNote": "10s cooldown."
+        },
+        {
+          "id": "HAR_18",
+          "tree": "Harmony",
+          "tier": 3,
+          "name": "Empowered Support",
+          "pointCost": 2,
+          "requiredPoints": 8,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Shield"
+          ],
+          "exactEffect": "After dealing damage with 2 different spell slots, your next heal or shield is 15% stronger.",
+          "balanceNote": "8s duration."
+        },
+        {
+          "id": "HAR_19",
+          "tree": "Harmony",
+          "tier": 4,
+          "name": "Divine Resonance",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Shield"
+          ],
+          "exactEffect": "Heals and shields grant Resonance, max 5. At 5, next support spell is 30% stronger, costs no resource, and gains 15% range.",
+          "balanceNote": "Keystone; one stack per cast."
+        },
+        {
+          "id": "HAR_20",
+          "tree": "Harmony",
+          "tier": 4,
+          "name": "Circle of Life",
+          "pointCost": 3,
+          "requiredPoints": 12,
+          "implemented": false,
+          "hidden": false,
+          "requires": [],
+          "affectedTags": [
+            "Healing",
+            "Damage"
+          ],
+          "exactEffect": "Every 18s, dealing damage stores 20% of damage dealt, capped at 10% max health; your next ally heal adds the stored amount.",
+          "balanceNote": "Keystone hybrid support."
+        }
+      ]
+    }
+  },
+  "implementedList": [
+    "DES_01",
+    "DES_02",
+    "DES_08",
+    "DES_09",
+    "DES_10",
+    "DES_11",
+    "DES_12",
+    "GUA_08",
+    "CON_03",
+    "FLO_01",
+    "HAR_01"
+  ]
+}

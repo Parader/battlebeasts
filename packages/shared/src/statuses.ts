@@ -330,7 +330,7 @@ export const STATUSES: Record<string, StatusDef> = {
     polarity: "buff",
     mechanic: "shield",
     durationMs: 8000,
-    maxStacks: combatMag(48),
+    maxStacks: combatMag(24),
     stackRule: "stack",
     color: "#a7f3d0",
     tag: "SHD",
@@ -406,7 +406,7 @@ export const STATUSES: Record<string, StatusDef> = {
     polarity: "buff",
     mechanic: "shield",
     durationMs: 3000,
-    maxStacks: combatMag(40),
+    maxStacks: combatMag(30),
     stackRule: "refresh",
     color: "#60a5fa",
     tag: "BAR",
@@ -472,19 +472,21 @@ export const STATUSES: Record<string, StatusDef> = {
     /** Overridden by REVENGE_CAST.vanishMs on apply. */
     durationMs: 500,
     grantsInvulnerable: true,
+    /** No casts / melee while invisible after Revenge blink. */
+    blocksCast: true,
     maxStacks: 1,
     stackRule: "refresh",
     color: "#ef4444",
     tag: "PHS",
   },
-  /** After a successful Counter — move speed burst (matches empower duration). */
+  /** After a successful Counter — move speed burst (longer than empower). */
   counterHaste: {
     id: "counterHaste",
     name: "Counter Rush",
     polarity: "buff",
     mechanic: "haste",
-    durationMs: 3000,
-    moveMul: 1.2,
+    durationMs: 4500,
+    moveMul: 1.45,
     maxStacks: 1,
     stackRule: "refresh",
     color: "#fbbf24",

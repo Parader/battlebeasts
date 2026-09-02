@@ -7,13 +7,20 @@ import {
   buildMagmaOrbsFlightPath,
   magmaOrbsArcYForRange,
   magmaOrbsMaxFlightTs,
+  pointInFront,
   resolveMagmaOrbsMeetRange,
+  type CircleCollider,
+  type BoxCollider,
   type WallCollider,
 } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
-import { getWorldStaticColliders } from "../../worldCollidersRuntime";
-import { getMagmaOrbsMeet, setMagmaOrbsMeetRange } from "../../magmaOrbsMeetRuntime";
+import {
+  getWorldProjectileCircles,
+  getWorldProjectileWalls,
+  getWorldProjectileBoxes,
+} from "../../worldCollidersRuntime";
+import { getMagmaOrbsMeet, setMagmaOrbsMeetCollide } from "../../magmaOrbsMeetRuntime";
 import { getGroundAim } from "../../groundAimRuntime";
 import {
   BOULDER_TARGET_SIZE,
@@ -92,8 +99,16 @@ function quadBezier(p0: Vec3, p1: Vec3, p2: Vec3, t: number): Vec3 {
   };
 }
 
-function worldWalls(): WallCollider[] {
-  return getWorldStaticColliders().filter((c): c is WallCollider => c.shape === "walls");
+function worldWalls(): readonly WallCollider[] {
+  return getWorldProjectileWalls();
+}
+
+function worldCircles(): readonly CircleCollider[] {
+  return getWorldProjectileCircles();
+}
+
+function worldBoxes(): readonly BoxCollider[] {
+  return getWorldProjectileBoxes();
 }
 
 /**
@@ -113,6 +128,7 @@ export function MagmaOrbsCastEffect({
   const right = useRef<THREE.Group>(null);
   const launched = useRef(false);
   const finished = useRef(false);
+  const pathMeetAt = useRef(0);
   const launchFromL = useRef<Vec3>({ x: 0, y: 0, z: 0 });
   const launchFromR = useRef<Vec3>({ x: 0, y: 0, z: 0 });
   const controlL = useRef<Vec3>({ x: 0, y: 0, z: 0 });
@@ -163,7 +179,32 @@ export function MagmaOrbsCastEffect({
       return;
     }
 
-    // Rise (frame 24 → 60)
+    // Local caster: keep publishing live cursor meet during loft so late flicks
+    // are authoritative for self and for the last server refreshCastAim tick.
+    const isLocal =
+      Boolean(shot.followOwnerId) && shot.followOwnerId === follow.localSessionId;
+    if (isLocal && shot.followOwnerId) {
+      const aim = getGroundAim();
+      if (aim) {
+        const cursorMeet = resolveMagmaOrbsMeetRange(
+          { x: pose.x, z: pose.z },
+          aim,
+        );
+        const collidePt = pointInFront(
+          { x: pose.x, z: pose.z },
+          pose.yaw,
+          cursorMeet,
+        );
+        setMagmaOrbsMeetCollide(
+          shot.followOwnerId,
+          collidePt.x,
+          collidePt.z,
+          pose.yaw,
+          cursorMeet,
+        );
+      }
+    }
+
     if (age < launchSec) {
       const u = Math.max(0, Math.min(1, (age - emergeSec) / Math.max(1e-3, launchSec - emergeSec)));
       const ease = 1 - (1 - u) * (1 - u);
@@ -223,32 +264,29 @@ export function MagmaOrbsCastEffect({
       return;
     }
 
-    if (!launched.current) {
+    const meet = getMagmaOrbsMeet(shot.followOwnerId);
+    const flightDur = Math.max(1e-3, explodeSec - launchSec);
+    const fu = Math.max(0, Math.min(1, (age - launchSec) / flightDur));
+    // Allow late server collide / aim patches to rebuild early in flight so
+    // remotes catch the caster's last-second flick (aoe often arrives 1+ frames late).
+    const meetStamp = meet?.updatedAt ?? 0;
+    const canRebuildPath = !launched.current || (fu < 0.22 && meetStamp > pathMeetAt.current + 1);
+    if (canRebuildPath) {
       launched.current = true;
-      const meet = getMagmaOrbsMeet(shot.followOwnerId);
-      const isLocal =
-        Boolean(shot.followOwnerId) &&
-        shot.followOwnerId === follow.localSessionId;
-      // Local caster: freeze to live cursor. Remotes: server meet / collide.
-      const cursorMeet = isLocal
-        ? resolveMagmaOrbsMeetRange({ x: pose.x, z: pose.z }, getGroundAim())
-        : undefined;
-      if (isLocal && cursorMeet != null && shot.followOwnerId) {
-        setMagmaOrbsMeetRange(shot.followOwnerId, cursorMeet);
-      }
+      pathMeetAt.current = meetStamp || performance.now();
       const meetRange =
-        cursorMeet ??
         (meet?.meetRange && meet.meetRange > 0 ? meet.meetRange : undefined) ??
         (typeof shot.radius === "number" && shot.radius > 0
           ? shot.radius
           : MAGMA_ORBS_CAST.meetRange);
       const collideOverride =
-        !isLocal && meet?.collideX != null && meet?.collideZ != null
+        meet?.collideX != null && meet?.collideZ != null
           ? { x: meet.collideX, z: meet.collideZ }
           : undefined;
+      const pathYaw = meet?.yaw ?? pose.yaw;
       const path = buildMagmaOrbsFlightPath(
         { x: pose.x, z: pose.z },
-        pose.yaw,
+        pathYaw,
         meetRange,
         collideOverride,
       );
@@ -275,13 +313,13 @@ export function MagmaOrbsCastEffect({
         path,
         worldWalls(),
         MAGMA_ORBS_CAST.flightHitRadius,
+        worldCircles(),
+        worldBoxes(),
       );
       leftMaxT.current = maxT.left;
       rightMaxT.current = maxT.right;
     }
 
-    const flightDur = Math.max(1e-3, explodeSec - launchSec);
-    const fu = Math.max(0, Math.min(1, (age - launchSec) / flightDur));
     // Ease-in — slow leave loft, accelerate into the crash.
     const t = fu * fu * fu;
 

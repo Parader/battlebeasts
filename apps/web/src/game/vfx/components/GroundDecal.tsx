@@ -54,7 +54,7 @@ export function GroundDecal({
   preset,
   shape,
   x = 0,
-  y = 0.03,
+  y = 0.06,
   z = 0,
   yaw = 0,
   radius,

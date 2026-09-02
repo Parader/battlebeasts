@@ -47,7 +47,10 @@ function saveAuthStorage() {
   }
 }
 
-/** Resolve game server URL: env > config.json beside exe > localhost. */
+/** Default host for friend builds — override with config.json or BB_GAME_SERVER_URL. */
+const DEFAULT_GAME_SERVER_URL = "ws://74.59.153.60:2567";
+
+/** Resolve game server URL: env > config.json beside exe > baked host IP. */
 function resolveGameServerUrl() {
   if (process.env.BB_GAME_SERVER_URL) return process.env.BB_GAME_SERVER_URL;
   try {
@@ -63,7 +66,7 @@ function resolveGameServerUrl() {
   } catch {
     // ignore malformed config
   }
-  return "ws://localhost:2567";
+  return DEFAULT_GAME_SERVER_URL;
 }
 
 function findProtocolUrl(argv = process.argv) {
@@ -108,14 +111,14 @@ function oauthSuccessHtml() {
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>BattleBeasts</title>
+  <title>Mage Trials</title>
   <meta http-equiv="refresh" content="1;url=${deepLink}"/>
 </head>
 <body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1220;color:#e8f2fa;font-family:system-ui,sans-serif">
   <div style="text-align:center;padding:2rem;max-width:28rem">
     <h1 style="margin:0 0 .5rem;font-size:1.5rem">Signed in</h1>
-    <p style="margin:0 0 1rem;opacity:.85">Return to the BattleBeasts window — sign-in should finish automatically.</p>
-    <p style="margin:1.25rem 0 0"><a href=${deepLinkJson} style="color:#7dd3fc">Open BattleBeasts</a></p>
+    <p style="margin:0 0 1rem;opacity:.85">Return to the Mage Trials window — sign-in should finish automatically.</p>
+    <p style="margin:1.25rem 0 0"><a href=${deepLinkJson} style="color:#7dd3fc">Open Mage Trials</a></p>
   </div>
   <script>
     try { window.location.replace(${deepLinkJson}); } catch (e) {}
@@ -363,7 +366,7 @@ if (!gotLock) {
       height: 800,
       minWidth: 960,
       minHeight: 600,
-      title: "BattleBeasts",
+      title: "Mage Trials",
       backgroundColor: "#000000",
       webPreferences: {
         preload: path.join(__dirname, "preload.cjs"),

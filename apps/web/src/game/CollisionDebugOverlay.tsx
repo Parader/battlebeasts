@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { Html } from "@react-three/drei";
 import {
-  baseCityStaticColliders,
   localToWorldXZ,
   type MeshCollider,
   type StaticCollider,
   type WallCollider,
 } from "@battlebeasts/shared";
+import { getWorldStaticColliders } from "./worldCollidersRuntime";
 
 /** Draw above meadow tiles so walls are obvious. */
 const Y = 0.55;
@@ -18,6 +18,23 @@ function isMesh(c: StaticCollider): c is MeshCollider {
 
 function isWalls(c: StaticCollider): c is WallCollider {
   return c.shape === "walls";
+}
+
+function summarize(colliders: readonly StaticCollider[]) {
+  let walls = 0;
+  let wallSegs = 0;
+  let circles = 0;
+  let meshes = 0;
+  for (const c of colliders) {
+    if (isWalls(c)) {
+      walls++;
+      wallSegs += c.segs.length / 4;
+    } else if (isMesh(c)) meshes++;
+    else if (c.shape === "box") {
+      /* skip */
+    } else circles++;
+  }
+  return { total: colliders.length, walls, wallSegs, circles, meshes };
 }
 
 function buildLineGeometry(colliders: readonly StaticCollider[]): THREE.BufferGeometry {
@@ -89,33 +106,18 @@ function buildLineGeometry(colliders: readonly StaticCollider[]): THREE.BufferGe
 }
 
 /**
- * Draws hub collision (Bezier walls + circles).
+ * Draws active-room collision (hub or arena).
  * Toggle with F9 (F3 is often stolen by the browser), or `window.__bbToggleCollision()`.
  */
 export function CollisionDebugOverlay() {
   const [visible, setVisible] = useState(false);
-  const colliders = useMemo(() => baseCityStaticColliders(), []);
-  const summary = useMemo(() => {
-    let walls = 0;
-    let wallSegs = 0;
-    let circles = 0;
-    let meshes = 0;
-    for (const c of colliders) {
-      if (isWalls(c)) {
-        walls++;
-        wallSegs += c.segs.length / 4;
-      } else if (isMesh(c)) meshes++;
-      else if (c.shape === "box") {
-        /* skip */
-      } else circles++;
-    }
-    return { total: colliders.length, walls, wallSegs, circles, meshes };
-  }, [colliders]);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     const toggle = () =>
       setVisible((v) => {
         const next = !v;
+        const summary = summarize(getWorldStaticColliders());
         console.info("[collision debug]", next ? "ON" : "OFF", summary);
         return next;
       });
@@ -132,8 +134,16 @@ export function CollisionDebugOverlay() {
       window.removeEventListener("keydown", onKey);
       delete (window as unknown as { __bbToggleCollision?: () => void }).__bbToggleCollision;
     };
-  }, [summary]);
+  }, []);
 
+  // Refresh geometry when toggled on so arena/hub swaps are visible.
+  useEffect(() => {
+    if (!visible) return;
+    setTick((t) => t + 1);
+  }, [visible]);
+
+  const colliders = useMemo(() => getWorldStaticColliders(), [visible, tick]);
+  const summary = useMemo(() => summarize(colliders), [colliders]);
   const lineGeo = useMemo(() => buildLineGeometry(colliders), [colliders]);
 
   useEffect(() => {

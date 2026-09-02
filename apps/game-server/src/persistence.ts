@@ -15,6 +15,9 @@ import {
   sanitizeTalentBuild,
   sanitizeUnlocksWithEquipped,
   emptyPlayerUnlocks,
+  normalizeFlexLoadout,
+  EMPTY_FLEX_LOADOUT,
+  type FlexLoadout,
   type CosmeticsEquipped,
   type PlayerUnlocks,
   type TalentBuild,
@@ -34,6 +37,7 @@ export type LoadoutPresetRow = {
   name: string;
   abilityIds: string[];
   talentBuild: TalentBuild;
+  flexAbilityIds: FlexLoadout;
 };
 
 export type EconomySnapshot = Wallet & {
@@ -48,6 +52,7 @@ export type EconomySnapshot = Wallet & {
   unlocks: PlayerUnlocks;
   loadoutPresets: LoadoutPresetRow[];
   activeLoadoutSlot: number;
+  flexAbilityIds: FlexLoadout;
 };
 
 export type ProfileAppearance = {
@@ -69,8 +74,17 @@ const DEFAULT_ECO: EconomySnapshot = {
   talentBuild: {},
   cosmeticsEquipped: normalizeCosmeticsEquipped({}),
   unlocks: emptyPlayerUnlocks(),
-  loadoutPresets: [{ slotIndex: 0, name: "Loadout 1", abilityIds: [...DEFAULT_LOADOUT], talentBuild: {} }],
+  loadoutPresets: [
+    {
+      slotIndex: 0,
+      name: "Loadout 1",
+      abilityIds: [...DEFAULT_LOADOUT],
+      talentBuild: {},
+      flexAbilityIds: [...EMPTY_FLEX_LOADOUT],
+    },
+  ],
   activeLoadoutSlot: 0,
+  flexAbilityIds: [...EMPTY_FLEX_LOADOUT],
 };
 
 export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
@@ -99,7 +113,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     supabase.from("player_unlocks").select("*").eq("user_id", userId).maybeSingle(),
     supabase
       .from("loadout_presets")
-      .select("slot_index, name, ability_ids, talent_build")
+      .select("slot_index, name, ability_ids, talent_build, flex_ability_ids")
       .eq("user_id", userId)
       .order("slot_index", { ascending: true }),
   ]);
@@ -203,6 +217,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
           emotes: unlocksData.emotes,
           abilities: unlocksData.abilities,
           loadout_slot_count: unlocksData.loadout_slot_count,
+          flex_slot_count: unlocksData.flex_slot_count,
           emote_slots: unlocksData.emote_slots,
         }
       : null,
@@ -236,6 +251,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
       // Empty preset builds inherit the account build so old rows stay playable.
       talentBuild:
         Object.keys(fromPreset).length > 0 ? fromPreset : accountTalentBuild,
+      flexAbilityIds: decodeFlexColumn(row.flex_ability_ids),
     };
   });
 
@@ -245,6 +261,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
       name: "Loadout 1",
       abilityIds,
       talentBuild: accountTalentBuild,
+      flexAbilityIds: [...EMPTY_FLEX_LOADOUT],
     });
   }
 
@@ -261,6 +278,10 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     ? normalizeLoadout(activePreset.abilityIds)
     : abilityIds;
   const resolvedTalentBuild = activePreset?.talentBuild ?? accountTalentBuild;
+  const resolvedFlex = clampFlexToUnlocked(
+    activePreset?.flexAbilityIds ?? EMPTY_FLEX_LOADOUT,
+    unlocks.flexSlotCount,
+  );
 
   // Persist sanitized unlocks once if table exists and row was empty-ish
   if (!unlocksError) {
@@ -282,7 +303,26 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     unlocks,
     loadoutPresets,
     activeLoadoutSlot,
+    flexAbilityIds: resolvedFlex,
   };
+}
+
+/**
+ * Postgres `text[]` has no null literal we can round-trip cleanly through
+ * PostgREST, so an unused slot is stored as an empty string.
+ */
+export function encodeFlexColumn(flex: FlexLoadout): string[] {
+  return normalizeFlexLoadout(flex).map((id) => id ?? "");
+}
+
+function decodeFlexColumn(raw: unknown): FlexLoadout {
+  if (!Array.isArray(raw)) return [...EMPTY_FLEX_LOADOUT];
+  return normalizeFlexLoadout(raw.map((v) => (typeof v === "string" && v ? v : null)));
+}
+
+/** Picks in slots the player has not bought are dropped, not silently kept. */
+export function clampFlexToUnlocked(flex: FlexLoadout, unlockedCount: number): FlexLoadout {
+  return normalizeFlexLoadout(flex).map((id, i) => (i < unlockedCount ? id : null));
 }
 
 export async function saveInventory(userId: string, wallet: Wallet, talentPoints?: number): Promise<void> {
@@ -338,6 +378,7 @@ export async function savePlayerUnlocks(userId: string, unlocks: PlayerUnlocks):
     emotes: normalized.emotes,
     abilities: normalized.abilities,
     loadout_slot_count: normalized.loadoutSlotCount,
+    flex_slot_count: normalized.flexSlotCount,
     emote_slots: normalized.emoteSlots,
     updated_at: new Date().toISOString(),
   };
@@ -370,7 +411,7 @@ export async function saveLoadoutPreset(
   userId: string,
   slotIndex: number,
   abilityIds: string[],
-  options?: { name?: string; talentBuild?: TalentBuild },
+  options?: { name?: string; talentBuild?: TalentBuild; flexAbilityIds?: FlexLoadout },
 ): Promise<void> {
   if (!supabase) return;
   const payload: Record<string, unknown> = {
@@ -382,6 +423,9 @@ export async function saveLoadoutPreset(
   };
   if (options?.talentBuild !== undefined) {
     payload.talent_build = normalizeTalentBuild(options.talentBuild);
+  }
+  if (options?.flexAbilityIds !== undefined) {
+    payload.flex_ability_ids = encodeFlexColumn(options.flexAbilityIds);
   }
   await supabase.from("loadout_presets").upsert(payload, {
     onConflict: "user_id,slot_index",

@@ -1,4 +1,4 @@
-# BattleBeasts
+# Mage Trials
 
 Web-based Battlerite-inspired top-down 3D PvP/PvE game.
 
@@ -17,6 +17,7 @@ pnpm dev
 
 - Web: http://localhost:5173
 - Game server: ws://localhost:2567
+- Map editor: `pnpm dev:editor` → http://localhost:5183
 
 ## Auth (Google via Supabase)
 

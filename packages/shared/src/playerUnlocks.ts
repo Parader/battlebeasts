@@ -14,10 +14,10 @@ import {
  */
 export const STARTER_ABILITY_IDS = [
   "bolt",
-  "smash",
+  "frostBall",
   "surge",
-  "counter",
-  "grasp",
+  "gust",
+  "spikes",
   "barrier",
   "fireball",
 ] as const;
@@ -35,6 +35,14 @@ export const STARTER_LOADOUT_SLOT_COUNT = 1;
 export const MAX_COIN_LOADOUT_SLOTS = 2;
 export const MAX_LOADOUT_SLOTS = 5;
 
+/**
+ * Free flex slot count. One is free so every player meets the mechanic; the
+ * other two are bought with essence, which makes running all three a build
+ * decision rather than a default.
+ */
+export const STARTER_FLEX_SLOT_COUNT = 1;
+export const MAX_FLEX_SLOTS = 3;
+
 export type PlayerUnlocks = {
   cosmetics: string[];
   colors: string[];
@@ -43,6 +51,7 @@ export type PlayerUnlocks = {
   emotes: string[];
   abilities: string[];
   loadoutSlotCount: number;
+  flexSlotCount: number;
   emoteSlots: (string | null)[];
 };
 
@@ -60,6 +69,7 @@ export function emptyPlayerUnlocks(): PlayerUnlocks {
     emotes,
     abilities: starterAbilityIds(),
     loadoutSlotCount: STARTER_LOADOUT_SLOT_COUNT,
+    flexSlotCount: STARTER_FLEX_SLOT_COUNT,
     emoteSlots: normalizeEmoteSlots(null, emotes),
   };
 }
@@ -102,6 +112,17 @@ export function normalizePlayerUnlocks(raw: unknown): PlayerUnlocks {
     Math.min(MAX_LOADOUT_SLOTS, Math.floor(loadoutSlotCount)),
   );
 
+  let flexSlotCount = STARTER_FLEX_SLOT_COUNT;
+  if (typeof obj.flexSlotCount === "number") {
+    flexSlotCount = obj.flexSlotCount;
+  } else if (typeof obj.flex_slot_count === "number") {
+    flexSlotCount = obj.flex_slot_count;
+  }
+  flexSlotCount = Math.max(
+    STARTER_FLEX_SLOT_COUNT,
+    Math.min(MAX_FLEX_SLOTS, Math.floor(flexSlotCount)),
+  );
+
   const emoteSlots = normalizeEmoteSlots(obj.emoteSlots ?? obj.emote_slots, emotes);
 
   return {
@@ -112,6 +133,7 @@ export function normalizePlayerUnlocks(raw: unknown): PlayerUnlocks {
     emotes,
     abilities,
     loadoutSlotCount,
+    flexSlotCount,
     emoteSlots,
   };
 }

@@ -1,14 +1,11 @@
-import { Room, Client } from "@colyseus/core";
+import { Client } from "@colyseus/core";
 import {
   ARENA_ROUND_COUNTDOWN_MS,
   ARENA_ROUND_END_MS,
   ARENA_ROUNDS_TO_WIN,
   ARENA_WIPE_EMOTE_MS,
-  CEMETERY_PLAYER_SPAWN,
-  cemeteryStaticColliders,
-  DEFAULT_LOADOUT,
-  MAX_TALENTS,
-  PLAYER_BASE_MAX_HP,
+  clampPvePartySize,
+  COOP_PVE_MAX_PLAYERS,
   PVE_RECONNECT_GRACE_MS,
   PVE_ZOMBIE_KIND,
   PVP_RECONNECT_GRACE_MS,
@@ -21,16 +18,21 @@ import {
   emptyPlayerUnlocks,
   getEmote,
   HAND_SHIELD_CAST,
-  arenaSpawnForSlot,
   arenaSpawnsForTeam,
-  arenaStaticColliders,
+  mapAttackablePropsFor,
+  mapCollidersFor,
+  mapNpcFor,
+  npcElementIdFrom,
+  NPC_INTERACT_RADIUS,
+  mapIdForMode,
+  mapSpawn,
+  type SpawnPose,
   computeMatchReward,
+  isPvpFfaTriosMode,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   cosmeticsEquippedFromFields,
   cosmeticsEquippedToFields,
-  normalizeCosmeticsEquipped,
-  normalizeLoadout,
   ownsEmote,
   outcomeFromMatch,
   rewardRollSalt,
@@ -38,16 +40,17 @@ import {
   type MatchRecapRow,
   type MatchRewardResult,
   type MatchKind,
+  type NpcAction,
   type PlayerInput,
-  type PlayerUnlocks,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
 import { grantPendingLoot } from "../pendingLoot.js";
-import { insertRewardGrant, loadEconomy } from "../persistence.js";
+import { insertRewardGrant } from "../persistence.js";
 import { bumpQuest } from "../quests.js";
 import { applyRankedMatchFinish } from "../ranked.js";
 import { WaveDirector } from "../pve/WaveDirector.js";
+import { ServicedRoom } from "./ServicedRoom.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
 export type ContentJoinOptions = AuthJoinOptions & {
@@ -56,9 +59,11 @@ export type ContentJoinOptions = AuthJoinOptions & {
   matchId?: string;
   matchKind?: MatchKind;
   seasonId?: string | null;
-  team?: "a" | "b" | "";
+  team?: "a" | "b" | "c" | "";
   role?: "fighter" | "spectator";
   spawnSlot?: number;
+  /** Locked coop party size (1–4) — scales Wave Assault difficulty for the whole run. */
+  partySize?: number;
 };
 
 type ContentKind = "pvp" | "pve";
@@ -68,7 +73,7 @@ function kindFromRoomName(roomName: string): ContentKind {
   return "pve";
 }
 
-export class ContentRoom extends Room<BaseCityState> {
+export class ContentRoom extends ServicedRoom {
   maxClients = 16;
   private inputs = new Map<string, PlayerInput[]>();
   private mode = "stub";
@@ -76,17 +81,17 @@ export class ContentRoom extends Room<BaseCityState> {
   /** Per-player return lobby (stamped at match transfer / join). */
   private returnHubBySession = new Map<string, string>();
   private kind: ContentKind = "pve";
-  private identities = new Map<string, VerifiedIdentity>();
+  /** Registry map backing this room; undefined for modes with no map. */
+  private mapId: string | undefined;
   private awaitingReconnect = new Set<string>();
   private resumeGraceClear: (() => void) | null = null;
-  private combat!: CombatSystem;
   private spawnBySession = new Map<string, { x: number; z: number; yaw: number }>();
   /** Per-fighter pad index within their team (0..2 → markers 1–3 / 4–6). */
   private spawnSlotBySession = new Map<string, number>();
   private diedAtBySession = new Map<string, number>();
-  private nextTeam: "a" | "b" = "a";
+  private nextTeam: "a" | "b" | "c" = "a";
   /** Set when a PvP match reaches a real conclusion (for essence payouts). */
-  private lastMatchWinner: "a" | "b" | "draw" | null = null;
+  private lastMatchWinner: "a" | "b" | "c" | "draw" | null = null;
   private matchId = "";
   private rematchIndex = 0;
   /** userIds already granted for the current matchGrantKey. */
@@ -97,15 +102,19 @@ export class ContentRoom extends Room<BaseCityState> {
   private matchKind: MatchKind = "ranked";
   private seasonId: string | null = null;
   private rankedAppliedForGrantKey = new Set<string>();
-  /** Emote unlocks + wheel slots (loaded with economy). */
-  private unlocksBySession = new Map<string, PlayerUnlocks>();
   private emoteUntilBySession = new Map<string, number>();
   /** Armed when a team first wipes — delay before endRound for emotes. */
   private wipeEndsAt = 0;
-  private wipeWinner: "a" | "b" | null = null;
+  private wipeWinner: "a" | "b" | "c" | null = null;
   private waveDirector: WaveDirector | null = null;
   /** Wave Assault wipe / score screen active. */
   private pveRunEnded = false;
+  /** Difficulty scale for this dungeon run (locked at room create). */
+  private partySize = 1;
+  /** Expected fighters before auto-starting waves (timeout still starts early). */
+  private expectedPartySize = 1;
+  private waveStartArmed = false;
+  private waveStartTimeout: { clear: () => void } | null = null;
 
   private matchGrantKey(): string {
     return `${this.matchId || this.roomId}:r${this.rematchIndex}`;
@@ -128,13 +137,19 @@ export class ContentRoom extends Room<BaseCityState> {
     this.matchId = options.matchId ?? `m_${Date.now().toString(36)}`;
     this.matchKind = options.matchKind === "custom" ? "custom" : "ranked";
     this.seasonId = options.seasonId ?? null;
+    this.partySize = clampPvePartySize(options.partySize ?? 1);
+    this.expectedPartySize = this.partySize;
     this.state.matchMode = this.mode;
     this.setMetadata({
       mode: this.mode,
       matchId: this.matchId,
       kind: this.kind,
       matchKind: this.matchKind,
+      partySize: this.partySize,
     });
+    if (this.kind === "pve" && this.mode === "dungeon") {
+      this.maxClients = COOP_PVE_MAX_PLAYERS;
+    }
     this.combat = new CombatSystem(this as never, {
       canHurtPlayers: true,
       onPlayerDamaged: (sessionId, damage, attackerId) => {
@@ -156,10 +171,15 @@ export class ContentRoom extends Room<BaseCityState> {
         }
       },
     });
-    if (this.kind === "pvp") {
-      this.combat.setStaticColliders(arenaStaticColliders());
-    } else if (this.kind === "pve" && this.mode === "dungeon") {
-      this.combat.setStaticColliders(cemeteryStaticColliders());
+    // Static geometry comes from whichever map the mode names. Modes without a
+    // map (hub, stubs) simply get none, which is what the old kind/mode branch
+    // worked out to anyway.
+    this.mapId = mapIdForMode(this.mode);
+    if (this.mapId) {
+      this.combat.setStaticColliders(mapCollidersFor(this.mapId));
+      // Props the author gave health to become world targets. They keep the
+      // collider they already contributed above; this only adds the HP.
+      for (const p of mapAttackablePropsFor(this.mapId)) this.combat.spawnPropTarget(p);
     }
     this.setPatchRate(1000 / 30);
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
@@ -167,7 +187,7 @@ export class ContentRoom extends Room<BaseCityState> {
     if (this.kind === "pve" && this.mode === "dungeon") {
       this.waveDirector = new WaveDirector(this.state, this.combat, (hud) => {
         this.broadcast("wave_hud", hud);
-      });
+      }, this.partySize);
     }
 
     this.onMessage("input", (client, message: { input: PlayerInput }) => {
@@ -230,6 +250,10 @@ export class ContentRoom extends Room<BaseCityState> {
     this.onMessage("cancel_emote", (client) => {
       this.handleCancelEmote(client);
     });
+
+    // Shop, spells, talents, appearance and quests, so that an NPC merchant or
+    // trainer standing in an authored map reaches the same code as the hub.
+    this.registerPlayerServices();
   }
 
   private handleCastEmote(client: Client, emoteId: string) {
@@ -272,7 +296,7 @@ export class ContentRoom extends Room<BaseCityState> {
     return verifyJoinOptions(options);
   }
 
-  onJoin(client: Client, options: ContentJoinOptions, identity?: VerifiedIdentity) {
+  async onJoin(client: Client, options: ContentJoinOptions, identity?: VerifiedIdentity) {
     if (!identity || identity.isGuest) {
       throw new Error("Authentication required");
     }
@@ -346,39 +370,67 @@ export class ContentRoom extends Room<BaseCityState> {
         player.invulnerable = true;
         this.spawnBySession.set(client.sessionId, { x: 0, z: 0, yaw: player.yaw });
       } else {
-        const team = options.team === "a" || options.team === "b" ? options.team : this.nextTeam;
-        this.nextTeam = team === "a" ? "b" : "a";
+        const ffa = isPvpFfaTriosMode(this.mode);
+        const team =
+          options.team === "a" ||
+          options.team === "b" ||
+          (ffa && options.team === "c")
+            ? options.team
+            : this.nextTeam;
+        if (ffa) {
+          this.nextTeam = team === "a" ? "b" : team === "b" ? "c" : "a";
+        } else {
+          this.nextTeam = team === "a" ? "b" : "a";
+        }
         player.team = team;
+        if (ffa) {
+          this.spawnSlotBySession.set(client.sessionId, 0);
+          const spawn = this.spawnPose(team as "a" | "b" | "c", 0, true);
+          player.x = spawn.x;
+          player.z = spawn.z;
+          player.yaw = spawn.yaw;
+          this.spawnBySession.set(client.sessionId, {
+            x: spawn.x,
+            z: spawn.z,
+            yaw: spawn.yaw,
+          });
+        } else {
+          const preferred = Number(options.spawnSlot);
+          const slot = this.claimTeamSpawnSlot(
+            team as "a" | "b",
+            Number.isFinite(preferred) ? Math.floor(preferred) : undefined,
+          );
+          this.spawnSlotBySession.set(client.sessionId, slot);
+          const spawn = this.spawnPose(team as "a" | "b", slot, false);
+          player.x = spawn.x;
+          player.z = spawn.z;
+          player.yaw = spawn.yaw;
+          this.spawnBySession.set(client.sessionId, {
+            x: spawn.x,
+            z: spawn.z,
+            yaw: spawn.yaw,
+          });
+        }
+      }
+    } else {
+      // PvE / dungeon: staggered cemetery pads so coop fighters don't stack.
+      let spawn: { x: number; z: number; yaw: number };
+      if (this.mode === "dungeon") {
         const preferred = Number(options.spawnSlot);
-        const slot = this.claimTeamSpawnSlot(
-          team,
+        const slot = this.claimDungeonSpawnSlot(
           Number.isFinite(preferred) ? Math.floor(preferred) : undefined,
         );
         this.spawnSlotBySession.set(client.sessionId, slot);
-        const spawn = arenaSpawnForSlot(team, slot) ?? { x: 0, z: 0, yaw: 0 };
-        player.x = spawn.x;
-        player.z = spawn.z;
-        player.yaw = spawn.yaw;
-        this.spawnBySession.set(client.sessionId, {
-          x: spawn.x,
-          z: spawn.z,
-          yaw: spawn.yaw,
-        });
+        spawn = this.spawnPose("a", slot, false);
+      } else {
+        const spawnIndex = this.state.players.size;
+        const angle = (spawnIndex / Math.max(1, this.maxClients)) * Math.PI * 2;
+        spawn = {
+          x: Math.cos(angle) * 4,
+          z: Math.sin(angle) * 4,
+          yaw: 0,
+        };
       }
-    } else {
-      // PvE / dungeon: cemetery center spawn (solo for now).
-      const spawn =
-        this.mode === "dungeon"
-          ? { ...CEMETERY_PLAYER_SPAWN }
-          : (() => {
-              const spawnIndex = this.state.players.size;
-              const angle = (spawnIndex / Math.max(1, this.maxClients)) * Math.PI * 2;
-              return {
-                x: Math.cos(angle) * 4,
-                z: Math.sin(angle) * 4,
-                yaw: 0,
-              };
-            })();
       player.x = spawn.x;
       player.z = spawn.z;
       player.yaw = spawn.yaw;
@@ -387,47 +439,23 @@ export class ContentRoom extends Room<BaseCityState> {
         z: spawn.z,
         yaw: spawn.yaw,
       });
-      if (this.waveDirector) {
-        this.waveDirector.start(Date.now());
-      }
     }
 
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, []);
     this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents, {});
 
-    if (!verified.isGuest) {
-      void loadEconomy(verified.userId).then((eco) => {
-        const p = this.state.players.get(client.sessionId);
-        if (!p) return;
-        p.loadout = normalizeLoadout(eco.abilityIds).join(",");
-        p.talents = eco.talentIds.slice(0, MAX_TALENTS).join(",");
-        if (eco.pattern) p.pattern = normalizeCosmeticPattern(eco.pattern);
-        if (eco.patternColor) p.patternColor = normalizeCosmeticPatternColor(eco.patternColor);
-        if (eco.color) p.color = eco.color;
-        if (eco.cosmeticsEquipped) {
-          const fields = cosmeticsEquippedToFields(
-            normalizeCosmeticsEquipped(eco.cosmeticsEquipped),
-          );
-          p.cosmeticHat = fields.cosmeticHat;
-          p.cosmeticShoulders = fields.cosmeticShoulders;
-          p.cosmeticChest = fields.cosmeticChest;
-          p.cosmeticGloves = fields.cosmeticGloves;
-          p.cosmeticBelt = fields.cosmeticBelt;
-          p.cosmeticLegs = fields.cosmeticLegs;
-          p.cosmeticShoes = fields.cosmeticShoes;
-        }
-        this.unlocksBySession.set(client.sessionId, eco.unlocks);
-        this.combat.syncSessionKit(client.sessionId, p.loadout, p.talents, eco.talentBuild);
-        const bonus = this.combat.getSessionKit(client.sessionId)?.maxHpBonus ?? 0;
-        p.maxHp = PLAYER_BASE_MAX_HP + bonus;
-        p.hp = Math.min(p.hp, p.maxHp);
-      });
-    } else {
-      player.loadout = DEFAULT_LOADOUT.join(",");
-      this.unlocksBySession.set(client.sessionId, emptyPlayerUnlocks());
-      this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents, {});
+    if (this.kind === "pve" && this.mode === "dungeon" && this.waveDirector) {
+      this.armWaveStart();
     }
+
+    // Awaited, not fired off. An NPC merchant means a purchase can arrive in
+    // the first frames here, and a half-loaded player has a zeroed wallet --
+    // which would not merely fail the sale, it would save that zero over the
+    // real balance. Colyseus holds the client until onJoin resolves.
+    await this.loadPlayerEconomy(client.sessionId, player, verified);
+    this.applyCombatKit(client.sessionId, player);
+    this.sendInventory(client, player);
 
     client.send("toast", {
       message:
@@ -532,10 +560,62 @@ export class ContentRoom extends Room<BaseCityState> {
     this.spawnBySession.delete(sessionId);
     this.spawnSlotBySession.delete(sessionId);
     this.diedAtBySession.delete(sessionId);
-    this.unlocksBySession.delete(sessionId);
+    this.clearPlayerServices(sessionId);
     this.emoteUntilBySession.delete(sessionId);
     this.returnHubBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
+  }
+
+  /**
+   * Unique cemetery pad (0..COOP_PVE_MAX_PLAYERS-1). Prefers matchmaking spawnSlot when free.
+   */
+  private claimDungeonSpawnSlot(preferred?: number): number {
+    const max = COOP_PVE_MAX_PLAYERS;
+    const used = new Set<number>();
+    for (const [sessionId] of this.state.players.entries()) {
+      const slot = this.spawnSlotBySession.get(sessionId);
+      if (typeof slot === "number") used.add(slot);
+    }
+    if (
+      preferred != null &&
+      preferred >= 0 &&
+      preferred < max &&
+      !used.has(preferred)
+    ) {
+      return preferred;
+    }
+    for (let i = 0; i < max; i++) {
+      if (!used.has(i)) return i;
+    }
+    return Math.min(max - 1, Math.max(0, preferred ?? 0));
+  }
+
+  /**
+   * Start waves once expected party size has joined, or after a short timeout
+   * so a late / missing transfer doesn't stall forever.
+   */
+  private armWaveStart() {
+    if (!this.waveDirector || this.waveStartArmed) return;
+    const present = this.state.players.size;
+    if (present >= this.expectedPartySize) {
+      this.startWavesNow();
+      return;
+    }
+    if (this.waveStartTimeout) return;
+    this.waveStartTimeout = this.clock.setTimeout(() => {
+      this.waveStartTimeout = null;
+      this.startWavesNow();
+    }, 2000);
+  }
+
+  private startWavesNow() {
+    if (!this.waveDirector || this.waveStartArmed) return;
+    this.waveStartArmed = true;
+    if (this.waveStartTimeout) {
+      this.waveStartTimeout.clear();
+      this.waveStartTimeout = null;
+    }
+    this.waveDirector.start(Date.now());
   }
 
   /**
@@ -589,13 +669,15 @@ export class ContentRoom extends Room<BaseCityState> {
   private checkPveWipe() {
     if (this.kind !== "pve" || this.mode !== "dungeon" || this.pveRunEnded) return;
     let living = 0;
-    let present = 0;
+    let fighters = 0;
     this.state.players.forEach((p) => {
       if (p.disconnected) return;
-      present += 1;
+      if (p.role === "spectator") return;
+      fighters += 1;
       if (p.hp > 0) living += 1;
     });
-    if (present > 0 && living === 0) {
+    // Wipe when every present fighter is dead (no ally revive in v1).
+    if (fighters > 0 && living === 0) {
       this.finishPveRun();
     }
   }
@@ -681,17 +763,40 @@ export class ContentRoom extends Room<BaseCityState> {
   private fighters(): PlayerState[] {
     const list: PlayerState[] = [];
     this.state.players.forEach((p) => {
-      if (p.role === "fighter" && (p.team === "a" || p.team === "b") && !p.disconnected) {
+      if (
+        p.role === "fighter" &&
+        (p.team === "a" || p.team === "b" || p.team === "c") &&
+        !p.disconnected
+      ) {
         list.push(p);
       }
     });
     return list;
   }
 
+  /**
+   * Spawn pose from this room's map, falling back to the origin.
+   *
+   * The fallback is deliberately loud-ish: a map with no pad for this team
+   * stacks everyone at 0,0, which is obvious in play, rather than throwing
+   * mid-join and dropping the client.
+   */
+  private spawnPose(team: "a" | "b" | "c", slot: number, ffa: boolean): SpawnPose {
+    const pose = this.mapId ? mapSpawn(this.mapId, { team, slot, ffa }) : undefined;
+    if (pose) return pose;
+    console.warn(`[ContentRoom] no spawn for team ${team} slot ${slot} on map "${this.mapId}"`);
+    return { x: 0, z: 0, yaw: 0 };
+  }
+
   private maybeBeginMatch() {
     const fighters = this.fighters();
     const hasA = fighters.some((p) => p.team === "a");
     const hasB = fighters.some((p) => p.team === "b");
+    if (isPvpFfaTriosMode(this.mode)) {
+      const hasC = fighters.some((p) => p.team === "c");
+      if (hasA && hasB && hasC) this.startRound(1);
+      return;
+    }
     if (hasA && hasB) this.startRound(1);
   }
 
@@ -702,6 +807,7 @@ export class ContentRoom extends Room<BaseCityState> {
     if (round === 1) {
       this.state.scoreA = 0;
       this.state.scoreB = 0;
+      this.state.scoreC = 0;
       this.state.players.forEach((p) => {
         p.statKills = 0;
         p.statDamageDealt = 0;
@@ -712,23 +818,41 @@ export class ContentRoom extends Room<BaseCityState> {
       });
     }
 
+    const ffa = isPvpFfaTriosMode(this.mode);
     const fallbackSlots = { a: 0, b: 0 };
     this.state.players.forEach((p, sessionId) => {
-      if (p.role !== "fighter" || (p.team !== "a" && p.team !== "b")) return;
-      const team = p.team as "a" | "b";
-      let slot = this.spawnSlotBySession.get(sessionId);
-      if (typeof slot !== "number") {
-        slot = fallbackSlots[team]++;
-        this.spawnSlotBySession.set(sessionId, slot);
-      }
-      const spawn = arenaSpawnForSlot(team, slot);
-      if (spawn) {
-        p.x = spawn.x;
-        p.z = spawn.z;
-        p.yaw = spawn.yaw;
-        this.spawnBySession.set(sessionId, { x: spawn.x, z: spawn.z, yaw: spawn.yaw });
+      if (p.role !== "fighter") return;
+      if (p.team !== "a" && p.team !== "b" && p.team !== "c") return;
+      if (ffa) {
+        const team = p.team as "a" | "b" | "c";
+        const spawn = mapSpawn(this.mapId ?? "", { team, slot: 0, ffa: true });
+        if (spawn) {
+          p.x = spawn.x;
+          p.z = spawn.z;
+          p.yaw = spawn.yaw;
+          this.spawnBySession.set(sessionId, { x: spawn.x, z: spawn.z, yaw: spawn.yaw });
+        }
+      } else {
+        if (p.team === "c") return;
+        const team = p.team as "a" | "b";
+        let slot = this.spawnSlotBySession.get(sessionId);
+        if (typeof slot !== "number") {
+          slot = fallbackSlots[team]++;
+          this.spawnSlotBySession.set(sessionId, slot);
+        }
+        const spawn = mapSpawn(this.mapId ?? "", { team, slot });
+        if (spawn) {
+          p.x = spawn.x;
+          p.z = spawn.z;
+          p.yaw = spawn.yaw;
+          this.spawnBySession.set(sessionId, { x: spawn.x, z: spawn.z, yaw: spawn.yaw });
+        }
       }
       p.hp = p.maxHp;
+      // No carry between rounds. Openings are then always played on the base
+      // kit, and the payoff moments land late in a round once someone has
+      // earned them.
+      p.energy = 0;
       p.roundDead = false;
       p.statuses.clear();
       p.castAbilityId = "";
@@ -746,20 +870,24 @@ export class ContentRoom extends Room<BaseCityState> {
     this.broadcast("toast", { message: `Round ${round} — get ready` });
   }
 
-  private endRound(winner: "a" | "b") {
+  private endRound(winner: "a" | "b" | "c") {
     this.wipeEndsAt = 0;
     this.wipeWinner = null;
     this.combat.clearRoundWorldEffects();
     if (winner === "a") this.state.scoreA += 1;
-    else this.state.scoreB += 1;
+    else if (winner === "b") this.state.scoreB += 1;
+    else this.state.scoreC += 1;
     this.state.matchPhase = "round_end";
     this.state.phaseEndsAt = Date.now() + ARENA_ROUND_END_MS;
+    const scoreLine = isPvpFfaTriosMode(this.mode)
+      ? `${this.state.scoreA}–${this.state.scoreB}–${this.state.scoreC}`
+      : `${this.state.scoreA}–${this.state.scoreB}`;
     this.broadcast("toast", {
-      message: `Round over — Team ${winner.toUpperCase()} (${this.state.scoreA}–${this.state.scoreB})`,
+      message: `Round over — Team ${winner.toUpperCase()} (${scoreLine})`,
     });
   }
 
-  private finishMatch(winner: "a" | "b" | "draw") {
+  private finishMatch(winner: "a" | "b" | "c" | "draw") {
     this.state.matchPhase = "match_end";
     this.state.phaseEndsAt = 0;
     this.lastMatchWinner = winner;
@@ -792,6 +920,7 @@ export class ContentRoom extends Room<BaseCityState> {
         winner,
         scoreA: this.state.scoreA,
         scoreB: this.state.scoreB,
+        scoreC: isPvpFfaTriosMode(this.mode) ? this.state.scoreC : undefined,
         matchKind: this.matchKind,
         rows: augmented,
       });
@@ -805,27 +934,60 @@ export class ContentRoom extends Room<BaseCityState> {
   }
 
   private async applyRankedAndAugmentRecap(
-    winner: "a" | "b" | "draw",
+    winner: "a" | "b" | "c" | "draw",
     rows: MatchRecapRow[],
   ): Promise<MatchRecapRow[]> {
     if (this.kind !== "pvp" || this.matchKind !== "ranked") return rows;
     const grantKey = this.matchGrantKey();
     if (this.rankedAppliedForGrantKey.has(grantKey)) return rows;
-    this.rankedAppliedForGrantKey.add(grantKey);
 
-    const players: Array<{ userId: string; team: "a" | "b" | "" }> = [];
-    this.state.players.forEach((p) => {
-      if (!p.id || p.role === "spectator") return;
-      players.push({ userId: p.id, team: (p.team as "a" | "b" | "") || "" });
+    const players: Array<{ userId: string; team: "a" | "b" | "c" | "" }> = [];
+    this.state.players.forEach((p, sessionId) => {
+      if (p.role === "spectator") return;
+      const userId =
+        (p.id && p.id.length > 0 ? p.id : null) ??
+        this.identities.get(sessionId)?.userId ??
+        "";
+      if (!userId) return;
+      const team =
+        p.team === "a" || p.team === "b" || p.team === "c" ? p.team : "";
+      players.push({ userId, team });
     });
 
-    const results = await applyRankedMatchFinish({
+    if (players.length === 0) {
+      console.warn("[ranked] content finish skipped — no fighter user ids", {
+        matchId: grantKey,
+      });
+      return rows;
+    }
+
+    const finish = await applyRankedMatchFinish({
       matchId: grantKey,
       mode: this.mode,
       kind: "ranked",
       winner,
       players,
     });
+    const results = finish.results;
+
+    // Only lock in-memory after a successful DB persist so a failed write can retry.
+    if (finish.persisted && results.length > 0) {
+      this.rankedAppliedForGrantKey.add(grantKey);
+    } else if (results.length === 0) {
+      console.error("[ranked] finish produced no results", {
+        matchId: grantKey,
+        mode: this.mode,
+        winner,
+        fighters: players.length,
+      });
+      this.broadcast("toast", {
+        message: "Ranked LP could not be saved — check game-server Supabase service key",
+      });
+    } else if (!finish.persisted) {
+      this.broadcast("toast", {
+        message: "Ranked reward shown, but ladder save failed — restart game-server if this persists",
+      });
+    }
 
     const byUser = new Map(results.map((r) => [r.userId, r]));
     for (const r of results) {
@@ -835,7 +997,11 @@ export class ContentRoom extends Room<BaseCityState> {
     }
     return rows.map((row) => {
       const player = this.state.players.get(row.sessionId);
-      const ranked = player?.id ? byUser.get(player.id) : undefined;
+      const sessionId = row.sessionId;
+      const userId =
+        (player?.id && player.id.length > 0 ? player.id : null) ??
+        this.identities.get(sessionId)?.userId;
+      const ranked = userId ? byUser.get(userId) : undefined;
       if (!ranked) return row;
       return {
         ...row,
@@ -966,6 +1132,29 @@ export class ContentRoom extends Room<BaseCityState> {
 
   private checkRoundWipe(now: number) {
     if (this.state.matchPhase !== "fighting") return;
+
+    if (isPvpFfaTriosMode(this.mode)) {
+      const living = this.fighters().filter((p) => !p.roundDead && p.hp > 0);
+      if (living.length === 0) {
+        this.wipeEndsAt = 0;
+        this.wipeWinner = null;
+        this.combat.clearRoundWorldEffects();
+        this.startRound(this.state.matchRound);
+        return;
+      }
+      if (living.length === 1) {
+        const winner = living[0]!.team as "a" | "b" | "c";
+        if (!this.wipeEndsAt || this.wipeWinner !== winner) {
+          this.wipeEndsAt = now + ARENA_WIPE_EMOTE_MS;
+          this.wipeWinner = winner;
+        }
+        return;
+      }
+      this.wipeEndsAt = 0;
+      this.wipeWinner = null;
+      return;
+    }
+
     const livingA = this.fighters().filter((p) => p.team === "a" && !p.roundDead && p.hp > 0);
     const livingB = this.fighters().filter((p) => p.team === "b" && !p.roundDead && p.hp > 0);
     if (livingA.length === 0 && livingB.length === 0) {
@@ -1007,7 +1196,12 @@ export class ContentRoom extends Room<BaseCityState> {
     } else if (phase === "round_end" && now >= this.state.phaseEndsAt) {
       if (this.state.scoreA >= ARENA_ROUNDS_TO_WIN) this.finishMatch("a");
       else if (this.state.scoreB >= ARENA_ROUNDS_TO_WIN) this.finishMatch("b");
-      else this.startRound(this.state.matchRound + 1);
+      else if (
+        isPvpFfaTriosMode(this.mode) &&
+        this.state.scoreC >= ARENA_ROUNDS_TO_WIN
+      ) {
+        this.finishMatch("c");
+      } else this.startRound(this.state.matchRound + 1);
     } else if (phase === "fighting") {
       this.checkRoundWipe(now);
       if (
@@ -1026,9 +1220,15 @@ export class ContentRoom extends Room<BaseCityState> {
     if (this.kind === "pvp") {
       this.broadcast("match_forfeit", { playerName });
       const fighters = this.fighters();
+      const ffa = isPvpFfaTriosMode(this.mode);
       const teamEmpty =
         this.state.matchPhase !== "" &&
-        (!fighters.some((p) => p.team === "a") || !fighters.some((p) => p.team === "b"));
+        (ffa
+          ? !fighters.some((p) => p.team === "a") ||
+            !fighters.some((p) => p.team === "b") ||
+            !fighters.some((p) => p.team === "c")
+          : !fighters.some((p) => p.team === "a") ||
+            !fighters.some((p) => p.team === "b"));
       if (remaining < 2 || teamEmpty) {
         this.endMatch("Not enough hunters left — returning to city");
         return;
@@ -1041,6 +1241,7 @@ export class ContentRoom extends Room<BaseCityState> {
       void this.disconnect();
       return;
     }
+    if (this.mode === "dungeon") this.checkPveWipe();
     this.forceResume();
   }
 
@@ -1083,7 +1284,7 @@ export class ContentRoom extends Room<BaseCityState> {
     });
   }
 
-  /** Fighters: act only when alive and outside countdown / round_end / match_end. */
+  /** Fighters: casts only when alive and outside countdown / round_end / match_end. */
   private canCombat(player: PlayerState): boolean {
     if (player.role === "spectator") return false;
     if (player.hp <= 0 || player.roundDead) return false;
@@ -1094,9 +1295,15 @@ export class ContentRoom extends Room<BaseCityState> {
     return true;
   }
 
-  /** Spectators always move; fighters use the same gates as combat. */
+  /**
+   * Spectators always move.
+   * Round-end celebrate window: living fighters can walk (and emote); dead stay put.
+   */
   private canMove(player: PlayerState): boolean {
     if (player.role === "spectator") return true;
+    if (this.kind === "pvp" && this.state.matchPhase === "round_end") {
+      return player.hp > 0 && !player.roundDead;
+    }
     return this.canCombat(player);
   }
 
@@ -1163,6 +1370,7 @@ export class ContentRoom extends Room<BaseCityState> {
           });
           if (began) this.activityOf(sessionId).castCount += 1;
         }
+        if (input.interactId) this.handleInteract(sessionId, player, input.interactId);
       }
     }
 
@@ -1171,5 +1379,46 @@ export class ContentRoom extends Room<BaseCityState> {
     if (this.kind === "pve" && this.mode === "dungeon") {
       this.checkPveWipe();
     }
+  }
+
+  /**
+   * Talking to an NPC authored into the map.
+   *
+   * The client already checked the distance before showing the prompt; this
+   * checks it again because the client is the one thing that can lie, and
+   * shopping from across the map is exactly the kind of thing a modified
+   * client would try. Range is generous (`NPC_INTERACT_RADIUS` plus a metre)
+   * so a player who took a step while the packet was in flight is not refused
+   * a conversation they were standing in range to start.
+   */
+  private handleInteract(sessionId: string, player: PlayerState, interactId: string) {
+    const elementId = npcElementIdFrom(interactId);
+    if (!elementId || !this.mapId) return;
+
+    const npc = mapNpcFor(this.mapId, elementId);
+    if (!npc) return;
+
+    const reach = NPC_INTERACT_RADIUS + 1;
+    if (Math.hypot(player.x - npc.x, player.z - npc.z) > reach) return;
+
+    const client = this.clients.find((c) => c.sessionId === sessionId);
+    client?.send("npc_dialogue", {
+      npcId: npc.id,
+      name: npc.name,
+      line: npc.line,
+      action: this.supportedNpcAction(npc.action),
+    });
+  }
+
+  /**
+   * Downgrade an action this room cannot honour to a plain conversation.
+   *
+   * Portals queue for a match through the hub's party registry, which does not
+   * exist here, so a gatekeeper NPC dropped into an arena would otherwise show
+   * a button that quietly does nothing. Better to let him just talk.
+   */
+  private supportedNpcAction(action: NpcAction): NpcAction {
+    if (action !== "portal_pvp" && action !== "portal_pve") return action;
+    return this.mode === "hub" ? action : "talk";
   }
 }

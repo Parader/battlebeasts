@@ -1,12 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router";
 import { SocialButton } from "@/components/base/buttons/social-button";
-import { Button } from "@/components/base/buttons/button";
-import { Badge } from "@/components/base/badges/badges";
-import { Form } from "@/components/base/form/form";
-import { Input } from "@/components/base/input/input";
-import { ContentDivider } from "@/components/application/content-divider/content-divider";
+import { APP_DISPLAY_NAME } from "@/brand";
 import { useAuth } from "@/providers/auth-provider";
+import { AuthShell } from "./auth/AuthShell";
 
 function isDesktopApp() {
     return (
@@ -62,7 +59,9 @@ export const LoginScreen = () => {
             await signInWithGoogle();
             if (desktop) {
                 setAwaitingBrowser(true);
-                setInfo("Continue in your browser. After Google, allow opening BattleBeasts — sign-in finishes in the app.");
+                setInfo(
+                    `Continue in your browser. After Google, allow opening ${APP_DISPLAY_NAME} — sign-in finishes in the app.`,
+                );
                 setLoading(false);
             }
         } catch (err) {
@@ -108,83 +107,81 @@ export const LoginScreen = () => {
     };
 
     return (
-        <section className="relative min-h-dvh overflow-hidden bg-primary px-4 py-12 md:px-8 md:pt-24">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--color-brand-100)_0%,_transparent_55%)] opacity-70" />
-            <div className="relative mx-auto flex w-full flex-col gap-8 sm:max-w-90">
-                <div className="flex flex-col items-center gap-6 text-center">
-                    <Badge color="brand" size="lg">
-                        BattleBeasts
-                    </Badge>
-                    <div className="flex flex-col gap-2 md:gap-3">
-                        <h1 className="text-xl font-semibold text-primary md:text-display-xs">
-                            {mode === "signin" ? "Sign in" : "Create account"}
-                        </h1>
-                        <p className="text-md text-tertiary">
-                            Sign in to play, add friends, and join ranked matches.
-                        </p>
-                    </div>
+        <AuthShell showBack layout="split">
+            <h2 className="bb-auth-panel__title">
+                {mode === "signin" ? "Enter the trials" : "Create your account"}
+            </h2>
+            <p className="bb-auth-panel__lead">
+                Sign in to play, add friends, and join ranked matches.
+            </p>
+
+            {!configured && (
+                <div className="bb-auth-warn">
+                    <strong>Supabase not configured</strong>
+                    Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> to{" "}
+                    <code>apps/web/.env</code>.
                 </div>
+            )}
 
-                {!configured && (
-                    <div className="rounded-xl bg-secondary p-4 text-sm text-secondary ring-1 ring-secondary">
-                        <p className="font-medium text-primary">Supabase not configured</p>
-                        <p className="mt-1 text-tertiary">
-                            Add <code className="text-xs">VITE_SUPABASE_URL</code> and{" "}
-                            <code className="text-xs">VITE_SUPABASE_PUBLISHABLE_KEY</code> to{" "}
-                            <code className="text-xs">apps/web/.env</code>.
-                        </p>
-                    </div>
-                )}
-
-                {configured && (
-                    <Form onSubmit={onEmailSubmit} className="flex flex-col gap-4">
-                        <Input
-                            isRequired
+            {configured && (
+                <form onSubmit={onEmailSubmit} className="bb-auth-form">
+                    <label className="bb-auth-label">
+                        Email
+                        <input
+                            className="bb-input"
+                            required
                             type="email"
                             name="email"
-                            label="Email"
                             placeholder="you@example.com"
-                            size="lg"
                             autoComplete="email"
                         />
-                        <Input
-                            isRequired
+                    </label>
+                    <label className="bb-auth-label">
+                        Password
+                        <input
+                            className="bb-input"
+                            required
                             type="password"
                             name="password"
-                            label="Password"
                             placeholder="At least 6 characters"
-                            size="lg"
                             autoComplete={mode === "signin" ? "current-password" : "new-password"}
                             minLength={6}
                         />
-                        <Button type="submit" size="lg" color="primary" isDisabled={loading || !ready} isLoading={loading}>
-                            {mode === "signin" ? "Sign in with email" : "Create account"}
-                        </Button>
-                        {error && <p className="text-center text-sm text-error-primary">{error}</p>}
-                        {info && <p className="text-center text-sm text-tertiary">{info}</p>}
-                        <p className="text-center text-sm text-tertiary">
-                            {mode === "signin" ? "Need an account?" : "Already have an account?"}{" "}
-                            <button
-                                type="button"
-                                className="font-medium text-brand-secondary underline-offset-2 hover:underline"
-                                onClick={() => {
-                                    setMode(mode === "signin" ? "signup" : "signin");
-                                    setError(null);
-                                    setInfo(null);
-                                }}
-                            >
-                                {mode === "signin" ? "Sign up" : "Sign in"}
-                            </button>
-                        </p>
-                    </Form>
-                )}
+                    </label>
+                    <button
+                        type="submit"
+                        className="bb-btn-brass"
+                        disabled={loading || !ready}
+                    >
+                        {loading
+                            ? "Working…"
+                            : mode === "signin"
+                              ? "Sign in with email"
+                              : "Create account"}
+                    </button>
+                    {error && <p className="bb-auth-error">{error}</p>}
+                    {info && <p className="bb-auth-info">{info}</p>}
+                    <p className="bb-auth-switch">
+                        {mode === "signin" ? "Need an account?" : "Already have an account?"}{" "}
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setMode(mode === "signin" ? "signup" : "signin");
+                                setError(null);
+                                setInfo(null);
+                            }}
+                        >
+                            {mode === "signin" ? "Sign up" : "Sign in"}
+                        </button>
+                    </p>
+                </form>
+            )}
 
-                {configured && (
-                    <>
-                        <ContentDivider type="single-line">
-                            <span className="text-sm font-medium text-tertiary">OR</span>
-                        </ContentDivider>
-                        <div className="flex flex-col gap-3">
+            {configured && (
+                <>
+                    <div className="bb-auth-divider">Or</div>
+                    <div className="bb-auth-form">
+                        <div className="bb-auth-google">
                             <SocialButton
                                 social="google"
                                 theme="color"
@@ -200,30 +197,24 @@ export const LoginScreen = () => {
                                           : "Redirecting…"
                                       : "Continue with Google"}
                             </SocialButton>
-                            {awaitingBrowser && (
-                                <Button
-                                    size="md"
-                                    color="tertiary"
-                                    onClick={() => {
-                                        void window.battlebeasts?.cancelDesktopOAuth?.();
-                                        void window.battlebeasts?.cancelOAuthLoopback?.();
-                                        setAwaitingBrowser(false);
-                                        setInfo(null);
-                                    }}
-                                >
-                                    Cancel browser sign-in
-                                </Button>
-                            )}
                         </div>
-                    </>
-                )}
-
-                <div className="flex justify-center">
-                    <Button color="link-color" size="md" href="/">
-                        Back
-                    </Button>
-                </div>
-            </div>
-        </section>
+                        {awaitingBrowser && (
+                            <button
+                                type="button"
+                                className="bb-btn-ink"
+                                onClick={() => {
+                                    void window.battlebeasts?.cancelDesktopOAuth?.();
+                                    void window.battlebeasts?.cancelOAuthLoopback?.();
+                                    setAwaitingBrowser(false);
+                                    setInfo(null);
+                                }}
+                            >
+                                Cancel browser sign-in
+                            </button>
+                        )}
+                    </div>
+                </>
+            )}
+        </AuthShell>
     );
 };

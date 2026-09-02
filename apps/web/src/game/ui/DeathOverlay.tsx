@@ -11,6 +11,8 @@ type Props = {
   allowRespawn?: boolean;
   /** Optional subtitle when respawn is disabled (e.g. Wave Assault). */
   fallenHint?: string;
+  /** Local camera spectate (no server role change). */
+  onSpectate?: () => void;
 };
 
 /**
@@ -23,6 +25,7 @@ export function DeathOverlay({
   onRespawn,
   allowRespawn = true,
   fallenHint,
+  onSpectate,
 }: Props) {
   const [now, setNow] = useState(() => Date.now());
   const [showBanner, setShowBanner] = useState(false);
@@ -92,6 +95,14 @@ export function DeathOverlay({
               onClick={onRespawn}
             >
               {unlocked ? "Respawn" : `Respawn (${leftSec})`}
+            </button>
+          ) : onSpectate ? (
+            <button
+              type="button"
+              className="bb-btn-ink mt-4 w-full"
+              onClick={onSpectate}
+            >
+              Spectate
             </button>
           ) : null}
         </div>

@@ -4,6 +4,7 @@ import * as THREE from "three";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope, smooth01 } from "../easing";
+import { useSpellLight } from "../spellLights";
 
 const SEGMENTS = 36;
 const INDEX_PER_SEG = 6;
@@ -110,7 +111,8 @@ export function CrescentCastEffect({
 }) {
   const root = useRef<THREE.Group>(null);
   const blade = useRef<THREE.Group>(null);
-  const light = useRef<THREE.PointLight>(null);
+  const lightAt = useRef<THREE.Object3D>(null);
+  const light = useSpellLight();
   const swing = useMemo(() => resolvePose(shot), [shot.variant, shot.key]);
   const geo = useMemo(() => buildSwoopRibbon(swing.flip), [swing.flip]);
   const glowGeo = useMemo(() => buildSwoopRibbon(swing.flip), [swing.flip]);
@@ -213,7 +215,7 @@ export function CrescentCastEffect({
     g.scale.setScalar(swing.scale * (0.94 + fade * 0.08));
     mat.opacity = fade * 0.95;
     glowMat.opacity = fade * 0.38;
-    if (light.current) light.current.intensity = fade * 2.4 * drawT;
+    light.emitAt(lightAt.current, shot.color, fade * 2.4 * drawT, 3.5);
   });
 
   return (
@@ -225,7 +227,7 @@ export function CrescentCastEffect({
         <mesh geometry={glowGeo} scale={[1.08, 1.15, 1.08]}>
           <primitive object={glowMat} attach="material" />
         </mesh>
-        <pointLight ref={light} color={shot.color} intensity={0} distance={3.5} decay={2} />
+        <object3D ref={lightAt} />
       </group>
     </group>
   );

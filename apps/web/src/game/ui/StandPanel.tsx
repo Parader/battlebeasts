@@ -22,6 +22,8 @@ import {
   normalizeCosmeticPatternColor,
   normalizeCosmeticsEquipped,
   normalizeEmoteSlots,
+  normalizeFlexLoadout,
+  flexSlotShopItemId,
   normalizeLoadout,
   ownsAbility,
   ownsColor,
@@ -31,6 +33,7 @@ import {
   ownsPatternColor,
   type CosmeticSlot,
   type CosmeticsEquipped,
+  type FlexLoadout,
   type PlayerUnlocks,
   type TalentBuild,
 } from "@battlebeasts/shared";
@@ -65,6 +68,7 @@ type Economy = {
   talentPoints: number;
   talentBuild: TalentBuild;
   loadout: string[];
+  flexLoadout: FlexLoadout;
   talents: string[];
   unlocks: PlayerUnlocks | null;
   loadoutPresets: LoadoutPreset[];
@@ -566,11 +570,19 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
 
   const [draftLoadout, setDraftLoadout] = useState(() => normalizeLoadout(economy.loadout));
   const [selectedSlot, setSelectedSlot] = useState(() => loadStandMenuMemory().spellSlot);
+  const [draftFlex, setDraftFlex] = useState(() => normalizeFlexLoadout(economy.flexLoadout));
+  // null means a main slot is selected. The two pickers are one selection, not
+  // two: editing a flex slot has to replace the pool, so both cannot be live.
+  const [selectedFlex, setSelectedFlex] = useState<number | null>(null);
   const [hideOwnedShopItems, setHideOwnedShopItems] = useState(false);
   const [talentHeaderActions, setTalentHeaderActions] = useState<ReactNode>(null);
   const [unlockConfirm, setUnlockConfirm] = useState<{
     abilityId: string;
     name: string;
+    cost: number;
+  } | null>(null);
+  const [flexSlotConfirm, setFlexSlotConfirm] = useState<{
+    toCount: number;
     cost: number;
   } | null>(null);
 
@@ -581,6 +593,22 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
     // every new array reference from schema currency ticks.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional key-based sync
   }, [serverLoadoutKey, economy.activeLoadoutSlot]);
+
+  const serverFlexKey = normalizeFlexLoadout(economy.flexLoadout).join(",");
+  useEffect(() => {
+    setDraftFlex(normalizeFlexLoadout(economy.flexLoadout));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional key-based sync
+  }, [serverFlexKey, economy.activeLoadoutSlot]);
+
+  const assignFlex = (abilityId: string | null) => {
+    if (selectedFlex === null) return;
+    if (abilityId && !ownsAbility(unlocks.abilities, abilityId)) return;
+    const next = [...draftFlex];
+    next[selectedFlex] = abilityId;
+    const cleaned = normalizeFlexLoadout(next);
+    setDraftFlex(cleaned);
+    room?.send("set_flex_loadout", { abilityIds: cleaned });
+  };
 
   const assignAbility = (abilityId: string) => {
     const slot = SPELL_SLOTS[selectedSlot];
@@ -624,9 +652,15 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
         selectedSlot={selectedSlot}
         onSelectSlot={(i) => {
           setSelectedSlot(i);
+          setSelectedFlex(null);
           saveStandMenuMemory({ spellSlot: i });
         }}
         onEquip={assignAbility}
+        flexDraft={draftFlex}
+        selectedFlex={selectedFlex}
+        onSelectFlex={setSelectedFlex}
+        onEquipFlex={assignFlex}
+        onRequestFlexSlotUnlock={(toCount, cost) => setFlexSlotConfirm({ toCount, cost })}
         onRequestUnlock={(abilityId, name, cost) =>
           setUnlockConfirm({ abilityId, name, cost })
         }
@@ -688,11 +722,32 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
         }}
         onCancel={() => setUnlockConfirm(null)}
       />
+      <ConfirmDialog
+        open={Boolean(flexSlotConfirm)}
+        title="Unlock flex slot?"
+        message={
+          flexSlotConfirm ? (
+            <>
+              Unlock <strong>flex slot {flexSlotConfirm.toCount}</strong> for{" "}
+              <strong>{flexSlotConfirm.cost} essence</strong>? It stays unlocked on every
+              loadout.
+            </>
+          ) : null
+        }
+        confirmLabel={flexSlotConfirm ? `Unlock (−${flexSlotConfirm.cost})` : "Unlock"}
+        onConfirm={() => {
+          if (!flexSlotConfirm) return;
+          room?.send("shop_buy", { itemId: flexSlotShopItemId(flexSlotConfirm.toCount) });
+          setFlexSlotConfirm(null);
+        }}
+        onCancel={() => setFlexSlotConfirm(null)}
+      />
       <GamePanelShell
       title={TITLES[kind]}
       subtitle={kind === "build" ? undefined : <WalletDisplay wallet={economy} />}
       onClose={onClose}
       floatingHeader={kind === "build"}
+      fullBleed={kind === "talent"}
       titleAside={
         kind === "talent"
           ? talentHeaderActions
@@ -719,7 +774,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
       }
       maxWidthClass={
         kind === "talent"
-          ? "max-w-6xl"
+          ? undefined
           : kind === "build"
             ? "max-w-6xl"
             : kind === "customization"
@@ -730,7 +785,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
       }
       maxHeightClass={
         kind === "talent"
-          ? "h-[min(96dvh,62rem)] max-h-[min(96dvh,62rem)]"
+          ? undefined
           : kind === "build"
             ? "h-[min(88dvh,52rem)] max-h-[min(88dvh,52rem)]"
             : kind === "customization"

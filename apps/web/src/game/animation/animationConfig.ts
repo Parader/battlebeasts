@@ -274,6 +274,12 @@ export const abilityAnimationBindings: Record<
     upper: "castPrimary",
     upperTimeScale: BOLT_CAST.playbackRate,
   },
+  arcThread: {
+    upper: "castPrimary",
+    upperTimeScale: BOLT_CAST.playbackRate,
+    // Hold the punch extension through the tether window.
+    upperHoldAtSec: BOLT_CAST.releaseFrame / BOLT_CAST.fps,
+  },
   grasp: { upper: "castPrimary" },
   chainJump: { upper: "castPrimary" },
   fireball: {

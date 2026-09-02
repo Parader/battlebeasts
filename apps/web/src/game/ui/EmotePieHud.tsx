@@ -59,7 +59,7 @@ export function EmotePieHud({ slots, aimAngleRad, visible }: HudProps) {
   const labelR = (HUD_OUTER_R + HUD_INNER_R) / 2;
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center">
+    <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center">
       <div className="bb-emote-pie">
         <svg
           width={size}

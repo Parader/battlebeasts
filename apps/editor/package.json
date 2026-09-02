@@ -1,0 +1,29 @@
+{
+  "name": "@battlebeasts/editor",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "description": "Dev-only map editor. Never shipped -- deliberately has no build script so `pnpm -r run build` skips it.",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc -b",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@battlebeasts/shared": "workspace:*",
+    "@react-three/drei": "^10.0.6",
+    "@react-three/fiber": "^9.1.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "three": "^0.175.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.175.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.2"
+  }
+}

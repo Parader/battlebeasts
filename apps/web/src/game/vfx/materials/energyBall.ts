@@ -38,3 +38,38 @@ export function tintEnergyMaterial(
   mat.color.set(color);
   if (opacity !== undefined) mat.opacity = opacity;
 }
+
+/**
+ * Prototypes keyed by color — clone so each one-shot can mutate opacity
+ * without fighting, while WebGL programs stay warm after the first cast.
+ */
+const ballProto = new Map<string, THREE.MeshBasicMaterial>();
+const ringProto = new Map<string, THREE.MeshBasicMaterial>();
+
+export function acquireEnergyBallMaterial(
+  color: string,
+  opacity = 1,
+): THREE.MeshBasicMaterial {
+  let proto = ballProto.get(color);
+  if (!proto) {
+    proto = createEnergyBallMaterial(color, 1);
+    ballProto.set(color, proto);
+  }
+  const mat = proto.clone();
+  mat.opacity = opacity;
+  return mat;
+}
+
+export function acquireEnergyRingMaterial(
+  color: string,
+  opacity = 0.9,
+): THREE.MeshBasicMaterial {
+  let proto = ringProto.get(color);
+  if (!proto) {
+    proto = createEnergyRingMaterial(color, 1);
+    ringProto.set(color, proto);
+  }
+  const mat = proto.clone();
+  mat.opacity = opacity;
+  return mat;
+}

@@ -17,9 +17,9 @@ export const CAMERA = {
   minDistance: 12,
   fov: 45,
   /** Soft follow of player (1/s). Lower = less shake when strafing. */
-  followLambda: 2.2,
+  followLambda: 1.85,
   /** Soft follow of cursor offset (1/s). Higher = snappier look-ahead. */
-  cursorLambda: 6,
+  cursorLambda: 3.2,
   /** Max look-ahead as fraction of half-screen (lower = more resistance). */
   cursorInfluence: 0.55,
 } as const;

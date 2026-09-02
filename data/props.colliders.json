@@ -1,0 +1,235 @@
+{
+  "colliders": {
+    "beach/PP_Beach_Rocks_03": {
+      "mode": "circle",
+      "radius": 1.747,
+      "offsetX": 0.026,
+      "offsetZ": -0.128
+    },
+    "beach/PP_Palm_08": {
+      "mode": "box",
+      "halfX": 1.17,
+      "halfZ": 0.6,
+      "yaw": 0,
+      "offsetX": 0.215,
+      "offsetZ": -0.044
+    },
+    "desert/PP_Sphinx_01": {
+      "mode": "none"
+    },
+    "fantasy/PP_Teleporter_01": {
+      "mode": "none"
+    },
+    "forest/PP_Bush_02": {
+      "mode": "circle",
+      "radius": 0.721,
+      "offsetX": 0.135,
+      "offsetZ": -0.066,
+      "blocksProjectiles": false
+    },
+    "forest/PP_Bush_Berries_02": {
+      "mode": "circle",
+      "radius": 0.721,
+      "offsetX": 0.135,
+      "offsetZ": -0.067,
+      "blocksProjectiles": false
+    },
+    "forest/PP_Fir_Tree_17": {
+      "mode": "circle",
+      "radius": 1.172,
+      "offsetX": -0.018,
+      "offsetZ": -0.074
+    },
+    "forest/PP_Tree_12": {
+      "mode": "circle",
+      "radius": 1.039,
+      "offsetX": -0.096,
+      "offsetZ": -0.202
+    },
+    "forest/PP_Tree_Stump_02": {
+      "mode": "circle",
+      "radius": 0.918,
+      "offsetX": 0.099,
+      "blocksProjectiles": false
+    },
+    "forest/PP_Tree_Stump_04": {
+      "mode": "circle",
+      "radius": 0.727,
+      "blocksProjectiles": false
+    },
+    "forest/PP_Tree_Trunk_03": {
+      "mode": "box",
+      "halfX": 1.564,
+      "halfZ": 0.464,
+      "yaw": 0,
+      "offsetX": 0.036,
+      "offsetZ": -0.025,
+      "blocksProjectiles": false
+    },
+    "kingdom/PP_Big_Tree_01": {
+      "mode": "circle",
+      "radius": 2.289,
+      "offsetX": -0.103,
+      "offsetZ": 0.238
+    },
+    "kingdom/PP_Cart_Fireworks_01_Preset": {
+      "mode": "circle",
+      "radius": 0.957,
+      "offsetZ": 0.506
+    },
+    "kingdom/PP_Castle_Wall_02": {
+      "mode": "box",
+      "halfX": 2.475,
+      "halfZ": 0.275,
+      "yaw": 0
+    },
+    "kingdom/PP_Castle_Wall_Corner_L_Base_01": {
+      "mode": "none"
+    },
+    "kingdom/PP_Crate_Wood_01": {
+      "mode": "box",
+      "halfX": 0.535,
+      "halfZ": 0.535,
+      "yaw": 0
+    },
+    "kingdom/PP_Preset_Blacksmith_01": {
+      "mode": "none"
+    },
+    "kingdom/PP_Preset_Church_01_B": {
+      "mode": "box",
+      "halfX": 2.812,
+      "halfZ": 4.775,
+      "yaw": 0,
+      "offsetZ": -0.566
+    },
+    "kingdom/PP_Preset_House_01_A": {
+      "mode": "box",
+      "halfX": 3.942,
+      "halfZ": 3.942,
+      "yaw": 0,
+      "offsetX": -0.681,
+      "offsetZ": 0.703
+    },
+    "kingdom/PP_Preset_House_02_A": {
+      "mode": "box",
+      "halfX": 2.86,
+      "halfZ": 2.86,
+      "yaw": 0,
+      "offsetZ": -0.975
+    },
+    "kingdom/PP_Preset_House_Archway_02": {
+      "mode": "none"
+    },
+    "kingdom/PP_Preset_Hut_01": {
+      "mode": "box",
+      "halfX": 2.711,
+      "halfZ": 3.461,
+      "yaw": 0,
+      "offsetX": 0.424,
+      "offsetZ": 0.214
+    },
+    "kingdom/PP_Preset_Outhouse_01": {
+      "mode": "box",
+      "halfX": 1.41,
+      "halfZ": 1.41,
+      "yaw": 0
+    },
+    "kingdom/PP_Preset_Shelter_02": {
+      "mode": "none"
+    },
+    "kingdom/PP_Quest_Board_01_Posters_01": {
+      "mode": "none"
+    },
+    "kingdom/PP_Rock_02": {
+      "mode": "none"
+    },
+    "kingdom/PP_Rock_Chunk_02": {
+      "mode": "circle",
+      "radius": 0.802,
+      "offsetX": -0.165,
+      "offsetZ": -0.138
+    },
+    "kingdom/PP_Rock_Chunk_03": {
+      "mode": "box",
+      "halfX": 1.4115,
+      "halfZ": 1.2615,
+      "yaw": 0,
+      "offsetX": 0.162,
+      "offsetZ": -0.535
+    },
+    "kingdom/PP_Sign_Wood_01": {
+      "mode": "none"
+    },
+    "kingdom/PP_StoneWall_01": {
+      "mode": "box",
+      "halfX": 2.504,
+      "halfZ": 0.295,
+      "yaw": 0,
+      "offsetX": -0.03299999999999992,
+      "offsetZ": 0.0010000000000000009
+    },
+    "kingdom/PP_StoneWall_02": {
+      "mode": "box",
+      "halfX": 2.11,
+      "halfZ": 0.303,
+      "yaw": 0,
+      "offsetX": -0.018000000000000238
+    },
+    "kingdom/PP_StoneWall_03": {
+      "mode": "box",
+      "halfX": 0.605,
+      "halfZ": 0.223,
+      "yaw": 0,
+      "offsetX": -0.04599999999999993,
+      "offsetZ": 0.010999999999999996
+    },
+    "kingdom/PP_Tent_Large_01": {
+      "mode": "box",
+      "halfX": 5.431,
+      "halfZ": 4.031,
+      "yaw": 0,
+      "offsetZ": 0.1
+    },
+    "kingdom/PP_Tent_Open_02": {
+      "mode": "circle",
+      "radius": 1.975,
+      "offsetX": 0.022,
+      "offsetZ": -0.016
+    },
+    "kingdom/PP_Tree_Large_01": {
+      "mode": "circle",
+      "radius": 1.7085,
+      "offsetX": 0.8130000000000001,
+      "offsetZ": -0.48800000000000004
+    },
+    "kingdom/PP_Tree_Large_02": {
+      "mode": "circle",
+      "radius": 0.9265,
+      "offsetX": -1.9100000000000001,
+      "offsetZ": -0.151
+    },
+    "kingdom/PP_Workbench_01_Preset": {
+      "mode": "none"
+    },
+    "kingdom/PP_Workbench_Alchemy_01_Preset": {
+      "mode": "none"
+    },
+    "meshy/castle": {
+      "mode": "none"
+    },
+    "meshy/house": {
+      "mode": "box",
+      "halfX": 0.366,
+      "halfZ": 0.433,
+      "yaw": 0,
+      "offsetZ": 0.015
+    },
+    "props/PP_Fence_Wooden_03": {
+      "mode": "box",
+      "halfX": 1.472,
+      "halfZ": 0.074,
+      "yaw": 0,
+      "offsetZ": 0.002
+    }
+  }
+}

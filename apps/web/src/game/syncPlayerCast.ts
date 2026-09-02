@@ -117,6 +117,11 @@ export function syncAbilityCast(
       ) {
         lastCastId.current = `${castKey}:throw`;
         controller.seekUpperBodyTime(binding.recoveryUpperSeekSec);
+        // Keep charge playbackRate through the throw → release segment so
+        // launch delay (wall ms) matches visible hand release.
+        if (typeof binding.upperTimeScale === "number" && binding.upperTimeScale > 0) {
+          controller.setUpperBodyTimeScale(binding.upperTimeScale);
+        }
       }
       const clipT = controller.getUpperBodyTime();
       const releaseSec =

@@ -1,6 +1,8 @@
 export {
   createEnergyBallMaterial,
   createEnergyRingMaterial,
+  acquireEnergyBallMaterial,
+  acquireEnergyRingMaterial,
   tintEnergyMaterial,
 } from "./energyBall";
 export { createFresnelGlowMaterial, setFresnelColor } from "./fresnelGlow";

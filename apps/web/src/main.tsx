@@ -7,10 +7,16 @@ import { LoginScreen } from "@/pages/login-screen";
 import { AuthCallbackScreen } from "@/pages/auth-callback-screen";
 import { NameSetupScreen } from "@/pages/name-setup-screen";
 import { NotFound } from "@/pages/not-found";
+import { registerAuthoredMaps } from "@battlebeasts/shared";
 import { AuthProvider } from "@/providers/auth-provider";
 import { RouteProvider } from "@/providers/router-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import "@/styles/globals.css";
+import { installSharedPropTextureResolver } from "@/game/propTextureUrls";
+
+// Before any scene mounts: MapScene resolves its geometry from the registry.
+registerAuthoredMaps();
+installSharedPropTextureResolver();
 
 /** file:// / Electron cannot use path-based BrowserRouter (shows app 404). */
 const useHashRouter =

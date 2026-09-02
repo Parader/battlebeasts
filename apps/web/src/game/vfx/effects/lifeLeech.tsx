@@ -1,15 +1,12 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, type RefObject } from "react";
 import * as THREE from "three";
-import {
-  baseCityStaticColliders,
-  coneRayMaxLength,
-  type WallCollider,
-} from "@battlebeasts/shared";
+import { coneRayMaxLength } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { smooth01 } from "../easing";
 import { createCirclePointMaterial } from "../materials/circlePoint";
+import { getWorldProjectileCircles, getWorldProjectileWalls, getWorldProjectileBoxes } from "../../worldCollidersRuntime";
 
 const DAMAGE_HOT = "#f87171";
 const HEAL_HOT = "#4ade80";
@@ -152,12 +149,6 @@ export function LifeLeechEffect({
 
   const endLength = shot.radius ?? 7.5;
 
-  const walls = useMemo((): WallCollider[] => {
-    return baseCityStaticColliders().filter(
-      (c): c is WallCollider => c.shape === "walls",
-    );
-  }, []);
-
   const outBuf = useMemo(() => makeParticleBuffers(OUT_MOTES), []);
   const inBuf = useMemo(() => makeParticleBuffers(IN_MOTES), []);
 
@@ -222,6 +213,9 @@ export function LifeLeechEffect({
     }
 
     const bodies = collectOccludeBodies(follow, shot.followOwnerId);
+    const walls = getWorldProjectileWalls();
+    const circles = getWorldProjectileCircles();
+    const boxes = getWorldProjectileBoxes();
     const origin = { x: pose.current.x, z: pose.current.z };
     const wallLen = coneRayMaxLength(
       origin,
@@ -230,6 +224,7 @@ export function LifeLeechEffect({
       walls,
       [],
       shot.followOwnerId ?? "",
+      { circles, boxes },
     );
     const maxLen = coneRayMaxLength(
       origin,
@@ -238,6 +233,7 @@ export function LifeLeechEffect({
       walls,
       bodies,
       shot.followOwnerId ?? "",
+      { circles, boxes },
     );
     /** Green return only while a living body soft-stops the aim ray (not walls / empty air). */
     const hittingTarget = maxLen < wallLen - 0.08;

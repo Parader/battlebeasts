@@ -14,7 +14,18 @@ export const COLLISION = {
   skin: 0.02,
 } as const;
 
-export type CircleCollider = {
+/**
+ * Whether a solid also stops projectiles and aimed telegraphs, or only bodies.
+ *
+ * Absent means yes, so every collider that predates this flag keeps blocking
+ * everything. Set it false for waist-high cover -- a crate, a bush, a low wall
+ * -- that a fighter has to walk around but an arrow flies straight over.
+ * Collision is XZ-only, so height is not modelled; this flag is how a map says
+ * "short" without one.
+ */
+export type ProjectilePermeable = { blocksProjectiles?: boolean };
+
+export type CircleCollider = ProjectilePermeable & {
   id: string;
   shape?: "circle";
   x: number;
@@ -23,7 +34,7 @@ export type CircleCollider = {
 };
 
 /** Oriented box on the XZ plane (yaw around Y). */
-export type BoxCollider = {
+export type BoxCollider = ProjectilePermeable & {
   id: string;
   shape: "box";
   x: number;
@@ -38,7 +49,7 @@ export type BoxCollider = {
  * and an occupancy grid for "inside solid" push-out.
  * `segs` is flat [ax,az,bx,bz, ...]; mask is packed bits row-major.
  */
-export type MeshCollider = {
+export type MeshCollider = ProjectilePermeable & {
   id: string;
   shape: "mesh";
   x: number;
@@ -61,7 +72,7 @@ export type MeshCollider = {
 };
 
 /** Thin walls from Blender Bezier curves — world XZ segments [ax,az,bx,bz,...]. */
-export type WallCollider = {
+export type WallCollider = ProjectilePermeable & {
   id: string;
   shape: "walls";
   segs: Float32Array;
@@ -69,8 +80,38 @@ export type WallCollider = {
 
 export type StaticCollider = CircleCollider | BoxCollider | MeshCollider | WallCollider;
 
-/** Hub solids live in hubVillage (buildings / trees / rocks / stands). */
-export { hubStaticColliders as baseCityStaticColliders } from "./hubVillage";
+/**
+ * Does this solid stop projectiles, beams and aimed telegraphs?
+ *
+ * The one place the default lives, so movement code can keep treating every
+ * collider as solid while projectile code filters through this.
+ */
+export function blocksProjectiles(c: ProjectilePermeable): boolean {
+  return c.blocksProjectiles !== false;
+}
+
+/**
+ * The subset of solids that stop projectiles, split into the shapes the
+ * ray tests understand.
+ */
+export function projectileBlockers(colliders: readonly StaticCollider[]): {
+  walls: WallCollider[];
+  circles: CircleCollider[];
+  boxes: BoxCollider[];
+} {
+  const walls: WallCollider[] = [];
+  const circles: CircleCollider[] = [];
+  const boxes: BoxCollider[] = [];
+  for (const c of colliders) {
+    if (!blocksProjectiles(c)) continue;
+    if (c.shape === "walls") walls.push(c);
+    else if (c.shape === "box") boxes.push(c);
+    else if (!c.shape || c.shape === "circle") circles.push(c);
+  }
+  return { walls, circles, boxes };
+}
+
+/** Hub solids are exported from hubVillage as `baseCityStaticColliders` (see index.ts). */
 
 function isBox(c: StaticCollider): c is BoxCollider {
   return c.shape === "box";
@@ -395,6 +436,126 @@ export function projectileHitsWalls(
   return false;
 }
 
+/** Closest distance from point to segment (XZ). */
+function distPointToSeg(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): number {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const apx = px - ax;
+  const apz = pz - az;
+  const ab2 = abx * abx + abz * abz || 1e-8;
+  const t = Math.max(0, Math.min(1, (apx * abx + apz * abz) / ab2));
+  return Math.hypot(px - (ax + abx * t), pz - (az + abz * t));
+}
+
+/**
+ * Projectile blocked by solid circle props (arena rocks, etc.).
+ * True when the travel capsule overlaps a circle.
+ */
+export function projectileHitsCircles(
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  radius: number,
+  circles: readonly CircleCollider[],
+): boolean {
+  for (const c of circles) {
+    const R = Math.max(0.05, c.radius) + Math.max(0, radius);
+    if (length2(toX - c.x, toZ - c.z) <= R) return true;
+    if (distPointToSeg(c.x, c.z, fromX, fromZ, toX, toZ) <= R) return true;
+  }
+  return false;
+}
+
+function circleHitsBox(x: number, z: number, radius: number, box: BoxCollider): boolean {
+  const { x: lx, z: lz } = worldToLocalXZ(box.x, box.z, box.yaw, x, z);
+  const cx = clamp(lx, -box.halfX, box.halfX);
+  const cz = clamp(lz, -box.halfZ, box.halfZ);
+  const dx = lx - cx;
+  const dz = lz - cz;
+  const r = Math.max(0, radius);
+  return dx * dx + dz * dz <= r * r;
+}
+
+function segmentHitsAabb(
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+  minX: number,
+  minZ: number,
+  maxX: number,
+  maxZ: number,
+): boolean {
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  let t0 = 0;
+  let t1 = 1;
+  const clip = (p: number, q: number): boolean => {
+    if (p === 0) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  };
+  return (
+    clip(-dx, x0 - minX) &&
+    clip(dx, maxX - x0) &&
+    clip(-dz, z0 - minZ) &&
+    clip(dz, maxZ - z0) &&
+    t0 <= t1
+  );
+}
+
+function projectileHitsBoxes(
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  radius: number,
+  boxes: readonly BoxCollider[],
+): boolean {
+  for (const box of boxes) {
+    const a = worldToLocalXZ(box.x, box.z, box.yaw, fromX, fromZ);
+    const b = worldToLocalXZ(box.x, box.z, box.yaw, toX, toZ);
+    const hx = box.halfX + Math.max(0, radius);
+    const hz = box.halfZ + Math.max(0, radius);
+    if (circleHitsBox(fromX, fromZ, radius, box)) return true;
+    if (segmentHitsAabb(a.x, a.z, b.x, b.z, -hx, -hz, hx, hz)) return true;
+  }
+  return false;
+}
+
+/** Walls + solid circles + oriented boxes that stop projectiles / aimed telegraphs. */
+export function projectileHitsSolids(
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  radius: number,
+  walls: readonly WallCollider[],
+  circles: readonly CircleCollider[] = [],
+  boxes: readonly BoxCollider[] = [],
+): boolean {
+  return (
+    projectileHitsWalls(fromX, fromZ, toX, toZ, radius, walls) ||
+    projectileHitsCircles(fromX, fromZ, toX, toZ, radius, circles) ||
+    projectileHitsBoxes(fromX, fromZ, toX, toZ, radius, boxes)
+  );
+}
+
 /** Soft dome that blocks inbound projectiles only (XZ circle). */
 export type ProtectionBubbleCollider = {
   /** Stable zone id when available (for spawn-inside pass-through). */
@@ -462,14 +623,14 @@ export function projectileHitsProtectionBubbles(
   bubbles: readonly ProtectionBubbleCollider[],
   /** Bubble ids that this projectile may freely leave / re-curve through. */
   passBubbleIds?: ReadonlySet<string>,
-): boolean {
+): ProtectionBubbleCollider | null {
   for (const b of bubbles) {
     if (b.id && passBubbleIds?.has(b.id)) continue;
     if (projectileEntersProtectionBubble(fromX, fromZ, toX, toZ, projRadius, b)) {
-      return true;
+      return b;
     }
   }
-  return false;
+  return null;
 }
 
 function circleHitsAnyWall(
@@ -484,8 +645,32 @@ function circleHitsAnyWall(
   return false;
 }
 
+function circleHitsAnyCircle(
+  x: number,
+  z: number,
+  radius: number,
+  circles: readonly CircleCollider[],
+): boolean {
+  for (const c of circles) {
+    if (length2(x - c.x, z - c.z) <= radius + Math.max(0.05, c.radius)) return true;
+  }
+  return false;
+}
+
+function circleHitsAnyBox(
+  x: number,
+  z: number,
+  radius: number,
+  boxes: readonly BoxCollider[],
+): boolean {
+  for (const box of boxes) {
+    if (circleHitsBox(x, z, radius, box)) return true;
+  }
+  return false;
+}
+
 /**
- * Last free progress t∈[0,1] along from→to before a wall blocks the circle.
+ * Last free progress t∈[0,1] along from→to before a wall/solid blocks the circle.
  * Thin walls can be skipped by push-out (flip to far side); this ray test stops that.
  * Returns null when the full segment is clear.
  */
@@ -494,10 +679,18 @@ export function lastFreeTBeforeWalls(
   to: Vec2,
   radius: number,
   walls: readonly WallCollider[],
+  circles: readonly CircleCollider[] = [],
+  boxes: readonly BoxCollider[] = [],
 ): number | null {
-  if (!walls.length) return null;
-  if (circleHitsAnyWall(from.x, from.z, radius, walls)) return 0;
-  if (!projectileHitsWalls(from.x, from.z, to.x, to.z, radius, walls)) return null;
+  if (!walls.length && !circles.length && !boxes.length) return null;
+  if (
+    circleHitsAnyWall(from.x, from.z, radius, walls) ||
+    circleHitsAnyCircle(from.x, from.z, radius, circles) ||
+    circleHitsAnyBox(from.x, from.z, radius, boxes)
+  ) {
+    return 0;
+  }
+  if (!projectileHitsSolids(from.x, from.z, to.x, to.z, radius, walls, circles, boxes)) return null;
 
   let lo = 0;
   let hi = 1;
@@ -505,20 +698,22 @@ export function lastFreeTBeforeWalls(
     const mid = (lo + hi) * 0.5;
     const mx = from.x + (to.x - from.x) * mid;
     const mz = from.z + (to.z - from.z) * mid;
-    if (projectileHitsWalls(from.x, from.z, mx, mz, radius, walls)) hi = mid;
+    if (projectileHitsSolids(from.x, from.z, mx, mz, radius, walls, circles, boxes)) hi = mid;
     else lo = mid;
   }
   return lo;
 }
 
-/** Clamp a desired end pose so the path does not cross / embed in walls. */
+/** Clamp a desired end pose so the path does not cross / embed in walls or solid props. */
 export function clampTargetBeforeWalls(
   from: Vec2,
   to: Vec2,
   radius: number,
   walls: readonly WallCollider[],
+  circles: readonly CircleCollider[] = [],
+  boxes: readonly BoxCollider[] = [],
 ): Vec2 {
-  const t = lastFreeTBeforeWalls(from, to, radius, walls);
+  const t = lastFreeTBeforeWalls(from, to, radius, walls, circles, boxes);
   if (t == null) return to;
   if (t <= 1e-8) return { x: from.x, z: from.z };
   return {
@@ -614,11 +809,20 @@ export function playerCollidersExcept(
 
 /** Practice dummies / world targets as live pose circles (opt-in; not used for hub walk). */
 export function targetColliders(
-  targets: Iterable<[string, { x: number; z: number; hp?: number }]>,
+  targets: Iterable<[string, { x: number; z: number; hp?: number; kind?: string }]>,
 ): CircleCollider[] {
   const out: CircleCollider[] = [];
   for (const [id, t] of targets) {
     if (typeof t.hp === "number" && t.hp <= 0) continue;
+    /*
+     * Attackable map props are skipped.
+     *
+     * They already block through the static collider the map authored, which
+     * is the real shape of the model. Adding a dummy-sized circle on top would
+     * put an invisible 0.55m bollard at the centre of a barn, or a ring of
+     * blocked ground around a fencepost.
+     */
+    if (t.kind === "prop") continue;
     out.push({
       id,
       x: t.x,
@@ -843,7 +1047,11 @@ export function sweepMove(
   maxStep = 0.22,
 ): Vec2 {
   const walls = staticColliders.filter(isWalls);
-  const target = clampTargetBeforeWalls(from, to, radius, walls);
+  const circles = staticColliders.filter(
+    (c): c is CircleCollider => !c.shape || c.shape === "circle",
+  );
+  const boxes = staticColliders.filter(isBox).filter(blocksProjectiles);
+  const target = clampTargetBeforeWalls(from, to, radius, walls, circles, boxes);
 
   const dx = target.x - from.x;
   const dz = target.z - from.z;
@@ -857,8 +1065,8 @@ export function sweepMove(
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const desired = { x: from.x + dx * t, z: from.z + dz * t };
-    // Re-check walls each step so sliding around other solids can't re-enter a wall cut.
-    if (walls.length && projectileHitsWalls(p.x, p.z, desired.x, desired.z, radius, walls)) {
+    // Re-check solids each step so sliding can't re-enter a wall cut / rock.
+    if (projectileHitsSolids(p.x, p.z, desired.x, desired.z, radius, walls, circles, boxes)) {
       break;
     }
     const next = moveAndCollide(p, desired, radius, staticColliders, dynamicColliders);
@@ -866,9 +1074,8 @@ export function sweepMove(
     const want = length2(desired.x - p.x, desired.z - p.z);
     // Reject wall flip-through: push landed on the far side of a thin wall.
     if (
-      walls.length &&
       moved > 1e-4 &&
-      projectileHitsWalls(p.x, p.z, next.x, next.z, radius, walls)
+      projectileHitsSolids(p.x, p.z, next.x, next.z, radius, walls, circles, boxes)
     ) {
       break;
     }

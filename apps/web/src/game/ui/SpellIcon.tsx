@@ -6,6 +6,7 @@ import { assetUrl } from "../assetUrl";
  */
 const SPELL_ICON_FILE: Record<string, string> = {
   bolt: "bolt.png",
+  arcThread: "bolt.png",
   shrooms: "sporeshrooms.png",
   iceLance: "icelance.png",
   crescent: "crescent.png",

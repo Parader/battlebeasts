@@ -1,74 +1,24 @@
 import {
-  ABILITIES,
   COMBAT_FX_VARIANT_WALL_HIT,
-  FIREWALL_CAST,
-  FROST_MIST_CAST,
-  GROOVE_CAST,
-  HEAL_BEAM_CAST,
-  LIFE_LEECH_CAST,
-  POISON_CLOUD_CAST,
-  SMOKE_BOMB_CAST,
-  HOLY_GROUND_CAST,
-  FIREBALL_CAST,
-  VOLCANO_CAST,
+  HAND_SHIELD_CAST,
 } from "@battlebeasts/shared";
 import { abilityVfxColor } from "./colors";
 import { spawnImpactEffect } from "./runtime";
-import { CHANNEL_VFX, getAbilityVfxProfile } from "./profiles/registry";
+import { getAbilityVfxProfile } from "./profiles/registry";
+import { dispatchAoeCombatFx } from "./aoeCombatFxHandlers";
 import {
-  usesAoeCrackFx,
-  usesBridgedAoeFx,
-  usesFirewallFx,
-  usesFrostMistFx,
-  usesGrooveFx,
-  usesHealBeamFx,
-  usesIceLanceExplodeFx,
-  usesLifeLeechFx,
-  usesMeleeSwoopFx,
-  usesPoisonCloudFx,
-  usesSmokeBombFx,
-  usesHolyGroundFx,
-  usesSpikeFx,
-  usesVolcanoFx,
   usesMagmaOrbsFx,
+  usesMeleeSwoopFx,
 } from "./catalog";
 import { notifyCrescentHit, notifyCrescentMelee } from "./crescentSpawn";
-import { playBoltHitSfx, playSlamHitSfx } from "../gameSfx";
+import { playBoltHitSfx } from "../gameSfx";
 import {
   setMagmaOrbsMeetCollide,
   setMagmaOrbsMeetRange,
 } from "../magmaOrbsMeetRuntime";
-import type { FxBurst } from "../CombatVfx";
+import type { CombatFxDispatchCtx, CombatFxMessage } from "./combatFxTypes";
 
-export type CombatFxMessage = {
-  kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase" | "portal";
-  abilityId: string;
-  x: number;
-  z: number;
-  y?: number;
-  x2?: number;
-  z2?: number;
-  radius?: number;
-  yaw?: number;
-  ownerId?: string;
-  damage?: number;
-  crit?: boolean;
-  phase?: string;
-  phaseEndsAt?: number;
-  cooldownMs?: number;
-  comboHit?: number;
-  variant?: number;
-};
-
-export type CombatFxDispatchCtx = {
-  localSessionId: string | null;
-  localYaw: number;
-  predicted: { x: number; z: number };
-  getOwner: (ownerId: string) => { x?: number; z?: number; yaw?: number } | undefined;
-  pushBurst: (burst: FxBurst) => void;
-  nextFxKey: () => number;
-  fxColors: Record<"aoe" | "melee" | "dash" | "hit", string>;
-};
+export type { CombatFxDispatchCtx, CombatFxMessage } from "./combatFxTypes";
 
 function resolveOwnerYaw(
   msg: CombatFxMessage,
@@ -82,34 +32,18 @@ function resolveOwnerYaw(
   return localOwner ? ctx.localYaw : (owner?.yaw ?? yaw);
 }
 
+/**
+ * Prefer profile.combatFx.skipLegacyBurst. Keep only id edge-cases that do not
+ * have a profile yet (or need kind-specific exceptions).
+ */
 function shouldSkipLegacyBurst(msg: CombatFxMessage): boolean {
-  return (
-    (usesMeleeSwoopFx(msg.abilityId) && (msg.kind === "melee" || msg.kind === "hit")) ||
-    (usesAoeCrackFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesBridgedAoeFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesSpikeFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesFrostMistFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesGrooveFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesHealBeamFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesLifeLeechFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesFirewallFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesPoisonCloudFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesSmokeBombFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesHolyGroundFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesIceLanceExplodeFx(msg.abilityId) && msg.kind === "aoe") ||
-    (usesVolcanoFx(msg.abilityId) && msg.kind === "aoe") ||
-    (msg.abilityId === "protectionBubble" && msg.kind === "aoe") ||
-    (msg.abilityId === "shrooms" && msg.kind === "aoe") ||
-    (msg.abilityId === "bloodRush" && msg.kind === "dash") ||
-    (msg.abilityId === "spiritForm" && msg.kind === "dash") ||
-    // Hit lands at the teleport spot during the invisible window — skip so we
-    // don't flash a "reappear" burst before the vanish ends. Dash puff stays.
-    (msg.abilityId === "revenge" && msg.kind === "hit") ||
-    (msg.kind === "hit" && msg.variant === COMBAT_FX_VARIANT_WALL_HIT) ||
-    // Profiles with custom cast/impact FX set this — honor for every kind
-    // (fireball explode was still painting a huge legacy ring and crushing bloom).
-    Boolean(getAbilityVfxProfile(msg.abilityId).combatFx?.skipLegacyBurst)
-  );
+  if (getAbilityVfxProfile(msg.abilityId).combatFx?.skipLegacyBurst) return true;
+  if (msg.kind === "hit" && msg.variant === COMBAT_FX_VARIANT_WALL_HIT) return true;
+  // Hit lands at the teleport spot during the invisible window — skip so we
+  // don't flash a "reappear" burst before the vanish ends. Dash puff stays.
+  if (msg.abilityId === "revenge" && msg.kind === "hit") return true;
+  if (msg.abilityId === "handShield" && msg.kind === "aoe") return true;
+  return false;
 }
 
 /**
@@ -130,17 +64,37 @@ export function dispatchCombatFxVfx(
       typeof msg.radius === "number" &&
       msg.radius > 0
     ) {
-      setMagmaOrbsMeetRange(msg.ownerId, msg.radius);
+      const hasCollide =
+        typeof msg.x2 === "number" &&
+        typeof msg.z2 === "number" &&
+        Number.isFinite(msg.x2) &&
+        Number.isFinite(msg.z2);
+      if (hasCollide) {
+        setMagmaOrbsMeetCollide(
+          msg.ownerId,
+          msg.x2!,
+          msg.z2!,
+          typeof msg.yaw === "number" ? msg.yaw : undefined,
+          msg.radius,
+        );
+      } else {
+        setMagmaOrbsMeetRange(msg.ownerId, msg.radius);
+      }
     }
     return { handledPortal: false };
   }
 
   if (usesMagmaOrbsFx(msg.abilityId) && msg.kind === "aoe" && msg.ownerId) {
+    const meetRange =
+      typeof msg.x2 === "number" && typeof msg.z2 === "number"
+        ? Math.hypot(msg.x - msg.x2, msg.z - msg.z2)
+        : undefined;
     setMagmaOrbsMeetCollide(
       msg.ownerId,
       msg.x,
       msg.z,
       typeof msg.yaw === "number" ? msg.yaw : undefined,
+      meetRange && meetRange > 0 ? meetRange : undefined,
     );
   }
 
@@ -178,7 +132,8 @@ export function dispatchCombatFxVfx(
     });
   }
 
-  if (msg.kind === "dash" && msg.abilityId === "bloodRush") {
+  const onDash = getAbilityVfxProfile(msg.abilityId).combatFx?.onDash;
+  if (msg.kind === "dash" && onDash === "bloodRushTrail") {
     spawnImpactEffect(
       msg.abilityId,
       { x: msg.x, z: msg.z, y: 0.04, yaw: resolveOwnerYaw(msg, ctx) },
@@ -189,7 +144,7 @@ export function dispatchCombatFxVfx(
     );
   }
 
-  if (msg.kind === "dash" && msg.abilityId === "spiritForm") {
+  if (msg.kind === "dash" && onDash === "spiritForm") {
     const dur =
       typeof msg.phaseEndsAt === "number"
         ? Math.max(200, msg.phaseEndsAt - Date.now() + 180)
@@ -221,125 +176,18 @@ export function dispatchCombatFxVfx(
     else if (msg.kind === "hit") notifyCrescentHit(payload);
   }
 
-  const onAoe = getAbilityVfxProfile(msg.abilityId).combatFx?.onAoe;
-  const effectKindAoe =
-    onAoe ??
-    (usesSpikeFx(msg.abilityId)
-      ? "spikes"
-      : usesFrostMistFx(msg.abilityId)
-        ? "channelOnce"
-        : usesGrooveFx(msg.abilityId)
-          ? "groove"
-          : usesHealBeamFx(msg.abilityId)
-            ? "healBeam"
-            : usesLifeLeechFx(msg.abilityId)
-              ? "lifeLeech"
-            : usesFirewallFx(msg.abilityId)
-              ? "firewall"
-              : usesPoisonCloudFx(msg.abilityId)
-                ? "poisonCloud"
-              : usesSmokeBombFx(msg.abilityId)
-                ? "smokeBomb"
-              : usesHolyGroundFx(msg.abilityId)
-                ? "holyGround"
-              : usesAoeCrackFx(msg.abilityId)
-                ? "groundCrack"
-                : usesIceLanceExplodeFx(msg.abilityId)
-                  ? "iceLanceExplode"
-                  : undefined);
+  dispatchAoeCombatFx(msg, ctx, getAbilityVfxProfile(msg.abilityId).combatFx?.onAoe);
 
-  if (msg.kind === "aoe" && effectKindAoe === "groundCrack") {
+  if (msg.kind === "aoe" && msg.abilityId === "handShield" && (msg.variant ?? 0) === 1) {
+    const yaw = resolveOwnerYaw(msg, ctx);
     spawnImpactEffect(
       msg.abilityId,
-      { x: msg.x, z: msg.z, y: 0.04 },
-      { radius: msg.radius ?? 2.2 },
-    );
-    if (msg.abilityId === "smash") playSlamHitSfx();
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "spikes") {
-    spawnImpactEffect(msg.abilityId, { x: msg.x, z: msg.z, y: 0.02 }, { lifeMs: 560 });
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "firewall") {
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 0.03, yaw: msg.yaw },
-      { lifeMs: FIREWALL_CAST.zoneDurationMs + 100, radius: msg.radius },
-    );
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "poisonCloud") {
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 0.03, yaw: msg.yaw },
+      { x: msg.x, z: msg.z, y: 0.04, yaw },
       {
-        lifeMs: POISON_CLOUD_CAST.zoneDurationMs + 200,
-        radius: msg.radius ?? POISON_CLOUD_CAST.radius,
-        originX: msg.x2,
-        originZ: msg.z2,
+        lifeMs: 700,
+        radius: msg.radius ?? HAND_SHIELD_CAST.retaliateRange,
       },
     );
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "smokeBomb") {
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 0.03, yaw: msg.yaw },
-      {
-        lifeMs: SMOKE_BOMB_CAST.zoneDurationMs + 200,
-        radius: msg.radius ?? SMOKE_BOMB_CAST.radius,
-      },
-    );
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "holyGround") {
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 0.03, yaw: msg.yaw },
-      {
-        lifeMs: HOLY_GROUND_CAST.zoneDurationMs + 200,
-        radius: msg.radius ?? HOLY_GROUND_CAST.radius,
-      },
-    );
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "fireballBurn") {
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 0.03 },
-      {
-        lifeMs: FIREBALL_CAST.burnDurationMs + 200,
-        radius: msg.radius ?? FIREBALL_CAST.burnRadiusMax,
-      },
-    );
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "volcano") {
-    // variant 0 = schema mesh spawn (no one-shot). 1 = rock telegraph, 2 = impact.
-    if (msg.variant === 1) {
-      spawnImpactEffect(
-        msg.abilityId,
-        { x: msg.x, z: msg.z, y: 0.04 },
-        {
-          lifeMs: VOLCANO_CAST.telegraphMs,
-          variant: 1,
-          radius: msg.radius ?? VOLCANO_CAST.rockBlastRadius,
-          originX: msg.x2,
-          originZ: msg.z2,
-        },
-      );
-    } else if (msg.variant === 2) {
-      spawnImpactEffect(
-        msg.abilityId,
-        { x: msg.x, z: msg.z, y: 0.04 },
-        {
-          lifeMs: 900,
-          variant: 2,
-          radius: msg.radius ?? VOLCANO_CAST.rockBlastRadius,
-        },
-      );
-    }
   }
 
   if (msg.kind === "aoe" && msg.abilityId === "shrooms" && (msg.variant === 1 || msg.variant === 2)) {
@@ -350,100 +198,6 @@ export function dispatchCombatFxVfx(
         lifeMs: 900,
         variant: msg.variant,
         radius: msg.radius ?? 3.4,
-      },
-    );
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "iceLanceExplode") {
-    spawnImpactEffect(
-      msg.abilityId,
-      {
-        x: msg.x,
-        z: msg.z,
-        y: typeof msg.y === "number" ? msg.y : 0.85,
-      },
-      { lifeMs: 900, radius: msg.radius ?? 2.0 },
-    );
-  }
-
-  if (
-    msg.kind === "aoe" &&
-    effectKindAoe === "channelOnce" &&
-    (msg.comboHit ?? 1) === 1
-  ) {
-    const yaw = resolveOwnerYaw(msg, ctx);
-    const mistDef = ABILITIES.frostMist;
-    const ch = CHANNEL_VFX.frostMist;
-    const channelMs = ch.ticks * ch.tickMs + ch.lifePadMs;
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 0.04, yaw },
-      {
-        lifeMs: channelMs,
-        radius: mistDef?.range ?? ch.fallbackRange,
-        startRadius: mistDef?.mistStartRange ?? ch.fallbackStartRange,
-        growMs: FROST_MIST_CAST.mistGrowMs,
-        followOwnerId: msg.ownerId,
-      },
-    );
-  }
-
-  if (msg.kind === "aoe" && effectKindAoe === "groove") {
-    const yaw = resolveOwnerYaw(msg, ctx);
-    const grooveDef = ABILITIES.groove;
-    const ch = CHANNEL_VFX.groove;
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 1.0, yaw },
-      {
-        lifeMs: GROOVE_CAST.channelMs + ch.lifePadMs,
-        radius: grooveDef?.radius ?? ch.fallbackRadius,
-        followOwnerId: msg.ownerId,
-      },
-    );
-  }
-
-  if (
-    msg.kind === "aoe" &&
-    effectKindAoe === "healBeam" &&
-    (msg.comboHit ?? 1) === 1
-  ) {
-    const yaw = resolveOwnerYaw(msg, ctx);
-    const beamDef = ABILITIES.healBeam;
-    const ch = CHANNEL_VFX.healBeam;
-    const channelMs = ch.ticks * ch.tickMs + ch.lifePadMs;
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 1.1, yaw },
-      {
-        lifeMs: channelMs,
-        radius: beamDef?.range ?? HEAL_BEAM_CAST.range,
-        growMs: ch.growMs,
-        followOwnerId: msg.ownerId,
-      },
-    );
-  }
-
-  if (
-    msg.kind === "aoe" &&
-    effectKindAoe === "lifeLeech" &&
-    (msg.comboHit ?? 1) === 1
-  ) {
-    const yaw = resolveOwnerYaw(msg, ctx);
-    const beamDef = ABILITIES.lifeLeech;
-    const ch = CHANNEL_VFX.lifeLeech;
-    // Hold channel — long life; cancelFollowOwnerVfx ends it on release.
-    const channelMs = beamDef?.holdChannel
-      ? LIFE_LEECH_CAST.holdMaxMs + ch.lifePadMs
-      : ch.ticks * ch.tickMs + ch.lifePadMs;
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 1.1, yaw },
-      {
-        lifeMs: channelMs,
-        radius: beamDef?.range ?? LIFE_LEECH_CAST.range,
-        growMs: ch.growMs,
-        followOwnerId: msg.ownerId,
       },
     );
   }

@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router";
-import { Badge } from "@/components/base/badges/badges";
-import { Button } from "@/components/base/buttons/button";
+import { APP_DISPLAY_NAME } from "@/brand";
 import { useAuth } from "@/providers/auth-provider";
+import { AuthShell } from "./auth/AuthShell";
 
 const NAME_RE = /^[A-Za-z0-9_]+$/;
 
@@ -41,7 +41,6 @@ export const NameSetupScreen = () => {
 
     const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
-        // Prefer the live field value (FormData) so submit is not stuck on stale React state.
         const data = new FormData(e.currentTarget);
         const cleaned = normalizeName(data.get("displayName") || name);
         setName(cleaned);
@@ -70,54 +69,50 @@ export const NameSetupScreen = () => {
     };
 
     return (
-        <section className="relative min-h-dvh overflow-hidden bg-primary px-4 py-12 md:px-8 md:pt-24">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--color-brand-100)_0%,_transparent_55%)] opacity-70" />
-            <div className="relative mx-auto flex w-full max-w-md flex-col gap-6">
-                <div className="flex flex-col items-center gap-3 text-center">
-                    <Badge color="brand" size="lg">
-                        BattleBeasts
-                    </Badge>
-                    <h1 className="text-display-xs font-semibold text-primary">Choose your hunter name</h1>
-                    <p className="text-md text-tertiary">
-                        This name is unique. We picked a random default — change it or keep it.
-                    </p>
-                </div>
+        <AuthShell layout="split" subtitle="Claim the name others will face in the trials.">
+            <h2 className="bb-auth-panel__title">Choose your mage name</h2>
+            <p className="bb-auth-panel__lead">
+                Unique across {APP_DISPLAY_NAME}. We picked a random default — change it or keep it.
+            </p>
 
-                <form onSubmit={onSubmit} className="flex flex-col gap-4 rounded-2xl bg-primary p-5 ring-1 ring-secondary">
-                    <label className="flex w-full flex-col gap-1.5">
-                        <span className="text-sm font-medium text-secondary">
-                            Display name <span className="text-brand-secondary">*</span>
-                        </span>
-                        <input
-                            name="displayName"
-                            type="text"
-                            required
-                            minLength={3}
-                            maxLength={20}
-                            autoComplete="nickname"
-                            spellCheck={false}
-                            value={name}
-                            onChange={(ev) => {
-                                setName(ev.target.value);
-                                if (error) setError(null);
-                            }}
-                            className="w-full rounded-lg bg-primary px-3.5 py-2.5 text-md text-primary shadow-xs ring-1 ring-primary outline-hidden ring-inset placeholder:text-placeholder focus:ring-2 focus:ring-brand"
-                            aria-invalid={Boolean(error) || undefined}
-                        />
-                        <span className="text-sm text-tertiary">3–20 characters · letters, numbers, underscore</span>
-                    </label>
-                    {error && <p className="text-sm text-error-primary">{error}</p>}
-                    <Button type="submit" size="lg" color="primary" isDisabled={saving || normalizeName(name).length < 3}>
-                        {saving ? "Saving…" : "Continue"}
-                    </Button>
-                </form>
+            <form onSubmit={onSubmit} className="bb-auth-form">
+                <label className="bb-auth-label">
+                    Display name
+                    <input
+                        className="bb-input"
+                        name="displayName"
+                        type="text"
+                        required
+                        minLength={3}
+                        maxLength={20}
+                        autoComplete="nickname"
+                        spellCheck={false}
+                        value={name}
+                        onChange={(ev) => {
+                            setName(ev.target.value);
+                            if (error) setError(null);
+                        }}
+                        aria-invalid={Boolean(error) || undefined}
+                    />
+                    <span style={{ fontWeight: 400, letterSpacing: 0 }}>
+                        3–20 characters · letters, numbers, underscore
+                    </span>
+                </label>
+                {error && <p className="bb-auth-error">{error}</p>}
+                <button
+                    type="submit"
+                    className="bb-btn-brass"
+                    disabled={saving || normalizeName(name).length < 3}
+                >
+                    {saving ? "Saving…" : "Continue"}
+                </button>
+            </form>
 
-                <div className="flex justify-center">
-                    <Button color="link-color" size="md" onClick={() => void signOut()}>
-                        Sign out
-                    </Button>
-                </div>
+            <div className="bb-auth-actions" style={{ marginTop: "0.75rem" }}>
+                <button type="button" className="bb-btn-ink" onClick={() => void signOut()}>
+                    Sign out
+                </button>
             </div>
-        </section>
+        </AuthShell>
     );
 };

@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import {
+  advanceHubIntroLine,
   getHubIntroSnapshot,
-  skipHubIntro,
   subscribeHubIntro,
   type HubIntroSnapshot,
 } from "./hubIntroRuntime";
 
-/** Full-screen fade + captions + Skip during hub intro. */
+/** Full-screen fade + captions + Next during hub intro. */
 export function HubIntroOverlay() {
   const [snap, setSnap] = useState<HubIntroSnapshot>(getHubIntroSnapshot);
 
@@ -44,10 +44,10 @@ export function HubIntroOverlay() {
           <button
             type="button"
             className="pointer-events-auto bb-btn-ink mt-8 opacity-90"
-            onClick={() => skipHubIntro()}
+            onClick={() => advanceHubIntroLine()}
             style={{ visibility: snap.phase === "playing" && snap.fade < 0.2 ? "visible" : "hidden" }}
           >
-            Skip
+            Next
           </button>
         </div>
       ) : null}

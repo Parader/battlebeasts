@@ -6,11 +6,15 @@
     "dev": "pnpm -r --parallel --filter @battlebeasts/web --filter @battlebeasts/game-server run dev",
     "dev:web": "pnpm --filter @battlebeasts/web dev",
     "dev:server": "pnpm --filter @battlebeasts/game-server dev",
+    "dev:editor": "pnpm --filter @battlebeasts/editor dev",
     "dev:desktop": "pnpm --filter @battlebeasts/desktop dev",
     "dist:desktop": "pnpm --filter @battlebeasts/desktop dist",
     "deploy:game": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy-game-server.ps1",
     "build": "pnpm -r run build",
-    "build:shared": "pnpm --filter @battlebeasts/shared build"
+    "build:shared": "pnpm --filter @battlebeasts/shared build",
+    "gen:props": "node scripts/gen-prop-manifest.mjs",
+    "gen:props:force": "node scripts/gen-prop-manifest.mjs --force",
+    "gen:maps": "node scripts/gen-map-index.mjs"
   },
   "engines": {
     "node": ">=20"

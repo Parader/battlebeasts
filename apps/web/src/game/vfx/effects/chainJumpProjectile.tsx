@@ -3,6 +3,7 @@ import { Room } from "colyseus.js";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { abilityVfxColor } from "../colors";
+import { useSpellLight } from "../spellLights";
 
 const TIP_Y = 1.12;
 const SHOULDER_FORWARD = 0.28;
@@ -20,6 +21,7 @@ export function ChainJumpProjectileEffect({ room, id }: { room: Room; id: string
   const root = useRef<THREE.Group>(null);
   const linksMesh = useRef<THREE.InstancedMesh>(null);
   const tipGroup = useRef<THREE.Group>(null);
+  const light = useSpellLight();
   const core = useRef<THREE.Mesh>(null);
   const glow = useRef<THREE.Mesh>(null);
 
@@ -95,6 +97,7 @@ export function ChainJumpProjectileEffect({ room, id }: { room: Room; id: string
     if (!p || !g || !mesh) {
       if (g) g.visible = false;
       seeded.current = false;
+      light.off();
       return;
     }
     g.visible = true;
@@ -190,6 +193,7 @@ export function ChainJumpProjectileEffect({ room, id }: { room: Room; id: string
     const pulse = 1 + Math.sin(performance.now() * 0.02) * 0.1;
     if (core.current) core.current.scale.setScalar(0.55 * pulse);
     if (glow.current) glow.current.scale.setScalar(1.05 * pulse);
+    light.emitAt(tipGroup.current, "#a8a8b0", 0.55, 2.6);
   });
 
   return (
@@ -203,7 +207,6 @@ export function ChainJumpProjectileEffect({ room, id }: { room: Room; id: string
         <mesh ref={glow} material={tipGlowMat} rotation={[Math.PI / 2, 0, 0]}>
           <torusGeometry args={[0.09, 0.035, 6, 12]} />
         </mesh>
-        <pointLight color="#a8a8b0" intensity={0.55} distance={2.6} decay={2} />
       </group>
     </group>
   );

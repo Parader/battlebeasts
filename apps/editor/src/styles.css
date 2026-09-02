@@ -1,0 +1,401 @@
+:root {
+  --bg: #12151a;
+  --panel: #1b1f26;
+  --panel-2: #232833;
+  --line: #313846;
+  --text: #dbe2ec;
+  --muted: #8b97a8;
+  --accent: #6aa9ff;
+  --danger: #ff6b6b;
+  --warn: #ffb454;
+  --ok: #5fd08a;
+
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* --- layout --- */
+
+.app {
+  display: grid;
+  grid-template-columns: 268px 1fr 300px;
+  grid-template-rows: 44px 1fr 26px;
+  grid-template-areas:
+    "top top top"
+    "left view right"
+    "status status status";
+  height: 100%;
+}
+
+.topbar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.left {
+  grid-area: left;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.view {
+  grid-area: view;
+  position: relative;
+  min-width: 0;
+}
+
+/* --- game-orientation compass ---
+   The match camera never yaws, so a map has a permanent front. The needle
+   points the way it looks; needle up means this view matches a player's. */
+
+.compass {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.compass__dial {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(27, 31, 38, 0.82);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.compass__dial:hover {
+  border-color: var(--accent);
+}
+
+/* Ring of the horizon, so the needle reads against something. */
+.compass__dial::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border: 1px dashed rgba(139, 151, 168, 0.35);
+  border-radius: 50%;
+}
+
+.compass__needle {
+  position: absolute;
+  inset: 0;
+  /* Rotation is written per frame from the camera, so keep this cheap. */
+  will-change: transform;
+}
+
+/* Arrowhead at 12 o'clock; the whole needle element is what rotates. */
+.compass__needle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 5px;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 11px solid var(--accent);
+}
+
+/* Tail, so a needle pointing away is still legible as a direction. */
+.compass__needle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 15px;
+  width: 2px;
+  height: 15px;
+  transform: translateX(-50%);
+  background: rgba(106, 169, 255, 0.45);
+}
+
+.compass__label {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.right {
+  grid-area: right;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.statusbar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 10px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* --- controls --- */
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: #47536a;
+  background: #2a3140;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d1520;
+  font-weight: 600;
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: #10141a;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 7px;
+  width: 100%;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.title {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  display: inline-block;
+}
+
+/* --- panel sections --- */
+
+.section {
+  border-bottom: 1px solid var(--line);
+  padding: 9px 10px;
+}
+
+.section h3 {
+  margin: 0 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.row:last-child {
+  margin-bottom: 0;
+}
+
+.row label {
+  flex: 0 0 62px;
+  color: var(--muted);
+}
+
+/* Checkbox + label as one click target, unlike .row's fixed label column. */
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.check input {
+  cursor: pointer;
+  accent-color: var(--accent, #6aa9ff);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* --- palette tree --- */
+
+.tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 5px 10px;
+}
+
+.tree-row:hover:not(:disabled) {
+  background: #2a3140;
+  border: none;
+}
+
+.tree-cat {
+  border-top: 1px solid var(--line);
+  background: #1f242e;
+}
+
+.tree-fam {
+  padding-left: 22px;
+  font-size: 12px;
+}
+
+/*
+ * A family row is a container with two targets: the row itself arms or expands
+ * the family, and a trailing button marks it unusable. The inner button is
+ * unstyled and stretches, so clicking anywhere along the name still works.
+ */
+.tree-row__main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+.tree-row__main:hover:not(:disabled) {
+  border: none;
+  background: transparent;
+}
+
+.mark-btn {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  /* Revealed on hover so 900 rows are not a wall of icons. */
+  opacity: 0;
+}
+
+.tree-row:hover .mark-btn,
+.tree-row--unusable .mark-btn {
+  opacity: 1;
+}
+
+.mark-btn:hover {
+  border: none;
+  color: var(--danger);
+  background: transparent;
+}
+
+/* Marked entries stay legible but obviously set aside. */
+.tree-row--unusable .tree-row__main {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.chip--unusable {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.caret {
+  width: 10px;
+  flex: 0 0 10px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.variant-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 10px 8px 32px;
+}
+
+.banner {
+  padding: 8px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.banner.error {
+  background: #3a1d1f;
+  color: #ffc9c9;
+}

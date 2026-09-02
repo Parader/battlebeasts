@@ -3,7 +3,13 @@ import { useFrame } from "@react-three/fiber";
 import { Billboard } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
-import { COMBAT_ENGAGE_LINGER_MS, PLAYER_BASE_MAX_HP, totalShieldAbsorb } from "@battlebeasts/shared";
+import {
+  COMBAT_ENGAGE_LINGER_MS,
+  ENERGY_MAX_PIPS,
+  PLAYER_BASE_MAX_HP,
+  energyPips,
+  totalShieldAbsorb,
+} from "@battlebeasts/shared";
 import {
   StatusHpBadgeStack,
   readBleedingBadge,
@@ -21,6 +27,10 @@ import {
   type StatusRowLite,
 } from "./StatusHpBadgeStack";
 import { isRevengeVanished } from "./revengeVanishRuntime";
+
+/** Pip strip spans the HP bar's 1.05 width, with a hairline gap between pips. */
+const PIP_PITCH = 1.05 / ENERGY_MAX_PIPS;
+const PIP_W = PIP_PITCH - 0.015;
 
 type Props = {
   room: Room | null;
@@ -52,6 +62,8 @@ export function PlayerHpBillboard({
   const fill = useRef<THREE.Mesh>(null);
   const fillMat = useRef<THREE.MeshBasicMaterial>(null);
   const shield = useRef<THREE.Mesh>(null);
+  const energyRow = useRef<THREE.Group>(null);
+  const energyFills = useRef<(THREE.Mesh | null)[]>([]);
   const poisonBadge = useRef<HTMLDivElement>(null);
   const poisonStacksEl = useRef<HTMLSpanElement>(null);
   const poisonRing = useRef<SVGCircleElement>(null);
@@ -98,6 +110,7 @@ export function PlayerHpBillboard({
       | {
           hp?: number;
           maxHp?: number;
+          energy?: number;
           castPhase?: string;
           disconnected?: boolean;
           statuses?: {
@@ -240,6 +253,15 @@ export function PlayerHpBillboard({
     syncSilenceBadge(silBadge, silenceRing.current, silence);
     syncHolyBadge(hlyBadge, holyRing.current, holy);
 
+    // Whole pips only up here. A partial sliver is unreadable at nameplate
+    // size, and the question this bar answers is "what can they afford".
+    const pips = energyPips(p.energy ?? 0);
+    if (energyRow.current) energyRow.current.visible = pips > 0;
+    for (let i = 0; i < ENERGY_MAX_PIPS; i++) {
+      const m = energyFills.current[i];
+      if (m) m.visible = i < pips;
+    }
+
     const mat = fillMat.current;
     if (mat && lastFillColor.current !== fillColor) {
       lastFillColor.current = fillColor;
@@ -278,6 +300,45 @@ export function PlayerHpBillboard({
             toneMapped={false}
           />
         </mesh>
+        {/* Energy sits under the HP bar rather than on a separate frame: an
+            opponent's pips are a read you make while aiming at them, so they
+            have to be where you are already looking. */}
+        <group ref={energyRow} position={[0, -0.075, 0.01]} renderOrder={1002}>
+          {Array.from({ length: ENERGY_MAX_PIPS }, (_, i) => (
+            <mesh
+              key={i}
+              position={[(i - (ENERGY_MAX_PIPS - 1) / 2) * PIP_PITCH, 0, 0]}
+              renderOrder={1002}
+            >
+              <planeGeometry args={[PIP_W, 0.022]} />
+              <meshBasicMaterial
+                color="#1f2937"
+                depthTest={false}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </mesh>
+          ))}
+          {Array.from({ length: ENERGY_MAX_PIPS }, (_, i) => (
+            <mesh
+              key={`f${i}`}
+              ref={(m) => {
+                energyFills.current[i] = m;
+              }}
+              position={[(i - (ENERGY_MAX_PIPS - 1) / 2) * PIP_PITCH, 0, 0.005]}
+              visible={false}
+              renderOrder={1003}
+            >
+              <planeGeometry args={[PIP_W, 0.022]} />
+              <meshBasicMaterial
+                color="#fbbf24"
+                depthTest={false}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </mesh>
+          ))}
+        </group>
         <StatusHpBadgeStack
           poisonBadgeRef={poisonBadge}
           poisonStacksRef={poisonStacksEl}

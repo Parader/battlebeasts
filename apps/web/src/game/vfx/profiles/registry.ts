@@ -11,7 +11,7 @@ import {
   ICE_LANCE_CAST,
   POISON_DART_CAST,
 } from "@battlebeasts/shared";
-import type { AbilityVfxProfile } from "./types";
+import type { AbilityVfxProfile, AbilityVfxAssets } from "./types";
 import {
   BARRIER_CHARGE_PAD_MS,
   BARRIER_DISSOLVE_MS,
@@ -207,6 +207,12 @@ const MAGMA_ORBS: AbilityVfxProfile = {
   combatFx: { skipLegacyBurst: true },
 };
 
+const ARC_THREAD: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "arcThread", skipLegacyBurst: true },
+};
+
 const FROST_MIST: AbilityVfxProfile = {
   castEngine: "combatFxOnly",
   projectile: "none",
@@ -264,6 +270,7 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
       skipLegacyBurst: false,
     },
   },
+  arcThread: ARC_THREAD,
   poisonDart: MUZZLE_POISON,
   frostBall: CHARGE_FROST,
   fireball: CHARGE_FIREBALL,
@@ -286,7 +293,11 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
     castEngine: "none",
     projectile: "none",
     // Trail spawns from dash combat_fx; pass-through hits use the tiny legacy ring only.
-    combatFx: { onHit: "sfxOnly", skipLegacyBurst: true },
+    combatFx: {
+      onHit: "sfxOnly",
+      onDash: "bloodRushTrail",
+      skipLegacyBurst: true,
+    },
   },
   frostMist: FROST_MIST,
   silenceSweep: SILENCE_SWEEP,
@@ -299,7 +310,7 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
   spiritForm: {
     castEngine: "none",
     projectile: "none",
-    combatFx: { skipLegacyBurst: true },
+    combatFx: { onDash: "spiritForm", skipLegacyBurst: true },
   },
 };
 
@@ -311,6 +322,15 @@ const DEFAULT_PROFILE: AbilityVfxProfile = {
 export function getAbilityVfxProfile(abilityId: string | undefined): AbilityVfxProfile {
   if (!abilityId) return DEFAULT_PROFILE;
   return PROFILES[abilityId] ?? DEFAULT_PROFILE;
+}
+
+/** All profile-declared textures/GLBs (for loading-gate preload). */
+export function getRegisteredSpellVfxAssets(): AbilityVfxAssets[] {
+  const out: AbilityVfxAssets[] = [];
+  for (const profile of Object.values(PROFILES)) {
+    if (profile.assets) out.push(profile.assets);
+  }
+  return out;
 }
 
 export function hasCastEngine(abilityId: string | undefined): boolean {

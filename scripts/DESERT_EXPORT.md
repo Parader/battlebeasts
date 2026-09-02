@@ -12,8 +12,8 @@ Exports `desert.blend` into the game as one visual GLB + wall polylines + number
 | Piece | Where / how |
 |-------|-------------|
 | Visuals | Mesh objects in the scene |
-| Walls | Curves in collection **`CollisionWalls`** |
-| Spawns | Empties with **Label** `Spawn 1` … `Spawn 6` (1–3 team A, 4–6 team B) |
+| Walls | Curves in collection **`CollisionWalls`**. Runtime keeps the outer fence as a **convex hull** (dents become invisible teleport/magma blockers) and replaces interior rock loops with tight rings from the GLB. Prefer one outline per obstacle — never wrap a whole rock cluster in one fat Bezier. |
+| Spawns | Empties with **Label** `Spawn 1` … `Spawn 6` (1–3 team A, 4–6 team B). Markers only — never put spawn empties in `CollisionWalls`. |
 
 ## Export command (PowerShell, from repo root)
 

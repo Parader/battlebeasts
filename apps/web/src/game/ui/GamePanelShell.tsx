@@ -15,6 +15,8 @@ type Props = {
    * instead of inside the parchment chrome.
    */
   floatingHeader?: boolean;
+  /** Stretch the panel to nearly fill the viewport (talent constellation). */
+  fullBleed?: boolean;
   wide?: boolean;
   maxWidthClass?: string;
   maxHeightClass?: string;
@@ -35,6 +37,7 @@ export function GamePanelShell({
   titleAside,
   headerActions,
   floatingHeader = false,
+  fullBleed = false,
   wide,
   maxWidthClass,
   maxHeightClass,
@@ -44,7 +47,12 @@ export function GamePanelShell({
   ariaLabel,
   role = "dialog",
 }: Props) {
-  const width = maxWidthClass ?? (wide ? "max-w-4xl" : "max-w-md");
+  const width = fullBleed
+    ? "max-w-none"
+    : (maxWidthClass ?? (wide ? "max-w-4xl" : "max-w-md"));
+  const height = fullBleed
+    ? "h-[min(100dvh-1rem,100%)] max-h-[min(100dvh-1rem,100%)]"
+    : maxHeightClass;
 
   const header = (
     <header
@@ -82,7 +90,7 @@ export function GamePanelShell({
 
   return (
     <div
-      className={`bb-overlay-dim fixed inset-0 ${zClass} flex items-center justify-center p-4`}
+      className={`bb-overlay-dim fixed inset-0 ${zClass} flex items-center justify-center ${fullBleed ? "p-2" : "p-4"}`}
       data-ui-overlay
       onClick={(e) => {
         if (e.target === e.currentTarget && onClose) onClose();
@@ -97,7 +105,8 @@ export function GamePanelShell({
           "relative z-10 flex w-full flex-col",
           width,
           floatingHeader ? "bb-panel-stack" : "",
-          floatingHeader ? maxHeightClass ?? "" : "",
+          fullBleed ? "bb-panel-stack--constel" : "",
+          floatingHeader || fullBleed ? height ?? "" : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -111,7 +120,8 @@ export function GamePanelShell({
           className={[
             "bb-parchment bb-book-panel relative flex w-full flex-col min-h-0",
             floatingHeader ? "bb-book-panel--under-float flex-1" : "",
-            floatingHeader ? "" : maxHeightClass ?? "",
+            fullBleed ? "bb-book-panel--constel flex-1" : "",
+            floatingHeader || fullBleed ? "" : height ?? "",
           ]
             .filter(Boolean)
             .join(" ")}

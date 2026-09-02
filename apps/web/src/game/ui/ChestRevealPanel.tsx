@@ -36,10 +36,10 @@ const LID_OPEN_RAD = -Math.PI * 0.62;
 
 const SPIKE_COUNT = 16;
 
-/** Timeline (ms) — shake, then lid + loot. */
-const SHAKE_MS = 1100;
-const OPEN_MS = 950;
-const LOOT_DELAY_MS = 180;
+/** Timeline (ms) — longer shake/open so server loot usually arrives before reveal. */
+const SHAKE_MS = 1750;
+const OPEN_MS = 1300;
+const LOOT_DELAY_MS = 450;
 
 type AnimState = {
   /** 0–1 shake intensity (peaks near end of shake). */

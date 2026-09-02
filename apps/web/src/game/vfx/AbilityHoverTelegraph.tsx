@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ABILITIES, abilityEffectKind, firewallWallPoints } from "@battlebeasts/shared";
 import { abilityHoverRuntime } from "../abilityHoverRuntime";
+import { castAimRuntime } from "../castAimRuntime";
 
 /**
  * Ground range / AoE preview while hovering a spellbar slot.
@@ -8,15 +9,23 @@ import { abilityHoverRuntime } from "../abilityHoverRuntime";
  */
 export function AbilityHoverTelegraph() {
   const [abilityId, setAbilityId] = useState(() => abilityHoverRuntime.hoveredAbilityId);
+  const [casting, setCasting] = useState(() => castAimRuntime.isAimPreviewActive());
 
   useEffect(() => {
-    return abilityHoverRuntime.subscribe(() => {
+    const unsubHover = abilityHoverRuntime.subscribe(() => {
       setAbilityId(abilityHoverRuntime.hoveredAbilityId);
     });
+    const unsubCast = castAimRuntime.subscribe(() => {
+      setCasting(castAimRuntime.isAimPreviewActive());
+    });
+    return () => {
+      unsubHover();
+      unsubCast();
+    };
   }, []);
 
   const def = abilityId ? ABILITIES[abilityId] : undefined;
-  if (!def) return null;
+  if (!def || casting) return null;
 
   // Firewall: forward wall (length × thickness), not a huge range circle.
   if (abilityEffectKind(def) === "firewall") {

@@ -34,6 +34,7 @@ export type ShopGrant =
   | { kind: "pattern_color"; hex: string }
   | { kind: "emote"; emoteId: string }
   | { kind: "loadout_slot"; toCount: number }
+  | { kind: "flex_slot"; toCount: number }
   | { kind: "lobby_beach_ball"; toCount: number }
   | { kind: "consumable"; effect: "health_tonic" | "copper_pouch" }
   | { kind: "item_stack"; itemId: string; qty: number };
@@ -79,6 +80,23 @@ export const SHOP_ITEMS: Record<string, ShopItemDef> = {
     grant: { kind: "loadout_slot", toCount: 2 },
     description: "Unlock a second saved spell loadout",
   },
+  flex_slot_2: {
+    id: "flex_slot_2",
+    name: "Second Flex Slot",
+    category: "loadouts",
+    cost: { kind: "essence", amount: 150 },
+    grant: { kind: "flex_slot", toCount: 2 },
+    description: "Unlock flex slot 2 (key 2)",
+  },
+  flex_slot_3: {
+    id: "flex_slot_3",
+    name: "Third Flex Slot",
+    category: "loadouts",
+    cost: { kind: "essence", amount: 300 },
+    grant: { kind: "flex_slot", toCount: 3 },
+    description: "Unlock flex slot 3 (key 3)",
+  },
+
   /** First beach ball for your own lobby plaza. */
   beach_ball: {
     id: "beach_ball",
@@ -191,4 +209,15 @@ export function shopItemsForCategory(category: ShopCategory): ShopItemDef[] {
 
 export function getShopItem(id: string): ShopItemDef | undefined {
   return SHOP_ITEMS[id];
+}
+
+/** Shop id that unlocks the flex slot bringing the total to `toCount`. */
+export function flexSlotShopItemId(toCount: number): string {
+  return `flex_slot_${toCount}`;
+}
+
+/** Essence price of the flex slot bringing the total to `toCount`; 0 if free. */
+export function flexSlotUnlockCost(toCount: number): number {
+  const cost = SHOP_ITEMS[flexSlotShopItemId(toCount)]?.cost;
+  return cost?.kind === "essence" ? cost.amount : 0;
 }

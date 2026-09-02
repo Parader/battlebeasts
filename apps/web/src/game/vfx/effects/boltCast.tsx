@@ -5,9 +5,11 @@ import * as THREE from "three";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope } from "../easing";
-import { createEnergyBallMaterial } from "../materials/energyBall";
+import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { GroundMagicCircle } from "../components/GroundMagicCircle";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
+import { GEO_SPHERE_HI, GEO_SPHERE_MD } from "../sharedGeo";
+import { useSpellLight } from "../spellLights";
 
 /** Short muzzle flash — follows caster, offset toward extended hand. */
 export function BoltCastEffect({
@@ -19,9 +21,9 @@ export function BoltCastEffect({
 }) {
   const root = useRef<THREE.Group>(null);
   const group = useRef<THREE.Group>(null);
-  const coreMat = useMemo(() => createEnergyBallMaterial(shot.color, 0), [shot.color]);
-  const glowMat = useMemo(() => createEnergyBallMaterial(shot.color, 0), [shot.color]);
-  const light = useRef<THREE.PointLight>(null);
+  const coreMat = useMemo(() => acquireEnergyBallMaterial(shot.color, 0), [shot.color]);
+  const glowMat = useMemo(() => acquireEnergyBallMaterial(shot.color, 0), [shot.color]);
+  const light = useSpellLight();
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: shot.y });
 
   useFrame(() => {
@@ -61,6 +63,7 @@ export function BoltCastEffect({
     if (!g) return;
     if (age >= 1) {
       g.visible = false;
+      light.off();
       return;
     }
     g.visible = true;
@@ -68,21 +71,16 @@ export function BoltCastEffect({
     g.scale.setScalar(0.08 + amp * 0.55);
     coreMat.opacity = amp * 0.9;
     glowMat.opacity = amp * 0.4;
-    if (light.current) light.current.intensity = amp * 2.2;
+    // Pool lights live at the scene root, so this is world space -- the group
+    // it used to hang off sits at (pose, shot.y).
+    light.emit(pose.current.x, shot.y, pose.current.z, shot.color, amp * 2.2, 3.5);
   });
 
   return (
     <group ref={root} position={[shot.x, 0, shot.z]}>
       <group ref={group} position={[0, shot.y, 0]} scale={0.08}>
-        <mesh>
-          <sphereGeometry args={[0.12, 12, 12]} />
-          <primitive object={coreMat} attach="material" />
-        </mesh>
-        <mesh scale={1.7}>
-          <sphereGeometry args={[0.12, 10, 10]} />
-          <primitive object={glowMat} attach="material" />
-        </mesh>
-        <pointLight ref={light} color={shot.color} intensity={0} distance={3.5} decay={2} />
+        <mesh scale={0.12} geometry={GEO_SPHERE_HI} material={coreMat} />
+        <mesh scale={0.12 * 1.7} geometry={GEO_SPHERE_MD} material={glowMat} />
         <AdditiveParticleBurst
           color={shot.color}
           origin={[0, 0, 0]}

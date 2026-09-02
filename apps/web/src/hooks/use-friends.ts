@@ -52,6 +52,9 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
     const seenRequestIds = useRef<Set<string>>(new Set());
     const requestsBootstrapped = useRef(false);
 
+    const failStreak = useRef(0);
+    const nextPollAt = useRef(0);
+
     const refresh = useCallback(async () => {
         if (!userId) {
             setFriends([]);
@@ -61,8 +64,10 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
             setHasRedeemedCode(false);
             seenRequestIds.current = new Set();
             requestsBootstrapped.current = false;
+            failStreak.current = 0;
             return;
         }
+        if (Date.now() < nextPollAt.current) return;
         setLoading(true);
         setError(null);
         try {
@@ -73,6 +78,8 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
                 ensureFriendCode().catch(() => ""),
                 hasRedeemedFriendCode(userId),
             ]);
+            failStreak.current = 0;
+            nextPollAt.current = 0;
             setFriends(f);
             setRequests(r);
             setInvites(i);
@@ -97,6 +104,10 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
                 seenRequestIds.current = ids;
             }
         } catch (err) {
+            // Back off hard while Supabase Data API is 504/timing out so we don't pile on.
+            failStreak.current += 1;
+            const delayMs = Math.min(60_000, 8_000 * 2 ** Math.min(failStreak.current - 1, 3));
+            nextPollAt.current = Date.now() + delayMs;
             setError(err instanceof Error ? err.message : "Failed to load friends");
         } finally {
             setLoading(false);
@@ -124,7 +135,12 @@ export function useFriends(userId: string | null, hubOwnerId: string | null) {
         cancelPendingOffline();
 
         const beat = () => {
-            void heartbeatPresence(hubOwnerId);
+            if (Date.now() < nextPollAt.current) return;
+            void heartbeatPresence(hubOwnerId).catch(() => {
+                failStreak.current += 1;
+                const delayMs = Math.min(60_000, 12_000 * 2 ** Math.min(failStreak.current - 1, 3));
+                nextPollAt.current = Date.now() + delayMs;
+            });
         };
         beat();
         const id = window.setInterval(beat, 12_000);

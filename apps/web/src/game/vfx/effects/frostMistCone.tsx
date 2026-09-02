@@ -1,11 +1,9 @@
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
   CONE_OCCLUSION_SECTORS,
-  baseCityStaticColliders,
   coneRayMaxLength,
-  type WallCollider,
 } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
@@ -13,12 +11,47 @@ import { GroundDecal } from "../components/GroundDecal";
 import { groundPresets } from "../presets/ground";
 import { softEnvelope } from "../easing";
 import { createTrailMaterial } from "../materials/trailMaterial";
+import { getWorldProjectileCircles, getWorldProjectileWalls, getWorldProjectileBoxes } from "../../worldCollidersRuntime";
 
 const BEAM_COUNT = 48;
 const HALF_ANGLE_START = 0.28;
 const HALF_ANGLE_END = 0.7;
 /** Near-hand spawn before beams race down the cone. */
 const BEAM_SPAWN = 0.45;
+/** Keep mist above uneven GLB ground (cemetery / desert). */
+const DECAL_Y = 0.09;
+const _down = new THREE.Vector3(0, -1, 0);
+const _origin = new THREE.Vector3();
+
+function collectGroundMeshes(scene: THREE.Object3D): THREE.Object3D[] {
+  const meshes: THREE.Object3D[] = [];
+  scene.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.visible) return;
+    const n = m.name.toLowerCase();
+    if (n.includes("beta_") || n.includes("mixamorig") || n.startsWith("sm_chr")) return;
+    if (/ground|terrain|floor|meadow|path|tile/.test(n) || meshes.length < 40) {
+      meshes.push(m);
+    }
+  });
+  return meshes;
+}
+
+function sampleGroundY(
+  meshes: THREE.Object3D[],
+  x: number,
+  z: number,
+  raycaster: THREE.Raycaster,
+): number {
+  if (!meshes.length) return 0;
+  _origin.set(x, 80, z);
+  raycaster.set(_origin, _down);
+  const hits = raycaster.intersectObjects(meshes, false);
+  if (!hits.length) return 0;
+  const named = hits.find((h) => /ground|terrain|floor|meadow|path/i.test(h.object.name));
+  const y = (named ?? hits[0]!).point.y;
+  return Number.isFinite(y) ? y : 0;
+}
 
 type IceBeam = {
   /** Fixed aim angle within the full cone (−1…1 → ±halfAngle). */
@@ -80,21 +113,18 @@ export function FrostMistConeEffect({
   const beamsRef = useRef<THREE.Group>(null);
   const progress = useRef(0);
   const opacity = useRef(0.95);
-  const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw });
+  const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: 0 });
   const liveLength = useRef(shot.startRadius ?? shot.radius ?? 3);
   const liveHalf = useRef(HALF_ANGLE_START);
   const sectorRanges = useRef<Float32Array>(new Float32Array(CONE_OCCLUSION_SECTORS).fill(1));
   const halfAngleLive = useRef(HALF_ANGLE_START);
+  const { scene } = useThree();
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+  const groundMeshes = useMemo(() => collectGroundMeshes(scene), [scene]);
 
   const endLength = shot.radius ?? 11;
   const startLength = shot.startRadius ?? Math.min(endLength, endLength * 0.28);
   const growMs = Math.max(80, shot.growMs ?? 180);
-
-  const walls = useMemo((): WallCollider[] => {
-    return baseCityStaticColliders().filter(
-      (c): c is WallCollider => c.shape === "walls",
-    );
-  }, []);
 
   const beams = useMemo((): IceBeam[] => {
     const seed = shot.key * 5059;
@@ -154,7 +184,11 @@ export function FrostMistConeEffect({
       }
     }
 
-    g.position.set(pose.current.x, 0, pose.current.z);
+    g.position.set(
+      pose.current.x,
+      sampleGroundY(groundMeshes, pose.current.x, pose.current.z, raycaster),
+      pose.current.z,
+    );
     g.rotation.y = pose.current.yaw;
 
     const growT = grow01((now - shot.born) / growMs);
@@ -172,6 +206,9 @@ export function FrostMistConeEffect({
     const elapsed = (now - shot.born) / 1000;
     const origin = { x: pose.current.x, z: pose.current.z };
     const bodies = collectOccludeBodies(follow, shot.followOwnerId);
+    const walls = getWorldProjectileWalls();
+    const circles = getWorldProjectileCircles();
+    const boxes = getWorldProjectileBoxes();
 
     // Ground cone pie ranges (0..1 of endLength) — same wall soft clip as beams.
     const ranges = sectorRanges.current;
@@ -188,6 +225,7 @@ export function FrostMistConeEffect({
         walls,
         bodies,
         shot.followOwnerId ?? null,
+        { circles, boxes },
       );
       ranges[s] = Math.max(0, Math.min(1, maxLen * invEnd));
     }
@@ -213,6 +251,7 @@ export function FrostMistConeEffect({
           walls,
           bodies,
           shot.followOwnerId ?? null,
+          { circles, boxes },
         );
         if (maxLen <= BEAM_SPAWN + 0.05) {
           mesh.visible = false;
@@ -271,7 +310,7 @@ export function FrostMistConeEffect({
         sectorRangesRef={sectorRanges}
         halfAngleRef={halfAngleLive}
         growExpand
-        y={0.035}
+        y={DECAL_Y}
       />
       <group ref={beamsRef}>
         {beamMats.map((mat, i) => (

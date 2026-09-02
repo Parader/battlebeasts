@@ -161,7 +161,8 @@ export type AbilityEffectKind =
   | "shrooms"
   | "spiritForm"
   | "riftFissure"
-  | "fireball";
+  | "fireball"
+  | "arcThread";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
 export type SpellTag =
@@ -253,6 +254,15 @@ export interface AbilityDef {
   iFrames?: AbilityIFrames;
   /** Statuses applied to hit targets when the effect resolves. */
   applyOnHit?: StatusApplication[];
+  /**
+   * Second hit damage for multi-stage spells (Arc Thread discharge).
+   * Initial hit still uses `damage`.
+   */
+  secondaryDamage?: number;
+  /** Arc Thread: wall-clock ms the tether must survive for the discharge. */
+  threadDurationMs?: number;
+  /** Arc Thread: max aim angle off-target (degrees) before the tether snaps. */
+  threadAimToleranceDegrees?: number;
   /**
    * If set, a hit on a target at or below this HP fraction (0–1)
    * deals their remaining HP instead (execute). Blood Rush uses 0.25.
@@ -405,9 +415,9 @@ export const SMASH_JUMP_ATTACK = {
   groundFrame: 54,
   clipDurationSec: 3.833333,
   /** Air / land playback (frames 19→54). */
-  playbackRate: 3,
+  playbackRate: 2.35,
   /** Plant / windup playback (start→19) — snappier commit. */
-  windupRate: 5.5,
+  windupRate: 4.2,
 } as const;
 
 /**
@@ -466,7 +476,7 @@ export const BARRIER_CAST = {
   /** Natural Mixamo pace. */
   playbackRate: 1,
   /** Absorb HP charged over anticipation+cast, then held this long. */
-  shieldStacks: combatMag(40),
+  shieldStacks: combatMag(30),
   shieldDurationMs: 3000,
 } as const;
 
@@ -488,11 +498,13 @@ export const RIFT_FISSURE_CAST = {
   fps: BARRIER_CAST.fps,
   releaseFrame: BARRIER_CAST.releaseFrame,
   clipDurationSec: BARRIER_CAST.clipDurationSec,
-  playbackRate: 1.25,
+  playbackRate: 1.45,
   unlockCostEssence: 120,
   /** Longer than Portal / Dash. */
   cooldownMs: 26000,
-  /** Forward plant distance from caster feet. */
+  /** Max ground-cursor plant range from caster feet. */
+  maxPlaceRange: 8,
+  /** Legacy forward plant distance (fallback when aim unavailable). */
   placeForward: 2.1,
   /** Trigger / mouth radius — keep tight so you walk into the oval. */
   mouthRadius: 0.45,
@@ -619,6 +631,24 @@ function boltReleaseWallMs(): number {
 function boltRecoveryWallMs(): number {
   return 70;
 }
+
+/**
+ * Arc Thread (LMB) — short magical tether. Initial ray hit, then 450ms track;
+ * surviving connection fires a secondary discharge + micro-slow.
+ */
+export const ARC_THREAD_CAST = {
+  unlockCostEssence: 80,
+  cooldownMs: 750,
+  range: 7.5,
+  /** Narrow cone half-angle (rad) for first-contact acquisition. */
+  acquireHalfAngle: 0.09,
+  threadDurationMs: 450,
+  threadAimToleranceDegrees: 12,
+  /** Tick cadence while validating the tether. */
+  validateMs: 50,
+  handY: BOLT_CAST.handY,
+  spawnOffset: BOLT_CAST.spawnOffset,
+} as const;
 
 /**
  * Standing 1H Magic Attack 02 (hero.glb) @ 30fps.
@@ -784,7 +814,7 @@ export const POISON_CLOUD_CAST = {
   /** Stack pace — ~3 poison stacks if you stay for most of the zone. */
   tickMs: 1600,
   radius: 3,
-  range: 9,
+  range: 6.5,
   /** Soft settle after the vial lands. */
   recoveryMs: 380,
   unlockCostEssence: 90,
@@ -1008,6 +1038,12 @@ export const HAND_SHIELD_CAST = {
   channelMoveMul: 0.55,
   /** Max turn rate while shielding (~63°/s) — slow aim, still steerable. */
   yawTurnRate: 1.1,
+  /** Retaliate cone on successful block (silence-like). */
+  retaliateRange: 7,
+  retaliateConeHalfAngle: 0.95,
+  retaliateDamage: combatMag(6),
+  retaliateKnockback: 1.8,
+  retaliateKnockbackMs: 200,
 } as const;
 
 /** Status + collider duration: channel hold through Block End recovery. */
@@ -1183,8 +1219,9 @@ function healBeamReleaseWallMs(): number {
 
 /**
  * Fireball (F alt) — single clip `Casting Spell` (hero.glb, ~7.733s @ 30fps).
- * Charge scales linearly from appear → release. Early confirm seeks to the throw
- * frames, then the projectile waits until the release frame leaves the hands.
+ * Charge scales linearly from appear → release. Early confirm seeks the mixer
+ * to throwSeekFrame (clip time = frame/fps), then the projectile waits until
+ * releaseFrame leaves the hands.
  * Frame 34 = ball appears, 143 = throw seek, 160 = leaves the hands.
  */
 export const FIREBALL_CAST = {
@@ -1270,28 +1307,25 @@ export function fireballReleaseWallMs(): number {
 }
 
 export function fireballReleaseSec(): number {
-  return (
-    FIREBALL_CAST.releaseFrame /
-    FIREBALL_CAST.fps /
-    FIREBALL_CAST.playbackRate
-  );
+  // Mixer `action.time` is clip seconds (frame / fps), not wall time.
+  return FIREBALL_CAST.releaseFrame / FIREBALL_CAST.fps;
 }
 
 export function fireballFollowThroughEndSec(): number {
-  return (
-    FIREBALL_CAST.followThroughEndFrame /
-    FIREBALL_CAST.fps /
-    FIREBALL_CAST.playbackRate
-  );
+  return FIREBALL_CAST.followThroughEndFrame / FIREBALL_CAST.fps;
 }
 
 /** Wall ms for release → followThroughEnd at accelerated playback. */
 export function fireballFollowThroughWallMs(): number {
   const frames =
     FIREBALL_CAST.followThroughEndFrame - FIREBALL_CAST.releaseFrame;
+  // After release, syncPlayerCast sets timeScale to followThroughTimeScale
+  // (replacing charge playbackRate) — wall time is clipDelta / that scale.
   return (
-    fireballFrameWallMs(Math.max(0, frames)) /
-    Math.max(0.1, FIREBALL_CAST.followThroughTimeScale)
+    (Math.max(0, frames) /
+      FIREBALL_CAST.fps /
+      Math.max(0.1, FIREBALL_CAST.followThroughTimeScale)) *
+    1000
   );
 }
 
@@ -1301,11 +1335,7 @@ export function fireballRecoveryWallMs(): number {
 }
 
 export function fireballThrowSeekSec(): number {
-  return (
-    FIREBALL_CAST.throwSeekFrame /
-    FIREBALL_CAST.fps /
-    FIREBALL_CAST.playbackRate
-  );
+  return FIREBALL_CAST.throwSeekFrame / FIREBALL_CAST.fps;
 }
 
 /** Wall ms from throw seek → ball leaves the hands (early-confirm spawn delay). */
@@ -1416,7 +1446,7 @@ export const GROOVE_CAST = {
   clipDurationSec: 2.766667,
   /** Heal pulses while channeling. */
   healTicks: 12,
-  healPerTick: combatMag(8),
+  healPerTick: combatMag(6.4),
   /** Gap between heal ticks (12 × 550ms = 6.6s channel). */
   healTickMs: 550,
   /** Heal aura / dance channel wall time. */
@@ -1478,6 +1508,43 @@ export const ABILITIES: Record<string, AbilityDef> = {
       recoveryMoveMul: 0.95,
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
+    },
+  },
+  /**
+   * Arc Thread (LMB) — fire a short tether. First contact deals damage and
+   * attaches; if aim/LOS/range hold for threadDurationMs, discharge + slow.
+   * Anim: same punch as Bolt; hold release pose through the tether window.
+   */
+  arcThread: {
+    id: "arcThread",
+    unlockCostEssence: ARC_THREAD_CAST.unlockCostEssence,
+    name: "Arc Thread",
+    description:
+      "Fire a short magical tether. On contact, deal a hit and hold the link briefly — if it survives, unleash a second electrical discharge and slow the target.",
+    cooldownMs: ARC_THREAD_CAST.cooldownMs,
+    range: ARC_THREAD_CAST.range,
+    shape: "projectile",
+    effectKind: "arcThread",
+    tags: ["Damage", "SingleTarget", "Channel", "Cast", "Control"],
+    damage: combatMag(5.5),
+    secondaryDamage: combatMag(7.5),
+    threadDurationMs: ARC_THREAD_CAST.threadDurationMs,
+    threadAimToleranceDegrees: ARC_THREAD_CAST.threadAimToleranceDegrees,
+    spawnOffset: ARC_THREAD_CAST.spawnOffset,
+    applyOnHit: [{ statusId: "slowed", durationMs: 700, chance: 1 }],
+    interruptible: true,
+    allowedSlots: ["m1"],
+    timing: {
+      anticipationMs: authoredForWallMs(60),
+      castMs: authoredForWallMs(80),
+      impactMs: authoredForWallMs(ARC_THREAD_CAST.threadDurationMs),
+      recoveryMs: authoredForWallMs(90),
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.8,
+      recoveryMoveMul: 0.95,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
     },
   },
   /**
@@ -1603,13 +1670,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Jump Slam",
     description:
       "Leap to your aim and slam the ground. Airborne iframes; stuns enemies on landing.",
-    cooldownMs: 7000,
+    cooldownMs: 9000,
     range: 4.0,
     shape: "aoe",
     effectKind: "standard",
     tags: ["Area", "Damage", "Movement", "Stun", "Control", "Cast"],
     damage: combatMag(12),
-    radius: 2.2,
+    radius: 1.65,
     allowedSlots: ["m2"],
     // Windup start→19 (fast), air 19→54 (unchanged rate), then 150ms pose hold.
     timing: {
@@ -1865,9 +1932,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: RIFT_FISSURE_CAST.unlockCostEssence,
     name: "Rift Fissure",
     description:
-      "Tear open a rift in front of you, then a second within 5 seconds. Walking into either portal exits the other — allies and enemies alike. Portals stay open for 10 seconds.",
+      "Tear open a rift at your aim, then a second within 5 seconds. Walking into either portal exits the other — allies and enemies alike. Portals stay open for 10 seconds.",
     cooldownMs: RIFT_FISSURE_CAST.cooldownMs,
-    range: RIFT_FISSURE_CAST.placeForward,
+    range: RIFT_FISSURE_CAST.maxPlaceRange,
     shape: "aoe",
     effectKind: "riftFissure",
     tags: ["Blink", "Area", "GroundEffect", "Persistent", "Cast", "Movement"],
@@ -1930,14 +1997,14 @@ export const ABILITIES: Record<string, AbilityDef> = {
      */
   },
   /**
-   * Barrier — short cast, blue absorb bubble (combatMag(40) HP / 3s).
+   * Barrier — short cast, blue absorb bubble (combatMag(30) HP / 3s).
    * Anim: Standing 1H Cast Spell 01.
    */
   barrier: {
     id: "barrier",
     name: "Barrier",
     description:
-      `Locked cast — absorb bubble charges to ${combatMag(40)} shield over the windup (3s once complete). Damage during cast only eats what you've built so far.`,
+      `Locked cast — absorb bubble charges to ${combatMag(30)} shield over the windup (3s once complete). Damage during cast only eats what you've built so far.`,
     cooldownMs: 14000,
     range: 0,
     shape: "buff",
@@ -1973,6 +2040,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   counter: {
     id: "counter",
+    unlockCostEssence: 80,
     name: "Counter",
     description:
       "Plant into a dance stance and glow for 1.2s (no movement). Cancel anytime. The next direct hit (melee or projectile — not ground AoE) is denied, then you gain +20% move speed, +20% damage, and 40% damage resistance for 3s.",
@@ -1983,7 +2051,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
     tags: ["Buff", "Self", "Defense", "Counter", "Channel"],
     damage: 0,
     allowedSlots: ["q"],
-    defaultSlot: "q",
     timing: {
       /** Windup + hold = 1.2s rooted counter window. */
       anticipationMs: 40,
@@ -2158,12 +2225,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnSelf: [{ statusId: "cloaked", durationMs: 2000 }],
   },
   /**
-   * Push Back — circular push wave. Equippable on Q.
+   * Push Back — circular push wave. Default Q starter.
    * Hits shove targets outward, then slow them briefly.
    */
   gust: {
     id: "gust",
-    unlockCostEssence: 80,
     name: "Push Back",
     description:
       "Circular push wave at your feet. Knocks enemies outward, then slows them briefly.",
@@ -2177,6 +2243,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     knockback: 9.5,
     knockbackMs: 320,
     allowedSlots: ["q"],
+    defaultSlot: "q",
     // magic_aoe: suck ends @48, blow @54 — wall times scale with playbackRate
     timing: {
       anticipationMs: authoredForWallMs(gustAnticipationWallMs()),
@@ -2200,6 +2267,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   grasp: {
     id: "grasp",
+    unlockCostEssence: 80,
     name: "Grasp",
     description:
       "Stretch a dark hand forward and yank an enemy toward you. Light damage, then slows them briefly.",
@@ -2209,7 +2277,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "standard",
     tags: ["Projectile", "Damage", "Pull", "Debuff", "Control", "SingleTarget", "Cast"],
     damage: combatMag(5),
-    speed: 26,
+    speed: 24,
     radius: 0.55,
     spawnOffset: 0.42,
     pull: 8,
@@ -2218,8 +2286,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     allowedSlots: ["e"],
     // Timed to Standing 1H Magic Attack 01 (~2.33s) at a snappy combat pace.
     timing: {
-      anticipationMs: 260,
-      castMs: 180,
+      anticipationMs: 320,
+      castMs: 220,
       impactMs: 200,
       recoveryMs: 280,
       anticipationMoveMul: 0.7,
@@ -2241,7 +2309,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Life Leech",
     description:
       "Hold to channel a short red–green drain stream. Enemies in the line take damage each tick; you heal for 40% of damage dealt. Release to end — cooldown starts then.",
-    cooldownMs: 2000,
+    cooldownMs: 0,
     range: LIFE_LEECH_CAST.range,
     shape: "aoe",
     effectKind: "lifeLeech",
@@ -2283,8 +2351,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "standard",
     tags: ["Projectile", "Damage", "Pull", "Dash", "Debuff", "Control", "SingleTarget", "Cast"],
     damage: combatMag(5),
-    /** Faster hook than Grasp so the leap feels snappier. */
-    speed: 40,
+    /** Slightly slower hook for readability vs Grasp. */
+    speed: 32,
     radius: 0.55,
     spawnOffset: 0.42,
     pull: 8,
@@ -2294,8 +2362,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     allowedSlots: ["e"],
     // Same cast pacing as Grasp (Standing 1H Magic Attack 01).
     timing: {
-      anticipationMs: 260,
-      castMs: 180,
+      anticipationMs: 300,
+      castMs: 210,
       impactMs: 200,
       recoveryMs: 280,
       anticipationMoveMul: 0.7,
@@ -2308,13 +2376,12 @@ export const ABILITIES: Record<string, AbilityDef> = {
     applyOnHit: [{ statusId: "chained", durationMs: 500, chance: 1 }],
   },
   /**
-   * Spikes (E) — staggered poison needles along the aim line.
+   * Spikes (E) — staggered poison needles along the aim line. Default E starter.
    * Anim: Standing 1H Magic Attack 03 — first spike @ frame 30.
    * Applies shared `poisoned` DoT (same status as Poison Dart).
    */
   spikes: {
     id: "spikes",
-    unlockCostEssence: 80,
     name: "Spikes",
     description:
       "Venomous spikes erupt from the ground in a fast staggered line. Narrow path, long reach; applies Poisoned (stacks with Poison Dart).",
@@ -2828,7 +2895,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Groove",
     description:
       `Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. If a pulse heals nobody, gain a ${combatMag(4)} HP shield for 8s (stacks). 40% damage resistance while channeling. Cancel anytime.`,
-    cooldownMs: 14000,
+    cooldownMs: 17000,
     range: 0,
     shape: "aoe",
     effectKind: "pulseHeal",
@@ -2837,7 +2904,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     heal: GROOVE_CAST.healPerTick,
     healTicks: GROOVE_CAST.healTicks,
     tickMs: GROOVE_CAST.healTickMs,
-    radius: 7,
+    radius: 5.2,
     allowedSlots: ["r"],
     timing: {
       anticipationMs: authoredForWallMs(GROOVE_CAST.anticipationMs),
@@ -2856,9 +2923,23 @@ export const ABILITIES: Record<string, AbilityDef> = {
   },
 };
 
+/**
+ * Starter spell per hotbar slot — armoury list order and DEFAULT_LOADOUT.
+ * Keep in sync with STARTER_ABILITY_IDS in playerUnlocks.ts.
+ */
+export const DEFAULT_ABILITY_BY_SLOT: Record<SpellSlotId, string> = {
+  m1: "bolt",
+  m2: "frostBall",
+  space: "surge",
+  q: "gust",
+  e: "spikes",
+  r: "barrier",
+  f: "fireball",
+};
+
 /** Ordered by SPELL_SLOTS: LMB, RMB, Space, Q, E, R, F */
-export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map((slot) =>
-  defaultAbilityForSlot(slot.id),
+export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map(
+  (slot) => DEFAULT_ABILITY_BY_SLOT[slot.id],
 );
 
 /** True for the seven default loadout picks (always unlocked). */
@@ -2886,7 +2967,8 @@ export function abilityEffectKind(def: AbilityDef | undefined): AbilityEffectKin
 
 /**
  * Hits that can trigger an armed Counter.
- * Melee (crescent) and contact projectiles yes; Jump Slam yes; other ground AoE / aura ticks no.
+ * Melee (crescent) and contact projectiles yes; Jump Slam yes; Frost Mist cone ticks yes;
+ * other ground AoE / aura ticks no.
  */
 export function abilityTriggersCounter(
   def: AbilityDef | undefined,
@@ -2894,6 +2976,21 @@ export function abilityTriggersCounter(
 ): boolean {
   // NPC melee (Wave Assault zombies) — no AbilityDef, still count as direct hits.
   if (abilityId === "zombie_melee") return true;
+  // Magma orb blasts / shroom pops / frost mist spray — directed hits that should riposte.
+  if (
+    abilityId === "magmaOrbs" ||
+    abilityId === "shrooms" ||
+    abilityId === "frostMist"
+  ) {
+    return true;
+  }
+  if (
+    def?.id === "magmaOrbs" ||
+    def?.id === "shrooms" ||
+    def?.id === "frostMist"
+  ) {
+    return true;
+  }
   if (!def || !(def.damage > 0)) return false;
   if (def.id === "smash") return true;
   if (def.shape === "melee") return true;
@@ -2916,9 +3013,19 @@ export function isComboAbility(def: AbilityDef | undefined): boolean {
   return (def?.combo?.hits ?? 0) > 1;
 }
 
-/** Choosable spells for a hotbar slot (Spells UI catalog). */
+/** Choosable spells for a hotbar slot (Spells UI catalog). Default starter first. */
 export function abilitiesForSlot(slotId: SpellSlotId): AbilityDef[] {
-  return Object.values(ABILITIES).filter((a) => a.allowedSlots.includes(slotId));
+  const preferred = DEFAULT_ABILITY_BY_SLOT[slotId];
+  return Object.values(ABILITIES)
+    .filter((a) => a.allowedSlots.includes(slotId))
+    .sort((a, b) => {
+      if (a.id === preferred) return -1;
+      if (b.id === preferred) return 1;
+      return (
+        (a.unlockCostEssence ?? 0) - (b.unlockCostEssence ?? 0) ||
+        a.name.localeCompare(b.name)
+      );
+    });
 }
 
 function formatSeconds(ms: number): string {
@@ -3041,9 +3148,7 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
 }
 
 function defaultAbilityForSlot(slotId: SpellSlotId): string {
-  /** First entry in the Armoury list for this slot. */
-  const first = abilitiesForSlot(slotId)[0];
-  return first?.id ?? "bolt";
+  return DEFAULT_ABILITY_BY_SLOT[slotId] ?? "bolt";
 }
 
 /**

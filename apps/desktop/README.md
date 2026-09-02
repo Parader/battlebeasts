@@ -1,4 +1,4 @@
-# BattleBeasts desktop (Electron)
+# Mage Trials desktop (Electron)
 
 Local client that packages the web build + GLB assets so friends load them from disk instead of through a tunnel.
 
@@ -40,10 +40,10 @@ Your friend runs the portable app; you run `pnpm --filter @battlebeasts/game-ser
 ## Google sign-in (desktop)
 
 Desktop Google OAuth opens the **system browser**. After Google finishes, the browser hits
-`http://127.0.0.1:3847/auth/callback`, then focuses BattleBeasts. The packaged UI is served from
+`http://127.0.0.1:3847/auth/callback`, then focuses Mage Trials. The packaged UI is served from
 `http://127.0.0.1:3850` (not `file://`) so Supabase PKCE session storage works.
 
 1. In Supabase → Authentication → URL Configuration, add redirect URL (required):
    `http://127.0.0.1:3847/auth/callback`
 2. Ensure the Google OAuth provider is enabled for the same Supabase project used by `apps/web/.env`.
-3. After Google sign-in, allow opening BattleBeasts — the waiting state should clear automatically.
+3. After Google sign-in, allow opening Mage Trials — the waiting state should clear automatically.

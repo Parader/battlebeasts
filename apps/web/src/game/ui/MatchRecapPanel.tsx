@@ -65,7 +65,7 @@ export function MatchRecapPanel({
 
   useEffect(() => {
     setRankRevealDone(false);
-  }, [recap.scoreA, recap.scoreB, recap.winner, localSessionId]);
+  }, [recap.scoreA, recap.scoreB, recap.scoreC, recap.winner, localSessionId]);
 
   useEffect(() => {
     if (!ranked) {
@@ -92,7 +92,9 @@ export function MatchRecapPanel({
             <div>
               <h2 className="bb-panel-title">{winnerLabel(recap.winner)}</h2>
               <p className="bb-panel-sub tabular-nums">
-                {recap.scoreA} – {recap.scoreB}
+                {typeof recap.scoreC === "number"
+                  ? `${recap.scoreA} – ${recap.scoreB} – ${recap.scoreC}`
+                  : `${recap.scoreA} – ${recap.scoreB}`}
               </p>
             </div>
           </header>
@@ -120,8 +122,14 @@ export function MatchRecapPanel({
               <p className="bb-section-label mb-1">Ranked</p>
               <p className="tabular-nums font-semibold">{ranked.label}</p>
               <p className="bb-meta mt-0.5 tabular-nums">
-                LP {ranked.lpDelta >= 0 ? "+" : ""}
-                {ranked.lpDelta}
+                {ranked.lpDelta === 0 && !ranked.promoted && !ranked.demoted ? (
+                  <>LP unchanged{ranked.lpAfter === 0 ? " (shield at 0 LP)" : ""}</>
+                ) : (
+                  <>
+                    LP {ranked.lpDelta >= 0 ? "+" : ""}
+                    {ranked.lpDelta}
+                  </>
+                )}
                 {ranked.mmrDelta !== 0 ? (
                   <>
                     {" "}

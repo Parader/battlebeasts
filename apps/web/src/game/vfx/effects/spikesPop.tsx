@@ -3,6 +3,13 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { OneShotEffect } from "../types";
 import { softEnvelope } from "../easing";
+import {
+  GEO_SPIKE_KNOB,
+  GEO_SPIKE_MIST,
+  GEO_SPIKE_STALK,
+  GEO_SPIKE_THORN,
+  GEO_SPIKE_TIP,
+} from "../sharedGeo";
 
 type RootSpec = {
   ox: number;
@@ -179,31 +186,27 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
             rotation={[r.leanX, r.yaw, r.leanZ + r.twist]}
             position={[r.ox, 0, r.oz]}
           >
-            <mesh material={barkMat} position={[0, 0.5, 0]}>
-              <coneGeometry args={[0.07, 1, 5]} />
-            </mesh>
-            <mesh material={barkMat} position={[0, 0.28, 0]} scale={[1.15, 0.22, 1.15]}>
-              <sphereGeometry args={[0.07, 6, 5]} />
-            </mesh>
+            <mesh material={barkMat} position={[0, 0.5, 0]} geometry={GEO_SPIKE_STALK} />
+            <mesh
+              material={barkMat}
+              position={[0, 0.28, 0]}
+              scale={[1.15, 0.22, 1.15]}
+              geometry={GEO_SPIKE_KNOB}
+            />
             <mesh
               material={barkMat}
               position={[0.04, 0.38, 0]}
               rotation={[r.thornLean, r.thornYaw, 0.2]}
               scale={[r.thornScale, r.thornScale * 0.85, r.thornScale]}
-            >
-              <coneGeometry args={[0.045, 0.7, 4]} />
-            </mesh>
-            <mesh material={tipMat} position={[0, 0.92, 0]}>
-              <sphereGeometry args={[0.045, 6, 6]} />
-            </mesh>
+              geometry={GEO_SPIKE_THORN}
+            />
+            <mesh material={tipMat} position={[0, 0.92, 0]} geometry={GEO_SPIKE_TIP} />
           </group>
         ))}
       </group>
       <group ref={mistRef}>
         {mist.map((_, i) => (
-          <mesh key={i} material={mistMats[i]}>
-            <sphereGeometry args={[1, 6, 6]} />
-          </mesh>
+          <mesh key={i} material={mistMats[i]} geometry={GEO_SPIKE_MIST} />
         ))}
       </group>
     </group>

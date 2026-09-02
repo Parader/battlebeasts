@@ -14,7 +14,7 @@ type RiftSchema = {
 const RING_RADIUS = 0.72;
 
 /** Outline-only cooldown: bright arc depletes clockwise; dim track stays full. */
-function createRiftArmRingMaterial() {
+export function createRiftArmRingMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
       uProgress: { value: 0 },

@@ -24,7 +24,14 @@ export const QUEST_MAX_SPELLS = Object.keys(ABILITIES).length;
 /** Purchased talent points at budget (owned − starter). */
 export const QUEST_MAX_TALENT_SPEND = TALENT_POINT_BUDGET - STARTER_TALENT_POINTS;
 
-export type MatchRewardMode = "arena_1v1" | "arena_2v2" | "arena_3v3" | "battleground" | "pve" | "unknown";
+export type MatchRewardMode =
+  | "arena_1v1"
+  | "arena_1v1v1"
+  | "arena_2v2"
+  | "arena_3v3"
+  | "battleground"
+  | "pve"
+  | "unknown";
 
 export type MatchOutcome = "win" | "loss" | "draw" | "leave_early" | "pve";
 
@@ -65,8 +72,20 @@ type ModeRewardBand = {
 };
 
 /** Per-mode payout bands (before activity mul). */
-export const MATCH_REWARDS: Record<"arena_1v1" | "arena_2v2" | "arena_3v3", ModeRewardBand> = {
+export const MATCH_REWARDS: Record<
+  "arena_1v1" | "arena_1v1v1" | "arena_2v2" | "arena_3v3",
+  ModeRewardBand
+> = {
   arena_1v1: {
+    baseEssence: 8,
+    winBonusEssence: 8,
+    lossCopper: [5, 12],
+    winCopper: [18, 28],
+    activityThreshold: 80,
+    leaveEarlyEssence: 2,
+  },
+  /** Same band as 1v1 for custom FFA trios. */
+  arena_1v1v1: {
     baseEssence: 8,
     winBonusEssence: 8,
     lossCopper: [5, 12],
@@ -566,14 +585,26 @@ export function filterQuestRowsForDisplay<T extends { id: string; completed: boo
 
 export function resolveRewardMode(mode: string | undefined | null): MatchRewardMode {
   if (!mode) return "unknown";
-  if (mode === "arena_1v1" || mode === "arena_2v2" || mode === "arena_3v3") return mode;
+  if (
+    mode === "arena_1v1" ||
+    mode === "arena_1v1v1" ||
+    mode === "arena_2v2" ||
+    mode === "arena_3v3"
+  ) {
+    return mode;
+  }
   if (mode === "battleground") return "battleground";
   if (mode.startsWith("pve") || mode === "stub") return "pve";
   return "unknown";
 }
 
 function bandForMode(mode: MatchRewardMode): ModeRewardBand {
-  if (mode === "arena_1v1" || mode === "arena_2v2" || mode === "arena_3v3") {
+  if (
+    mode === "arena_1v1" ||
+    mode === "arena_1v1v1" ||
+    mode === "arena_2v2" ||
+    mode === "arena_3v3"
+  ) {
     return MATCH_REWARDS[mode];
   }
   if (mode === "battleground") return BATTLEGROUND_BAND;
@@ -665,7 +696,7 @@ export function computeMatchReward(opts: {
 export function outcomeFromMatch(opts: {
   kind: "pvp" | "pve";
   earlyLeave: boolean;
-  winner: "a" | "b" | "draw" | null;
+  winner: "a" | "b" | "c" | "draw" | null;
   team: string;
 }): MatchOutcome {
   if (opts.kind !== "pvp") return "pve";
@@ -687,7 +718,11 @@ export function rewardRollSalt(...parts: string[]): number {
 
 export function isPvpModeId(id: string): id is PvpModeId {
   return (
-    id === "arena_1v1" || id === "arena_2v2" || id === "arena_3v3" || id === "battleground"
+    id === "arena_1v1" ||
+    id === "arena_1v1v1" ||
+    id === "arena_2v2" ||
+    id === "arena_3v3" ||
+    id === "battleground"
   );
 }
 

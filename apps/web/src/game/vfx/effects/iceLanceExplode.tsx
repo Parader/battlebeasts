@@ -6,12 +6,14 @@ import { softEnvelope, smoothstep } from "../easing";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { GroundDecal } from "../components/GroundDecal";
 import { groundPresets } from "../presets/ground";
+import { GEO_OCTA } from "../sharedGeo";
+import { useSpellLight } from "../spellLights";
 
 const ICE = "#7dd3fc";
 const ICE_HOT = "#e0f2fe";
 const ICE_DEEP = "#075985";
 
-/** Lightweight shards — MeshBasic, few verts (was 14 Standard octahedrons). */
+/** Lightweight shards — MeshBasic, shared octa geo. */
 const FRAG_COUNT = 6;
 /** Fallback when FX omits height (mid body). */
 const DEFAULT_LANCE_Y = 0.85;
@@ -25,12 +27,13 @@ type Frag = {
 };
 
 /**
- * Frost detonation — frost bloom + a few ice shards (no heavy sphere mesh).
+ * Frost detonation — frost bloom + a few ice shards.
  * Fragment origin follows `shot.y` (stuck ≈1.05, grounded ≈0.28).
  */
 export function IceLanceExplodeEffect({ shot }: { shot: OneShotEffect }) {
   const root = useRef<THREE.Group>(null);
-  const light = useRef<THREE.PointLight>(null);
+  const lightAt = useRef<THREE.Object3D>(null);
+  const light = useSpellLight();
   const meshes = useRef<(THREE.Mesh | null)[]>([]);
   const fragMat = useMemo(
     () =>
@@ -93,7 +96,7 @@ export function IceLanceExplodeEffect({ shot }: { shot: OneShotEffect }) {
     g.visible = true;
 
     fragMat.opacity = fragFade * 0.9;
-    if (light.current) light.current.intensity = amp * 2.2;
+    light.emitAt(lightAt.current, ICE, amp * 2.2, 4.5);
 
     const safeDt = Math.min(0.05, dt);
     const ageSec = age * (life / 1000);
@@ -146,21 +149,13 @@ export function IceLanceExplodeEffect({ shot }: { shot: OneShotEffect }) {
               meshes.current[i] = el;
             }}
             material={fragMat}
+            geometry={GEO_OCTA}
             position={[0, lanceY, 0]}
             scale={f.size}
-          >
-            <octahedronGeometry args={[1, 0]} />
-          </mesh>
+          />
         ))}
       </group>
-      <pointLight
-        ref={light}
-        position={[0, lanceY, 0]}
-        color={ICE}
-        intensity={0}
-        distance={4.5}
-        decay={2}
-      />
+      <object3D ref={lightAt} position={[0, lanceY, 0]} />
       <AdditiveParticleBurst
         color={ICE_HOT}
         origin={[0, lanceY, 0]}

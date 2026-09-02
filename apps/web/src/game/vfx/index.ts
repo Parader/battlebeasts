@@ -97,6 +97,8 @@ export {
   setAoeRimMarkerProgress,
   createEnergyBallMaterial,
   createEnergyRingMaterial,
+  acquireEnergyBallMaterial,
+  acquireEnergyRingMaterial,
   tintEnergyMaterial,
   createFresnelGlowMaterial,
   setFresnelColor,

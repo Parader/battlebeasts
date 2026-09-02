@@ -198,6 +198,10 @@ let boulderProtoSource: THREE.Object3D | null = null;
 const BOULDER_PROTO_REV = 3;
 let boulderProtoRev = -1;
 
+/** Pre-cloned instances for first fireball / magma casts after warm. */
+const BOULDER_POOL_TARGET = 2;
+const boulderInstancePool: THREE.Object3D[] = [];
+
 function ensureBoulderProtos(gltfScene: THREE.Object3D): THREE.Object3D[] {
   if (
     boulderProtos &&
@@ -206,6 +210,7 @@ function ensureBoulderProtos(gltfScene: THREE.Object3D): THREE.Object3D[] {
   ) {
     return boulderProtos;
   }
+  boulderInstancePool.length = 0;
   const templates = pickBoulderTemplates(gltfScene);
   boulderProtos = templates.map((t) =>
     cloneFittedTemplate(t, BOULDER_TARGET_SIZE, {
@@ -219,26 +224,41 @@ function ensureBoulderProtos(gltfScene: THREE.Object3D): THREE.Object3D[] {
   return boulderProtos;
 }
 
-/**
- * Cheap instance of a pre-fitted boulder (shared materials).
- * Call once per rock — never re-runs bounds fitting.
- */
-export function instantiateBoulder(
-  gltfScene: THREE.Object3D,
-  index: number,
-): THREE.Object3D | null {
-  const protos = ensureBoulderProtos(gltfScene);
-  if (protos.length === 0) return null;
-  const proto = protos[index % protos.length]!;
+function cloneBoulderFromProto(proto: THREE.Object3D, index: number): THREE.Object3D {
   const inst = proto.clone(true);
   const jitter = 0.92 + (index % 7) * 0.025;
   inst.scale.multiplyScalar(jitter);
   return inst;
 }
 
+/**
+ * Cheap instance of a pre-fitted boulder (shared materials).
+ * Call once per rock — never re-runs bounds fitting.
+ * Prefers a warm pool entry when available.
+ */
+export function instantiateBoulder(
+  gltfScene: THREE.Object3D,
+  index: number,
+): THREE.Object3D | null {
+  const pooled = boulderInstancePool.pop();
+  if (pooled) return pooled;
+
+  const protos = ensureBoulderProtos(gltfScene);
+  if (protos.length === 0) return null;
+  const proto = protos[index % protos.length]!;
+  return cloneBoulderFromProto(proto, index);
+}
+
 /** Warm boulder protos during volcano spawn so first rock doesn't hitch. */
 export function warmVolcanoAssets(gltfScene: THREE.Object3D): void {
-  ensureBoulderProtos(gltfScene);
+  const protos = ensureBoulderProtos(gltfScene);
+  // Pre-pool a couple clones so first fireball / magma skip clone(true).
+  let i = 0;
+  while (boulderInstancePool.length < BOULDER_POOL_TARGET && protos.length > 0) {
+    const proto = protos[i % protos.length]!;
+    boulderInstancePool.push(cloneBoulderFromProto(proto, i));
+    i += 1;
+  }
   // Also fit volcano once into a discarded group so GPU shaders compile early.
   const v = pickVolcanoTemplate(gltfScene);
   if (v) {

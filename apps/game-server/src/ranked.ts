@@ -2,9 +2,12 @@ import {
   MMR_MIDPOINT,
   SEASON_TIER_REWARD_KEYS,
   applyRankedMatchResult,
+  compareLadderRank,
   emptyRankSnapshot,
   formatRankLabel,
+  normalizeRankSnapshot,
   softResetMmr,
+  maxPeakTier,
   tierAtLeast,
   type MatchKind,
   type RankDelta,
@@ -21,6 +24,19 @@ const serverKey =
 
 const supabase = url && serverKey ? createClient(url, serverKey) : null;
 
+const usingPublishableKey =
+  Boolean(serverKey) &&
+  !process.env.SUPABASE_SECRET_KEY &&
+  Boolean(process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY);
+
+if (usingPublishableKey) {
+  console.warn(
+    "[ranked] SUPABASE_SECRET_KEY missing — using anon/publishable key. " +
+      "RLS blocks writes to player_ratings, so everyone stays Bronze 0 LP. " +
+      "Set SUPABASE_SECRET_KEY on the game-server.",
+  );
+}
+
 export type SeasonRow = {
   id: string;
   slug: string;
@@ -31,7 +47,7 @@ export type SeasonRow = {
 
 export type RankedPlayerResult = {
   userId: string;
-  team: "a" | "b" | "";
+  team: "a" | "b" | "c" | "";
   delta: RankDelta;
   label: string;
 };
@@ -45,8 +61,9 @@ function rowToSnapshot(row: {
   losses: number;
   placement_remaining: number;
   peak_tier: string;
+  gmRank?: number | null;
 }): RankSnapshot {
-  return {
+  return normalizeRankSnapshot({
     mmr: row.mmr,
     lp: row.lp,
     tier: row.tier as RankSnapshot["tier"],
@@ -55,8 +72,25 @@ function rowToSnapshot(row: {
     losses: row.losses,
     placementRemaining: row.placement_remaining,
     peakTier: row.peak_tier as RankSnapshot["peakTier"],
-    gmRank: null,
-  };
+    gmRank: row.gmRank ?? null,
+  });
+}
+
+async function gmLadderPosition(
+  seasonId: string,
+  userId: string,
+  tier: string,
+): Promise<number | null> {
+  if (!supabase || tier !== "grandmaster") return null;
+  const { data } = await supabase
+    .from("player_ratings")
+    .select("user_id")
+    .eq("season_id", seasonId)
+    .eq("tier", "grandmaster")
+    .order("mmr", { ascending: false })
+    .limit(200);
+  const idx = (data ?? []).findIndex((r) => r.user_id === userId);
+  return idx >= 0 ? idx + 1 : null;
 }
 
 export async function getActiveSeason(): Promise<SeasonRow | null> {
@@ -74,12 +108,18 @@ export async function ensurePlayerRating(
   seasonId: string,
 ): Promise<RankSnapshot> {
   if (!supabase) return emptyRankSnapshot();
-  const { data: existing } = await supabase
+  const { data: existing, error: selectErr } = await supabase
     .from("player_ratings")
     .select("*")
     .eq("user_id", userId)
     .eq("season_id", seasonId)
     .maybeSingle();
+  if (selectErr) {
+    console.warn("[ranked] ensurePlayerRating select failed:", selectErr.message, {
+      userId,
+      seasonId,
+    });
+  }
   if (existing) {
     const snap = rowToSnapshot(existing);
     // Placement matches removed — clear leftover DB countdown so LP UI/awards work.
@@ -95,7 +135,7 @@ export async function ensurePlayerRating(
   }
 
   const blank = emptyRankSnapshot(MMR_MIDPOINT);
-  await supabase.from("player_ratings").insert({
+  const { error: insertErr } = await supabase.from("player_ratings").insert({
     user_id: userId,
     season_id: seasonId,
     mmr: blank.mmr,
@@ -108,6 +148,21 @@ export async function ensurePlayerRating(
     peak_tier: blank.peakTier,
     career_peak_tier: blank.peakTier,
   });
+  if (insertErr) {
+    // Race: another writer inserted — re-read.
+    console.warn("[ranked] ensurePlayerRating insert:", insertErr.message, { userId, seasonId });
+    const { data: again } = await supabase
+      .from("player_ratings")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("season_id", seasonId)
+      .maybeSingle();
+    if (again) return rowToSnapshot(again);
+    console.error(
+      "[ranked] ensurePlayerRating could not create row — ratings will stick at Bronze 0 LP. " +
+        "Check SUPABASE_SECRET_KEY (service role) on the game-server.",
+    );
+  }
   return blank;
 }
 
@@ -145,7 +200,11 @@ export async function getHubRankedState(userId: string): Promise<{
 } | null> {
   const season = await getActiveSeason();
   if (!season) return { season: null, rating: null, label: null };
-  const rating = await ensurePlayerRating(userId, season.id);
+  let rating = await ensurePlayerRating(userId, season.id);
+  if (rating.tier === "grandmaster") {
+    const gmRank = await gmLadderPosition(season.id, userId, rating.tier);
+    rating = { ...rating, gmRank };
+  }
   return { season, rating, label: formatRankLabel(rating) };
 }
 
@@ -164,14 +223,14 @@ export async function getRankedLeaderboard(limit = 100): Promise<
   const season = await getActiveSeason();
   if (!season) return [];
 
+  // Pull a season pool, then sort by visible ladder (not hidden MMR).
   const { data } = await supabase
     .from("player_ratings")
     .select("user_id, mmr, lp, tier, division, profiles(display_name)")
     .eq("season_id", season.id)
-    .order("mmr", { ascending: false })
-    .limit(limit);
+    .limit(Math.max(limit * 5, 500));
 
-  return (data ?? []).map((row, i) => {
+  const rows = (data ?? []).map((row) => {
     const profiles = row.profiles as { display_name?: string } | { display_name?: string }[] | null;
     const name = Array.isArray(profiles)
       ? profiles[0]?.display_name
@@ -179,13 +238,16 @@ export async function getRankedLeaderboard(limit = 100): Promise<
     return {
       userId: row.user_id as string,
       displayName: name ?? "Hunter",
-      mmr: row.mmr as number,
-      lp: row.lp as number,
-      tier: row.tier as string,
-      division: row.division as number,
-      rank: i + 1,
+      mmr: Number(row.mmr) || 0,
+      lp: Number(row.lp) || 0,
+      tier: String(row.tier ?? "bronze"),
+      division: Number(row.division) || 0,
+      rank: 0,
     };
   });
+
+  rows.sort(compareLadderRank);
+  return rows.slice(0, limit).map((row, i) => ({ ...row, rank: i + 1 }));
 }
 
 async function persistSnapshot(
@@ -193,9 +255,11 @@ async function persistSnapshot(
   seasonId: string,
   snap: RankSnapshot,
   careerPeak: RankTier,
-): Promise<void> {
-  if (!supabase) return;
-  const { error } = await supabase.from("player_ratings").upsert({
+): Promise<boolean> {
+  if (!supabase) return false;
+  const peak =
+    typeof careerPeak === "string" && careerPeak.length > 0 ? careerPeak : snap.peakTier;
+  const payload = {
     user_id: userId,
     season_id: seasonId,
     mmr: snap.mmr,
@@ -206,12 +270,76 @@ async function persistSnapshot(
     losses: snap.losses,
     placement_remaining: 0,
     peak_tier: snap.peakTier,
-    career_peak_tier: careerPeak,
+    career_peak_tier: peak,
     updated_at: new Date().toISOString(),
-  });
-  if (error) {
-    console.warn("[ranked] persistSnapshot failed:", error.message, { userId, seasonId });
+  };
+
+  // Prefer explicit update → insert so we never depend on upsert+returning quirks.
+  const { data: updated, error: updateErr } = await supabase
+    .from("player_ratings")
+    .update(payload)
+    .eq("user_id", userId)
+    .eq("season_id", seasonId)
+    .select("lp, tier, division, wins, losses")
+    .maybeSingle();
+
+  if (updateErr) {
+    console.error("[ranked] persistSnapshot update failed:", updateErr.message, {
+      userId,
+      seasonId,
+    });
+  } else if (updated) {
+    return true;
   }
+
+  const { error: insertErr } = await supabase.from("player_ratings").insert(payload);
+  if (insertErr) {
+    // Concurrent insert — try update once more.
+    const { data: again, error: againErr } = await supabase
+      .from("player_ratings")
+      .update(payload)
+      .eq("user_id", userId)
+      .eq("season_id", seasonId)
+      .select("lp")
+      .maybeSingle();
+    if (againErr || !again) {
+      console.error("[ranked] persistSnapshot insert/update failed:", insertErr.message, {
+        userId,
+        seasonId,
+        tier: snap.tier,
+        lp: snap.lp,
+      });
+      return false;
+    }
+  }
+
+  const { data: verify, error: verifyErr } = await supabase
+    .from("player_ratings")
+    .select("lp, tier, division")
+    .eq("user_id", userId)
+    .eq("season_id", seasonId)
+    .maybeSingle();
+  if (verifyErr || !verify) {
+    console.error("[ranked] persistSnapshot verify failed:", verifyErr?.message, {
+      userId,
+      seasonId,
+    });
+    return false;
+  }
+  if (
+    Number(verify.lp) !== snap.lp ||
+    String(verify.tier) !== snap.tier ||
+    Number(verify.division) !== snap.division
+  ) {
+    console.error("[ranked] persistSnapshot verify mismatch", {
+      userId,
+      seasonId,
+      expected: { lp: snap.lp, tier: snap.tier, division: snap.division },
+      got: verify,
+    });
+    return false;
+  }
+  return true;
 }
 
 async function maybeClaimSeasonTier(
@@ -245,24 +373,32 @@ export type FinishRankedMatchArgs = {
   matchId: string;
   mode: string;
   kind: MatchKind;
-  winner: "a" | "b" | "draw";
-  players: Array<{ userId: string; team: "a" | "b" | "" }>;
+  winner: "a" | "b" | "c" | "draw";
+  players: Array<{ userId: string; team: "a" | "b" | "c" | "" }>;
 };
 
 /** Idempotent ranked rating update for a finished match. No-op for custom. */
 export async function applyRankedMatchFinish(
   args: FinishRankedMatchArgs,
-): Promise<RankedPlayerResult[]> {
-  if (args.kind !== "ranked") return [];
+): Promise<{ results: RankedPlayerResult[]; persisted: boolean }> {
+  if (args.kind !== "ranked") return { results: [], persisted: true };
   if (!supabase) {
     console.warn("[ranked] skip finish — Supabase not configured");
-    return [];
+    return { results: [], persisted: false };
   }
 
   const season = await getActiveSeason();
   if (!season) {
     console.warn("[ranked] skip finish — no active season");
-    return [];
+    return { results: [], persisted: false };
+  }
+
+  const fighters = args.players.filter(
+    (p) => p.userId && (p.team === "a" || p.team === "b" || p.team === "c"),
+  );
+  if (fighters.length === 0) {
+    console.warn("[ranked] skip finish — no fighter userIds", { matchId: args.matchId });
+    return { results: [], persisted: false };
   }
 
   const { data: existing } = await supabase
@@ -271,13 +407,47 @@ export async function applyRankedMatchFinish(
     .eq("match_id", args.matchId)
     .maybeSingle();
   if (existing) {
-    // Already processed — return empty (client may have cached deltas from first finish).
-    return [];
+    const stored = await loadStoredMatchResults(args.matchId, fighters);
+    // Repair drift: match was locked but player_ratings never updated (legacy failed persists).
+    if (stored.length > 0) {
+      for (const r of stored) {
+        const live = await ensurePlayerRating(r.userId, season.id);
+        const drifted =
+          live.lp !== r.delta.after.lp ||
+          live.tier !== r.delta.after.tier ||
+          live.division !== r.delta.after.division ||
+          live.mmr !== r.delta.after.mmr;
+        if (drifted) {
+          console.warn("[ranked] repairing drifted rating from match history", {
+            matchId: args.matchId,
+            userId: r.userId,
+            live,
+            after: r.delta.after,
+          });
+          // Match history rows don't store career W/L — keep live wins/losses.
+          await persistSnapshot(
+            r.userId,
+            season.id,
+            {
+              ...live,
+              lp: r.delta.after.lp,
+              mmr: r.delta.after.mmr,
+              tier: r.delta.after.tier,
+              division: r.delta.after.division,
+              peakTier: maxPeakTier(live.peakTier, r.delta.after.tier),
+            },
+            maxPeakTier(live.peakTier, r.delta.after.peakTier),
+          );
+        }
+      }
+    }
+    return { results: stored, persisted: true };
   }
 
-  const fighters = args.players.filter((p) => p.team === "a" || p.team === "b");
   const teamA = fighters.filter((p) => p.team === "a");
   const teamB = fighters.filter((p) => p.team === "b");
+  const teamC = fighters.filter((p) => p.team === "c");
+  const ffa = teamC.length > 0;
 
   const mmrs = await getPlayerMmrs(
     fighters.map((p) => p.userId),
@@ -289,21 +459,33 @@ export async function applyRankedMatchFinish(
   };
   const avgA = avg(teamA);
   const avgB = avg(teamB);
+  const avgC = avg(teamC);
+
+  const opponentAvgFor = (team: "a" | "b" | "c"): number => {
+    if (ffa) {
+      if (team === "a") return (avgB + avgC) / 2;
+      if (team === "b") return (avgA + avgC) / 2;
+      return (avgA + avgB) / 2;
+    }
+    return team === "a" ? avgB : avgA;
+  };
 
   const results: RankedPlayerResult[] = [];
   const playerRows: Record<string, unknown>[] = [];
+  let persistFailed = false;
 
   for (const p of fighters) {
     const before = await ensurePlayerRating(p.userId, season.id);
-    const opponentAvg = p.team === "a" ? avgB : avgA;
-    const won =
-      args.winner === "draw" ? false : (args.winner === "a" && p.team === "a") || (args.winner === "b" && p.team === "b");
+    const team = p.team as "a" | "b" | "c";
+    const opponentAvg = opponentAvgFor(team);
     const draw = args.winner === "draw";
+    const won = !draw && args.winner === team;
     const delta = applyRankedMatchResult({
       snapshot: before,
       opponentAvgMmr: opponentAvg,
       won,
       draw,
+      mode: args.mode,
     });
 
     const { data: prior } = await supabase
@@ -312,13 +494,23 @@ export async function applyRankedMatchFinish(
       .eq("user_id", p.userId)
       .eq("season_id", season.id)
       .maybeSingle();
-    const careerPeak = tierAtLeast(
+    // maxPeakTier (not tierAtLeast — that returns boolean and breaks the CHECK constraint).
+    const careerPeak = maxPeakTier(
       (prior?.career_peak_tier as RankTier) ?? "bronze",
       delta.after.peakTier,
     );
 
-    await persistSnapshot(p.userId, season.id, delta.after, careerPeak);
-    await maybeClaimSeasonTier(p.userId, season.id, delta.before, delta.after);
+    const saved = await persistSnapshot(p.userId, season.id, delta.after, careerPeak);
+    if (!saved) {
+      persistFailed = true;
+      console.error("[ranked] persist failed for fighter — will still show recap LP", {
+        matchId: args.matchId,
+        userId: p.userId,
+        lpDelta: delta.lpDelta,
+      });
+    } else {
+      await maybeClaimSeasonTier(p.userId, season.id, delta.before, delta.after);
+    }
 
     results.push({
       userId: p.userId,
@@ -345,6 +537,15 @@ export async function applyRankedMatchFinish(
     });
   }
 
+  // Always return deltas for match recap UI. Only lock the match when every
+  // rating row persisted — otherwise a rematch/retry can repair.
+  if (persistFailed) {
+    console.error("[ranked] abort match lock — persist failed; match will NOT be locked", {
+      matchId: args.matchId,
+    });
+    return { results, persisted: false };
+  }
+
   const { error: matchErr } = await supabase.from("ranked_matches").insert({
     match_id: args.matchId,
     season_id: season.id,
@@ -353,19 +554,86 @@ export async function applyRankedMatchFinish(
     winner: args.winner,
   });
   if (matchErr) {
-    // Race: another writer won — treat as already processed.
+    // Race: another writer won — return whatever they stored.
     console.warn("[ranked] match insert", matchErr.message);
-    return [];
+    return {
+      results: await loadStoredMatchResults(args.matchId, fighters),
+      persisted: true,
+    };
   }
 
   if (playerRows.length) {
-    await supabase.from("ranked_match_players").insert(playerRows);
+    const { error: playersErr } = await supabase.from("ranked_match_players").insert(playerRows);
+    if (playersErr) {
+      console.warn("[ranked] match players insert", playersErr.message);
+    }
   }
 
   // Refresh GM top-N assignment by MMR among masters+.
   await refreshGrandmasters(season.id);
 
-  return results;
+  return { results, persisted: true };
+}
+
+async function loadStoredMatchResults(
+  matchId: string,
+  fighters: Array<{ userId: string; team: "a" | "b" | "c" | "" }>,
+): Promise<RankedPlayerResult[]> {
+  if (!supabase) return [];
+  const { data } = await supabase
+    .from("ranked_match_players")
+    .select("*")
+    .eq("match_id", matchId);
+  if (!data?.length) return [];
+
+  const byUser = new Map(data.map((row) => [row.user_id as string, row]));
+  const out: RankedPlayerResult[] = [];
+  for (const p of fighters) {
+    const row = byUser.get(p.userId);
+    if (!row) continue;
+    const before = normalizeRankSnapshot({
+      mmr: Number(row.mmr_before) || MMR_MIDPOINT,
+      lp: Number(row.lp_before) || 0,
+      tier: String(row.tier_before || "bronze") as RankTier,
+      division: Number(row.division_before) || 3,
+      wins: 0,
+      losses: 0,
+      placementRemaining: 0,
+      peakTier: String(row.tier_before || "bronze") as RankTier,
+      gmRank: null,
+    });
+    const after = normalizeRankSnapshot({
+      mmr: Number(row.mmr_after) || before.mmr,
+      lp: Number(row.lp_after) || 0,
+      tier: String(row.tier_after || before.tier) as RankTier,
+      division: Number(row.division_after) || before.division,
+      wins: before.wins,
+      losses: before.losses,
+      placementRemaining: 0,
+      peakTier: String(row.tier_after || before.tier) as RankTier,
+      gmRank: null,
+    });
+    const lpDelta = Number(row.lp_delta) || after.lp - before.lp;
+    const mmrDelta = Number(row.mmr_delta) || after.mmr - before.mmr;
+    out.push({
+      userId: p.userId,
+      team: p.team,
+      delta: {
+        before,
+        after,
+        mmrDelta,
+        lpDelta,
+        promoted:
+          before.tier !== after.tier ||
+          (before.division !== after.division && after.division < before.division),
+        demoted:
+          before.tier !== after.tier ||
+          (before.division !== after.division && after.division > before.division),
+      },
+      label: formatRankLabel(after),
+    });
+  }
+  return out;
 }
 
 async function refreshGrandmasters(seasonId: string): Promise<void> {

@@ -1,37 +1,81 @@
 /**
  * Cemetery Wave Assault arena (PvE dungeon).
  * Visual: apps/web/public/assets/maps/cemetery.glb
- * Bézier boundary curves are in the blend but not in the GLB — until
- * cemetery.walls.json is exported, we use a procedural playable box.
+ * Walls: packages/shared/src/maps/cemetery.walls.json (Blender CollisionWalls)
  */
 
 import type { StaticCollider, WallCollider } from "./collision";
+import cemeteryWalls from "./maps/cemetery.walls.json";
 
-/** Cache-bust when re-exporting the GLB. */
-export const CEMETERY_SCENE_URL = `/assets/maps/cemetery.glb?v=1`;
+type WallsDoc = {
+  version?: number;
+  exportedAt?: string;
+  walls?: Array<{
+    id: string;
+    segs: number[];
+  }>;
+};
+
+const wallsDoc = cemeteryWalls as WallsDoc;
+
+/** Cache-bust when re-exporting the GLB / walls. */
+export const CEMETERY_SCENE_URL = `/assets/maps/cemetery.glb?v=${encodeURIComponent(
+  wallsDoc.exportedAt ?? "2",
+)}`;
 
 /** Same authoring scale family as village / desert. */
 export const CEMETERY_SCENE_SCALE = 0.2;
 
-/**
- * Ground mesh ≈ ±42.6 world after node×scene scale.
- * Keep a little inset so hunters don't clip through fence meshes.
- */
-export const CEMETERY_PLAYABLE_HALF = 38;
+const S = CEMETERY_SCENE_SCALE;
 
-/** Soft ground plane under the GLB (matches mesh extent). */
-export const CEMETERY_GROUND_SIZE = CEMETERY_PLAYABLE_HALF * 2 + 10;
+function sx(v: number) {
+  return v * S;
+}
 
-/** Player spawn at arena center. */
+function wallExtentHalf(): number {
+  let max = 40;
+  for (const w of wallsDoc.walls ?? []) {
+    for (const v of w.segs) max = Math.max(max, Math.abs(sx(v)));
+  }
+  return max;
+}
+
+/** Approx half-extent of Blender wall polylines (world units). */
+export const CEMETERY_PLAYABLE_HALF = wallExtentHalf();
+
+/** Soft ground plane under the GLB (matches wall extent). */
+export const CEMETERY_GROUND_SIZE = Math.ceil(CEMETERY_PLAYABLE_HALF * 2 + 16);
+
+/** Player spawn at arena center (solo / slot 0). */
 export const CEMETERY_PLAYER_SPAWN = { x: 0, z: 0, yaw: 0 } as const;
 
 /**
+ * Coop spawn pads around center so up to 4 fighters don't stack.
+ * Slot 0 stays at the classic center spawn.
+ */
+export function cemeteryPlayerSpawn(slotIndex: number): {
+  x: number;
+  z: number;
+  yaw: number;
+} {
+  const slot = Math.max(0, Math.floor(slotIndex));
+  if (slot === 0) return { ...CEMETERY_PLAYER_SPAWN };
+  const radius = 1.75;
+  const angle = ((slot - 1) / 3) * Math.PI * 2;
+  return {
+    x: Math.sin(angle) * radius,
+    z: Math.cos(angle) * radius,
+    yaw: 0,
+  };
+}
+
+/**
  * Candidate enemy spawn ring (world units). Director picks points farthest from players.
- * Inside the playable box so they don't spawn outside the fence.
+ * Sized inside the fence (~70% of wall half-extent).
  */
 export const CEMETERY_ENEMY_SPAWN_RING: ReadonlyArray<{ x: number; z: number }> = (() => {
   const out: { x: number; z: number }[] = [];
-  const r = 28;
+  const r = Math.max(28, Math.min(CEMETERY_PLAYABLE_HALF * 0.7, CEMETERY_PLAYABLE_HALF - 8));
   const n = 12;
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2;
@@ -40,44 +84,15 @@ export const CEMETERY_ENEMY_SPAWN_RING: ReadonlyArray<{ x: number; z: number }> 
   return out;
 })();
 
-/** Build a closed square as wall segments (axis-aligned playable bounds). */
-function squareWallSegs(half: number, stepsPerSide = 10): number[] {
-  const corners: Array<[number, number]> = [
-    [-half, -half],
-    [half, -half],
-    [half, half],
-    [-half, half],
-    [-half, -half],
-  ];
-  const segs: number[] = [];
-  for (let s = 0; s < 4; s++) {
-    const [ax, az] = corners[s]!;
-    const [bx, bz] = corners[s + 1]!;
-    for (let i = 0; i < stepsPerSide; i++) {
-      const t0 = i / stepsPerSide;
-      const t1 = (i + 1) / stepsPerSide;
-      segs.push(
-        ax + (bx - ax) * t0,
-        az + (bz - az) * t0,
-        ax + (bx - ax) * t1,
-        az + (bz - az) * t1,
-      );
-    }
-  }
-  return segs;
-}
-
 export function cemeteryWallColliders(): WallCollider[] {
-  return [
-    {
-      id: "cemetery_bounds",
-      shape: "walls" as const,
-      segs: Float32Array.from(squareWallSegs(CEMETERY_PLAYABLE_HALF)),
-    },
-  ];
+  return (wallsDoc.walls ?? []).map((w) => ({
+    id: w.id,
+    shape: "walls" as const,
+    segs: Float32Array.from(w.segs.map(sx)),
+  }));
 }
 
-/** Movement solids for Wave Assault (swap for Blender walls.json when exported). */
+/** Movement solids for Wave Assault (Blender CollisionWalls curves). */
 export function cemeteryStaticColliders(): StaticCollider[] {
   return cemeteryWallColliders();
 }

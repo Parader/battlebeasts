@@ -1,39 +1,44 @@
 import { useThree } from "@react-three/fiber";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { warmSpellMaterials } from "./preloadVfx";
 import { whenSpellTexturesPrimed } from "./primeSpellTextures";
-import { markVfxGpuReady } from "./vfxGpuReady";
+import { clearVfxGpuReady, markVfxGpuReady } from "./vfxGpuReady";
+
+type Props = {
+  /**
+   * Changes on hub ↔ content (and dungeon) remounts so shaders re-compile
+   * under the new lights/fog. Parent should clear ready when this flips.
+   */
+  warmKey?: string;
+};
 
 /**
- * One-shot compile of spell VFX shaders after the Canvas / lights exist.
+ * Compile spell VFX shaders after Canvas / scene lights exist.
  * Waits for texture prime so programs compile with real maps.
- * Signals the play loading gate when done.
+ * Keeps a persistent hidden warm group (see warmSpellMaterials).
+ * Re-runs when `warmKey` changes (map transfer).
  */
-export function VfxWarmup() {
+export function VfxWarmup({ warmKey = "default" }: Props) {
   const { gl, scene, camera } = useThree();
-  const done = useRef(false);
 
   useEffect(() => {
-    if (done.current) return;
-    done.current = true;
+    clearVfxGpuReady();
 
     let cancelled = false;
     let raf = 0;
 
     const run = async () => {
-      // Don't block forever if preload failed — warm with lazy TextureLoader fallbacks.
       await Promise.race([
         whenSpellTexturesPrimed(),
         new Promise<void>((r) => window.setTimeout(r, 4000)),
       ]);
       if (cancelled) return;
 
-      // A couple frames so lights/shadows are in the scene graph.
       await new Promise<void>((resolve) => {
         let frames = 0;
         const tick = () => {
           frames += 1;
-          if (frames < 2) {
+          if (frames < 3) {
             raf = requestAnimationFrame(tick);
             return;
           }
@@ -48,7 +53,7 @@ export function VfxWarmup() {
       } catch {
         // Warmup is best-effort; first cast still works without it.
       } finally {
-        markVfxGpuReady();
+        if (!cancelled) markVfxGpuReady();
       }
     };
 
@@ -57,7 +62,7 @@ export function VfxWarmup() {
       cancelled = true;
       cancelAnimationFrame(raf);
     };
-  }, [gl, scene, camera]);
+  }, [gl, scene, camera, warmKey]);
 
   return null;
 }

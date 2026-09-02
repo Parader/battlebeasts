@@ -156,6 +156,13 @@ export function startHubIntro() {
   }, HUB_INTRO_FADE_IN_MS * 0.35);
 }
 
+/** Advance to the next intro line (or hand off after the last line). */
+export function advanceHubIntroLine() {
+  if (phase !== "playing") return;
+  clearTimer();
+  showLine(lineIndex + 1);
+}
+
 /** Skip remaining narration and hand off to playable camera. */
 export function skipHubIntro() {
   if (phase !== "playing" && phase !== "handingOff") return;

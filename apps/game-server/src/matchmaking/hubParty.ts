@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  COOP_PVE_MAX_PLAYERS,
   PVP_MODES,
+  isPvpFfaTriosMode,
   pvpModeFitsPlayerCount,
+  type PartyKind,
   type PartyMemberSnapshot,
   type PartySnapshot,
   type PvpSeat,
@@ -17,13 +20,14 @@ export type HubPartyMember = {
 export type HubParty = {
   partyId: string;
   leaderSessionId: string;
+  kind: PartyKind;
   modes: string[];
   members: Map<string, HubPartyMember>;
   /** sessionIds with an outstanding invite. */
   pendingInvites: Set<string>;
   /** Friend user ids invited from party lobby — join hub then auto-enter party. */
   pendingFriendInvites: Set<string>;
-  /** True once the party has been locked into the PvP queue. */
+  /** True once the party has been locked into the PvP queue / coop transfer. */
   queued: boolean;
 };
 
@@ -43,40 +47,68 @@ export function filterModesForHubSize(modes: string[], hubPlayerCount: number): 
 
 /** Whether the party's current seat assignments could fill (or fit within) `modeId`. */
 export function partyFitsMode(party: HubParty, modeId: string): boolean {
+  if (party.kind === "coop_pve") return party.members.size <= COOP_PVE_MAX_PLAYERS;
   const mode = PVP_MODES.find((m) => m.id === modeId);
   if (!mode) return false;
-  const { teamA, teamB, spectator } = seatCounts(party);
-  return teamA <= mode.teamSize && teamB <= mode.teamSize && spectator <= mode.maxSpectators;
+  const { teamA, teamB, teamC, spectator } = seatCounts(party);
+  if (spectator > mode.maxSpectators) return false;
+  if (isPvpFfaTriosMode(modeId) || mode.teamCount >= 3) {
+    return (
+      teamA <= mode.teamSize &&
+      teamB <= mode.teamSize &&
+      teamC <= mode.teamSize
+    );
+  }
+  return teamA <= mode.teamSize && teamB <= mode.teamSize && teamC === 0;
 }
 
-/** Full premade: both teams filled to mode capacity (can start Ranked/Unranked without queue). */
+/** Full premade: all sides filled to mode capacity (can start without queue). */
 export function isFullPremadeLobby(party: HubParty, modeId: string): boolean {
+  if (party.kind === "coop_pve") return false;
   const mode = PVP_MODES.find((m) => m.id === modeId);
   if (!mode) return false;
-  const { teamA, teamB, spectator } = seatCounts(party);
-  return (
-    teamA === mode.teamSize &&
-    teamB === mode.teamSize &&
-    spectator <= mode.maxSpectators &&
-    partyFitsMode(party, modeId)
-  );
+  const { teamA, teamB, teamC, spectator } = seatCounts(party);
+  if (spectator > mode.maxSpectators) return false;
+  if (!partyFitsMode(party, modeId)) return false;
+  if (isPvpFfaTriosMode(modeId) || mode.teamCount >= 3) {
+    return (
+      teamA === mode.teamSize &&
+      teamB === mode.teamSize &&
+      teamC === mode.teamSize
+    );
+  }
+  return teamA === mode.teamSize && teamB === mode.teamSize && teamC === 0;
 }
 
-export function seatCounts(party: HubParty): { teamA: number; teamB: number; spectator: number } {
+export function seatCounts(party: HubParty): {
+  teamA: number;
+  teamB: number;
+  teamC: number;
+  spectator: number;
+} {
   let teamA = 0;
   let teamB = 0;
+  let teamC = 0;
   let spectator = 0;
   for (const member of party.members.values()) {
     if (member.seat === "teamA") teamA++;
     else if (member.seat === "teamB") teamB++;
+    else if (member.seat === "teamC") teamC++;
     else spectator++;
   }
-  return { teamA, teamB, spectator };
+  return { teamA, teamB, teamC, spectator };
 }
 
-/** Puts a newly-joining member on whichever team currently has fewer fighters. */
+/** Puts a newly-joining member on whichever team currently has fewer fighters (coop: always teamA). */
 export function defaultSeatFor(party: HubParty): PvpSeat {
-  const { teamA, teamB } = seatCounts(party);
+  if (party.kind === "coop_pve") return "teamA";
+  const { teamA, teamB, teamC } = seatCounts(party);
+  const ffa = party.modes.some((m) => isPvpFfaTriosMode(m));
+  if (ffa) {
+    if (teamA <= teamB && teamA <= teamC) return "teamA";
+    if (teamB <= teamC) return "teamB";
+    return "teamC";
+  }
   return teamA <= teamB ? "teamA" : "teamB";
 }
 
@@ -90,6 +122,7 @@ export function toPartySnapshot(party: HubParty): PartySnapshot {
   return {
     partyId: party.partyId,
     leaderSessionId: party.leaderSessionId,
+    kind: party.kind,
     modes: [...party.modes],
     members,
     pendingInvites: [...party.pendingInvites],
@@ -119,10 +152,15 @@ export class HubPartyRegistry {
     return this.partyBySession.has(sessionId);
   }
 
-  create(leader: { sessionId: string; userId: string; displayName: string }, modes: string[]): HubParty {
+  create(
+    leader: { sessionId: string; userId: string; displayName: string },
+    modes: string[],
+    kind: PartyKind = "pvp",
+  ): HubParty {
     const party: HubParty = {
       partyId: randomUUID(),
       leaderSessionId: leader.sessionId,
+      kind,
       modes: [...modes],
       members: new Map(),
       pendingInvites: new Set(),

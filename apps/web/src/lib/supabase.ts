@@ -1,11 +1,18 @@
 import { createClient, type SupportedStorage, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const publishableKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
-    import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
+function trimEnv(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
 
-export const isSupabaseConfigured = Boolean(url && publishableKey);
+export const supabaseUrl = trimEnv(import.meta.env.VITE_SUPABASE_URL);
+export const supabasePublishableKey = trimEnv(
+    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY,
+);
+
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
 
 const isElectron =
     typeof window !== "undefined" && window.battlebeasts?.isElectron === true;
@@ -42,7 +49,7 @@ function createElectronAuthStorage(): SupportedStorage {
 }
 
 export const supabase: SupabaseClient<Database> | null = isSupabaseConfigured
-    ? createClient<Database>(url!, publishableKey!, {
+    ? createClient<Database>(supabaseUrl!, supabasePublishableKey!, {
           auth: {
               persistSession: true,
               autoRefreshToken: true,

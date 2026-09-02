@@ -1,6 +1,11 @@
 /* BattleBeasts in-game HUD ? dark game chrome (arena lobby language). */
 
-@import url("https://fonts.googleapis.com/css2?family=Elms+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Merienda:wght@400;500;600;700&display=swap");
+/*
+ * The Google Fonts @import lives in globals.css, not here. This file is
+ * concatenated into globals.css fourth, so an @import at the top of it still
+ * lands thousands of lines into the flattened stylesheet, where CSS forbids
+ * it.
+ */
 
 :root {
   --bb-ink: #e8f2fa;
@@ -236,7 +241,13 @@
   font-weight: 700;
   letter-spacing: 0.03em;
   color: var(--bb-brass);
-  min-width: 2.6rem;
+  min-width: 1.4rem;
+}
+
+.bb-talent-header-pts__budget {
+  font-family: var(--bb-font-body);
+  font-size: 0.78rem;
+  color: var(--bb-ink-soft);
 }
 
 .bb-talent-header-pts__buy {
@@ -508,12 +519,28 @@
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+  padding: 0;
 }
 
 .bb-panel-body:has(.bb-talent-panel) > .bb-talent-panel {
   flex: 1;
   min-height: 0;
   height: 100%;
+}
+
+/* Full-bleed constellation shell — fills the viewport under the overlay. */
+.bb-panel-stack--constel {
+  width: min(100vw - 1rem, 100%);
+  max-width: none !important;
+  height: min(100dvh - 1rem, 100%);
+  max-height: none !important;
+}
+
+.bb-book-panel--constel {
+  height: 100%;
+  max-height: none;
+  border-radius: 6px;
+  overflow: hidden;
 }
 
 /* Merchant */
@@ -754,6 +781,14 @@
 
 .bb-shop__card--focus {
   border-color: color-mix(in srgb, var(--bb-brass) 55%, var(--bb-panel-line));
+}
+
+.bb-shop__card--equipped {
+  border-color: color-mix(in srgb, var(--bb-panel-accent) 55%, var(--bb-panel-line));
+}
+
+.bb-shop__card--equipped .bb-loadout-card__shape {
+  color: var(--bb-panel-accent);
 }
 
 .bb-shop__buy-row {
@@ -1594,6 +1629,389 @@
     0 8px 28px rgba(0, 0, 0, 0.55);
 }
 
+/* ---- Armoury: flex slot picker and pool ---- */
+
+/*
+ * The flex picker sits under the seven-slot bar rather than beside it. Ten
+ * equal slots in one row would read as one ten-key kit, which is the opposite
+ * of true: these three are paid for per cast and the other seven are not.
+ */
+.bb-flex-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: none;
+  padding: 0.5rem 0.7rem;
+  border-radius: 4px;
+  border: 1px solid var(--bb-panel-line);
+  background: rgba(10, 14, 22, 0.4);
+}
+
+.bb-flex-row__label {
+  font-family: var(--bb-font-display);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fbbf24;
+}
+
+.bb-flex-row__slots {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.bb-flex-row__clear {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--bb-muted, #94a3b8);
+  text-decoration: underline;
+}
+
+.bb-flex-row__clear:hover {
+  color: #f87171;
+}
+
+.bb-flex-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.25rem;
+  border-radius: 3px;
+  border: 1.5px solid var(--bb-panel-line);
+  background: rgba(8, 12, 18, 0.7);
+  text-align: left;
+}
+
+.bb-flex-pick--on {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.45);
+}
+
+.bb-flex-pick__icon {
+  position: relative;
+  width: 2.75rem;
+  height: 2.75rem;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(4, 8, 14, 0.7);
+}
+
+.bb-flex-pick__empty-mark {
+  font-size: 1.1rem;
+  color: rgba(148, 163, 184, 0.6);
+}
+
+.bb-flex-pick__bind {
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+}
+
+.bb-flex-pick__cost {
+  position: absolute;
+  top: 1px;
+  left: 2px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #fbbf24;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
+}
+
+.bb-flex-pick__name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bb-flex-pick--empty .bb-flex-pick__name {
+  color: var(--bb-muted, #94a3b8);
+  font-style: italic;
+}
+
+/*
+ * A locked slot reads as a purchase, not as a broken slot: dashed border for
+ * "nothing here yet" and the price left at full contrast so the ask is legible.
+ */
+.bb-flex-pick--locked {
+  border-style: dashed;
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.bb-flex-pick--locked .bb-flex-pick__name {
+  color: #fbbf24;
+}
+
+.bb-flex-pick--locked:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bb-flex-pick--locked:disabled .bb-flex-pick__name {
+  color: var(--bb-muted, #94a3b8);
+}
+
+.bb-flex-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-bottom: 0.6rem;
+  /* Fixed header above the scrolling pool -- must not be squeezed by it. */
+  flex: none;
+}
+
+.bb-flex-filters__group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.bb-flex-filters__legend {
+  min-width: 2.8rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bb-muted, #94a3b8);
+}
+
+/* Cost rides on the family chip: filtering by family *is* filtering by price. */
+.bb-flex-filters__pips {
+  margin-left: 0.3rem;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #fbbf24;
+}
+
+/*
+ * The scroll container in flex mode.
+ *
+ * In slot mode `.bb-armoury__grid` is the direct flex child that scrolls. With
+ * groups there are several grids, so the scrolling has to move up to their
+ * wrapper -- otherwise nothing owns the overflow, the sections run past the
+ * panel, and only the first family is reachable.
+ */
+.bb-flex-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Grids inside a group size to their content; the wrapper does the scrolling. */
+.bb-flex-groups .bb-armoury__grid {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+
+/* Sections size to content; shrinking them would clip cards mid-scroll. */
+.bb-flex-group {
+  flex: none;
+}
+
+.bb-flex-group__header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--bb-panel-line);
+}
+
+.bb-flex-group__name {
+  font-family: var(--bb-font-display);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.bb-flex-group__cost {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fbbf24;
+}
+
+/* Energy price next to the spell name, in the pool. */
+.bb-armoury-card__energy {
+  margin-left: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #fbbf24;
+}
+
+/*
+ * A spell that is legal but pointless here -- same cooldown already in the kit.
+ * Left visible and explained rather than filtered out, because a card that
+ * silently disappears from a list reads as a bug.
+ */
+.bb-armoury-card--blocked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bb-armoury-card__blocked {
+  margin-top: 0.2rem;
+  font-size: 0.68rem;
+  font-style: italic;
+  color: #f87171;
+}
+
+/*
+ * Flex tray -- the Energy-paid spells, above the main bar.
+ *
+ * Smaller and quieter than the ability tray on purpose. These are situational
+ * extras rather than the core kit, and at any moment some of them are usually
+ * unaffordable, so giving them equal visual weight would overstate how much of
+ * the bar is actually live. It is a narrower strip so the eye reads the two
+ * rows as "kit" and "extras" rather than one ten-slot bar.
+ */
+.bb-flex-tray {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.3rem;
+  padding: 0.3rem 0.45rem 0.25rem;
+  border-radius: 4px;
+  background: var(--bb-page-fill);
+  border: 1px solid var(--bb-panel-line);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+.bb-flex-slot {
+  position: relative;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1.5px solid var(--bb-panel-line);
+  background: rgba(8, 12, 18, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6) inset,
+    0 2px 4px rgba(0, 0, 0, 0.4);
+  font-family: var(--bb-font-display);
+}
+
+.bb-flex-slot--icon {
+  background: rgba(8, 12, 18, 0.92);
+}
+
+.bb-flex-slot__art {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+  border-radius: 2px;
+}
+
+.bb-flex-slot--icon:has(.bb-ability-slot__cd-dim) .bb-flex-slot__art {
+  filter: grayscale(0.55) brightness(0.42);
+}
+
+/*
+ * Unaffordable. Desaturated rather than dimmed, and the cost badge stays lit:
+ * the slot is not disabled, it has a price you have not met yet, and the
+ * number you are waiting on should be the one thing still readable.
+ */
+.bb-flex-slot--poor .bb-flex-slot__art {
+  filter: grayscale(0.85) brightness(0.5);
+}
+
+.bb-flex-slot--poor {
+  border-color: rgba(120, 130, 150, 0.5);
+}
+
+/* Locked slots stay on the bar so the mechanic is visible before it is bought. */
+.bb-flex-slot--locked {
+  border-style: dashed;
+  border-color: rgba(120, 130, 150, 0.35);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.bb-flex-slot__lock {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  opacity: 0.65;
+}
+
+.bb-flex-slot__cd-num {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--bb-font-display);
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #fff8e7;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* Cost in pips, top-left, in the same amber the Energy bar fills with. */
+.bb-flex-slot__cost {
+  position: absolute;
+  top: 1px;
+  left: 2px;
+  z-index: 4;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #fbbf24;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 4px rgba(0, 0, 0, 0.8);
+}
+
+.bb-flex-slot--poor .bb-flex-slot__cost {
+  color: #f87171;
+}
+
+.bb-flex-slot__glyph {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.bb-flex-slot--flash {
+  border-color: #f3e6c0;
+  box-shadow:
+    0 0 0 1px #f3e6c0 inset,
+    0 0 12px rgba(201, 178, 122, 0.55);
+  transform: scale(1.04);
+}
+
+.bb-ability-tooltip__cost {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fbbf24;
+}
+
 .bb-ability-slot {
   position: relative;
   width: 3.65rem;
@@ -2268,386 +2686,274 @@
   backdrop-filter: blur(2px);
 }
 
-/* Talent trees ? left rail + filled stage */
+/* Talent constellation — full-bleed pan/zoom map */
 .bb-talent-panel {
-  display: grid;
-  grid-template-columns: minmax(12rem, 14rem) minmax(0, 1fr);
-  gap: 1rem;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: min(72vh, 44rem);
   align-items: stretch;
 }
 
-@media (max-width: 720px) {
-  .bb-talent-panel {
-    grid-template-columns: 1fr;
-    min-height: min(70vh, 38rem);
-  }
-}
-
-.bb-talent-rail {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+.bb-talent-panel--constel {
   min-height: 0;
-  padding: 0.75rem;
-  border: 1px solid var(--bb-panel-line);
-  border-radius: 3px;
-  background: rgba(6, 18, 32, 0.72);
+  gap: 0;
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(30, 70, 110, 0.22), transparent 55%),
+    linear-gradient(180deg, #071220 0%, #040a12 100%);
 }
 
-.bb-talent-rail__trees-label {
+.bb-constel-chrome {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0;
-}
-
-.bb-talent-rail__budget {
-  font-family: var(--bb-font-body);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: none;
-  color: var(--bb-ink-soft);
-}
-
-.bb-talent-rail__tabs {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 0.45rem;
-  min-height: 0;
-}
-
-.bb-talent-rail__tab {
-  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.55rem;
-  width: 100%;
-  min-height: 3.15rem;
-  padding: 0.55rem 0.7rem;
-  text-align: left;
+  gap: 0.55rem 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--bb-panel-line);
+  background: rgba(6, 18, 32, 0.88);
+  z-index: 2;
+}
+
+.bb-constel-chrome__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.bb-constel-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.bb-constel-legend__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
   border-radius: 2px;
   border: 1px solid var(--bb-panel-line);
-  background: rgba(16, 40, 64, 0.85);
+  background: rgba(16, 40, 64, 0.75);
   color: var(--bb-ink-soft);
   cursor: pointer;
   font-family: var(--bb-font-display);
   transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
 }
 
-.bb-talent-rail__tab:hover {
+.bb-constel-legend__chip:hover {
   border-color: var(--bb-talent-accent, var(--bb-panel-accent));
   color: var(--bb-ink);
 }
 
-.bb-talent-rail__tab--on {
+.bb-constel-legend__chip--on {
   border-color: var(--bb-talent-accent, var(--bb-panel-accent));
   background: color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 18%, rgba(16, 40, 64, 0.9));
   color: var(--bb-ink);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 35%, transparent);
 }
 
-.bb-talent-rail__tab-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
-.bb-talent-rail__tab-icon {
-  flex-shrink: 0;
-}
-
-.bb-talent-rail__tab-name {
-  font-size: 0.92rem;
+.bb-constel-legend__name {
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
-.bb-talent-rail__tab-pts {
+.bb-constel-legend__pts {
   font-family: var(--bb-font-body);
-  font-size: 0.82rem;
-  letter-spacing: 0.04em;
+  font-size: 0.7rem;
   color: var(--bb-ink-soft);
 }
 
-.bb-talent-rail__tab--on .bb-talent-rail__tab-pts {
+.bb-constel-legend__chip--on .bb-constel-legend__pts {
   color: var(--bb-brass);
 }
 
-.bb-talent-main {
-  /* loadout presets | stage (fills) | footer — points live in the panel header */
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 0.75rem;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-}
-
-.bb-talent-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.7rem 1rem;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid var(--bb-panel-line);
-  border-radius: 3px;
-  background: rgba(6, 18, 32, 0.72);
-}
-
-.bb-talent-bar--foot {
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-
-.bb-talent-bar__info {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.75rem 1.5rem;
-}
-
-.bb-talent-bar__stat {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.35rem 0.45rem;
-}
-
-.bb-talent-bar__k {
-  font-family: var(--bb-font-display);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--bb-panel-accent);
-}
-
-.bb-talent-bar__v {
-  font-family: var(--bb-font-display);
-  font-size: 1.15rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  color: var(--bb-brass);
-}
-
-.bb-talent-bar__buy {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.bb-talent-stage {
+.bb-constel-viewport {
   position: relative;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 0.4rem;
+  flex: 1;
   min-height: 0;
-  height: 100%;
-  padding: 0.65rem 0.75rem 0.75rem;
-  border: 1px solid var(--bb-panel-line);
-  border-radius: 3px;
-  background:
-    radial-gradient(
-      ellipse at 50% 0%,
-      color-mix(in srgb, var(--bb-talent-accent, var(--bb-panel-accent)) 16%, transparent),
-      transparent 55%
-    ),
-    linear-gradient(180deg, rgba(16, 40, 64, 0.55) 0%, rgba(6, 18, 32, 0.78) 100%);
   overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
-.bb-talent-stage__label {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem 1rem;
+.bb-constel-viewport:active {
+  cursor: grabbing;
 }
 
-.bb-talent-stage__title {
-  margin: 0;
-  font-family: var(--bb-font-display);
-  font-size: 1.2rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--bb-talent-accent, var(--bb-brass));
-}
-
-.bb-talent-stage__fit {
-  position: relative;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-}
-
-.bb-talent-stage__board {
+.bb-constel-world {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform-origin: center center;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
   will-change: transform;
 }
 
-.bb-talent-frame {
-  border: 1px solid var(--bb-panel-line);
-  border-radius: 3px;
+.bb-constel-field {
+  position: absolute;
+  inset: 0;
   background:
-    radial-gradient(ellipse at 50% 0%, rgba(40, 90, 140, 0.2), transparent 55%),
-    linear-gradient(180deg, rgba(16, 40, 64, 0.55) 0%, rgba(6, 18, 32, 0.7) 100%);
-  padding: 0.65rem 0.75rem 0.85rem;
+    radial-gradient(circle at 50% 50%, rgba(50, 100, 150, 0.12), transparent 42%),
+    radial-gradient(circle at 20% 30%, rgba(180, 83, 9, 0.06), transparent 28%),
+    radial-gradient(circle at 80% 35%, rgba(14, 116, 144, 0.07), transparent 28%),
+    radial-gradient(circle at 30% 75%, rgba(77, 124, 15, 0.06), transparent 26%),
+    radial-gradient(circle at 70% 78%, rgba(161, 98, 7, 0.06), transparent 26%),
+    radial-gradient(circle at 50% 85%, rgba(87, 83, 78, 0.08), transparent 30%);
+  pointer-events: none;
 }
 
-.bb-talent-scroll {
-  overflow: hidden;
-  max-height: none;
-  padding-bottom: 0;
-}
-
-.bb-talent-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.4rem 0.65rem;
-  border-radius: 2px;
-  border: 1px solid var(--bb-panel-line);
-  background: rgba(16, 40, 64, 0.65);
-  font-family: var(--bb-font-display);
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--bb-ink-soft);
-  cursor: pointer;
-}
-
-.bb-talent-tab:hover {
-  border-color: var(--bb-talent-accent, var(--bb-brass-dim));
-  color: var(--bb-ink);
-}
-
-.bb-talent-tab--on {
-  background: color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 22%, transparent);
-  border-color: var(--bb-talent-accent, var(--bb-brass));
-  color: var(--bb-ink);
-}
-
-.bb-talent-tab__pts {
-  min-width: 1rem;
-  text-align: center;
-  font-family: var(--bb-font-body);
-  font-size: 0.65rem;
-  opacity: 0.85;
-}
-
-.bb-talent-board {
-  position: relative;
-  margin: 0 auto;
-  width: max-content;
-}
-
-.bb-talent-board__links {
+.bb-constel-links {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
+  overflow: visible;
 }
 
-.bb-talent-link {
-  stroke: rgba(100, 140, 175, 0.4);
-  stroke-width: 3;
+.bb-constel-link {
+  stroke: rgba(100, 140, 175, 0.28);
+  stroke-width: 1.5;
 }
 
-.bb-talent-link--on {
+.bb-constel-link--on {
   stroke: var(--bb-talent-accent, var(--bb-brass-dim));
-  stroke-width: 3.5;
-  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 40%, transparent));
+  stroke-width: 2.25;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 45%, transparent));
 }
 
-.bb-talent-link--open {
-  stroke: color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass-dim)) 55%, rgba(100, 140, 175, 0.45));
-  stroke-width: 3.25;
+.bb-constel-link--open {
+  stroke: color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass-dim)) 50%, rgba(100, 140, 175, 0.4));
+  stroke-width: 2;
 }
 
-.bb-talent-board__nodes {
-  position: relative;
-  z-index: 1;
-}
-
-.bb-talent-node {
+.bb-constel-core,
+.bb-constel-hub,
+.bb-constel-node,
+.bb-constel-spell {
   position: absolute;
   z-index: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--bb-font-display);
+  border: none;
+  background: transparent;
+}
+
+.bb-constel-core {
+  border-radius: 50%;
+  border: 2px solid rgba(180, 200, 230, 0.45);
+  background:
+    radial-gradient(circle at 40% 35%, rgba(120, 170, 220, 0.35), transparent 55%),
+    linear-gradient(160deg, #1a3550 0%, #0a1828 100%);
+  box-shadow:
+    0 0 28px rgba(80, 140, 200, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  color: var(--bb-ink);
+  gap: 0.1rem;
+}
+
+.bb-constel-core__label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bb-brass);
+}
+
+.bb-constel-core__pts {
+  font-family: var(--bb-font-body);
+  font-size: 0.72rem;
+  color: var(--bb-ink-soft);
+}
+
+.bb-constel-hub {
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 55%, #5c5346);
+  background:
+    radial-gradient(
+      circle at 40% 30%,
+      color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 28%, transparent),
+      transparent 60%
+    ),
+    linear-gradient(160deg, #2a3230 0%, #141a18 100%);
+  box-shadow:
+    0 0 18px color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 25%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  color: #e8efdc;
+  gap: 0.05rem;
+}
+
+.bb-constel-hub--on {
+  box-shadow:
+    0 0 26px color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 45%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  border-color: var(--bb-talent-accent, var(--bb-brass));
+}
+
+.bb-constel-hub__name {
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.1;
+  max-width: 5.5rem;
+  text-align: center;
+}
+
+.bb-constel-hub__pts {
+  font-family: var(--bb-font-body);
+  font-size: 0.58rem;
+  color: #c4cbb8;
+}
+
+.bb-constel-node {
+  border-radius: 50%;
   border: 2px solid #5c5346;
   background:
     linear-gradient(160deg, #3a4038 0%, #232820 55%, #1a1e18 100%);
   color: #c4cbb8;
-  cursor: pointer;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 2px 4px rgba(0, 0, 0, 0.35);
-  font-family: var(--bb-font-display);
-  padding: 0;
 }
 
-.bb-talent-node:hover,
-.bb-talent-node:focus-visible {
+.bb-constel-node:hover,
+.bb-constel-node:focus-visible {
   z-index: 60;
 }
 
-.bb-talent-node__glyph {
+.bb-constel-node__glyph {
   display: flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
-  color: inherit;
 }
 
-.bb-talent-node__glyph svg,
-.bb-talent-node__glyph .bb-game-icon {
-  display: block;
-  flex-shrink: 0;
-}
-
-.bb-talent-node__cost {
+.bb-constel-node__cost,
+.bb-constel-node__rank {
   position: absolute;
-  right: 3px;
-  bottom: 2px;
+  right: 4px;
+  bottom: 3px;
   font-family: var(--bb-font-body);
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   font-weight: 700;
   color: #e8efdc;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
-.bb-talent-node__rank {
-  position: absolute;
-  right: 3px;
-  bottom: 2px;
-  font-family: var(--bb-font-body);
-  font-size: 0.68rem;
-  font-weight: 700;
-  color: #e8efdc;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-}
-
-.bb-talent-node--locked {
+.bb-constel-node--locked {
   filter: grayscale(0.85) brightness(0.72);
   border-color: #3f3a32;
   cursor: not-allowed;
 }
 
-.bb-talent-node--available {
+.bb-constel-node--available {
   border-color: #8a9a6e;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.1),
@@ -2655,11 +2961,7 @@
     0 2px 6px rgba(0, 0, 0, 0.35);
 }
 
-.bb-talent-node--available:hover {
-  border-color: #b7c99a;
-}
-
-.bb-talent-node--learned {
+.bb-constel-node--learned {
   border-color: var(--bb-talent-accent, var(--bb-brass));
   background:
     linear-gradient(
@@ -2675,21 +2977,72 @@
     0 0 10px color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 28%, transparent);
 }
 
-.bb-talent-node--wip {
+.bb-constel-node--wip {
   outline: 1px dashed rgba(180, 140, 70, 0.55);
   outline-offset: -3px;
 }
 
-.bb-talent-node__wip {
+.bb-constel-node__wip {
   position: absolute;
-  left: 3px;
-  top: 2px;
-  font-family: var(--bb-font-display);
-  font-size: 0.55rem;
+  left: 4px;
+  top: 3px;
+  font-size: 0.5rem;
   letter-spacing: 0.06em;
   color: #e0c989;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
   pointer-events: none;
+}
+
+/* Diamond spell unlock placeholders */
+.bb-constel-spell {
+  border: 2px solid color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 40%, #6b7280);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 22%, #1e293b) 0%,
+      #0f172a 100%
+    );
+  color: #e2e8f0;
+  transform: rotate(45deg);
+  box-shadow:
+    0 0 12px color-mix(in srgb, var(--bb-talent-accent, var(--bb-brass)) 20%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.bb-constel-spell__glyph,
+.bb-constel-spell__lock {
+  transform: rotate(-45deg);
+  line-height: 1;
+}
+
+.bb-constel-spell__glyph {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.bb-constel-spell__lock {
+  position: absolute;
+  font-family: var(--bb-font-body);
+  font-size: 0.65rem;
+  font-weight: 700;
+  bottom: 6px;
+  right: 8px;
+  color: #94a3b8;
+}
+
+.bb-constel-hint {
+  margin: 0;
+  padding: 0.35rem 0.85rem 0.5rem;
+  border-top: 1px solid var(--bb-panel-line);
+  background: rgba(6, 18, 32, 0.88);
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-constel-hub,
+  .bb-constel-core {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
 }
 
 .bb-talent-tip__wip {
@@ -3009,6 +3362,39 @@
   color: #93c5fd;
 }
 
+/*
+ * Energy pips, under the HP bar.
+ *
+ * Separate segments rather than one bar because every cost is a whole number
+ * of pips, so affording something is a counting question. Shorter than the HP
+ * track on purpose -- it is the secondary resource and should not compete
+ * with health for attention.
+ */
+.bb-energy {
+  display: flex;
+  gap: 2px;
+  margin-top: 0.22rem;
+}
+
+.bb-energy__pip {
+  position: relative;
+  flex: 1;
+  height: 0.2rem;
+  overflow: hidden;
+  border-radius: 1px;
+  background: #0b1626;
+  border: 1px solid var(--bb-panel-line);
+}
+
+.bb-energy__pip-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #b45309, #fbbf24);
+  box-shadow: 0 0 5px rgba(251, 191, 36, 0.5);
+  /* Only the partial pip animates; whole ones snap, so the count stays honest. */
+  transition: width 120ms linear;
+}
+
 .bb-interact-prompt {
   box-sizing: border-box;
   min-width: 8.5rem;
@@ -3314,8 +3700,13 @@
   gap: 0.85rem;
 }
 
+.bb-lobby-teams--ffa {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
 @media (max-width: 640px) {
-  .bb-lobby-teams {
+  .bb-lobby-teams,
+  .bb-lobby-teams--ffa {
     grid-template-columns: 1fr;
   }
 }
@@ -3851,4 +4242,370 @@
   border-radius: inherit;
   background: linear-gradient(90deg, color-mix(in srgb, var(--bb-brass) 70%, #fff), var(--bb-brass));
   transition: width 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* -- Auth / marketing shell (login, home, name setup) -- */
+.bb-auth-shell {
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
+  color: var(--bb-ink);
+  font-family: var(--bb-font-body);
+  background: #0c141e;
+}
+
+.bb-auth-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.bb-auth-backdrop__veil {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  /* Keep spell FX / maps readable in the open arena while UI stays legible. */
+  background:
+    radial-gradient(ellipse 72% 58% at 30% 44%, transparent 0%, rgba(6, 12, 20, 0.22) 52%, rgba(4, 8, 14, 0.78) 100%),
+    linear-gradient(90deg, rgba(6, 12, 20, 0.42) 0%, transparent 48%, rgba(6, 12, 20, 0.7) 100%),
+    linear-gradient(180deg, rgba(8, 14, 22, 0.18) 0%, transparent 38%, rgba(4, 8, 14, 0.86) 100%);
+}
+
+.bb-auth-backdrop__grain {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+.bb-auth-shell__content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-height: 100dvh;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: clamp(1.25rem, 4vw, 3rem);
+  gap: clamp(1.25rem, 3vw, 2.5rem);
+  align-content: center;
+}
+
+.bb-auth-shell--split .bb-auth-shell__content {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 900px) {
+  .bb-auth-shell--split .bb-auth-shell__content {
+    grid-template-columns: 1.05fr 0.95fr;
+    align-items: center;
+  }
+}
+
+.bb-auth-shell--center .bb-auth-shell__content {
+  justify-items: center;
+  text-align: center;
+  max-width: 44rem;
+}
+
+.bb-auth-brand {
+  animation: bb-auth-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.bb-auth-shell--center .bb-auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.bb-auth-brand__eyebrow {
+  margin: 0 0 0.45rem;
+  font-family: var(--bb-font-body);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bb-panel-accent);
+}
+
+.bb-auth-brand__title {
+  margin: 0;
+  font-family: var(--bb-font-display);
+  font-size: clamp(2.6rem, 8vw, 4.6rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  color: #f3f7fb;
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.45),
+    0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+.bb-auth-brand__tag {
+  margin: 0.85rem 0 0;
+  max-width: 28rem;
+  font-size: clamp(0.95rem, 2.2vw, 1.1rem);
+  line-height: 1.45;
+  color: var(--bb-ink-soft);
+}
+
+.bb-auth-brand__rule {
+  margin-top: 1.15rem;
+  max-width: 14rem;
+}
+
+.bb-auth-shell--center .bb-auth-brand__rule {
+  width: 12rem;
+}
+
+.bb-auth-panel {
+  width: min(100%, 26rem);
+  padding: clamp(1.15rem, 3vw, 1.65rem);
+  animation: bb-auth-rise 850ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
+  backdrop-filter: blur(6px);
+}
+
+.bb-auth-shell--center .bb-auth-panel {
+  width: min(100%, 28rem);
+}
+
+.bb-auth-panel__title {
+  margin: 0 0 0.35rem;
+  font-family: var(--bb-font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bb-ink);
+}
+
+.bb-auth-panel__lead {
+  margin: 0 0 1.1rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--bb-ink-soft);
+}
+
+.bb-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.bb-auth-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--bb-ink-soft);
+}
+
+.bb-auth-label .bb-input {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.95rem;
+}
+
+.bb-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: center;
+}
+
+.bb-auth-shell--center .bb-auth-actions {
+  margin-top: 0.25rem;
+}
+
+.bb-auth-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #fca5a5;
+  text-align: center;
+}
+
+.bb-auth-info {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--bb-ink-soft);
+  text-align: center;
+}
+
+.bb-auth-switch {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--bb-ink-soft);
+  text-align: center;
+}
+
+.bb-auth-switch button {
+  font: inherit;
+  font-weight: 700;
+  color: var(--bb-panel-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.bb-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.35rem 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bb-ink-soft);
+}
+
+.bb-auth-divider::before,
+.bb-auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--bb-panel-line), transparent);
+}
+
+.bb-auth-google {
+  width: 100%;
+}
+
+.bb-auth-google button,
+.bb-auth-google > * {
+  width: 100%;
+}
+
+.bb-auth-warn {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--bb-panel-line);
+  border-radius: 2px;
+  background: rgba(8, 18, 30, 0.7);
+  font-size: 0.85rem;
+  color: var(--bb-ink-soft);
+}
+
+.bb-auth-warn strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--bb-ink);
+}
+
+.bb-auth-warn code {
+  font-size: 0.75rem;
+  color: var(--bb-panel-accent);
+}
+
+.bb-auth-back {
+  justify-self: start;
+  font-family: var(--bb-font-display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bb-ink-soft);
+  text-decoration: none;
+}
+
+.bb-auth-back:hover {
+  color: var(--bb-panel-accent);
+}
+
+.bb-auth-shell--center .bb-auth-back {
+  justify-self: center;
+}
+
+@keyframes bb-auth-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-auth-brand,
+  .bb-auth-panel {
+    animation: none;
+  }
+}
+
+.bb-auth-center-body {
+  width: min(100%, 32rem);
+  animation: bb-auth-rise 850ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
+}
+
+/* --- NPC dialogue ---------------------------------------------------------
+ * Anchored low and centred rather than centred on screen: you are looking at
+ * the villager while you read, so a panel over their face is the one place it
+ * must not be.
+ */
+.bb-npc-dialogue {
+  position: fixed;
+  left: 50%;
+  bottom: 12rem;
+  transform: translateX(-50%);
+  z-index: 60;
+  box-sizing: border-box;
+  width: min(34rem, calc(100vw - 3rem));
+  padding: 1rem 1.25rem 1.1rem;
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, rgba(24, 52, 78, 0.96) 0%, rgba(6, 18, 32, 0.97) 100%);
+  border: 1px solid var(--bb-panel-line);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
+.bb-npc-dialogue__name {
+  margin: 0 0 0.4rem;
+  font-family: var(--bb-font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--bb-ink);
+}
+
+.bb-npc-dialogue__line {
+  margin: 0 0 0.9rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--bb-ink-soft);
+}
+
+.bb-npc-dialogue__actions {
+  display: flex;
+  gap: 0.55rem;
+  justify-content: flex-end;
+}
+
+.bb-npc-dialogue__button {
+  padding: 0.4rem 1rem;
+  border-radius: 3px;
+  border: 1px solid var(--bb-panel-line);
+  background: rgba(12, 28, 46, 0.9);
+  font-family: var(--bb-font-display);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  color: var(--bb-ink-soft);
+  cursor: pointer;
+}
+
+.bb-npc-dialogue__button:hover {
+  color: var(--bb-ink);
+  border-color: rgba(148, 200, 255, 0.5);
+}
+
+.bb-npc-dialogue__button--primary {
+  background: rgba(30, 78, 122, 0.95);
+  color: var(--bb-ink);
 }

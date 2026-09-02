@@ -4,14 +4,14 @@ import { Room } from "colyseus.js";
 import * as THREE from "three";
 import {
     CAMERA,
+    HUB_MAP_ID,
     HUB_PORTALS,
-    HUB_SCENE_SCALE,
-    HUB_SCENE_URL,
     HUB_SPAWN,
     HUB_STANDS,
     STARTER_COLORS,
     type InteractZone,
 } from "@battlebeasts/shared";
+import { useHubBallIds } from "./useColyseusMapKeys";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
@@ -21,63 +21,11 @@ import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
 import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
 import { PlacementHelper } from "./PlacementHelper";
-import { useGLTF } from "@react-three/drei";
-import type { PredictedPose } from "./useBaseCityRoom";
-import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
-import { assetUrl } from "./assetUrl";
 import { HubIntroCamera } from "./intro/HubIntroCamera";
 import { getHubIntroSnapshot, subscribeHubIntro } from "./intro/hubIntroRuntime";
+import { MapScene } from "./MapScene";
 
-const HUB_GLB = assetUrl(HUB_SCENE_URL.replace(/^\//, ""));
-useGLTF.preload(HUB_GLB);
-
-/** Drop village so meadow under spawn sits on y=0 (player feet). */
-function plantVillageAtSpawn(root: THREE.Object3D) {
-    root.updateMatrixWorld(true);
-    const meshes: THREE.Object3D[] = [];
-    root.traverse((o) => {
-        if ((o as THREE.Mesh).isMesh) meshes.push(o);
-    });
-    if (meshes.length === 0) return;
-    const origin = new THREE.Vector3(HUB_SPAWN.x, 200, HUB_SPAWN.z);
-    const hits = new THREE.Raycaster(origin, new THREE.Vector3(0, -1, 0)).intersectObjects(
-        meshes,
-        false,
-    );
-    const hit = hits[0];
-    if (hit && Number.isFinite(hit.point.y)) {
-        root.position.y -= hit.point.y;
-    }
-}
-
-function VillageScene() {
-    const gltf = useGLTF(HUB_GLB);
-    const scene = useMemo(() => {
-        const root = cloneSkinned(gltf.scene) as THREE.Object3D;
-        root.traverse((obj) => {
-            const mesh = obj as THREE.Mesh;
-            if (!mesh.isMesh) return;
-            // Full village shadow-casting tanks the GPU (300+ meshes).
-            mesh.castShadow = false;
-            mesh.receiveShadow = true;
-            if (mesh.material) {
-                const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-                for (const m of mats) {
-                    // Avoid per-frame lights×maps cost on dense foliage kits
-                    const std = m as THREE.MeshStandardMaterial;
-                    if (std.isMeshStandardMaterial) {
-                        std.envMapIntensity = 0;
-                    }
-                }
-            }
-        });
-        root.scale.setScalar(HUB_SCENE_SCALE);
-        plantVillageAtSpawn(root);
-        root.userData.bbHubTerrain = true;
-        return root;
-    }, [gltf.scene]);
-    return <primitive object={scene} />;
-}
+import type { PredictedPose } from "./useBaseCityRoom";
 
 type Props = {
     room: Room | null;
@@ -166,6 +114,7 @@ function InteractZoneField({
     profile = "pad",
 }: InteractZone & { color: string; density?: number; profile?: "pad" | "portal" }) {
     const mesh = useRef<THREE.InstancedMesh>(null);
+    const frameTick = useRef(0);
     const { camera } = useThree();
     const portal = profile === "portal";
     const area = Math.max(0.35, halfX * 2 * (halfZ * 2));
@@ -228,6 +177,8 @@ function InteractZoneField({
     }, [geometry, material, count, color]);
 
     useFrame(({ clock }, dt) => {
+        frameTick.current = (frameTick.current + 1) % 3;
+        if (frameTick.current !== 0) return;
         const inst = mesh.current;
         if (!inst) return;
         const t = clock.elapsedTime;
@@ -437,8 +388,7 @@ function HubPushBallMesh({
 }
 
 function HubPushBalls({ room }: { room: Room | null }) {
-    const [ids, setIds] = useState<string[]>([]);
-    const prevKey = useRef("");
+    const ids = useHubBallIds(room);
     const map = useMemo(() => createHubBallTexture(), []);
 
     useEffect(() => {
@@ -446,24 +396,6 @@ function HubPushBalls({ room }: { room: Room | null }) {
             map.dispose();
         };
     }, [map]);
-
-    useFrame(() => {
-        if (!room?.state?.hubBalls) {
-            if (prevKey.current !== "") {
-                prevKey.current = "";
-                setIds([]);
-            }
-            return;
-        }
-        const next: string[] = [];
-        room.state.hubBalls.forEach((_b: unknown, id: string) => next.push(id));
-        next.sort();
-        const key = next.join("|");
-        if (key !== prevKey.current) {
-            prevKey.current = key;
-            setIds(next);
-        }
-    });
 
     if (!room || ids.length === 0) return null;
     return (
@@ -498,18 +430,6 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     useFrame(() => {
         const p = predictedRef.current;
         localPos.current.set(p.x, 0, p.z);
-
-        // Keep ground aim fresh even when the cursor is still (cast clicks need it).
-        if (!aimReady.current) return;
-        // Don't fight intro face-cam with aim yaw.
-        if (!getHubIntroSnapshot().followCameraEnabled) return;
-        raycaster.setFromCamera(aimNdc.current, camera);
-        if (raycaster.ray.intersectPlane(groundPlane, hit)) {
-            const origin = predictedRef.current;
-            const yaw = Math.atan2(hit.x - origin.x, hit.z - origin.z);
-            setGroundAim(hit.x, hit.z);
-            (window as unknown as { __bbSetYaw?: (y: number) => void }).__bbSetYaw?.(yaw);
-        }
     });
 
     useEffect(() => {
@@ -543,7 +463,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
             <ambientLight intensity={0.55} />
             <FollowSun follow={localPos} intensity={1.2} />
 
-            <VillageScene />
+            <MapScene mapId={HUB_MAP_ID} />
 
             <CollisionDebugOverlay />
             <PlacementHelper />

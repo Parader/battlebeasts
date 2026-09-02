@@ -22,17 +22,41 @@ export const PVE_WAVE_SPAWN_STAGGER_MS = 650;
 /** First wave enemy count; scales +1/wave, capped. */
 export const PVE_WAVE_BASE_COUNT = 4;
 
-export function pveWaveEnemyCount(waveIndex: number): number {
-  const n = PVE_WAVE_BASE_COUNT + Math.max(0, waveIndex - 1);
-  return Math.min(PVE_WAVE_ENEMY_SOFT_CAP, n);
+/** Clamp locked coop party size used for difficulty scaling (1–4). */
+export function clampPvePartySize(partySize: number): number {
+  const n = Math.floor(Number(partySize));
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(1, Math.min(4, n));
 }
 
-export function pveWaveHp(waveIndex: number): number {
-  return Math.round(PVE_ZOMBIE_BASE_HP * (1 + (waveIndex - 1) * 0.12));
+/** HP multiplier by party size: 1.0 / 1.3 / 1.6 / 1.9 */
+export function pvePartyHpMul(partySize: number): number {
+  const n = clampPvePartySize(partySize);
+  return 0.7 + 0.3 * n;
 }
 
-export function pveWaveDamage(waveIndex: number): number {
-  return Math.round(PVE_ZOMBIE_MELEE_DAMAGE * (1 + (waveIndex - 1) * 0.08));
+/** Damage multiplier by party size: 1.0 / 1.25 / 1.5 / 1.75 */
+export function pvePartyDamageMul(partySize: number): number {
+  const n = clampPvePartySize(partySize);
+  return 0.75 + 0.25 * n;
+}
+
+export function pveWaveEnemyCount(waveIndex: number, partySize = 1): number {
+  const n = clampPvePartySize(partySize);
+  const count = PVE_WAVE_BASE_COUNT + Math.max(0, waveIndex - 1) + (n - 1);
+  return Math.min(PVE_WAVE_ENEMY_SOFT_CAP, count);
+}
+
+export function pveWaveHp(waveIndex: number, partySize = 1): number {
+  return Math.round(
+    PVE_ZOMBIE_BASE_HP * (1 + (waveIndex - 1) * 0.12) * pvePartyHpMul(partySize),
+  );
+}
+
+export function pveWaveDamage(waveIndex: number, partySize = 1): number {
+  return Math.round(
+    PVE_ZOMBIE_MELEE_DAMAGE * (1 + (waveIndex - 1) * 0.08) * pvePartyDamageMul(partySize),
+  );
 }
 
 export function pveWaveSpeed(waveIndex: number): number {

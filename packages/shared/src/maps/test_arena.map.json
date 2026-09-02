@@ -1,0 +1,3333 @@
+{
+  "version": 1,
+  "id": "test_arena",
+  "name": "Test Arena",
+  "ground": {
+    "kind": "painted",
+    "sizeX": 150,
+    "sizeZ": 150,
+    "resX": 480,
+    "resZ": 480,
+    "layers": [
+      "sand",
+      "sand_beach",
+      "rock",
+      "burned"
+    ],
+    "splatUrl": "assets/maps/test_arena.splat.png",
+    "heightUrl": "assets/maps/test_arena.height.png",
+    "heightScale": 0.25
+  },
+  "env": {
+    "skyPreset": "park",
+    "fogColor": "#d8c9a8",
+    "fogNear": 40,
+    "fogFar": 120
+  },
+  "props": [
+    {
+      "id": "p001",
+      "prop": "beach/PP_Beach_Rocks_01",
+      "x": 0,
+      "y": 0,
+      "z": -7,
+      "yaw": 0,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 1.699,
+        "offsetX": 0.132,
+        "offsetZ": 0.2
+      }
+    },
+    {
+      "id": "p002",
+      "prop": "beach/PP_Beach_Rocks_02",
+      "x": 0,
+      "y": 0,
+      "z": 7,
+      "yaw": 1.2,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 1.732,
+        "offsetX": -0.117,
+        "offsetZ": -0.059
+      }
+    },
+    {
+      "id": "p003",
+      "prop": "beach/PP_Beach_Rocks_03",
+      "x": -9,
+      "y": 0,
+      "z": 0,
+      "yaw": 2.4,
+      "scale": 0.8,
+      "collider": {
+        "mode": "circle",
+        "radius": 1.747,
+        "offsetX": 0.026,
+        "offsetZ": -0.128
+      }
+    },
+    {
+      "id": "p004",
+      "prop": "beach/PP_Beach_Rocks_03",
+      "x": 7.75,
+      "y": -0.0019999999999965722,
+      "z": 0.25,
+      "yaw": 0.7853981633974483,
+      "scale": 1,
+      "pivotX": -0.254,
+      "pivotZ": 0.11,
+      "collider": {
+        "mode": "circle",
+        "radius": 1.747,
+        "offsetX": 0.026,
+        "offsetZ": -0.128
+      }
+    },
+    {
+      "id": "p005",
+      "prop": "desert/PP_Sphinx_01",
+      "x": 0.25,
+      "y": -0.0019999999999917744,
+      "z": -21,
+      "yaw": 0,
+      "scale": 1,
+      "pivotZ": -1.178,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p006",
+      "prop": "desert/PP_Pyramid_01",
+      "x": -17.75,
+      "y": -0.0019999999999979574,
+      "z": -34.25,
+      "yaw": 1.5707963267948968,
+      "scale": 0.6999999999999998,
+      "pivotX": -0.056,
+      "pivotZ": -0.096,
+      "collider": {
+        "mode": "circle",
+        "radius": 21.14
+      }
+    },
+    {
+      "id": "p007",
+      "prop": "desert/PP_Pyramid_01",
+      "x": 18,
+      "y": -0.0019999999999979574,
+      "z": -33.25,
+      "yaw": 1.5533430342749535,
+      "scale": 0.6999999999999998,
+      "pivotX": -0.056,
+      "pivotZ": -0.096,
+      "collider": {
+        "mode": "circle",
+        "radius": 21.14
+      }
+    },
+    {
+      "id": "p009",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -24.5,
+      "y": -0.002,
+      "z": -11.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p010",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -24.5,
+      "y": -0.002,
+      "z": -7.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p011",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -24.5,
+      "y": -0.002,
+      "z": -2.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p012",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -24.5,
+      "y": -0.002,
+      "z": 2.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p013",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -24.5,
+      "y": -0.002,
+      "z": 7.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p014",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -24.5,
+      "y": -0.002,
+      "z": 12.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p015",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -24.5,
+      "y": -0.002,
+      "z": 17.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p017",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 25.25,
+      "y": -0.002,
+      "z": -9.75,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p018",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 25.25,
+      "y": -0.002,
+      "z": -6,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p019",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 25.25,
+      "y": -0.002,
+      "z": -1,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p020",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 25.25,
+      "y": -0.002,
+      "z": 4,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p021",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 25.25,
+      "y": -0.002,
+      "z": 9,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p022",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 25.25,
+      "y": -0.002,
+      "z": 14,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p023",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 25.25,
+      "y": -0.002,
+      "z": 18,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p024",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": -22.25,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p025",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": -17.25,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p026",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": -12.25,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p027",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": -7.25,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p028",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": -2.25,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p029",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": 2.75,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p030",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": 7.75,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p031",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": 12.75,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p032",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": 17.75,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p033",
+      "prop": "kingdom/PP_Castle_Wall_Cut_02",
+      "x": 22.75,
+      "y": -0.002,
+      "z": 20.25,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.5,
+        "halfZ": 0.25,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p034",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -26.75,
+      "y": 5,
+      "z": 17.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p035",
+      "prop": "kingdom/PP_Castle_Floor_Stone_Pool_01",
+      "x": -29.5,
+      "y": 6,
+      "z": 15.25,
+      "yaw": 2.356194490192345,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p037",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -22.25,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p038",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -26.75,
+      "y": 5,
+      "z": 12.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p039",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -26.75,
+      "y": 5,
+      "z": 7.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p040",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -26.75,
+      "y": 5,
+      "z": 2.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p041",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -26.75,
+      "y": 5,
+      "z": -2.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p042",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -26.75,
+      "y": 5,
+      "z": -7.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p043",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -26.75,
+      "y": 5,
+      "z": -10.25,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p045",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -31.75,
+      "y": 5,
+      "z": 17.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p046",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -31.75,
+      "y": 5,
+      "z": 12.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p047",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -31.75,
+      "y": 5,
+      "z": 7.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p048",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -31.75,
+      "y": 5,
+      "z": 2.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p049",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -31.75,
+      "y": 5,
+      "z": -2.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p050",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -31.75,
+      "y": 5,
+      "z": -7.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p051",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -31.75,
+      "y": 5,
+      "z": -10.25,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p053",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 27.5,
+      "y": 5,
+      "z": 18,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p054",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 27.5,
+      "y": 5,
+      "z": 13,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p055",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 27.5,
+      "y": 5,
+      "z": 8,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p056",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 27.5,
+      "y": 5,
+      "z": 3,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p057",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 27.5,
+      "y": 5,
+      "z": -2,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p058",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 27.5,
+      "y": 5,
+      "z": -7,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p059",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 27.5,
+      "y": 5,
+      "z": -8.25,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p061",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 32.5,
+      "y": 5,
+      "z": 18,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p062",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 32.5,
+      "y": 5,
+      "z": 13,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p063",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 32.5,
+      "y": 5,
+      "z": 8,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p064",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 32.5,
+      "y": 5,
+      "z": 3,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p065",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 32.5,
+      "y": 5,
+      "z": -2,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p066",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 32.5,
+      "y": 5,
+      "z": -7,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p067",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 32.5,
+      "y": 5,
+      "z": -8.25,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p069",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 37.5,
+      "y": 5,
+      "z": 18,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p070",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 37.5,
+      "y": 5,
+      "z": 13,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p071",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 37.5,
+      "y": 5,
+      "z": 8,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p072",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 37.5,
+      "y": 5,
+      "z": 3,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p073",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 37.5,
+      "y": 5,
+      "z": -2,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p074",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 37.5,
+      "y": 5,
+      "z": -7,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p075",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 37.5,
+      "y": 5,
+      "z": -8.25,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p077",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -36.75,
+      "y": 5,
+      "z": 17.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p078",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -36.75,
+      "y": 5,
+      "z": 12.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p079",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -36.75,
+      "y": 5,
+      "z": 7.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p080",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -36.75,
+      "y": 5,
+      "z": 2.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p081",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -36.75,
+      "y": 5,
+      "z": -2.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p082",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -36.75,
+      "y": 5,
+      "z": -7.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p083",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -36.75,
+      "y": 5,
+      "z": -10.25,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p085",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -17.25,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p086",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -12.25,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p087",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 2.75,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p088",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -2.25,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p089",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -7.25,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p090",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 17.75,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p091",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 12.75,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p092",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 7.75,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p093",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 22.75,
+      "y": 2.5,
+      "z": 22.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p096",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -21.75,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p097",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -16.75,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p098",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -11.75,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p099",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -6.75,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p100",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -1.75,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p101",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 3.25,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p102",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 8.25,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p103",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 13.25,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p104",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 18.25,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p105",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 22.5,
+      "y": 2.5,
+      "z": 27.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p106",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -21.75,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p107",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -16.75,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p108",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -11.75,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p109",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -6.75,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p110",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": -1.75,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p111",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 3.25,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p112",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 8.25,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p113",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 13.25,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p114",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 18.25,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p115",
+      "prop": "kingdom/PP_Castle_Floor_Wood_01",
+      "x": 22.5,
+      "y": 2.5,
+      "z": 32.5,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p116",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -36.75,
+      "y": -0.002,
+      "z": 19.75,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p117",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -31.75,
+      "y": -0.002,
+      "z": 19.75,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p118",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": -26.75,
+      "y": -0.002,
+      "z": 19.75,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p119",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 37.5,
+      "y": -0.002,
+      "z": 20,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p120",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 32.5,
+      "y": -0.002,
+      "z": 20,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p121",
+      "prop": "kingdom/PP_Castle_Wall_02",
+      "x": 27.5,
+      "y": -0.002,
+      "z": 20,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "box",
+        "halfX": 2.475,
+        "halfZ": 0.275,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p123",
+      "prop": "meadow/PP_Meadow_Water_01",
+      "x": -30,
+      "y": 5.5,
+      "z": 15,
+      "yaw": 2.356194490192345,
+      "scale": 0.20000000000000004,
+      "pivotZ": 0.299,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p124",
+      "prop": "meadow/PP_Meadow_Water_01",
+      "x": -29,
+      "y": 5.5,
+      "z": 15.75,
+      "yaw": 2.356194490192345,
+      "scale": 0.20000000000000004,
+      "pivotZ": 0.299,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p125",
+      "prop": "kingdom/PP_Castle_Wall_Corner_L_Base_01",
+      "x": -28.1,
+      "y": 10,
+      "z": 23.75,
+      "yaw": 0,
+      "scale": 1,
+      "pivotX": 1.125,
+      "pivotZ": 3.875,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p036",
+      "prop": "kingdom/PP_Castle_Wall_Corner_L_Base_01",
+      "x": 28.85,
+      "y": 10,
+      "z": 24.25,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "pivotX": 1.125,
+      "pivotZ": 3.875,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p094",
+      "prop": "kingdom/PP_Gazebo_Wall_01",
+      "x": -24,
+      "y": -0.002,
+      "z": 7.75,
+      "yaw": -1.570796326794897,
+      "scale": 1,
+      "pivotX": 0.027,
+      "pivotZ": 0.02,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p095",
+      "prop": "kingdom/PP_Castle_Wall_Pillars_Half_Corner_L_02",
+      "x": 29.5,
+      "y": 5,
+      "z": 24.5,
+      "yaw": 1.5707963267948968,
+      "scale": 1.15,
+      "pivotX": 2.376,
+      "pivotZ": 2.625,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p122",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": -21.75,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p126",
+      "prop": "kingdom/PP_Castle_Wall_Archway_4Way_Legs_01",
+      "x": -41.5,
+      "y": 4.998,
+      "z": 22.25,
+      "yaw": 5.235987755982988,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p127",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": 25.75,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p128",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": 22,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p129",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": 14.5,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p130",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": 18.25,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p131",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": -0.5,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p132",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": 3.25,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p133",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": 7,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p134",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": 10.75,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p136",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": -11.75,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p137",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": -8,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p138",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": -24.5,
+      "y": 5,
+      "z": -4.25,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p140",
+      "prop": "kingdom/PP_Gazebo_Wall_01",
+      "x": -24,
+      "y": 2.5,
+      "z": 7.75,
+      "yaw": -1.570796326794897,
+      "scale": 1,
+      "pivotX": 0.027,
+      "pivotZ": 0.02,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p141",
+      "prop": "kingdom/PP_Gazebo_Wall_01",
+      "x": -24,
+      "y": -0.002,
+      "z": 4.75,
+      "yaw": -1.570796326794897,
+      "scale": 1,
+      "pivotX": 0.027,
+      "pivotZ": 0.02,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p142",
+      "prop": "kingdom/PP_Gazebo_Wall_01",
+      "x": -24,
+      "y": 2.5,
+      "z": 4.75,
+      "yaw": -1.570796326794897,
+      "scale": 1,
+      "pivotX": 0.027,
+      "pivotZ": 0.02,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p143",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": 24.75,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p144",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": 21,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p145",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": 17.25,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p146",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": 13.5,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p147",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": 9.75,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p148",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": 6,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p149",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": 2.25,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p150",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": -1.5,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p151",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": -5.25,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p152",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": -9,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p155",
+      "prop": "kingdom/PP_Castle_Battlements_06_Short",
+      "x": 25.25,
+      "y": 5,
+      "z": 26.25,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p156",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": -16.75,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p157",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": -6.75,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p158",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": -11.75,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p159",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": 13.25,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p160",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": 8.25,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p161",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": 3.25,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p162",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": -1.75,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p163",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": 23.25,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p164",
+      "prop": "kingdom/PP_Castle_Wall_Panel_Wood_01",
+      "x": 18.25,
+      "y": 2.5,
+      "z": 20.25,
+      "yaw": 3.1415926535897927,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.165,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p165",
+      "prop": "kingdom/PP_Castle_Wall_Gate_L_01",
+      "x": 25,
+      "y": 0.34,
+      "z": -14.75,
+      "yaw": -1.5707963267948963,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.192,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p166",
+      "prop": "kingdom/PP_Castle_Wall_Gate_L_01",
+      "x": -24.25,
+      "y": 0.3400000000000036,
+      "z": -16.25,
+      "yaw": 1.5707963267948968,
+      "scale": 1,
+      "pivotX": 2.5,
+      "pivotZ": 0.192,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p167",
+      "prop": "kingdom/PP_Castle_Wall_Window_04",
+      "x": -27.25,
+      "y": 5,
+      "z": -12.75,
+      "yaw": 3.1415926535897922,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p168",
+      "prop": "kingdom/PP_Castle_Wall_Window_04",
+      "x": -32.25,
+      "y": 5,
+      "z": -12.75,
+      "yaw": 3.1415926535897922,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p169",
+      "prop": "kingdom/PP_Castle_Wall_Window_04",
+      "x": -37.25,
+      "y": 5,
+      "z": -12.75,
+      "yaw": 3.1415926535897922,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p170",
+      "prop": "kingdom/PP_Castle_Wall_Window_04",
+      "x": 27.75,
+      "y": 5,
+      "z": -10.5,
+      "yaw": 3.1415926535897922,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p171",
+      "prop": "kingdom/PP_Castle_Wall_Window_04",
+      "x": 32.75,
+      "y": 5,
+      "z": -10.5,
+      "yaw": 3.1415926535897922,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p172",
+      "prop": "kingdom/PP_Castle_Wall_Window_04",
+      "x": 37.75,
+      "y": 5,
+      "z": -10.5,
+      "yaw": 3.1415926535897922,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p008",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": 30.5,
+      "y": 10.75,
+      "z": -8,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p016",
+      "prop": "kingdom/PP_Castle_Roof_L_Corner_01",
+      "x": 30.5,
+      "y": 10.75,
+      "z": 21.5,
+      "yaw": -6.661338147750939e-16,
+      "scale": 1,
+      "pivotX": -2.496,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p044",
+      "prop": "kingdom/PP_Castle_Roof_M_01",
+      "x": 27.25,
+      "y": 10.75,
+      "z": -10,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -1.875,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p052",
+      "prop": "kingdom/PP_Castle_Roof_M_01",
+      "x": 32.25,
+      "y": 10.75,
+      "z": -10,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -1.875,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p060",
+      "prop": "kingdom/PP_Castle_Roof_M_01",
+      "x": 37.25,
+      "y": 10.75,
+      "z": -10,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -1.875,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p068",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": 30.5,
+      "y": 10.75,
+      "z": -3.25,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p076",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": 30.5,
+      "y": 10.75,
+      "z": 1.75,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p084",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": 30.5,
+      "y": 10.75,
+      "z": 16.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p135",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": 30.5,
+      "y": 10.75,
+      "z": 6.75,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p139",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": 30.5,
+      "y": 10.75,
+      "z": 11.5,
+      "yaw": -1.5707963267948972,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p153",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 35.5,
+      "y": 15.75,
+      "z": 16.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p154",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 35.5,
+      "y": 15.75,
+      "z": 11.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p173",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 35.5,
+      "y": 15.75,
+      "z": 1.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p174",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 35.5,
+      "y": 15.75,
+      "z": 6.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p175",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 35.5,
+      "y": 15.75,
+      "z": -3.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p176",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 35.5,
+      "y": 15.75,
+      "z": -8,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p177",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 35.5,
+      "y": 15.75,
+      "z": 21.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p178",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 40.5,
+      "y": 15.75,
+      "z": 21.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p179",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 40.5,
+      "y": 15.75,
+      "z": 16.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p180",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 40.5,
+      "y": 15.75,
+      "z": 11.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p181",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 40.5,
+      "y": 15.75,
+      "z": 6.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p182",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 40.5,
+      "y": 15.75,
+      "z": 1.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p183",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 40.5,
+      "y": 15.75,
+      "z": -3.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p184",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 40.5,
+      "y": 15.75,
+      "z": -8,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p185",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 45.5,
+      "y": 15.75,
+      "z": 21.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p186",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 45.5,
+      "y": 15.75,
+      "z": 16.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p187",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 45.5,
+      "y": 15.75,
+      "z": 11.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p188",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 45.5,
+      "y": 15.75,
+      "z": 6.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p189",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 45.5,
+      "y": 15.75,
+      "z": 1.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p190",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 45.5,
+      "y": 15.75,
+      "z": -3.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p191",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": 45.5,
+      "y": 15.75,
+      "z": -8,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p192",
+      "prop": "kingdom/PP_Castle_Wall_Window_04",
+      "x": 35.25,
+      "y": 5,
+      "z": 20.25,
+      "yaw": -8.881784197001252e-16,
+      "scale": 1,
+      "pivotX": 2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p193",
+      "prop": "kingdom/PP_Castle_Roof_M_01",
+      "x": -26.25,
+      "y": 10.75,
+      "z": -11.75,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -1.875,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p194",
+      "prop": "kingdom/PP_Castle_Roof_M_01",
+      "x": -31.25,
+      "y": 10.75,
+      "z": -11.75,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -1.875,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p195",
+      "prop": "kingdom/PP_Castle_Roof_M_01",
+      "x": -36.25,
+      "y": 10.75,
+      "z": -11.75,
+      "yaw": -7.771561172376096e-16,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -1.875,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p196",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": -28,
+      "y": 10.75,
+      "z": -10.25,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p197",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": -28,
+      "y": 10.75,
+      "z": -5.25,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p198",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": -28,
+      "y": 10.75,
+      "z": -0.25,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p199",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": -28,
+      "y": 10.75,
+      "z": 4.75,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p200",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": -28,
+      "y": 10.75,
+      "z": 9.75,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p201",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": -28,
+      "y": 10.75,
+      "z": 14.75,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p202",
+      "prop": "kingdom/PP_Castle_Roof_L_01",
+      "x": -28,
+      "y": 10.75,
+      "z": 19.75,
+      "yaw": 1.5707963267948961,
+      "scale": 1,
+      "pivotX": -2.5,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p203",
+      "prop": "kingdom/PP_Castle_Roof_L_Corner_01",
+      "x": -28,
+      "y": 10.75,
+      "z": 24.75,
+      "yaw": 1.570796326794896,
+      "scale": 1,
+      "pivotX": -2.496,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p204",
+      "prop": "kingdom/PP_Castle_Wall_Pillars_Half_Corner_L_02",
+      "x": -28.5,
+      "y": 5,
+      "z": 24,
+      "yaw": 4.440892098500626e-16,
+      "scale": 1.15,
+      "pivotX": 2.376,
+      "pivotZ": 2.625,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p205",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -42.75,
+      "y": 15.75,
+      "z": 19.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p206",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -37.75,
+      "y": 15.75,
+      "z": 19.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p207",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -32.75,
+      "y": 15.75,
+      "z": 19.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p208",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -32.75,
+      "y": 15.75,
+      "z": 14.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p209",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -37.75,
+      "y": 15.75,
+      "z": 14.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p210",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -42.75,
+      "y": 15.75,
+      "z": 14.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p211",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -42.75,
+      "y": 15.75,
+      "z": 9.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p212",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -37.75,
+      "y": 15.75,
+      "z": 9.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p213",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -32.75,
+      "y": 15.75,
+      "z": 9.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p214",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -32.75,
+      "y": 15.75,
+      "z": 4.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p215",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -37.75,
+      "y": 15.75,
+      "z": 4.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p216",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -42.75,
+      "y": 15.75,
+      "z": 4.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p217",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -42.75,
+      "y": 15.75,
+      "z": -0.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p218",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -37.75,
+      "y": 15.75,
+      "z": -0.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p219",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -32.75,
+      "y": 15.75,
+      "z": -0.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p220",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -32.75,
+      "y": 15.75,
+      "z": -5.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p221",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -37.75,
+      "y": 15.75,
+      "z": -5.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p222",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -42.75,
+      "y": 15.75,
+      "z": -5.5,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p223",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -42.75,
+      "y": 15.75,
+      "z": -10,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p224",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -37.75,
+      "y": 15.75,
+      "z": -10,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p225",
+      "prop": "kingdom/PP_Castle_Floor_Stone_01",
+      "x": -32.75,
+      "y": 15.75,
+      "z": -10,
+      "yaw": 3.141592653589793,
+      "scale": 1,
+      "pivotX": 2.499,
+      "pivotZ": -2.5,
+      "collider": {
+        "mode": "none"
+      }
+    }
+  ],
+  "walls": [
+    {
+      "id": "w001",
+      "closed": true,
+      "points": [
+        [
+          -24.25,
+          -19.25
+        ],
+        [
+          -2.75,
+          -19
+        ],
+        [
+          -1.75,
+          -13.75
+        ],
+        [
+          -0.5,
+          -13.75
+        ],
+        [
+          -0.5,
+          -18
+        ],
+        [
+          1,
+          -18
+        ],
+        [
+          1,
+          -13.75
+        ],
+        [
+          2.5,
+          -13.75
+        ],
+        [
+          3,
+          -18.5
+        ],
+        [
+          25.5,
+          -18.25
+        ],
+        [
+          25.25,
+          20.5
+        ],
+        [
+          -24.25,
+          20
+        ]
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "id": "e001",
+      "type": "player_spawn",
+      "x": -18.25,
+      "z": 0,
+      "yaw": 0,
+      "y": -0.002,
+      "params": {
+        "team": "a",
+        "slot": 0
+      }
+    },
+    {
+      "id": "e002",
+      "type": "player_spawn",
+      "x": -18,
+      "z": -6,
+      "yaw": 0,
+      "y": -0.0019999999999986678,
+      "params": {
+        "team": "a",
+        "slot": 1
+      }
+    },
+    {
+      "id": "e003",
+      "type": "player_spawn",
+      "x": 18,
+      "z": 0,
+      "yaw": 3.141592653589793,
+      "params": {
+        "team": "b",
+        "slot": 0
+      }
+    },
+    {
+      "id": "e004",
+      "type": "player_spawn",
+      "x": 18,
+      "z": 5,
+      "yaw": 3.141592653589793,
+      "y": -0.0020000000000011103,
+      "params": {
+        "team": "b",
+        "slot": 1
+      }
+    },
+    {
+      "id": "e005",
+      "type": "player_spawn",
+      "x": 0,
+      "z": -13,
+      "yaw": 1.5707963267948966,
+      "params": {
+        "team": "c",
+        "slot": 0
+      }
+    },
+    {
+      "id": "e006",
+      "type": "player_spawn",
+      "x": -18.25,
+      "z": 6,
+      "yaw": 0,
+      "y": -0.0020000000000013323,
+      "params": {
+        "team": "a",
+        "slot": 2
+      }
+    },
+    {
+      "id": "e007",
+      "type": "player_spawn",
+      "x": 18.5,
+      "z": -5.5,
+      "yaw": 3.141592653589793,
+      "y": -0.001999999999998779,
+      "params": {
+        "team": "b",
+        "slot": 2
+      }
+    }
+  ]
+}

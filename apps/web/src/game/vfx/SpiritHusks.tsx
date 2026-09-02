@@ -48,7 +48,7 @@ const TETHER_HEIGHT = 1.05;
 const COOLDOWN_RING_Y = 0.022;
 
 /** Angular pie cooldown on the ground — track + filled sweep (0 empty → 1 full). */
-function createCooldownRingMaterial(fillColor: string, trackColor: string) {
+export function createCooldownRingMaterial(fillColor: string, trackColor: string) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uProgress: { value: 0 },
@@ -217,7 +217,7 @@ function SpiritTetherFollow({
 function SpiritHuskAvatar({ room, huskId }: { room: Room; huskId: string }) {
   const group = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
-  const colorRef = useRef(STARTER_COLORS[0]!);
+  const colorRef = useRef<string>(STARTER_COLORS[0]!);
   const patternRef = useRef("plain");
   const patternColorRef = useRef("#1f2937");
   const cosmeticsKeyRef = useRef("");

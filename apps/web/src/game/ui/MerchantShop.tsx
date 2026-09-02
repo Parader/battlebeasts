@@ -13,6 +13,7 @@ import {
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   normalizeCosmeticsEquipped,
+  normalizeEmoteSlots,
   ownsColor,
   ownsCosmetic,
   ownsEmote,
@@ -57,6 +58,8 @@ function ownsShopItem(
       return ownsEmote(unlocks.emotes, grant.emoteId);
     case "loadout_slot":
       return unlocks.loadoutSlotCount >= grant.toCount;
+    case "flex_slot":
+      return unlocks.flexSlotCount >= grant.toCount;
     case "lobby_beach_ball":
       return beachBallCount >= grant.toCount;
     default:
@@ -145,6 +148,41 @@ function previewLooksFromBase(
   return { ...base, cosmeticsEquipped };
 }
 
+function isShopItemEquipped(
+  item: ShopItemDef,
+  looks: AppearanceLooks,
+  emoteSlots: readonly (string | null)[],
+): boolean {
+  const grant = item.grant;
+  switch (grant.kind) {
+    case "color":
+      return looks.color === grant.hex;
+    case "pattern":
+      return looks.pattern === grant.patternId;
+    case "pattern_color":
+      return looks.pattern !== "plain" && looks.patternColor === grant.hex;
+    case "cosmetic": {
+      const def = getCosmeticItem(grant.itemId);
+      return Boolean(def && looks.cosmeticsEquipped[def.slot] === def.id);
+    }
+    case "emote":
+      return emoteSlots.includes(grant.emoteId);
+    default:
+      return false;
+  }
+}
+
+function canEquipShopItem(item: ShopItemDef): boolean {
+  const kind = item.grant.kind;
+  return (
+    kind === "color" ||
+    kind === "pattern" ||
+    kind === "pattern_color" ||
+    kind === "cosmetic" ||
+    kind === "emote"
+  );
+}
+
 type CosmeticSub = null | "tints" | "inks" | "patterns" | "gear" | CosmeticSlot;
 
 function cosmeticSubItems(sub: Exclude<CosmeticSub, null>): ShopItemDef[] {
@@ -178,6 +216,7 @@ export function MerchantPanel({
   const [holdBuyUiId, setHoldBuyUiId] = useState<string | null>(null);
   const [beachBallCount, setBeachBallCount] = useState(0);
   const [isOwnLobby, setIsOwnLobby] = useState(true);
+  const [liveLooks, setLiveLooks] = useState(appearanceBase);
   const holdBuyRaf = useRef<number | null>(null);
   const holdBuyStart = useRef(0);
   const holdBuyItemId = useRef<string | null>(null);
@@ -192,6 +231,21 @@ export function MerchantPanel({
   }, [cosmeticSub]);
 
   useEffect(() => {
+    setLiveLooks(appearanceBase);
+  }, [
+    appearanceBase.color,
+    appearanceBase.pattern,
+    appearanceBase.patternColor,
+    appearanceBase.cosmeticsEquipped.hat,
+    appearanceBase.cosmeticsEquipped.shoulders,
+    appearanceBase.cosmeticsEquipped.chest,
+    appearanceBase.cosmeticsEquipped.gloves,
+    appearanceBase.cosmeticsEquipped.belt,
+    appearanceBase.cosmeticsEquipped.legs,
+    appearanceBase.cosmeticsEquipped.shoes,
+  ]);
+
+  useEffect(() => {
     if (!room) {
       setBeachBallCount(0);
       setIsOwnLobby(true);
@@ -202,18 +256,40 @@ export function MerchantPanel({
         | {
             beachBallCount?: number;
             hubOwnerUserId?: string;
-            players?: { get: (id: string) => { id?: string } | undefined };
+            players?: {
+              get: (id: string) =>
+                | {
+                    id?: string;
+                    color?: string;
+                    pattern?: string;
+                    patternColor?: string;
+                    cosmeticHat?: string;
+                    cosmeticShoulders?: string;
+                    cosmeticChest?: string;
+                    cosmeticGloves?: string;
+                    cosmeticBelt?: string;
+                    cosmeticLegs?: string;
+                    cosmeticShoes?: string;
+                  }
+                | undefined;
+            };
           }
         | undefined;
       setBeachBallCount(Math.max(0, Math.floor(st?.beachBallCount ?? 0)));
       const ownerId = st?.hubOwnerUserId ?? "";
       const me = room.sessionId ? st?.players?.get(room.sessionId) : undefined;
       setIsOwnLobby(!ownerId || Boolean(me?.id && me.id === ownerId));
+      if (me) setLiveLooks(appearanceFromPlayer(me));
     };
     sync();
     const id = window.setInterval(sync, 250);
     return () => window.clearInterval(id);
   }, [room]);
+
+  const emoteSlots = useMemo(
+    () => normalizeEmoteSlots(unlocks.emoteSlots, unlocks.emotes),
+    [unlocks.emoteSlots, unlocks.emotes],
+  );
 
   const clearHoldBuy = () => {
     if (holdBuyRaf.current != null) {
@@ -286,8 +362,8 @@ export function MerchantPanel({
   );
 
   const previewLooks = useMemo(
-    () => previewLooksFromBase(appearanceBase, selectedItem),
-    [appearanceBase, selectedItem],
+    () => previewLooksFromBase(liveLooks, selectedItem),
+    [liveLooks, selectedItem],
   );
   const previewEmoteId =
     selectedItem?.grant.kind === "emote" ? selectedItem.grant.emoteId : null;
@@ -312,11 +388,9 @@ export function MerchantPanel({
     !selectedOwned &&
     !selectedNeedsOwnLobby &&
     canAffordShopCost(wallet, selectedItem.cost);
-  const selectedCosmetic =
-    selectedItem?.grant.kind === "cosmetic" ? getCosmeticItem(selectedItem.grant.itemId) : undefined;
-  const selectedCosmeticEquipped =
-    selectedCosmetic != null &&
-    appearanceBase.cosmeticsEquipped[selectedCosmetic.slot] === selectedCosmetic.id;
+  const selectedEquipped =
+    selectedItem != null && isShopItemEquipped(selectedItem, liveLooks, emoteSlots);
+  const selectedCanEquip = selectedItem != null && canEquipShopItem(selectedItem);
   const gearSlotBrowse =
     category === "cosmetics" &&
     cosmeticSub != null &&
@@ -361,13 +435,102 @@ export function MerchantPanel({
     holdBuyRaf.current = requestAnimationFrame(tick);
   };
 
-  const equipSelectedCosmetic = () => {
-    if (!selectedCosmetic) return;
-    if (selectedCosmeticEquipped) {
-      room?.send("set_cosmetic", { slot: selectedCosmetic.slot, itemId: null });
-    } else {
-      room?.send("set_cosmetic", { slot: selectedCosmetic.slot, itemId: selectedCosmetic.id });
+  const equipSelectedOwned = () => {
+    if (!selectedItem || !selectedOwned || !canEquipShopItem(selectedItem)) return;
+    const grant = selectedItem.grant;
+
+    if (grant.kind === "cosmetic") {
+      const def = getCosmeticItem(grant.itemId);
+      if (!def) return;
+      if (selectedEquipped) {
+        setLiveLooks((prev) => ({
+          ...prev,
+          cosmeticsEquipped: normalizeCosmeticsEquipped({
+            ...prev.cosmeticsEquipped,
+            [def.slot]: null,
+          }),
+        }));
+        room?.send("set_cosmetic", { slot: def.slot, itemId: null });
+      } else {
+        setLiveLooks((prev) => ({
+          ...prev,
+          cosmeticsEquipped: normalizeCosmeticsEquipped({
+            ...prev.cosmeticsEquipped,
+            [def.slot]: def.id,
+          }),
+        }));
+        room?.send("set_cosmetic", { slot: def.slot, itemId: def.id });
+      }
+      return;
     }
+
+    if (grant.kind === "color") {
+      if (selectedEquipped) return;
+      setLiveLooks((prev) => ({ ...prev, color: grant.hex }));
+      room?.send("set_color", { color: grant.hex });
+      return;
+    }
+
+    if (grant.kind === "pattern") {
+      if (selectedEquipped) return;
+      setLiveLooks((prev) => ({ ...prev, pattern: grant.patternId }));
+      room?.send("set_pattern", {
+        pattern: grant.patternId,
+        patternColor: liveLooks.patternColor,
+      });
+      return;
+    }
+
+    if (grant.kind === "pattern_color") {
+      if (selectedEquipped) return;
+      if (liveLooks.pattern === "plain") {
+        setLiveLooks((prev) => ({
+          ...prev,
+          pattern: "scales",
+          patternColor: grant.hex,
+        }));
+        room?.send("set_pattern", { pattern: "scales", patternColor: grant.hex });
+      } else {
+        setLiveLooks((prev) => ({ ...prev, patternColor: grant.hex }));
+        room?.send("set_pattern_color", { patternColor: grant.hex });
+      }
+      return;
+    }
+
+    if (grant.kind === "emote") {
+      const next = [...emoteSlots];
+      if (selectedEquipped) {
+        for (let i = 0; i < next.length; i++) {
+          if (next[i] === grant.emoteId) next[i] = null;
+        }
+      } else {
+        const empty = next.findIndex((id) => id == null);
+        if (empty < 0) {
+          next[0] = grant.emoteId;
+        } else {
+          next[empty] = grant.emoteId;
+        }
+      }
+      room?.send("set_emote_loadout", { emoteSlots: next });
+    }
+  };
+
+  const ownedActionLabel = () => {
+    if (!selectedItem) return "Owned";
+    if (selectedItem.grant.kind === "emote") {
+      return selectedEquipped ? "Remove from wheel" : "Add to wheel";
+    }
+    if (selectedItem.grant.kind === "cosmetic") {
+      return selectedEquipped ? "Unequip" : "Equip";
+    }
+    if (
+      selectedItem.grant.kind === "color" ||
+      selectedItem.grant.kind === "pattern" ||
+      selectedItem.grant.kind === "pattern_color"
+    ) {
+      return selectedEquipped ? "Equipped" : "Equip";
+    }
+    return "Owned";
   };
 
   return (
@@ -500,6 +663,7 @@ export function MerchantPanel({
                 ) : (
                   browseItems.map((item) => {
                     const owned = ownsShopItem(unlocks, item, beachBallCount);
+                    const equipped = owned && isShopItemEquipped(item, liveLooks, emoteSlots);
                     const selected = selectedItem?.id === item.id;
                     const holding = holdBuyUiId === item.id;
                     const buyable = canHoldBuyItem(item);
@@ -515,6 +679,7 @@ export function MerchantPanel({
                           className={[
                             "bb-loadout-card bb-shop__card bb-shop__card--select",
                             owned ? "bb-loadout-card--on" : "",
+                            equipped ? "bb-shop__card--equipped" : "",
                             selected ? "bb-shop__card--focus" : "",
                             holding ? "bb-shop__card--holding" : "",
                             buyable ? "bb-shop__card--buyable" : "",
@@ -539,7 +704,9 @@ export function MerchantPanel({
                             <div className="bb-loadout-card__top">
                               <span className="bb-loadout-card__name">{item.name}</span>
                               <span className="bb-loadout-card__shape">
-                                {owned ? (
+                                {equipped ? (
+                                  "Equipped"
+                                ) : owned ? (
                                   "Owned"
                                 ) : needsOwnLobby ? (
                                   "Own lobby"
@@ -553,6 +720,8 @@ export function MerchantPanel({
                             ) : null}
                             {!owned && buyable ? (
                               <p className="bb-shop__card__hold-hint">Hold to buy</p>
+                            ) : owned && canEquipShopItem(item) && !equipped ? (
+                              <p className="bb-shop__card__hold-hint">Select to equip</p>
                             ) : null}
                           </div>
                         </button>
@@ -584,13 +753,19 @@ export function MerchantPanel({
             {selectedItem ? (
               <div className="bb-shop__buy-row">
                 {selectedOwned ? (
-                  selectedCosmetic ? (
+                  selectedCanEquip ? (
                     <button
                       type="button"
-                      className="bb-btn-brass w-full"
-                      onClick={equipSelectedCosmetic}
+                      className="bb-btn-brass w-full disabled:opacity-40"
+                      disabled={
+                        selectedEquipped &&
+                        (selectedItem.grant.kind === "color" ||
+                          selectedItem.grant.kind === "pattern" ||
+                          selectedItem.grant.kind === "pattern_color")
+                      }
+                      onClick={equipSelectedOwned}
                     >
-                      {selectedCosmeticEquipped ? "Unequip" : "Equip"}
+                      {ownedActionLabel()}
                     </button>
                   ) : (
                     <span className="bb-loadout-card__action">Owned</span>
@@ -614,7 +789,23 @@ export function MerchantPanel({
 
         {!showCharacterPreview && selectedItem && selectedOwned ? (
           <div className="bb-shop__buy-row bb-shop__buy-row--solo">
-            <span className="bb-loadout-card__action">Owned</span>
+            {selectedCanEquip ? (
+              <button
+                type="button"
+                className="bb-btn-brass w-full disabled:opacity-40"
+                disabled={
+                  selectedEquipped &&
+                  (selectedItem.grant.kind === "color" ||
+                    selectedItem.grant.kind === "pattern" ||
+                    selectedItem.grant.kind === "pattern_color")
+                }
+                onClick={equipSelectedOwned}
+              >
+                {ownedActionLabel()}
+              </button>
+            ) : (
+              <span className="bb-loadout-card__action">Owned</span>
+            )}
           </div>
         ) : null}
 

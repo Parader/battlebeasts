@@ -9,18 +9,23 @@ type MeetTarget = {
 
 /**
  * Server-authored Magma Orbs meet point / range so client curves match damage.
- * Filled from cast_phase (range) and aoe combat_fx (collide xz).
+ * Filled from cast_phase (range + collide xz) and aoe combat_fx (final collide).
  */
 const byOwner = new Map<string, MeetTarget>();
 
-export function setMagmaOrbsMeetRange(ownerId: string, meetRange: number): void {
+export function setMagmaOrbsMeetRange(
+  ownerId: string,
+  meetRange: number,
+  opts?: { keepCollide?: boolean },
+): void {
   if (!ownerId || !(meetRange > 0)) return;
   const prev = byOwner.get(ownerId);
+  const keep = opts?.keepCollide === true;
   byOwner.set(ownerId, {
     meetRange,
-    collideX: prev?.collideX,
-    collideZ: prev?.collideZ,
-    yaw: prev?.yaw,
+    collideX: keep ? prev?.collideX : undefined,
+    collideZ: keep ? prev?.collideZ : undefined,
+    yaw: keep ? prev?.yaw : undefined,
     updatedAt: performance.now(),
   });
 }
@@ -33,6 +38,7 @@ export function setMagmaOrbsMeetCollide(
   meetRange?: number,
 ): void {
   if (!ownerId) return;
+  if (!Number.isFinite(collideX) || !Number.isFinite(collideZ)) return;
   const prev = byOwner.get(ownerId);
   byOwner.set(ownerId, {
     meetRange: meetRange ?? prev?.meetRange ?? 0,

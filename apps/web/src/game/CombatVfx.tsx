@@ -1,11 +1,13 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { Html, useGLTF, Billboard } from "@react-three/drei";
+import { CombatHpBarBillboard } from "./CombatHpBarBillboard";
 import { Room } from "colyseus.js";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import {
-  HUB_PRACTICE_DUMMIES,
   MOVE_SPEED,
+  PLAYER_BASE_MAX_HP,
+  PROP_TARGET_KIND,
   PVE_ZOMBIE_KIND,
   STARTER_COLORS,
   totalShieldAbsorb,
@@ -36,6 +38,12 @@ import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { playBoltCastSfx } from "./gameSfx";
+import {
+  useDecoyIds,
+  useHubBallIds,
+  useProjectileIds,
+  useWorldTargetIds,
+} from "./useColyseusMapKeys";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
 
@@ -163,37 +171,10 @@ function ProjectileRouter({
 }
 
 export function Projectiles({ room }: { room: Room | null }) {
-    const [ids, setIds] = useState<string[]>([]);
-    const keyRef = useRef("");
-    const abilityById = useRef(new Map<string, string>());
-    const prevLive = useRef(new Set<string>());
-
-    useFrame(() => {
-        if (!room?.state?.projectiles) return;
-        const live: string[] = [];
-        room.state.projectiles.forEach(
-            (p: { abilityId?: string; ownerSessionId?: string }, id: string) => {
-            live.push(id);
-            if (p.abilityId) abilityById.current.set(id, p.abilityId);
-            // Bolt cast SFX when the projectile first appears in the world.
-            if (!prevLive.current.has(id) && p.abilityId === "bolt") {
-                playBoltCastSfx(p.ownerSessionId || id);
-            }
-        },
-        );
-        live.sort();
-        prevLive.current = new Set(live);
-
-        for (const id of [...abilityById.current.keys()]) {
-            if (!live.includes(id)) abilityById.current.delete(id);
-        }
-
-        const key = live.join("|");
-        if (key !== keyRef.current) {
-            keyRef.current = key;
-            setIds(live);
-        }
-    });
+    const onBoltCast = useCallback((ownerSessionId: string) => {
+        playBoltCastSfx(ownerSessionId);
+    }, []);
+    const ids = useProjectileIds(room, onBoltCast);
 
     if (!room) return null;
     return (
@@ -203,7 +184,10 @@ export function Projectiles({ room }: { room: Room | null }) {
                     key={id}
                     room={room}
                     id={id}
-                    knownAbilityId={abilityById.current.get(id)}
+                    knownAbilityId={
+                        (room.state?.projectiles?.get(id) as { abilityId?: string } | undefined)
+                            ?.abilityId
+                    }
                 />
             ))}
         </>
@@ -377,21 +361,7 @@ export function DamagePopups() {
 }
 
 export function WorldTargets({ room }: { room: Room | null }) {
-  const [ids, setIds] = useState<string[]>([]);
-
-  useFrame(() => {
-    const map = room?.state?.targets as Map<string, { kind?: string }> | undefined;
-    if (!map) {
-      // Hub first paint: fall back to known dummy ids until schema syncs.
-      const hub = HUB_PRACTICE_DUMMIES.map((d) => d.id);
-      if (ids.length !== hub.length || ids.some((id, i) => id !== hub[i])) setIds(hub);
-      return;
-    }
-    const next: string[] = [];
-    map.forEach((_t, id) => next.push(id));
-    next.sort();
-    if (next.length !== ids.length || next.some((id, i) => id !== ids[i])) setIds(next);
-  });
+  const ids = useWorldTargetIds(room);
 
   return (
     <>
@@ -401,10 +371,44 @@ export function WorldTargets({ room }: { room: Room | null }) {
         if (kind === PVE_ZOMBIE_KIND) {
           return <ZombieAvatar key={id} room={room} targetId={id} />;
         }
+        if (kind === PROP_TARGET_KIND) {
+          return <PropTargetBar key={id} room={room} targetId={id} />;
+        }
         return <PracticeDummyAvatar key={id} room={room} targetId={id} />;
       })}
     </>
   );
+}
+
+/**
+ * Health bar over an attackable map prop.
+ *
+ * No avatar: the prop is already on screen, drawn by the instanced map mesh
+ * like any other piece of scenery. All that is missing is the readout, and
+ * since these refill rather than break, the model never has to react.
+ *
+ * The bar floats above the prop's own footprint. Radius is the only size the
+ * server knows about, so it stands in for height -- exact for the round things
+ * these tend to be (posts, barrels, dummies), and clamped so a wide-but-flat
+ * prop does not put its bar in the sky.
+ */
+function PropTargetBar({ room, targetId }: { room: Room | null; targetId: string }) {
+    const root = useRef<THREE.Group>(null);
+
+    useFrame(() => {
+        const t = room?.state?.targets?.get(targetId) as
+            | { x: number; z: number; y?: number; radius?: number }
+            | undefined;
+        const g = root.current;
+        if (!g || !t) return;
+        g.position.set(t.x, t.y ?? 0, t.z);
+    });
+
+    return (
+        <group ref={root}>
+            <HpBillboard room={room} targetId={targetId} y={3} />
+        </group>
+    );
 }
 
 function ZombieHpBar({ frac, y = 2.05 }: { frac: number; y?: number }) {
@@ -569,27 +573,43 @@ type DecoyNet = {
     pattern?: string;
     patternColor?: string;
     ownerSessionId?: string;
+    hp?: number;
+    maxHp?: number;
     expiresAt: number;
 };
 
-/** Always-visible 1-HP decoy bar (not gated on owner cloak). */
-function DecoyHpBillboard({ y = 2.15 }: { y?: number }) {
+/** Same geometry/colors as PlayerHpBillboard — driven by decoy.hp/maxHp. */
+function DecoyHpBillboard({
+    room,
+    decoyId,
+    y = 2.2,
+}: {
+    room: Room;
+    decoyId: string;
+    y?: number;
+}) {
+    const ratioRef = useRef(0);
+    const visibleRef = useRef(false);
+
+    useFrame(() => {
+        const d = room.state?.decoys?.get(decoyId) as DecoyNet | undefined;
+        if (!d || typeof d.hp !== "number" || d.hp <= 0) {
+            visibleRef.current = false;
+            ratioRef.current = 0;
+            return;
+        }
+        const maxHp = Math.max(1, d.maxHp ?? PLAYER_BASE_MAX_HP);
+        visibleRef.current = true;
+        ratioRef.current = Math.max(0, Math.min(1, d.hp / maxHp));
+    });
+
     return (
-        <Billboard position={[0, y, 0]} follow lockX={false} lockY={false} lockZ={false}>
-            <mesh position={[0, 0, 0.01]} renderOrder={40}>
-                <planeGeometry args={[0.95, 0.11]} />
-                <meshBasicMaterial color="#1f2937" depthTest={false} depthWrite={false} transparent opacity={0.85} />
-            </mesh>
-            <mesh position={[0, 0, 0.02]} renderOrder={41}>
-                <planeGeometry args={[0.88, 0.07]} />
-                <meshBasicMaterial
-                    color="#4ade80"
-                    depthTest={false}
-                    depthWrite={false}
-                    toneMapped={false}
-                />
-            </mesh>
-        </Billboard>
+        <CombatHpBarBillboard
+            y={y}
+            ratioRef={ratioRef}
+            visibleRef={visibleRef}
+            fillColor="#4ade80"
+        />
     );
 }
 
@@ -720,28 +740,15 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
                 <primitive object={scene} />
                 <EquippedCosmetics characterRoot={scene} equipped={equipped} />
             </group>
-            {/* Dedicated decoy HP — always visible; not tied to owner cloak. */}
-            <DecoyHpBillboard />
+            {/* Same HP bar as players — tracks decoy.hp until cloak ends / HP depleted. */}
+            <DecoyHpBillboard room={room} decoyId={decoyId} />
         </group>
     );
 }
 
 /** Visual clones from Decoy (Q). */
 export function Decoys({ room }: { room: Room | null }) {
-    const [ids, setIds] = useState<string[]>([]);
-    const prevKey = useRef("");
-
-    useFrame(() => {
-        if (!room?.state?.decoys) return;
-        const next: string[] = [];
-        room.state.decoys.forEach((_d: unknown, id: string) => next.push(id));
-        next.sort();
-        const key = next.join("|");
-        if (key !== prevKey.current) {
-            prevKey.current = key;
-            setIds(next);
-        }
-    });
+    const ids = useDecoyIds(room);
 
     if (!room) return null;
     return (

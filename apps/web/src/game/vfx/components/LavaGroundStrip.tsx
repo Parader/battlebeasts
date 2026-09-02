@@ -86,6 +86,33 @@ export type LavaGroundStripProps = {
 };
 
 /**
+ * Standalone so the warmup can compile this program before the first firewall.
+ * Kept out of the component body for that reason only.
+ */
+export function createLavaStripMaterial(opts?: {
+  sideFade?: number;
+  endFade?: number;
+  repeatX?: number;
+}): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uMap: { value: getLavaTexture() },
+      uOpacity: { value: 0 },
+      uProgress: { value: 0 },
+      uSideFade: { value: opts?.sideFade ?? 0.28 },
+      uEndFade: { value: opts?.endFade ?? 0.06 },
+      uRepeat: { value: new THREE.Vector2(Math.max(1, opts?.repeatX ?? 1), 1) },
+    },
+    vertexShader: VS,
+    fragmentShader: FS,
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+  });
+}
+
+/**
  * Textured lava corridor — replaces procedural frost-style ground decal.
  * Fades on the long sides; grows from center with progress.
  */
@@ -100,25 +127,10 @@ export function LavaGroundStrip({
 }: LavaGroundStripProps) {
   const mesh = useRef<THREE.Mesh>(null);
 
-  const material = useMemo(() => {
-    const map = getLavaTexture();
-    return new THREE.ShaderMaterial({
-      uniforms: {
-        uMap: { value: map },
-        uOpacity: { value: 0 },
-        uProgress: { value: 0 },
-        uSideFade: { value: sideFade },
-        uEndFade: { value: endFade },
-        uRepeat: { value: new THREE.Vector2(Math.max(1, length / Math.max(width, 0.01)), 1) },
-      },
-      vertexShader: VS,
-      fragmentShader: FS,
-      transparent: true,
-      depthWrite: false,
-      toneMapped: false,
-      side: THREE.DoubleSide,
-    });
-  }, [sideFade, endFade, length, width]);
+  const material = useMemo(
+    () => createLavaStripMaterial({ sideFade, endFade, repeatX: length / Math.max(width, 0.01) }),
+    [sideFade, endFade, length, width],
+  );
 
   useEffect(() => {
     material.uniforms.uSideFade!.value = sideFade;

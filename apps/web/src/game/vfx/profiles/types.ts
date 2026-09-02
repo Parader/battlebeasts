@@ -24,7 +24,16 @@ export type CombatFxAoeMode =
   | "healBeam"
   | "lifeLeech"
   | "volcano"
+  | "arcThread"
   | "none";
+
+export type CombatFxDashMode = "bloodRushTrail" | "spiritForm" | "none";
+
+/** Extra GPU assets for this ability — merged into hub/arena preload. */
+export type AbilityVfxAssets = {
+  textures?: readonly string[];
+  glbs?: readonly string[];
+};
 
 export type ChargeHandOpts = {
   forward: number;
@@ -66,9 +75,12 @@ export type AbilityVfxProfile = {
   muzzleLead?: MuzzleLeadOpts;
   bridgedAoe?: BridgedAoeOpts;
   projectile?: ProjectileVfxMode;
+  /** Declare new textures/GLBs here so loading gate preloads them. */
+  assets?: AbilityVfxAssets;
   combatFx?: {
     onHit?: CombatFxHitMode;
     onAoe?: CombatFxAoeMode;
+    onDash?: CombatFxDashMode;
     skipLegacyBurst?: boolean;
     /** Hit impact world Y. */
     hitY?: number;

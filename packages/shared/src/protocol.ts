@@ -1,3 +1,5 @@
+import type { NpcAction } from "./npcs";
+
 export interface PlayerInput {
   seq: number;
   dt: number;
@@ -91,7 +93,7 @@ export type ClientMessage =
   | { type: "party_invite_friend"; userId: string }
   | { type: "party_respond"; accept: boolean; partyId: string }
   | { type: "party_kick"; sessionId: string }
-  | { type: "party_set_seat"; sessionId: string; seat: "teamA" | "teamB" | "spectator" }
+  | { type: "party_set_seat"; sessionId: string; seat: "teamA" | "teamB" | "teamC" | "spectator" }
   | { type: "party_set_modes"; modes: string[] }
   | { type: "party_lock"; matchKind?: "ranked" | "unranked" }
   | { type: "party_leave" }
@@ -105,12 +107,14 @@ export type PartyMemberSnapshot = {
   sessionId: string;
   userId?: string;
   displayName: string;
-  seat: "teamA" | "teamB" | "spectator";
+  seat: "teamA" | "teamB" | "teamC" | "spectator";
 };
 
 export type PartySnapshot = {
   partyId: string;
   leaderSessionId: string;
+  /** Defaults to "pvp" when omitted (older snapshots). */
+  kind?: "pvp" | "coop_pve";
   modes: string[];
   members: PartyMemberSnapshot[];
   /** Outstanding in-hub session invites (legacy / rare). */
@@ -159,6 +163,15 @@ export type MatchRecapRow = {
 export type ServerMessage =
   | { type: "snapshot"; snapshot: WorldSnapshot }
   | { type: "ui"; ui: UiKind }
+  /**
+   * An NPC greeting, sent once the server has confirmed you are stood next to
+   * the one you asked to talk to.
+   *
+   * Carries the authored text rather than an id the client looks up, so the
+   * server stays the authority on what a villager says even though both sides
+   * hold the same map document.
+   */
+  | { type: "npc_dialogue"; npcId: string; name: string; line: string; action: NpcAction }
   | { type: "toast"; message: string }
   | { type: "queue_status"; queued: boolean; modes?: string[] }
   | { type: "transfer"; room: string; roomId?: string; options?: Record<string, unknown> }
@@ -183,9 +196,10 @@ export type ServerMessage =
   | { type: "hub_roster"; players: { sessionId: string; displayName: string; isOwner: boolean }[] }
   | {
       type: "match_recap";
-      winner: "a" | "b" | "draw";
+      winner: "a" | "b" | "c" | "draw";
       scoreA: number;
       scoreB: number;
+      scoreC?: number;
       matchKind?: "ranked" | "custom";
       rows: MatchRecapRow[];
     }

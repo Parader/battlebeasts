@@ -4,11 +4,17 @@ import {
     useContext,
     useEffect,
     useMemo,
+    useRef,
     useState,
     type ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import {
+    isSupabaseConfigured,
+    supabase,
+    supabasePublishableKey,
+    supabaseUrl,
+} from "@/lib/supabase";
 import type { Profile } from "@/lib/database.types";
 
 type AuthState = {
@@ -17,6 +23,10 @@ type AuthState = {
     session: Session | null;
     user: User | null;
     profile: Profile | null;
+    /** True while a signed-in user is waiting on the profiles row. */
+    profileLoading: boolean;
+    /** Set when profile fetch fails or times out (not when simply missing). */
+    profileError: string | null;
     accessToken: string | null;
     needsNameSetup: boolean;
     signInWithGoogle: () => Promise<void>;
@@ -31,15 +41,121 @@ const AuthContext = createContext<AuthState | null>(null);
 
 /** Dedicated desktop loopback (must match Electron main + Supabase redirect allowlist). */
 const DESKTOP_OAUTH_WEB_REDIRECT = "http://127.0.0.1:3847/auth/callback";
+const SESSION_READY_TIMEOUT_MS = 8_000;
+const PROFILE_FETCH_TIMEOUT_MS = 12_000;
 
-async function fetchProfile(userId: string): Promise<Profile | null> {
-    if (!supabase) return null;
-    const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
-    if (error) {
-        console.error("Failed to load profile", error);
-        return null;
+const PROFILE_SELECT =
+    "id,display_name,avatar_url,color,pattern,pattern_color,name_confirmed,name_changed_at,created_at,updated_at";
+
+function abortableTimeout(ms: number, label = "Profile request"): { signal: AbortSignal; clear: () => void } {
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => ctrl.abort(new Error(`${label} timed out after ${ms}ms`)), ms);
+    return {
+        signal: ctrl.signal,
+        clear: () => window.clearTimeout(t),
+    };
+}
+
+/**
+ * Fetch profile via REST — bypasses supabase-js auth locks that deadlock
+ * after OAuth `exchangeCodeForSession` / `onAuthStateChange`.
+ */
+async function fetchProfileRest(userId: string, accessToken: string): Promise<Profile | null> {
+    if (!supabaseUrl || !supabasePublishableKey) return null;
+
+    const qs = new URLSearchParams({
+        select: PROFILE_SELECT,
+        id: `eq.${userId}`,
+    });
+    const { signal, clear } = abortableTimeout(PROFILE_FETCH_TIMEOUT_MS, "Profile REST");
+    try {
+        const res = await fetch(`${supabaseUrl}/rest/v1/profiles?${qs}`, {
+            headers: {
+                apikey: supabasePublishableKey,
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json",
+            },
+            signal,
+        });
+
+        if (!res.ok) {
+            const body = await res.text().catch(() => "");
+            // PostgREST restarting: schema cache not ready yet.
+            if (res.status === 503 || /PGRST002|schema cache/i.test(body)) {
+                throw new Error("PostgREST_RESTARTING");
+            }
+            throw new Error(
+                body
+                    ? `Profile load failed (${res.status}): ${body.slice(0, 180)}`
+                    : `Profile load failed (${res.status})`,
+            );
+        }
+
+        const rows = (await res.json()) as Profile[];
+        return rows[0] ?? null;
+    } finally {
+        clear();
     }
-    return data;
+}
+
+/** Fallback via supabase-js (also deferred off the auth lock). */
+async function fetchProfileClient(userId: string): Promise<Profile | null> {
+    if (!supabase) return null;
+    const { signal, clear } = abortableTimeout(PROFILE_FETCH_TIMEOUT_MS, "Profile client");
+    try {
+        const query = supabase
+            .from("profiles")
+            .select(PROFILE_SELECT)
+            .eq("id", userId)
+            .maybeSingle();
+        const result = await Promise.race([
+            query,
+            new Promise<never>((_, reject) => {
+                signal.addEventListener(
+                    "abort",
+                    () => reject(signal.reason ?? new Error("Profile client timed out")),
+                    { once: true },
+                );
+            }),
+        ]);
+        if (result.error) throw result.error;
+        return (result.data as Profile | null) ?? null;
+    } finally {
+        clear();
+    }
+}
+
+async function fetchProfile(userId: string, accessToken: string): Promise<Profile | null> {
+    let restErr: unknown;
+    try {
+        return await fetchProfileRest(userId, accessToken);
+    } catch (err) {
+        restErr = err;
+        if (err instanceof Error && err.message === "PostgREST_RESTARTING") throw err;
+    }
+    try {
+        return await fetchProfileClient(userId);
+    } catch (clientErr) {
+        const restMsg = restErr instanceof Error ? restErr.message : String(restErr);
+        const clientMsg = clientErr instanceof Error ? clientErr.message : String(clientErr);
+        throw new Error(`Profile load failed. REST: ${restMsg} | Client: ${clientMsg}`);
+    }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const t = window.setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+        promise.then(
+            (v) => {
+                window.clearTimeout(t);
+                resolve(v);
+            },
+            (err) => {
+                window.clearTimeout(t);
+                reject(err);
+            },
+        );
+    });
 }
 
 function parseAuthCallbackUrl(url: string): URL | null {
@@ -59,15 +175,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [ready, setReady] = useState(!isSupabaseConfigured);
     const [session, setSession] = useState<Session | null>(null);
     const [profile, setProfile] = useState<Profile | null>(null);
+    const [profileLoading, setProfileLoading] = useState(false);
+    const [profileError, setProfileError] = useState<string | null>(null);
+    const profileReqId = useRef(0);
+    const sessionRef = useRef<Session | null>(null);
+    sessionRef.current = session;
 
-    const refreshProfile = useCallback(async () => {
-        if (!session?.user) {
+    const refreshProfile = useCallback(async (userId?: string) => {
+        const id = userId ?? sessionRef.current?.user?.id;
+        let token = sessionRef.current?.access_token;
+        if (!id || !token) {
             setProfile(null);
+            setProfileLoading(false);
+            setProfileError(null);
             return;
         }
-        const next = await fetchProfile(session.user.id);
-        setProfile(next);
-    }, [session?.user]);
+        const req = ++profileReqId.current;
+        setProfileLoading(true);
+        setProfileError(null);
+        try {
+            // Defer past auth lock release after OAuth / onAuthStateChange.
+            await new Promise<void>((r) => window.setTimeout(r, 0));
+            if (req !== profileReqId.current) return;
+
+            let next: Profile | null = null;
+            let lastErr: unknown;
+            // PostgREST schema-cache rebuild can take a bit after a project restart.
+            for (let attempt = 0; attempt < 8; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        await new Promise<void>((r) => window.setTimeout(r, 1500));
+                        if (req !== profileReqId.current) return;
+                        if (supabase) {
+                            const { data } = await supabase.auth.getSession();
+                            token = data.session?.access_token ?? token;
+                            if (data.session) setSession(data.session);
+                        }
+                    }
+                    next = await fetchProfile(id, token);
+                    lastErr = null;
+                    break;
+                } catch (err) {
+                    lastErr = err;
+                    const msg = err instanceof Error ? err.message : "";
+                    // Keep looping while API is mid-restart; otherwise stop early on hard errors.
+                    if (msg !== "PostgREST_RESTARTING" && !/timed out|aborted|504|503/i.test(msg)) {
+                        break;
+                    }
+                }
+            }
+            if (req !== profileReqId.current) return;
+            if (lastErr) throw lastErr;
+
+            setProfile(next);
+            if (!next) {
+                setProfileError("No profile found for this account. Try signing out and back in.");
+            }
+        } catch (err) {
+            if (req !== profileReqId.current) return;
+            console.error(err);
+            setProfile(null);
+            const raw = err instanceof Error ? err.message : "Failed to load profile";
+            const message =
+                raw === "PostgREST_RESTARTING" || /timed out|aborted|504|503|schema cache/i.test(raw)
+                    ? "Supabase Data API is restarting (PostgREST schema cache). Wait ~30–60s, then Retry."
+                    : raw;
+            setProfileError(message);
+        } finally {
+            if (req === profileReqId.current) setProfileLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
         if (!supabase) {
@@ -77,12 +254,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         let cancelled = false;
 
-        supabase.auth.getSession().then(({ data }) => {
-            if (cancelled) return;
-            setSession(data.session);
-            setReady(true);
-        });
+        void withTimeout(supabase.auth.getSession(), SESSION_READY_TIMEOUT_MS, "Auth session")
+            .then(({ data }) => {
+                if (cancelled) return;
+                setSession(data.session);
+                setReady(true);
+            })
+            .catch((err) => {
+                console.error(err);
+                if (cancelled) return;
+                // Don't soft-lock the whole app on a hung Supabase session read.
+                setSession(null);
+                setReady(true);
+            });
 
+        // Keep callback sync — async work inside onAuthStateChange deadlocks supabase-js.
         const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
             setSession(next);
         });
@@ -180,13 +366,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
     }, []);
 
+    // Load profile once per user id — don't retrigger on token refresh object identity.
+    const userId = session?.user?.id ?? null;
     useEffect(() => {
-        if (!session?.user) {
+        if (!userId) {
+            profileReqId.current += 1;
             setProfile(null);
+            setProfileLoading(false);
+            setProfileError(null);
             return;
         }
-        void refreshProfile();
-    }, [session?.user, refreshProfile]);
+        void refreshProfile(userId);
+    }, [userId, refreshProfile]);
 
     const signInWithGoogle = useCallback(async () => {
         if (!supabase) {
@@ -270,6 +461,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!supabase) return;
         await supabase.auth.signOut();
         setProfile(null);
+        setProfileError(null);
+        setProfileLoading(false);
     }, []);
 
     const claimDisplayName = useCallback(async (name: string) => {
@@ -285,6 +478,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const next = data as Profile;
         setProfile(next);
+        setProfileError(null);
         return next;
     }, []);
 
@@ -297,19 +491,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             session,
             user: session?.user ?? null,
             profile,
+            profileLoading,
+            profileError,
             accessToken: session?.access_token ?? null,
             needsNameSetup,
             signInWithGoogle,
             signInWithEmail,
             signUpWithEmail,
             signOut,
-            refreshProfile,
+            refreshProfile: () => refreshProfile(),
             claimDisplayName,
         }),
         [
             ready,
             session,
             profile,
+            profileLoading,
+            profileError,
             needsNameSetup,
             signInWithGoogle,
             signInWithEmail,

@@ -18,6 +18,7 @@ import { ChainJumpProjectileEffect } from "./effects/chainJumpProjectile";
 import { SpikesPopEffect } from "./effects/spikesPop";
 import { FrostMistConeEffect } from "./effects/frostMistCone";
 import { SilenceSweepEffect } from "./effects/silenceSweep";
+import { HandShieldRetaliateEffect } from "./effects/handShieldRetaliate";
 import { HealSwooshEffect } from "./effects/healSwoosh";
 import { HealBeamEffect } from "./effects/healBeam";
 import { LifeLeechEffect } from "./effects/lifeLeech";
@@ -35,6 +36,7 @@ import { BloodRushTrailEffect } from "./effects/bloodRushTrail";
 import { SpiritReturnTrailEffect } from "./effects/spiritReturnTrail";
 import { MagmaOrbsCastEffect } from "./effects/magmaOrbsCast";
 import { ShroomBurstEffect } from "./effects/shroomBurst";
+import { ArcThreadEffect } from "./effects/arcThread";
 import { WallFizzleEffect } from "./effects/wallFizzle";
 import {
   getAbilityVfxProfile,
@@ -65,6 +67,7 @@ export type ImpactVfxId =
   | "spikes"
   | "frostMist"
   | "silenceSweep"
+  | "handShield"
   | "groove"
   | "healBeam"
   | "lifeLeech"
@@ -223,11 +226,13 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   spiritForm: (shot, ctx) => <SpiritReturnTrailEffect key={shot.key} shot={shot} follow={ctx} />,
   magmaOrbs: (shot, ctx) => <MagmaOrbsCastEffect key={shot.key} shot={shot} follow={ctx} />,
   shrooms: (shot) => <ShroomBurstEffect key={shot.key} shot={shot} />,
+  arcThread: (shot, ctx) => <ArcThreadEffect key={shot.key} shot={shot} follow={ctx} />,
   poisonCloud: (shot) => <PoisonCloudGroundEffect key={shot.key} shot={shot} />,
   smokeBomb: (shot) => <SmokeBombGroundEffect key={shot.key} shot={shot} />,
   holyGround: (shot) => <HolyGroundEffect key={shot.key} shot={shot} />,
   fireball: (shot) => <FireballBurnGroundEffect key={shot.key} shot={shot} />,
   silenceSweep: (shot, ctx) => <SilenceSweepEffect key={shot.key} shot={shot} follow={ctx} />,
+  handShield: (shot, ctx) => <HandShieldRetaliateEffect key={shot.key} shot={shot} follow={ctx} />,
 };
 
 function renderByEffectKind(shot: OneShotEffect, ctx: VfxFollowContext): ReactNode | null {
@@ -319,4 +324,5 @@ export {
   PortalBlinkEffect,
   VolcanoRockEffect,
   BloodRushTrailEffect,
+  ArcThreadEffect,
 };

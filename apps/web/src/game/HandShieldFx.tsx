@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { findHandBone } from "./vfx/attach";
 import { createHandShieldMaterial } from "./vfx/materials/handShield";
+import { useSpellLight, type SpellLight } from "./vfx/spellLights";
 import type { StatusRowLite } from "./StatusOrnaments";
 
 type Props = {
@@ -22,8 +23,8 @@ const HAND_LIGHT = "#93c5fd";
 export function HandShieldFx({ characterRoot, getStatuses }: Props) {
   const anchor = useRef<THREE.Group>(null);
   const shield = useRef<THREE.Group>(null);
-  const leftLight = useRef<THREE.PointLight>(null);
-  const rightLight = useRef<THREE.PointLight>(null);
+  const leftLight = useSpellLight();
+  const rightLight = useSpellLight();
   const leftHandRef = useRef<THREE.Object3D | null>(null);
   const rightHandRef = useRef<THREE.Object3D | null>(null);
   const appear = useRef(0);
@@ -79,23 +80,18 @@ export function HandShieldFx({ characterRoot, getStatuses }: Props) {
     const pulse = 0.97 + 0.03 * Math.sin(clock.elapsedTime * 3.2);
     const handGlow = a * (1.2 + 0.3 * Math.sin(clock.elapsedTime * 5.5));
 
-    const placeHandLight = (
-      bone: THREE.Object3D | null,
-      light: THREE.PointLight | null,
-    ) => {
-      if (!light) return;
+    const placeHandLight = (bone: THREE.Object3D | null, light: SpellLight) => {
       if (!show || !bone) {
-        light.intensity = 0;
+        light.off();
         return;
       }
+      // Pool lights live at the scene root, so world space directly — no need
+      // to convert into the avatar's local frame as the nested lights did.
       bone.getWorldPosition(_handWorld);
-      _localPos.copy(_handWorld);
-      aRoot.worldToLocal(_localPos);
-      light.position.copy(_localPos);
-      light.intensity = handGlow * 2.6;
+      light.emit(_handWorld.x, _handWorld.y, _handWorld.z, HAND_LIGHT, handGlow * 2.6, 1.9);
     };
-    placeHandLight(leftHandRef.current, leftLight.current);
-    placeHandLight(rightHandRef.current, rightLight.current);
+    placeHandLight(leftHandRef.current, leftLight);
+    placeHandLight(rightHandRef.current, rightLight);
 
     if (!show) return;
 
@@ -120,20 +116,6 @@ export function HandShieldFx({ characterRoot, getStatuses }: Props) {
       <group ref={shield} renderOrder={5}>
         <mesh geometry={geo} material={mat} renderOrder={5} />
       </group>
-      <pointLight
-        ref={leftLight}
-        color={HAND_LIGHT}
-        intensity={0}
-        distance={1.9}
-        decay={2}
-      />
-      <pointLight
-        ref={rightLight}
-        color={HAND_LIGHT}
-        intensity={0}
-        distance={1.9}
-        decay={2}
-      />
     </group>
   );
 }

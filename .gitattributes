@@ -1,0 +1,28 @@
+# Binary game assets tracked via Git LFS.
+#
+# Scope note: only assets that are NEW to the repo are tracked here. The
+# existing apps/web/public/assets/maps/*.glb and hero.glb are already in
+# history as regular blobs -- converting them now would change storage for
+# tracked files and break checkouts on clients without LFS, for no gain
+# (their history cost is already paid).
+
+# Prop library: ~3900 files / ~300 MB. Only props referenced by shipped map
+# documents get copied into build output, so this is authoring-side weight.
+apps/web/public/assets/props/**/*.glb filter=lfs diff=lfs merge=lfs -text
+
+# Shared texture atlases. Synty-style kits reference one atlas from hundreds of
+# models, so these stay external to the GLBs rather than embedded per-model --
+# a few MB on disk instead of a few hundred, and one GPU upload at runtime.
+apps/web/public/assets/props/**/textures/*.png filter=lfs diff=lfs merge=lfs -text
+
+# Ground material library (Poly Haven, CC0). Two 1k JPEGs per material and the
+# pool is meant to keep growing, so this is a blanket rule rather than one line
+# per slug. The original sandy_gravel_02 set predates LFS and is excluded
+# below, for the same reason as the maps above: converting a committed blob
+# rewrites it for everyone.
+apps/web/public/ground_textures/*.jpg filter=lfs diff=lfs merge=lfs -text
+apps/web/public/ground_textures/sandy_gravel_02_*.jpg -filter -diff -merge -text
+
+# Painted-ground sidecars written by the map editor.
+apps/web/public/assets/maps/*.splat.png filter=lfs diff=lfs merge=lfs -text
+apps/web/public/assets/maps/*.height.png filter=lfs diff=lfs merge=lfs -text

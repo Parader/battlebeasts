@@ -5,10 +5,11 @@ import { FROST_BALL_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { smoothstep } from "../easing";
-import { createEnergyBallMaterial } from "../materials/energyBall";
+import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { GroundDecal } from "../components/GroundDecal";
 import { groundPresets } from "../presets/ground";
+import { useSpellLight } from "../spellLights";
 
 /** Forward offset / height — matches projectile spawn (`FROST_BALL_CAST`). */
 export const FROST_HAND_FORWARD = FROST_BALL_CAST.spawnOffset;
@@ -40,9 +41,10 @@ export function FrostBallCastEffect({
 }) {
   const root = useRef<THREE.Group>(null);
   const hand = useRef<THREE.Group>(null);
-  const coreMat = useMemo(() => createEnergyBallMaterial(shot.color, 0), [shot.color]);
-  const glowMat = useMemo(() => createEnergyBallMaterial(shot.color, 0), [shot.color]);
-  const light = useRef<THREE.PointLight>(null);
+  const coreMat = useMemo(() => acquireEnergyBallMaterial(shot.color, 0), [shot.color]);
+  const glowMat = useMemo(() => acquireEnergyBallMaterial(shot.color, 0), [shot.color]);
+  const lightAt = useRef<THREE.Object3D>(null);
+  const light = useSpellLight();
   const frostPreset = groundPresets.frostBallAura;
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: shot.y });
   const offset = shot.followSpawnOffset ?? FROST_HAND_FORWARD;
@@ -224,10 +226,12 @@ export function FrostBallCastEffect({
 
     coreMat.opacity = amp * (phase.current === "charge" ? 0.95 : 1);
     glowMat.opacity = amp * (phase.current === "charge" ? 0.5 : 0.45);
-    if (light.current) {
-      light.current.intensity =
-        amp * (phase.current === "charge" ? 1.4 + growFull.current * 1.8 : 1.8);
-    }
+    light.emitAt(
+      lightAt.current,
+      shot.color,
+      amp * (phase.current === "charge" ? 1.4 + growFull.current * 1.8 : 1.8),
+      5.5,
+    );
   });
 
   return (
@@ -252,7 +256,7 @@ export function FrostBallCastEffect({
           <icosahedronGeometry args={[0.42, 0]} />
           <primitive object={glowMat} attach="material" />
         </mesh>
-        <pointLight ref={light} color={shot.color} intensity={0} distance={5.5} decay={2} />
+        <object3D ref={lightAt} />
         <AdditiveParticleBurst
           color={shot.color}
           origin={[0, 0, 0]}

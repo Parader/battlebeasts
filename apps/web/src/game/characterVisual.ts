@@ -30,6 +30,20 @@ export type PrepareCharacterOptions = {
   restClip?: THREE.AnimationClip | null;
   upAxis?: "y" | "mixamo-z";
   visibleMeshName?: string;
+  /**
+   * Zero hips/root XZ in the idle clip before measuring height.
+   *
+   * Hero clips need this when Mixamo root translation is baked in. On some
+   * NPC rigs (merchant) it inflates the bbox and shrinks the visible mesh —
+   * pass false for villagers.
+   */
+  lockMeasureRoot?: boolean;
+  /**
+   * Measure height from the raw rest clip but plant feet using hips-XZ-locked
+   * rest. NPC Mixamo exports need raw height (merchant) and locked plant so
+   * feet stay on y=0 once runtime idle plays.
+   */
+  splitScaleAndPlant?: boolean;
 };
 
 /**
@@ -81,7 +95,11 @@ export function prepareCharacterScene(
     }
   });
 
-  const stance = measureIdleStance(sourceScene, restClip, targetHeight, upAxis, visibleMeshName);
+  const stance = opts.splitScaleAndPlant
+    ? measureSplitStance(sourceScene, restClip, targetHeight, upAxis, visibleMeshName)
+    : measureIdleStance(sourceScene, restClip, targetHeight, upAxis, visibleMeshName, {
+        lockRoot: opts.lockMeasureRoot !== false,
+      });
   if (stance) {
     root.scale.setScalar(stance.scale);
     root.position.set(-stance.feetX, -stance.minY, -stance.feetZ);
@@ -95,6 +113,7 @@ export function prepareCharacterScene(
     const fitted = new THREE.Box3().setFromObject(root);
     root.position.y -= fitted.min.y;
   }
+
   root.updateMatrixWorld(true);
 
   return root;
@@ -201,9 +220,33 @@ type IdleStance = {
   minY: number;
 };
 
+/** Raw idle height + hips-XZ-locked plant — see `splitScaleAndPlant`. */
+function measureSplitStance(
+  sourceScene: THREE.Object3D,
+  restClip: THREE.AnimationClip | null,
+  targetHeight: number,
+  upAxis: "y" | "mixamo-z",
+  visibleMeshName: string,
+): IdleStance | null {
+  const scaled = measureIdleStance(sourceScene, restClip, targetHeight, upAxis, visibleMeshName, {
+    lockRoot: false,
+  });
+  if (!scaled) return null;
+  const planted = measureIdleStance(sourceScene, restClip, targetHeight, upAxis, visibleMeshName, {
+    lockRoot: true,
+    fixedScale: scaled.scale,
+  });
+  if (!planted) return scaled;
+  return {
+    scale: scaled.scale,
+    feetX: planted.feetX,
+    feetZ: planted.feetZ,
+    minY: planted.minY,
+  };
+}
+
 /**
- * Disposable probe: evaluate rest clip with hips/root XZ locked, derive scale so
- * standing height matches `targetHeight`, then feet mid + ground plant.
+ * Disposable probe: evaluate rest clip, derive scale, then feet mid + ground plant.
  * Never touches the live skeleton/mixer.
  */
 function measureIdleStance(
@@ -212,6 +255,7 @@ function measureIdleStance(
   targetHeight: number,
   upAxis: "y" | "mixamo-z",
   visibleMeshName: string,
+  opts: { lockRoot?: boolean; fixedScale?: number } = {},
 ): IdleStance | null {
   if (!restClip) return null;
 
@@ -221,7 +265,7 @@ function measureIdleStance(
   hideAllCosmeticMeshes(probe);
   probe.updateMatrixWorld(true);
 
-  const clip = lockRootHorizontal(restClip);
+  const clip = opts.lockRoot === false ? restClip : lockRootHorizontal(restClip);
   const mixer = new THREE.AnimationMixer(probe);
   const action = mixer.clipAction(clip);
   action.enabled = true;
@@ -230,10 +274,14 @@ function measureIdleStance(
   mixer.update(0);
   probe.updateMatrixWorld(true);
 
-  const unscaled = new THREE.Box3().setFromObject(probe);
-  const size = new THREE.Vector3();
-  unscaled.getSize(size);
-  const scale = size.y > 1e-4 ? targetHeight / size.y : 1;
+  const scale =
+    opts.fixedScale ??
+    (() => {
+      const unscaled = new THREE.Box3().setFromObject(probe);
+      const size = new THREE.Vector3();
+      unscaled.getSize(size);
+      return size.y > 1e-4 ? targetHeight / size.y : 1;
+    })();
   probe.scale.setScalar(scale);
   probe.updateMatrixWorld(true);
 
@@ -383,4 +431,73 @@ export function setCharacterOpacity(scene: THREE.Object3D, opacity: number): voi
       std.needsUpdate = true;
     }
   });
+}
+
+const warmedOpacityLoadouts = new Set<string>();
+
+/**
+ * Compile the ghosted variant of the character's materials up front.
+ *
+ * `setCharacterOpacity` flips `transparent`, which three folds into the
+ * program cache key (the `opaque` bit). So the first decoy, cloak or spirit
+ * husk of a session relinks every hero and gear material on the spot -- a
+ * visible spike, measured on the first decoy cast.
+ *
+ * Programs are keyed by material configuration -- maps, skinning, vertex
+ * attributes -- rather than by cosmetic item, so distinct gear sharing a
+ * configuration also shares a program. A handful of loadouts covers the
+ * catalogue, which is why `loadoutKey` dedupes rather than warming per item.
+ *
+ * Call this whenever a new loadout enters the scene: the local avatar, an
+ * equipment change, or a remote player appearing. Repeats for a key already
+ * seen are skipped, since `gl.compile` walks the whole scene and is not free
+ * even when every program is a cache hit.
+ */
+export function warmCharacterOpacityVariants(
+  gl: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  characterRoot: THREE.Object3D,
+  loadoutKey = "default",
+): void {
+  if (warmedOpacityLoadouts.has(loadoutKey)) return;
+  warmedOpacityLoadouts.add(loadoutKey);
+
+  // Snapshot per material rather than reducing to one scalar. A character
+  // carries meshes this warm-up must not speak for -- hidden gear, eye and
+  // decal materials -- so any summary of "what opacity was the character at"
+  // is wrong for someone. Restoring each material to its own recorded state
+  // is exact, and it keeps a cloaked remote player cloaked.
+  const restore: Array<[THREE.Material, number, boolean, boolean]> = [];
+  characterRoot.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      if (!("opacity" in m)) continue;
+      restore.push([m, m.opacity, m.transparent, m.depthWrite]);
+    }
+  });
+
+  // Matches the VFX warmup: bind a target so the key carries the composer's
+  // linear output space rather than the canvas's sRGB.
+  const probe = new THREE.WebGLRenderTarget(1, 1);
+  const previousTarget = gl.getRenderTarget();
+  try {
+    setCharacterOpacity(characterRoot, 0.42);
+    gl.setRenderTarget(probe);
+    gl.compile(scene, camera);
+  } catch {
+    // Best-effort — a missed warm costs a hitch, not correctness.
+  } finally {
+    gl.setRenderTarget(previousTarget);
+    probe.dispose();
+    // No frame renders inside this call, so the swap is never visible.
+    for (const [m, opacity, transparent, depthWrite] of restore) {
+      m.opacity = opacity;
+      m.transparent = transparent;
+      m.depthWrite = depthWrite;
+      m.needsUpdate = true;
+    }
+  }
 }

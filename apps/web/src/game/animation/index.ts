@@ -30,6 +30,7 @@ export {
   createLowerBodyClip,
   createUpperBodyClip,
   createUpperLocoClip,
+  getCachedUpperCastClip,
   stripHorizontalRootMotion,
   plantHipsRootMotion,
   getHipsStartY,

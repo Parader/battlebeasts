@@ -4,8 +4,8 @@ import { setLavaTexture } from "./components/LavaGroundStrip";
 import { setChainTexture } from "./materials/chainTexture";
 import { setCircleTexture } from "./materials/circlePoint";
 import { setSmokeTexture } from "./smokeTexture";
+import { collectSpellVfxAssets } from "./spellVfxAssets";
 import {
-  SPELL_VFX_TEXTURE_URLS,
   VFX_CHAIN_URL,
   VFX_CIRCLE_URL,
   VFX_FIRE_URL,
@@ -50,31 +50,29 @@ function loadTexture(url: string): Promise<THREE.Texture> {
 }
 
 /**
- * Decode every spell/ground VFX texture into the same TextureLoader caches
- * the effects use at runtime (not drei's useTexture cache).
+ * Decode every spell/ground VFX texture into TextureLoader caches before play.
+ * Core atlases also bind into shared material setters; profile-only textures
+ * are still decoded so first cast does not hitch-fetch.
  */
 export async function preloadSpellVfxTextures(): Promise<void> {
   try {
-    const [fire, smoke, lava, circle, chain] = await Promise.all([
-      loadTexture(VFX_FIRE_URL),
-      loadTexture(VFX_SMOKE_URL),
-      loadTexture(VFX_LAVA_URL),
-      loadTexture(VFX_CIRCLE_URL),
-      loadTexture(VFX_CHAIN_URL),
-    ]);
+    const { textures } = collectSpellVfxAssets();
+    const loaded = await Promise.all(
+      textures.map(async (url) => [url, await loadTexture(url)] as const),
+    );
+    const byUrl = new Map(loaded);
 
-    setFireTexture(VFX_FIRE_URL, fire);
-    setSmokeTexture(smoke);
-    setLavaTexture(lava);
-    setCircleTexture(circle);
-    setChainTexture(chain);
+    const fire = byUrl.get(VFX_FIRE_URL);
+    const smoke = byUrl.get(VFX_SMOKE_URL);
+    const lava = byUrl.get(VFX_LAVA_URL);
+    const circle = byUrl.get(VFX_CIRCLE_URL);
+    const chain = byUrl.get(VFX_CHAIN_URL);
 
-    // Keep list authoritative — fail loudly if a URL was added without a setter.
-    if (SPELL_VFX_TEXTURE_URLS.length !== 5) {
-      console.warn(
-        `[vfx] SPELL_VFX_TEXTURE_URLS length ${SPELL_VFX_TEXTURE_URLS.length} — update primeSpellTextures`,
-      );
-    }
+    if (fire) setFireTexture(VFX_FIRE_URL, fire);
+    if (smoke) setSmokeTexture(smoke);
+    if (lava) setLavaTexture(lava);
+    if (circle) setCircleTexture(circle);
+    if (chain) setChainTexture(chain);
   } finally {
     // Always unblock GPU warmup (even on fetch failure).
     markPrimed();

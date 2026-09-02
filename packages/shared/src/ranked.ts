@@ -117,38 +117,145 @@ export function hasDivisions(tier: RankTier): boolean {
   return tier !== "master" && tier !== "grandmaster";
 }
 
-export function formatRankLabel(snap: RankSnapshot): string {
-  if (snap.tier === "grandmaster" && snap.gmRank != null) {
-    return `Grandmaster #${snap.gmRank}`;
-  }
-  if (snap.tier === "master" || snap.tier === "grandmaster") {
-    return `${capitalize(snap.tier)} · ${snap.lp} LP`;
-  }
-  const roman = divisionRoman(snap.division as RankDivision);
-  return `${capitalize(snap.tier)} ${roman} · ${snap.lp} LP`;
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
 export function divisionRoman(d: RankDivision): string {
   if (d === 1) return "I";
   if (d === 2) return "II";
   return "III";
 }
 
+/** Coerce wire/DB values so `division === 1` checks never fail on string "1". */
+export function normalizeRankSnapshot(raw: Partial<RankSnapshot> | null | undefined): RankSnapshot {
+  const base = emptyRankSnapshot();
+  if (!raw || typeof raw !== "object") return base;
+  const tier = (RANKED_TIERS as readonly string[]).includes(String(raw.tier))
+    ? (raw.tier as RankTier)
+    : base.tier;
+  const peakRaw = raw.peakTier ?? (raw as { peak_tier?: string }).peak_tier;
+  const peakTier = (RANKED_TIERS as readonly string[]).includes(String(peakRaw))
+    ? (peakRaw as RankTier)
+    : tier;
+  let division = Math.floor(Number(raw.division));
+  if (!Number.isFinite(division)) division = hasDivisions(tier) ? 3 : 0;
+  if (hasDivisions(tier)) division = Math.max(1, Math.min(3, division || 3));
+  else division = 0;
+  const lp = Math.max(0, Math.floor(Number(raw.lp) || 0));
+  const mmr = Math.max(0, Math.floor(Number(raw.mmr) || MMR_MIDPOINT));
+  const wins = Math.max(0, Math.floor(Number(raw.wins) || 0));
+  const losses = Math.max(0, Math.floor(Number(raw.losses) || 0));
+  const placementRemaining = Math.max(0, Math.floor(Number(raw.placementRemaining) || 0));
+  let gmRank: number | null = null;
+  if (raw.gmRank != null && Number.isFinite(Number(raw.gmRank))) {
+    gmRank = Math.max(1, Math.floor(Number(raw.gmRank)));
+  }
+  if (tier !== "grandmaster") gmRank = null;
+  return {
+    mmr,
+    lp,
+    tier,
+    division,
+    wins,
+    losses,
+    placementRemaining,
+    peakTier,
+    gmRank,
+  };
+}
+
+export function formatRankLabel(snap: RankSnapshot): string {
+  const n = normalizeRankSnapshot(snap);
+  if (n.tier === "grandmaster" && n.gmRank != null) {
+    return `Grandmaster #${n.gmRank}`;
+  }
+  if (n.tier === "master" || n.tier === "grandmaster") {
+    return `${capitalize(n.tier)} · ${n.lp} LP`;
+  }
+  const roman = divisionRoman(n.division as RankDivision);
+  return `${capitalize(n.tier)} ${roman} · ${n.lp} LP`;
+}
+
+/** Compact ladder line for leaderboard rows (tier + division + LP). */
+export function formatLeaderboardRank(row: {
+  tier: string;
+  division: number;
+  lp: number;
+  rank?: number;
+}): string {
+  const tier = (RANKED_TIERS as readonly string[]).includes(row.tier)
+    ? (row.tier as RankTier)
+    : "bronze";
+  const lp = Math.max(0, Math.floor(Number(row.lp) || 0));
+  if (tier === "grandmaster") {
+    return row.rank != null ? `Grandmaster #${row.rank}` : `Grandmaster · ${lp} LP`;
+  }
+  if (tier === "master") return `Master · ${lp} LP`;
+  let division = Math.floor(Number(row.division));
+  if (!Number.isFinite(division) || division < 1 || division > 3) division = 3;
+  return `${capitalize(tier)} ${divisionRoman(division as RankDivision)} · ${lp} LP`;
+}
+
+/** Visible ladder order: higher tier → lower division # → more LP → more MMR. */
+export function compareLadderRank(
+  a: { tier: string; division: number; lp: number; mmr: number },
+  b: { tier: string; division: number; lp: number; mmr: number },
+): number {
+  const tierA = (RANKED_TIERS as readonly string[]).includes(a.tier) ? (a.tier as RankTier) : "bronze";
+  const tierB = (RANKED_TIERS as readonly string[]).includes(b.tier) ? (b.tier as RankTier) : "bronze";
+  const ti = tierIndex(tierB) - tierIndex(tierA);
+  if (ti !== 0) return ti;
+  if (hasDivisions(tierA)) {
+    const divA = Math.floor(Number(a.division)) || 3;
+    const divB = Math.floor(Number(b.division)) || 3;
+    if (divA !== divB) return divA - divB; // 1 (I) before 3 (III)
+    const lp = Math.floor(Number(b.lp) || 0) - Math.floor(Number(a.lp) || 0);
+    if (lp !== 0) return lp;
+  }
+  return Math.floor(Number(b.mmr) || 0) - Math.floor(Number(a.mmr) || 0);
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 /** Base LP swing scaled by how surprising the result was vs MMR. */
-export function lpSwingForResult(ownMmr: number, opponentMmr: number, won: boolean): number {
+export function lpSwingForResult(
+  ownMmr: number,
+  opponentMmr: number,
+  won: boolean,
+  mode?: string,
+): number {
   const exp = expectedScore(ownMmr, opponentMmr);
+  let raw: number;
   if (won) {
     const base = 18;
     const bonus = Math.round((1 - exp) * 12);
-    return Math.max(12, Math.min(28, base + bonus));
+    raw = Math.max(12, Math.min(28, base + bonus));
+  } else {
+    const base = 16;
+    const extra = Math.round(exp * 8);
+    raw = -Math.max(10, Math.min(22, base + extra));
   }
-  const base = 16;
-  const extra = Math.round(exp * 8);
-  return -Math.max(10, Math.min(22, base + extra));
+  const mul = rankedLpModeMultiplier(mode);
+  const scaled = Math.round(raw * mul);
+  // Keep a minimum ±LP so tiny modes still move the bar.
+  if (won) return Math.max(8, scaled);
+  return -Math.max(7, Math.abs(scaled));
+}
+
+/**
+ * LP reward scale by arena mode — larger lobbies pay more.
+ * 1v1 < 2v2 < 3v3 (battleground slightly above 3v3 when enabled).
+ */
+export const RANKED_LP_MODE_MUL: Readonly<Record<string, number>> = {
+  arena_1v1: 0.7,
+  arena_1v1v1: 0.85,
+  arena_2v2: 0.85,
+  arena_3v3: 1,
+  battleground: 1.1,
+};
+
+export function rankedLpModeMultiplier(mode: string | undefined | null): number {
+  if (!mode) return 1;
+  return RANKED_LP_MODE_MUL[mode] ?? 1;
 }
 
 export type ApplyMatchInput = {
@@ -156,6 +263,8 @@ export type ApplyMatchInput = {
   opponentAvgMmr: number;
   won: boolean;
   draw?: boolean;
+  /** PvP mode id (`arena_1v1`, `arena_3v3`, …) — scales LP only. */
+  mode?: string;
   /** When true, skip demotion shield (Master → Champion only path uses normal demotion). */
   forceDemote?: boolean;
 };
@@ -165,8 +274,8 @@ export type ApplyMatchInput = {
  * Caller persists and handles GM ranking separately.
  */
 export function applyRankedMatchResult(input: ApplyMatchInput): RankDelta {
-  const before = { ...input.snapshot };
-  let snap: RankSnapshot = { ...input.snapshot, placementRemaining: 0 };
+  const before = normalizeRankSnapshot(input.snapshot);
+  let snap: RankSnapshot = { ...before, placementRemaining: 0 };
 
   const score: 0 | 0.5 | 1 = input.draw ? 0.5 : input.won ? 1 : 0;
   const mmrDelta = eloDelta(snap.mmr, input.opponentAvgMmr, score);
@@ -180,10 +289,15 @@ export function applyRankedMatchResult(input: ApplyMatchInput): RankDelta {
   let demoted = false;
 
   if (!input.draw) {
-    const swing = lpSwingForResult(before.mmr, input.opponentAvgMmr, input.won);
+    const swing = lpSwingForResult(before.mmr, input.opponentAvgMmr, input.won, input.mode);
     const applied = applyLp(snap, swing, input.forceDemote === true);
     snap = applied.snapshot;
-    lpDelta = applied.lpDelta;
+    // Actual LP change (demotion shield at 0 LP → 0, not the raw swing).
+    lpDelta = snap.lp - before.lp;
+    // Cross-division promotion/demotion: LP alone can understate the swing.
+    if (applied.promoted || applied.demoted) {
+      lpDelta = applied.lpDelta;
+    }
     promoted = applied.promoted;
     demoted = applied.demoted;
   }

@@ -11,6 +11,7 @@ import { getCharacterRoot } from "../../characterRoots";
 import { FireParticleField } from "../components/FireParticleField";
 import { VOLCANO_GLB_URL, instantiateBoulder } from "../volcanoAsset";
 import { VFX_FIRE_URL } from "../vfxUrls";
+import { useSpellLight } from "../spellLights";
 
 /** Forward / height fallbacks (`FIREBALL_CAST`). */
 export const FIREBALL_HAND_FORWARD = FIREBALL_CAST.handPush;
@@ -54,7 +55,8 @@ export function FireballCastEffect({
   const gltf = useGLTF(VOLCANO_GLB_URL);
   const root = useRef<THREE.Group>(null);
   const ball = useRef<THREE.Group>(null);
-  const light = useRef<THREE.PointLight>(null);
+  const lightAt = useRef<THREE.Object3D>(null);
+  const light = useSpellLight();
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: shot.y });
 
   const phase = useRef<Phase>("charge");
@@ -191,7 +193,7 @@ export function FireballCastEffect({
       trailProgress.current = 0;
       if (root.current) root.current.visible = false;
       if (ball.current) ball.current.visible = false;
-      if (light.current) light.current.intensity = 0;
+      light.off();
       return;
     }
 
@@ -323,10 +325,12 @@ export function FireballCastEffect({
     g.rotation.x += safeDt * (phase.current === "charge" ? 0.9 : 2.1);
     if (phase.current !== "charge") g.rotation.z += safeDt * 1.4;
 
-    if (light.current) {
-      light.current.intensity =
-        amp * LIGHT_INTENSITY * (0.5 + growFull.current * 0.5);
-    }
+    light.emitAt(
+      lightAt.current,
+      shot.color,
+      amp * LIGHT_INTENSITY * (0.5 + growFull.current * 0.5),
+      2.6,
+    );
   });
 
   return (
@@ -360,13 +364,7 @@ export function FireballCastEffect({
             progressRef={fireProgress}
             opacityMulRef={fireOpacity}
           />
-          <pointLight
-            ref={light}
-            color={shot.color}
-            intensity={0}
-            distance={2.6}
-            decay={2}
-          />
+          <object3D ref={lightAt} />
         </group>
       </group>
     </>

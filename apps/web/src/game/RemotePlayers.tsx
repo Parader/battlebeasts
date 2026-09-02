@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
+import { useRemotePlayerIds } from "./useColyseusMapKeys";
 import { MOVE_SPEED, type CosmeticsEquipped } from "@battlebeasts/shared";
 import {
   CharacterAnimationController,
@@ -16,6 +17,7 @@ import {
   prepareCharacterScene,
   setCharacterOpacity,
   tintCharacterSurface,
+  warmCharacterOpacityVariants,
 } from "./characterVisual";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
@@ -63,9 +65,9 @@ function resolveAimRelation(
   fallback: AimRelation,
 ): AimRelation {
   if (localTeam && remoteTeam) {
+    // Same non-empty team = ally; any other team letter (a/b/c/…) = enemy (FFA inclusive).
     if (remoteTeam === localTeam) return "ally";
-    if (remoteTeam === "a" || remoteTeam === "b") return "enemy";
-    return "neutral";
+    return "enemy";
   }
   return fallback;
 }
@@ -122,6 +124,23 @@ function RemotePlayerAvatar({
     registerCharacterRoot(sessionId, scene);
     return () => registerCharacterRoot(sessionId, null);
   }, [scene, sessionId]);
+
+  /*
+   * Warm this opponent's ghosted materials on sight rather than the first time
+   * they cloak or drop a decoy. Loadouts already compiled are skipped, so in
+   * practice this only costs anything for gear configurations new to the
+   * session. Deferred a frame so they are in the scene graph for gl.compile.
+   */
+  const gl = useThree((s) => s.gl);
+  const rootScene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+  const equippedKey = JSON.stringify(equipped);
+  useEffect(() => {
+    const id = requestAnimationFrame(() =>
+      warmCharacterOpacityVariants(gl, rootScene, camera, scene, equippedKey),
+    );
+    return () => cancelAnimationFrame(id);
+  }, [gl, rootScene, camera, scene, equippedKey]);
 
   useEffect(() => {
     const controller = new CharacterAnimationController(
@@ -438,46 +457,7 @@ export function RemotePlayers({
   relation?: AimRelation;
   localTeam?: string;
 }) {
-  const [remoteIds, setRemoteIds] = useState<string[]>([]);
-  const prevKey = useRef("");
-
-  useFrame(() => {
-    if (!room?.state?.players) {
-      if (prevKey.current !== "") {
-        prevKey.current = "";
-        setRemoteIds([]);
-      }
-      return;
-    }
-    const localUserId =
-      (localSessionId &&
-        (room.state.players.get(localSessionId) as { id?: string } | undefined)?.id) ||
-      "";
-    const next: string[] = [];
-    room.state.players.forEach(
-      (p: { disconnected?: boolean; id?: string; role?: string }, id: string) => {
-        if (id === localSessionId) return;
-        if (p?.disconnected) return;
-        // Arena spectators are move-only ghosts — no character mesh.
-        if (p?.role === "spectator") return;
-        // Same hunter, older seat (match-return ghost) — never render as a remote.
-        if (localUserId && p?.id && p.id === localUserId) return;
-        next.push(id);
-      },
-    );
-    next.sort();
-    const key = `${room.roomId}:${next.join("|")}`;
-    if (key !== prevKey.current) {
-      prevKey.current = key;
-      setRemoteIds(next);
-    }
-  });
-
-  // Drop remotes when room instance changes (transfer / reconnect).
-  useEffect(() => {
-    prevKey.current = "";
-    setRemoteIds([]);
-  }, [room?.roomId]);
+  const remoteIds = useRemotePlayerIds(room, localSessionId);
 
   if (!room) return null;
 

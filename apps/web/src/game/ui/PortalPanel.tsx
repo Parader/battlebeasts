@@ -38,7 +38,7 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
     return (
       <GamePanelShell
         title={title}
-        subtitle="Solo for now — coop comes later."
+        subtitle="Open a Wave Assault lobby — solo or up to 4 hunters."
         onClose={onClose}
         footer={
           <>
@@ -51,7 +51,7 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
               disabled={!canEnterPve}
               onClick={() => onConfirm("pve", { content: pveContent })}
             >
-              Enter
+              Open party lobby
             </button>
           </>
         }

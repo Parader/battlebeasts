@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
@@ -12,7 +12,13 @@ import {
   playEmoteAnimation,
 } from "./animation";
 import { getActiveEmote } from "./emoteRuntime";
-import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
+import {
+  CHARACTER_URL,
+  prepareCharacterScene,
+  setCharacterOpacity,
+  tintCharacterSurface,
+  warmCharacterOpacityVariants,
+} from "./characterVisual";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
 import { syncPlayerCast } from "./syncPlayerCast";
@@ -127,6 +133,25 @@ export function CharacterAvatar({
     registerCharacterRoot(localSessionId, scene);
     return () => registerCharacterRoot(localSessionId, null);
   }, [scene, localSessionId]);
+
+  /*
+   * Pre-compile the ghosted variant of this loadout, so the first decoy or
+   * cloak does not relink the hero and gear mid-fight. Re-runs on equipment
+   * change because new gear can bring a material configuration -- skinned vs
+   * rigid, normal-mapped or not -- that has not been compiled yet.
+   *
+   * Deferred a frame so the avatar is in the scene graph for gl.compile.
+   */
+  const gl = useThree((s) => s.gl);
+  const rootScene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+  const equippedKey = JSON.stringify(equipped);
+  useEffect(() => {
+    const id = requestAnimationFrame(() =>
+      warmCharacterOpacityVariants(gl, rootScene, camera, scene, equippedKey),
+    );
+    return () => cancelAnimationFrame(id);
+  }, [gl, rootScene, camera, scene, equippedKey]);
 
   useEffect(() => {
     const controller = new CharacterAnimationController(

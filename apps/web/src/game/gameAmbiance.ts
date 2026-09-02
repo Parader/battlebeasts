@@ -145,7 +145,12 @@ async function preloadTrack(id: AmbianceTrackId): Promise<void> {
       cleanup();
       reject(new Error(`Failed to load ${AMBIANCE_URLS[id]}`));
     };
+    const timer = window.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, 8_000);
     const cleanup = () => {
+      window.clearTimeout(timer);
       t.el.removeEventListener("canplaythrough", onReady);
       t.el.removeEventListener("error", onError);
     };

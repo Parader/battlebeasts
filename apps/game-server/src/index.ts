@@ -4,9 +4,13 @@ import { WebSocketTransport } from "@colyseus/ws-transport";
 import express from "express";
 import cors from "cors";
 import { createServer } from "http";
-import { ROOM } from "@battlebeasts/shared";
+import { registerAuthoredMaps, ROOM } from "@battlebeasts/shared";
 import { BaseCityRoom } from "./rooms/BaseCityRoom.js";
 import { ContentRoom } from "./rooms/ContentRoom.js";
+
+// Before any room is created: ContentRoom.onCreate resolves its map through
+// the registry, so authored documents must already be in it.
+registerAuthoredMaps();
 
 const PORT = Number(process.env.PORT ?? 2567);
 

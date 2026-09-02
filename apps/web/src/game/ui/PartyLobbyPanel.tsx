@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import {
+  COOP_PVE_MAX_PLAYERS,
+  PVE_CONTENTS,
   PVP_MODES,
+  isPvpFfaTriosMode,
   type PartyMemberSnapshot,
   type PartySnapshot,
   type PvpSeat,
@@ -27,7 +30,7 @@ type Props = {
   onInviteFriend: (friendUserId: string) => void;
   onSetSeat: (sessionId: string, seat: PvpSeat) => void;
   onKick: (sessionId: string) => void;
-  onLock: (matchKind?: "ranked" | "unranked") => void;
+  onLock: (matchKind?: "ranked" | "unranked" | "coop_pve") => void;
   onCancel: () => void;
   onLeave: () => void;
   onClose: () => void;
@@ -43,13 +46,17 @@ type ContextMenu = {
 function modeMeta(modes: string[]) {
   let teamSize = 1;
   let maxSpectators = 2;
+  let ffaTrios = false;
+  let noQueue = false;
   for (const id of modes) {
     const m = PVP_MODES.find((x) => x.id === id);
     if (!m) continue;
     teamSize = Math.max(teamSize, m.teamSize);
     maxSpectators = Math.max(maxSpectators, m.maxSpectators);
+    if (isPvpFfaTriosMode(m.id) || m.teamCount >= 3) ffaTrios = true;
+    if (m.noQueue) noQueue = true;
   }
-  return { teamSize, maxSpectators };
+  return { teamSize, maxSpectators, ffaTrios, noQueue };
 }
 
 function padSlots(
@@ -123,7 +130,7 @@ function PlayerSlot({
   );
 }
 
-/** PvP arena lobby — team columns, observer bench, game-style controls. */
+/** Hub party lobby — PvP teams or coop Wave Assault (max 4). */
 export function PartyLobbyPanel({
   party,
   localSessionId,
@@ -137,6 +144,7 @@ export function PartyLobbyPanel({
   onLeave,
   onClose,
 }: Props) {
+  const isCoopPve = party.kind === "coop_pve";
   const isLeader = party.leaderSessionId === localSessionId;
   const memberUserIds = useMemo(() => {
     const ids = new Set<string>();
@@ -154,10 +162,16 @@ export function PartyLobbyPanel({
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
 
-  const { teamSize, maxSpectators } = useMemo(() => modeMeta(party.modes), [party.modes]);
+  const { teamSize, maxSpectators, ffaTrios, noQueue } = useMemo(
+    () => modeMeta(party.modes),
+    [party.modes],
+  );
   const teamAFilled = party.members.filter((m) => m.seat === "teamA").length >= teamSize;
   const teamBFilled = party.members.filter((m) => m.seat === "teamB").length >= teamSize;
-  const fullPremade = teamAFilled && teamBFilled;
+  const teamCFilled = party.members.filter((m) => m.seat === "teamC").length >= teamSize;
+  const fullPremade = ffaTrios
+    ? teamAFilled && teamBFilled && teamCFilled
+    : teamAFilled && teamBFilled;
   const teamA = useMemo(
     () => padSlots(
       party.members.filter((m) => m.seat === "teamA"),
@@ -172,6 +186,13 @@ export function PartyLobbyPanel({
     ),
     [party.members, teamSize],
   );
+  const teamC = useMemo(
+    () => padSlots(
+      party.members.filter((m) => m.seat === "teamC"),
+      teamSize,
+    ),
+    [party.members, teamSize],
+  );
   const spectators = useMemo(
     () => padSlots(
       party.members.filter((m) => m.seat === "spectator"),
@@ -179,10 +200,20 @@ export function PartyLobbyPanel({
     ),
     [party.members, maxSpectators],
   );
+  const coopFighters = useMemo(
+    () => padSlots(party.members, COOP_PVE_MAX_PLAYERS),
+    [party.members],
+  );
 
   const localMember = party.members.find((m) => m.sessionId === localSessionId);
-  const canSelfMove = Boolean(localSessionId) && !party.queued;
-  const canStart = isLeader && !party.queued;
+  const canSelfMove = Boolean(localSessionId) && !party.queued && !isCoopPve;
+  const canStart = isLeader && !party.queued && (isCoopPve ? party.members.length >= 1 : true);
+
+  const coopSubtitle = useMemo(() => {
+    const contentId = party.modes.find((m) => m === "dungeon" || m === "boss") ?? "dungeon";
+    const label = PVE_CONTENTS.find((c) => c.id === contentId)?.label ?? "Wave Assault";
+    return `${label} · up to ${COOP_PVE_MAX_PLAYERS}${party.queued ? " · Starting…" : ""}`;
+  }, [party.modes, party.queued]);
 
   useEffect(() => {
     if (!menu) return;
@@ -244,6 +275,149 @@ export function PartyLobbyPanel({
     </section>
   );
 
+  const inviteSection =
+    isLeader && !party.queued && inviteOpen ? (
+      <div className="bb-lobby-invites">
+        {inviteableFriends.length === 0 ? (
+          <p className="bb-lobby-invites__empty">
+            No friends to invite. Everyone in this hub is already in the lobby.
+          </p>
+        ) : (
+          <ul className="bb-lobby-invites__list">
+            {inviteableFriends.map((f) => {
+              const pending = pendingFriends.has(f.id);
+              const inHub = hubPlayers.some((h) => h.userId === f.id);
+              return (
+                <li key={f.id}>
+                  <button
+                    type="button"
+                    className="bb-lobby-btn bb-lobby-btn--slot"
+                    disabled={pending || (isCoopPve && party.members.length >= COOP_PVE_MAX_PLAYERS)}
+                    onClick={() => onInviteFriend(f.id)}
+                  >
+                    {pending
+                      ? `Invited ${f.displayName}`
+                      : inHub
+                        ? `Add ${f.displayName}`
+                        : `Invite ${f.displayName}${f.online ? "" : " (offline)"}`}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    ) : null;
+
+  const footerLeft = (
+    <div className="bb-lobby-footer__left">
+      {isLeader ? (
+        <button type="button" className="bb-lobby-btn bb-lobby-btn--danger" onClick={onCancel}>
+          Leave Lobby
+        </button>
+      ) : (
+        <button type="button" className="bb-lobby-btn bb-lobby-btn--danger" onClick={onLeave}>
+          Leave Lobby
+        </button>
+      )}
+    </div>
+  );
+
+  const kickMenu = menu ? (
+    <div
+      className="bb-context-menu"
+      style={{ left: menu.x, top: menu.y }}
+      role="menu"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        className="bb-context-menu__item bb-context-menu__item--danger"
+        onClick={() => {
+          onKick(menu.sessionId);
+          setMenu(null);
+        }}
+      >
+        Kick {menu.displayName} from lobby
+      </button>
+    </div>
+  ) : null;
+
+  if (isCoopPve) {
+    return (
+      <div
+        className="bb-lobby-overlay fixed inset-0 z-40 flex items-center justify-center p-4"
+        data-ui-overlay
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+        role="presentation"
+      >
+        <div
+          role="dialog"
+          aria-modal
+          aria-label="Wave Assault lobby"
+          className="bb-lobby-panel"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <header className="bb-lobby-panel__header">
+            <div>
+              <h2 className="bb-lobby-panel__title">Wave Assault Lobby</h2>
+              <p className="bb-lobby-panel__sub">{coopSubtitle}</p>
+            </div>
+            <button
+              type="button"
+              className="bb-btn-close"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </header>
+
+          <div className="bb-lobby-teams">
+            {renderTeam("Fighters", "teamA", coopFighters)}
+          </div>
+
+          {inviteSection}
+
+          <footer className="bb-lobby-footer">
+            {footerLeft}
+            <div className="bb-lobby-footer__right">
+              {isLeader && !party.queued ? (
+                <button
+                  type="button"
+                  className="bb-lobby-btn bb-lobby-btn--slot"
+                  onClick={() => setInviteOpen((v) => !v)}
+                  disabled={party.members.length >= COOP_PVE_MAX_PLAYERS}
+                >
+                  {inviteOpen ? "Hide Invites" : "Invite Friend"}
+                </button>
+              ) : null}
+              {canStart ? (
+                <button
+                  type="button"
+                  className="bb-lobby-btn bb-lobby-btn--start"
+                  onClick={() => {
+                    onLock("coop_pve");
+                    onClose();
+                  }}
+                >
+                  Start Assault
+                </button>
+              ) : party.queued ? (
+                <span className="bb-lobby-queued">Starting…</span>
+              ) : null}
+            </div>
+          </footer>
+        </div>
+
+        {kickMenu}
+      </div>
+    );
+  }
+
   return (
     <div
       className="bb-lobby-overlay fixed inset-0 z-40 flex items-center justify-center p-4"
@@ -280,9 +454,10 @@ export function PartyLobbyPanel({
           </button>
         </header>
 
-        <div className="bb-lobby-teams">
-          {renderTeam("Team 1", "teamA", teamA)}
-          {renderTeam("Team 2", "teamB", teamB)}
+        <div className={`bb-lobby-teams${ffaTrios ? " bb-lobby-teams--ffa" : ""}`}>
+          {renderTeam(ffaTrios ? "Fighter 1" : "Team 1", "teamA", teamA)}
+          {renderTeam(ffaTrios ? "Fighter 2" : "Team 2", "teamB", teamB)}
+          {ffaTrios ? renderTeam("Fighter 3", "teamC", teamC) : null}
         </div>
 
         <section className="bb-lobby-observers">
@@ -323,51 +498,10 @@ export function PartyLobbyPanel({
           </div>
         </section>
 
-        {isLeader && !party.queued && inviteOpen ? (
-          <div className="bb-lobby-invites">
-            {inviteableFriends.length === 0 ? (
-              <p className="bb-lobby-invites__empty">
-                No friends to invite. Everyone in this hub is already in the lobby.
-              </p>
-            ) : (
-              <ul className="bb-lobby-invites__list">
-                {inviteableFriends.map((f) => {
-                  const pending = pendingFriends.has(f.id);
-                  const inHub = hubPlayers.some((h) => h.userId === f.id);
-                  return (
-                    <li key={f.id}>
-                      <button
-                        type="button"
-                        className="bb-lobby-btn bb-lobby-btn--slot"
-                        disabled={pending}
-                        onClick={() => onInviteFriend(f.id)}
-                      >
-                        {pending
-                          ? `Invited ${f.displayName}`
-                          : inHub
-                            ? `Add ${f.displayName}`
-                            : `Invite ${f.displayName}${f.online ? "" : " (offline)"}`}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        ) : null}
+        {inviteSection}
 
         <footer className="bb-lobby-footer">
-          <div className="bb-lobby-footer__left">
-            {isLeader ? (
-              <button type="button" className="bb-lobby-btn bb-lobby-btn--danger" onClick={onCancel}>
-                Leave Lobby
-              </button>
-            ) : (
-              <button type="button" className="bb-lobby-btn bb-lobby-btn--danger" onClick={onLeave}>
-                Leave Lobby
-              </button>
-            )}
-          </div>
+          {footerLeft}
           <div className="bb-lobby-footer__right">
             {isLeader && !party.queued ? (
               <button
@@ -393,7 +527,7 @@ export function PartyLobbyPanel({
                   </button>
                   <button
                     type="button"
-                    className="bb-lobby-btn bb-lobby-btn--slot"
+                    className="bb-lobby-btn bb-lobby-btn--start"
                     onClick={() => {
                       onLock("unranked");
                       onClose();
@@ -402,6 +536,8 @@ export function PartyLobbyPanel({
                     Start Unranked
                   </button>
                 </div>
+              ) : noQueue ? (
+                <span className="bb-lobby-queued">Fill all seats to start</span>
               ) : (
                 <button
                   type="button"
@@ -421,26 +557,7 @@ export function PartyLobbyPanel({
         </footer>
       </div>
 
-      {menu ? (
-        <div
-          className="bb-context-menu"
-          style={{ left: menu.x, top: menu.y }}
-          role="menu"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="bb-context-menu__item bb-context-menu__item--danger"
-            onClick={() => {
-              onKick(menu.sessionId);
-              setMenu(null);
-            }}
-          >
-            Kick {menu.displayName} from lobby
-          </button>
-        </div>
-      ) : null}
+      {kickMenu}
     </div>
   );
 }

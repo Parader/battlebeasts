@@ -3,6 +3,7 @@ import { Room } from "colyseus.js";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { abilityVfxColor } from "../colors";
+import { useSpellLight } from "../spellLights";
 
 const TIP_Y = 1.12;
 const SHOULDER_FORWARD = 0.28;
@@ -19,6 +20,7 @@ export function GraspProjectileEffect({ room, id }: { room: Room; id: string }) 
   const root = useRef<THREE.Group>(null);
   const limb = useRef<THREE.Mesh>(null);
   const tipGroup = useRef<THREE.Group>(null);
+  const light = useSpellLight();
   const core = useRef<THREE.Mesh>(null);
   const glow = useRef<THREE.Mesh>(null);
   const smokeMeshes = useRef<(THREE.Mesh | null)[]>([]);
@@ -104,6 +106,7 @@ export function GraspProjectileEffect({ room, id }: { room: Room; id: string }) 
       if (g) g.visible = false;
       seeded.current = false;
       smoke.current = [];
+      light.off();
       return;
     }
     g.visible = true;
@@ -177,6 +180,7 @@ export function GraspProjectileEffect({ room, id }: { room: Room; id: string }) 
     }
 
     if (tipGroup.current) {
+      light.emitAt(tipGroup.current, "#5b3a78", 1.35, 5);
       tipGroup.current.position.copy(tipPos.current);
     }
 
@@ -207,8 +211,9 @@ export function GraspProjectileEffect({ room, id }: { room: Room; id: string }) 
 
     // Pulse tip so it reads while flying
     const pulse = 1 + Math.sin(performance.now() * 0.02) * 0.12;
-    if (core.current) core.current.scale.setScalar(1.15 * pulse);
-    if (glow.current) glow.current.scale.setScalar(2.1 * pulse);
+    // Tip visual covers combat hit radius (~0.55).
+    if (core.current) core.current.scale.setScalar(1.55 * pulse);
+    if (glow.current) glow.current.scale.setScalar(2.85 * pulse);
 
     for (let i = 0; i < SMOKE_COUNT; i++) {
       const mesh = smokeMeshes.current[i];
@@ -235,12 +240,11 @@ export function GraspProjectileEffect({ room, id }: { room: Room; id: string }) 
 
       <group ref={tipGroup}>
         <mesh ref={core} material={tipCoreMat}>
-          <icosahedronGeometry args={[0.28, 1]} />
+          <icosahedronGeometry args={[0.38, 1]} />
         </mesh>
         <mesh ref={glow} material={tipGlowMat}>
-          <icosahedronGeometry args={[0.28, 0]} />
+          <icosahedronGeometry args={[0.42, 0]} />
         </mesh>
-        <pointLight color="#5b3a78" intensity={1.1} distance={4} decay={2} />
       </group>
 
       {smokeMats.map((mat, i) => (

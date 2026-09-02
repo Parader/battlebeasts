@@ -59,6 +59,14 @@ export function ArenaMatchHud({ hud }: Props) {
             <span className={hud.localTeam === "b" ? "text-[var(--bb-brass)]" : ""}>
               {hud.scoreB}
             </span>
+            {typeof hud.scoreC === "number" ? (
+              <>
+                <span className="mx-2 text-[var(--bb-ink-soft)]">–</span>
+                <span className={hud.localTeam === "c" ? "text-[var(--bb-brass)]" : ""}>
+                  {hud.scoreC}
+                </span>
+              </>
+            ) : null}
           </p>
         </div>
       </div>

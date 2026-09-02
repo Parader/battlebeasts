@@ -16,39 +16,29 @@ export const HUB_INTRO_CHARACTER_YAW_OFFSET = (-25 * Math.PI) / 180;
 
 export const HUB_INTRO_LINES: readonly HubIntroLine[] = [
   {
-    id: "awake",
-    text: "Awake, clone.\nYour awakening is complete.",
-    holdMs: 4000,
-  },
-  {
-    id: "architect",
-    text: "I am the Architect.\nI do not seek a perfect mage — I seek proof.",
-    holdMs: 4800,
+    id: "welcome",
+    text: "Welcome to my experiment, clone.",
+    holdMs: 3800,
   },
   {
     id: "purpose",
-    text: "I forge clones to test every possibility.\nTo find which combinations become champions.",
+    text: "You were created as part of a test\nto discover the strongest magical path.",
     holdMs: 5200,
   },
   {
-    id: "sanctuary",
-    text: "This sanctuary is yours.\nRest. Learn. Prepare.",
-    holdMs: 4200,
+    id: "arena",
+    text: "To prove your worth,\nbattle other mages in the Arena.",
+    holdMs: 4500,
   },
   {
-    id: "path",
-    text: "Master more skills than the rest.\nDiscover the loadouts no one has dared.",
-    holdMs: 5000,
-  },
-  {
-    id: "legend",
-    text: "Become the legendary magician —\nthe clone who found the best combinations.",
-    holdMs: 5200,
+    id: "sanctum",
+    text: "This is your Sanctum.\nHere, you can master new spells, customize your build, and invite your friends.",
+    holdMs: 5800,
   },
   {
     id: "go",
-    text: "The arena is waiting.\nShow me what you can become.",
-    holdMs: 4500,
+    text: "Now go.\nShow me which path is truly the strongest.",
+    holdMs: 4800,
   },
 ] as const;
 

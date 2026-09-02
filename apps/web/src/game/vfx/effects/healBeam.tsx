@@ -1,20 +1,47 @@
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import {
-  baseCityStaticColliders,
-  coneRayMaxLength,
-  type WallCollider,
-} from "@battlebeasts/shared";
+import { coneRayMaxLength } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope, smooth01 } from "../easing";
 import { createCirclePointMaterial } from "../materials/circlePoint";
+import { getWorldProjectileCircles, getWorldProjectileWalls, getWorldProjectileBoxes } from "../../worldCollidersRuntime";
 
 const BEAM_COLOR = "#6ee7b7";
 const BEAM_HOT = "#a7f3d0";
 const HAND_Y = 1.15;
 const SPAWN = 0.55;
+const _down = new THREE.Vector3(0, -1, 0);
+const _origin = new THREE.Vector3();
+
+function collectGroundMeshes(scene: THREE.Object3D): THREE.Object3D[] {
+  const meshes: THREE.Object3D[] = [];
+  scene.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.visible) return;
+    const n = m.name.toLowerCase();
+    if (n.includes("beta_") || n.includes("mixamorig") || n.startsWith("sm_chr")) return;
+    if (/ground|terrain|floor|meadow|path|tile/.test(n) || meshes.length < 40) {
+      meshes.push(m);
+    }
+  });
+  return meshes;
+}
+
+function sampleGroundY(
+  meshes: THREE.Object3D[],
+  x: number,
+  z: number,
+  raycaster: THREE.Raycaster,
+): number {
+  if (!meshes.length) return 0;
+  _origin.set(x, 80, z);
+  raycaster.set(_origin, _down);
+  const hits = raycaster.intersectObjects(meshes, false);
+  const y = hits[0]?.point.y;
+  return typeof y === "number" && Number.isFinite(y) ? y : 0;
+}
 
 /** Fixed pools — no alloc in the tick. */
 const HAND_MOTES = 32;
@@ -129,14 +156,11 @@ export function HealBeamEffect({
   const spawnAcc = useRef(0);
   const handPool = useRef(createMotePool(HAND_MOTES));
   const beamPool = useRef(createMotePool(BEAM_MOTES));
+  const { scene } = useThree();
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+  const groundMeshes = useMemo(() => collectGroundMeshes(scene), [scene]);
 
   const endLength = shot.radius ?? 14;
-
-  const walls = useMemo((): WallCollider[] => {
-    return baseCityStaticColliders().filter(
-      (c): c is WallCollider => c.shape === "walls",
-    );
-  }, []);
 
   const positions = useMemo(() => new Float32Array(TOTAL_MOTES * 3), []);
   const sizes = useMemo(() => new Float32Array(TOTAL_MOTES), []);
@@ -232,6 +256,7 @@ export function HealBeamEffect({
     }
 
     const bodies = collectOccludeBodies(follow, shot.followOwnerId);
+    const walls = getWorldProjectileWalls();
     const maxLen = coneRayMaxLength(
       { x: pose.current.x, z: pose.current.z },
       pose.current.yaw,
@@ -239,13 +264,20 @@ export function HealBeamEffect({
       walls,
       bodies,
       shot.followOwnerId ?? "",
+      { circles: getWorldProjectileCircles(), boxes: getWorldProjectileBoxes() },
     );
     const grow = smooth01(Math.min(1, ageMs / Math.max(80, shot.growMs ?? 140)));
     liveLen.current = THREE.MathUtils.lerp(SPAWN, Math.max(SPAWN, maxLen), grow);
 
     if (root.current) {
       root.current.visible = true;
-      root.current.position.set(pose.current.x, 0, pose.current.z);
+      const groundY = sampleGroundY(
+        groundMeshes,
+        pose.current.x,
+        pose.current.z,
+        raycaster,
+      );
+      root.current.position.set(pose.current.x, groundY, pose.current.z);
       root.current.rotation.y = pose.current.yaw;
     }
 

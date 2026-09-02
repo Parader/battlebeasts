@@ -7,6 +7,7 @@ import {
   createLowerBodyClip,
   createUpperBodyClip,
   createUpperLocoClip,
+  getCachedUpperCastClip,
   getHipsStartY,
   plantHipsRootMotion,
   reportMissingClips,
@@ -391,6 +392,48 @@ export class CharacterAnimationController {
       this.fullBodyClips.set(name, prepared);
       this.fullBodyClips.set(src.name, prepared);
     }
+
+    // Build PropertyBindings now so the first real cast doesn't hitch mid-fight.
+    this.warmBindings();
+  }
+
+  /**
+   * Play every cast / full-body action at weight 0 for one mixer tick so
+   * Three.js builds property bindings up front. Safe to call more than once.
+   */
+  warmBindings(): void {
+    if (this.disposed) return;
+    const seen = new Set<THREE.AnimationAction>();
+    const armed: THREE.AnimationAction[] = [];
+
+    const arm = (action: THREE.AnimationAction) => {
+      if (seen.has(action)) return;
+      seen.add(action);
+      action.enabled = true;
+      action.paused = false;
+      action.setEffectiveWeight(0);
+      action.time = 0;
+      if (!action.isRunning()) action.play();
+      armed.push(action);
+    };
+
+    for (const action of this.upperCastByName.values()) arm(action);
+
+    const clipsSeen = new Set<THREE.AnimationClip>();
+    for (const clip of this.fullBodyClips.values()) {
+      if (clipsSeen.has(clip)) continue;
+      clipsSeen.add(clip);
+      arm(this.mixer.clipAction(clip));
+    }
+
+    this.mixer.update(1 / 60);
+
+    for (const action of armed) {
+      action.stop();
+      action.reset();
+      action.setEffectiveWeight(0);
+      action.enabled = true;
+    }
   }
 
   /**
@@ -403,7 +446,7 @@ export class CharacterAnimationController {
       console.warn(`[CharacterAnimation] cannot register upper cast "${logicalName}" → "${clipName}"`);
       return;
     }
-    const castClip = createUpperBodyClip(src);
+    const castClip = getCachedUpperCastClip(src);
     if (castClip.tracks.length === 0) {
       console.warn(`[CharacterAnimation] cast clip has no tracks after mask: ${clipName}`);
       return;

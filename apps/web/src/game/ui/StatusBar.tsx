@@ -48,7 +48,7 @@ export function StatusBar({ room, sessionId }: { room: Room | null; sessionId: s
   if (rows.length === 0) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-36 z-20 flex justify-center">
+    <div className="pointer-events-none absolute inset-x-0 bottom-[14.75rem] z-10 flex justify-center">
       <div className="bb-ability-tray !gap-1 !px-2 !py-1.5">
         {rows.map((row) => {
           const def = STATUSES[row.statusId];

@@ -4,8 +4,13 @@ import { GameCanvas } from "@/game/GameCanvas";
 import { useBaseCityRoom } from "@/game/useBaseCityRoom";
 import { useAssetPreload } from "@/game/useAssetPreload";
 import { useVfxGpuReady } from "@/game/useVfxGpuReady";
+import { usePropShaderReady } from "@/game/usePropShaderReady";
+import { clearVfxGpuReady } from "@/game/vfx/vfxGpuReady";
+import { resetPropShaderReady } from "@/game/propShaderReady";
 import { useGameMusic } from "@/game/useGameMusic";
 import { useGameAmbiance } from "@/game/useGameAmbiance";
+import { EnergyPips } from "@/ui/EnergyPips";
+import { NpcDialogue } from "@/game/ui/NpcDialogue";
 import { StandPanel } from "@/game/ui/StandPanel";
 import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
@@ -62,8 +67,35 @@ function PauseCountdown({ until }: { until: number }) {
     return <p className="mt-2 text-sm text-[var(--bb-ink-soft)]">{left}s remaining</p>;
 }
 
+function ProfileLoadGate({
+    message,
+    loading,
+    onRetry,
+    onSignOut,
+}: {
+    message: string;
+    loading: boolean;
+    onRetry: () => void;
+    onSignOut: () => void;
+}) {
+    return (
+        <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-black px-6 text-center">
+            {loading ? <LoadingIndicator /> : null}
+            <p className="max-w-md text-sm text-white/80">{message}</p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+                <button type="button" className="bb-btn-brass" onClick={onRetry} disabled={loading}>
+                    Retry
+                </button>
+                <button type="button" className="bb-btn-ink" onClick={onSignOut}>
+                    Sign out
+                </button>
+            </div>
+        </div>
+    );
+}
+
 export const PlayScreen = () => {
-    const { ready, configured, user, profile, accessToken, needsNameSetup, signOut } = useAuth();
+    const { ready, configured, user, profile, profileLoading, profileError, accessToken, needsNameSetup, signOut, refreshProfile } = useAuth();
 
     const userId = user?.id ?? "";
     const displayName = profile?.display_name ?? user?.user_metadata?.full_name ?? "Hunter";
@@ -82,6 +114,7 @@ export const PlayScreen = () => {
 
     const [hubOwnerId, setHubOwnerId] = useState<string | null>(null);
     const [hubPrefReady, setHubPrefReady] = useState(false);
+    const [profileWaitExpired, setProfileWaitExpired] = useState(false);
     const effectiveHubOwnerId = hubOwnerId ?? userId;
 
     // Restore last visited host hub before joining so refresh stays in that lobby.
@@ -92,6 +125,18 @@ export const PlayScreen = () => {
         setHubPrefReady(true);
     }, [ready, user?.id]);
 
+    // If profile fetch stalls (or never sets error), surface Retry instead of spinning forever.
+    useEffect(() => {
+        if (profile || profileError || !user) {
+            setProfileWaitExpired(false);
+            return;
+        }
+        setProfileWaitExpired(false);
+        // Must exceed auth-provider's dual-attempt profile timeout (~24s).
+        const id = window.setTimeout(() => setProfileWaitExpired(true), 28_000);
+        return () => window.clearTimeout(id);
+    }, [profile, profileError, user?.id, profileLoading]);
+
     useEffect(() => {
         if (!user?.id || !hubPrefReady) return;
         if (hubOwnerId && hubOwnerId !== user.id) savePreferredHub(user.id, hubOwnerId);
@@ -101,7 +146,10 @@ export const PlayScreen = () => {
     const canJoinRoom =
         ready && Boolean(user) && hubPrefReady && Boolean(profile) && !needsNameSetup && Boolean(accessToken);
 
-    const friendsApi = useFriends(user?.id ?? null, user ? effectiveHubOwnerId : null);
+    const friendsApi = useFriends(
+        profile ? (user?.id ?? null) : null,
+        profile && user ? effectiveHubOwnerId : null,
+    );
     const [helpOpen, setHelpOpen] = useState(false);
     const [friendsOpen, setFriendsOpen] = useState(false);
     const [questsOpen, setQuestsOpen] = useState(false);
@@ -120,12 +168,15 @@ export const PlayScreen = () => {
     const [assetBundle, setAssetBundle] = useState<"hub" | "arena">("hub");
     const { progress, assetsReady } = useAssetPreload(assetBundle, canJoinRoom);
     const vfxGpuReady = useVfxGpuReady();
+    const propShaderReady = usePropShaderReady(assetBundle === "hub");
 
     const {
         status,
         toast,
         activeUi,
         setActiveUi,
+        npcDialogue,
+        closeNpcDialogue,
         room,
         localPlayer,
         predictedRef,
@@ -143,6 +194,10 @@ export const PlayScreen = () => {
         diedAt,
         deathAnimMs,
         requestRespawn,
+        deathSpectate,
+        adminTpToMap,
+        spectateTargetId,
+        beginDeathSpectate,
         hubRoster,
         kickFromHub,
         kickFromParty,
@@ -219,8 +274,16 @@ export const PlayScreen = () => {
         setAssetBundle(inContent ? "arena" : "hub");
     }, [inContent]);
 
+    // Hub↔content remounts need a fresh GPU warm under new lights/fog.
+    // Key off inContent (same signal as GameCanvas warmKey), not assetBundle —
+    // assetBundle updates one commit later and can race a completed warm.
+    useEffect(() => {
+        clearVfxGpuReady();
+        resetPropShaderReady();
+    }, [inContent]);
+
     const roomReady = status === "connected" || status === "error";
-    const playReady = assetsReady && roomReady && vfxGpuReady;
+    const playReady = assetsReady && roomReady && vfxGpuReady && propShaderReady;
     useLayoutEffect(() => {
         setLoadingGate(!playReady);
     }, [playReady]);
@@ -268,10 +331,12 @@ export const PlayScreen = () => {
     const loadingStatusLabel = !assetsReady
         ? inContent
             ? "Preparing arena"
-            : "Preparing hub"
+            : "Building village"
         : !vfxGpuReady
           ? "Warming spell FX"
-          : status === "connecting"
+          : !inContent && !propShaderReady
+            ? "Warming village props"
+            : status === "connecting"
             ? "Connecting"
             : status === "error"
               ? "Connection issue"
@@ -281,8 +346,9 @@ export const PlayScreen = () => {
 
     if (!ready) {
         return (
-            <div className="flex h-dvh items-center justify-center bg-black">
+            <div className="flex h-dvh flex-col items-center justify-center gap-3 bg-black">
                 <LoadingIndicator />
+                <p className="text-sm text-white/50">Checking sign-in…</p>
             </div>
         );
     }
@@ -296,9 +362,28 @@ export const PlayScreen = () => {
     }
 
     if (!profile || !hubPrefReady) {
+        if (profileError || profileWaitExpired) {
+            return (
+                <ProfileLoadGate
+                    message={
+                        profileError ??
+                        "Supabase PostgREST is still restarting or unreachable (profile never loaded). Wait a minute after a project restart, then Retry."
+                    }
+                    loading={profileLoading}
+                    onRetry={() => {
+                        setProfileWaitExpired(false);
+                        void refreshProfile();
+                    }}
+                    onSignOut={() => void signOut()}
+                />
+            );
+        }
         return (
-            <div className="flex h-dvh items-center justify-center bg-black">
+            <div className="flex h-dvh flex-col items-center justify-center gap-3 bg-black">
                 <LoadingIndicator />
+                <p className="text-sm text-white/50">
+                    {!hubPrefReady ? "Loading hub…" : "Loading profile…"}
+                </p>
             </div>
         );
     }
@@ -331,6 +416,7 @@ export const PlayScreen = () => {
                 phase={phase}
                 contentMode={contentMode}
                 suspended={suspendGameGl}
+                spectateTargetId={deathSpectate ? spectateTargetId : null}
             />
 
             {!playReady ? (
@@ -348,8 +434,13 @@ export const PlayScreen = () => {
 
             {playReady && !inContent ? <HubIntroOverlay /> : null}
 
+            {/*
+                Health and energy clear the ability bar, which is now two rows
+                tall: the tray itself plus the flex row above it. Centred on the
+                same axis as the bar so the three read as one column.
+            */}
             {playReady && combatHudVisible && !introPlaying && !isSpectator && (
-                <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center">
+                <div className="pointer-events-none absolute inset-x-0 bottom-40 z-20 flex justify-center">
                     <div className="bb-hp-tray">
                         <div className="bb-hp-tray__label">
                             <span>HP</span>
@@ -369,20 +460,28 @@ export const PlayScreen = () => {
                                 />
                             ) : null}
                         </div>
+                        <EnergyPips energy={localHp.energy} />
                     </div>
                 </div>
             )}
 
-            {playReady && diedAt != null && !isSpectator && !waveRunRecap && (
+            {playReady && diedAt != null && !isSpectator && !waveRunRecap && !deathSpectate && (
                 <DeathOverlay
                     diedAt={diedAt}
                     animDurationMs={deathAnimMs}
                     onRespawn={requestRespawn}
                     allowRespawn={arenaAllowRespawn}
+                    onSpectate={!arenaAllowRespawn ? beginDeathSpectate : undefined}
                     fallenHint={
                         isWaveAssault ? "No respawn — the run ends when all hunters fall." : undefined
                     }
                 />
+            )}
+
+            {playReady && deathSpectate && (
+                <div className="pointer-events-none absolute bottom-8 left-1/2 z-30 -translate-x-1/2 rounded bg-black/55 px-3 py-1.5 text-sm text-white/90">
+                    Spectating — Tab / click to cycle
+                </div>
             )}
 
             {playReady && arenaHud && inContent && <ArenaMatchHud hud={arenaHud} />}
@@ -598,6 +697,9 @@ export const PlayScreen = () => {
             {playReady && !introPlaying && !isSpectator && (
                 <AbilityBar
                     loadout={economy.loadout}
+                    flexLoadout={economy.flexLoadout}
+                    flexSlotCount={economy.unlocks?.flexSlotCount ?? 1}
+                    energy={localHp.energy}
                     wallet={inContent ? undefined : economy}
                     talentIds={economy.talents}
                     talentBuild={economy.talentBuild}
@@ -701,6 +803,25 @@ export const PlayScreen = () => {
                     />
                 )}
 
+            {/*
+              Hidden while a stand panel is up, because talking to a shopkeeper
+              opens the shop over the top of the conversation -- the dialogue is
+              still live underneath and comes back when the shop is closed.
+            */}
+            {playReady && npcDialogue && !activeUi && (
+                <NpcDialogue
+                    npc={npcDialogue}
+                    onClose={closeNpcDialogue}
+                    onAction={(action) => {
+                        closeNpcDialogue();
+                        // Quests are a HUD panel rather than a stand, so they
+                        // are the one hand-off that is not just a `ui` kind.
+                        if (action === "quests") setQuestsOpen(true);
+                        else setActiveUi(action);
+                    }}
+                />
+            )}
+
             {playReady && (activeUi === "portal_pvp" || activeUi === "portal_pve") && (
                 <PortalPanel
                     kind={activeUi}
@@ -799,6 +920,10 @@ export const PlayScreen = () => {
                     onSpawnChest={spawnHubChest}
                     adminNoCooldown={adminNoCooldown}
                     onToggleAdminNoCooldown={setAdminNoCooldownEnabled}
+                    onTpToMap={(mapId) => {
+                        setAdminOpen(false);
+                        adminTpToMap(mapId);
+                    }}
                     onReplayIntro={() => {
                         setAdminOpen(false);
                         replayHubIntro();

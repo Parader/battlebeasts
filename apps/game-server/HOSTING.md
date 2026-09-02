@@ -1,4 +1,4 @@
-# Hosted BattleBeasts game-server (Fly.io)
+# Hosted Mage Trials game-server (Fly.io)
 
 Gameplay traffic only — Electron/web clients keep GLBs local.
 
@@ -18,6 +18,10 @@ If the app name `battlebeasts-game` is taken, edit `app = "..."` in `fly.toml`.
 
 ```powershell
 fly secrets set ALLOW_GUESTS=true SUPABASE_URL="..." SUPABASE_SECRET_KEY="..."
+
+Ranked LP/tier writes require **SUPABASE_SECRET_KEY** (service role). If only the
+anon/publishable key is set, RLS blocks `player_ratings` upserts and everyone
+stays Bronze · 0 LP in the Ranked menu.
 ```
 
 5. Deploy:

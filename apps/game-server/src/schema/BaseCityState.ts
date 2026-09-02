@@ -61,6 +61,15 @@ export class PlayerState extends Schema {
   @type("number") rubies = 0;
   /** Comma-separated ability ids (Battlerite slots). */
   @type("string") loadout = DEFAULT_LOADOUT.join(",");
+  /**
+   * Comma-separated flex picks (keys 1-3), empty string for an unused slot --
+   * so `",frostBall,"` is a spell in slot 2 only. Positional, because which
+   * key a spell sits on is the player's muscle memory, not a detail.
+   *
+   * Replicated like `loadout`: an opponent's flex picks are part of the read,
+   * the same way their Energy is.
+   */
+  @type("string") flexLoadout = "";
   /** Comma-separated talent ids. */
   @type("string") talents = "";
   /** Arena: "a" | "b" | "" */
@@ -75,6 +84,15 @@ export class PlayerState extends Schema {
   @type("number") statDamageTaken = 0;
   @type("number") statHealing = 0;
   @type("number") statShield = 0;
+  /**
+   * Energy, in pips (see `packages/shared/src/energy.ts`). Fractional: it
+   * accumulates continuously, and only spending will deal in whole pips.
+   *
+   * Replicated to everyone, not just its owner. A hidden burst resource makes
+   * reads impossible in an arena -- an opponent sitting on a full bar is
+   * supposed to be a visible threat.
+   */
+  @type("number") energy = 0;
   /** Rematch vote while phase is rematch_wait. */
   @type("boolean") rematchReady = false;
   @type({ map: StatusInstanceState }) statuses = new MapSchema<StatusInstanceState>();
@@ -104,8 +122,20 @@ export class WorldTargetState extends Schema {
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") yaw = 0;
+  /**
+   * Ground height. Only attackable map props set it, because only they sit on
+   * authored terrain the client would otherwise have to raycast for -- and a
+   * raycast from above would hit the prop's own mesh, not the ground under it.
+   */
+  @type("number") y = 0;
   @type("number") hp = PRACTICE_DUMMY_MAX_HP;
   @type("number") maxHp = PRACTICE_DUMMY_MAX_HP;
+  /**
+   * Hit footprint, when it is not player-sized. Zero means "use the default",
+   * which is every target except an attackable map prop -- those take theirs
+   * from the prop's collider so a barn is not as hard to hit as a fencepost.
+   */
+  @type("number") radius = 0;
   /** Mirror of player cast fields for attack anim sync. */
   @type("string") castAbilityId = "";
   @type("string") castPhase = "";
@@ -113,7 +143,7 @@ export class WorldTargetState extends Schema {
   @type({ map: StatusInstanceState }) statuses = new MapSchema<StatusInstanceState>();
 }
 
-/** Visual clone from Decoy (Q) — drifts or idles; not a combat body. */
+/** Visual clone from Decoy (Q) — drifts or idles; absorbs hits while owner is cloaked. */
 export class DecoyState extends Schema {
   @type("string") id = "";
   @type("string") ownerSessionId = "";
@@ -125,6 +155,9 @@ export class DecoyState extends Schema {
   @type("string") color = STARTER_COLORS[0];
   @type("string") pattern = DEFAULT_COSMETIC_PATTERN;
   @type("string") patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
+  /** Mirrors owner HP at spawn; depleted by incoming damage. */
+  @type("number") hp = 100;
+  @type("number") maxHp = 100;
   /** Ground aim destination the decoy walks toward (cast-time). */
   @type("number") targetX = 0;
   @type("number") targetZ = 0;
@@ -244,6 +277,8 @@ export class BaseCityState extends Schema {
   @type("number") matchRound = 0;
   @type("number") scoreA = 0;
   @type("number") scoreB = 0;
+  /** Third side score (Arena 1v1v1 FFA). Unused in classic A/B modes. */
+  @type("number") scoreC = 0;
   @type("number") phaseEndsAt = 0;
   @type("string") matchMode = "";
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();

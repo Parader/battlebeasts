@@ -2,7 +2,7 @@
   "name": "@battlebeasts/desktop",
   "version": "0.0.1",
   "private": true,
-  "description": "BattleBeasts desktop client (Electron) — assets ship locally",
+  "description": "Mage Trials desktop client (Electron) — assets ship locally",
   "main": "main.cjs",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
@@ -16,7 +16,7 @@
   },
   "build": {
     "appId": "com.battlebeasts.desktop",
-    "productName": "BattleBeasts",
+    "productName": "Mage Trials",
     "directories": {
       "output": "release-v5"
     },
@@ -41,10 +41,10 @@
       ]
     },
     "portable": {
-      "artifactName": "BattleBeasts-${version}-portable.exe"
+      "artifactName": "MageTrials-${version}-portable.exe"
     },
     "protocols": {
-      "name": "BattleBeasts",
+      "name": "Mage Trials",
       "schemes": ["battlebeasts"]
     }
   }

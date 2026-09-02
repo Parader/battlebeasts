@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { listMaps } from "@battlebeasts/shared";
 import { GamePanelShell } from "./GamePanelShell";
 
 type ChestQuality = "green" | "blue" | "purple" | "legendary";
@@ -12,6 +13,8 @@ type Props = {
   /** Admin hub practice — skip ability cooldowns. */
   adminNoCooldown?: boolean;
   onToggleAdminNoCooldown?: (enabled: boolean) => void;
+  /** Drop into any registered map solo, for looking at authored maps. */
+  onTpToMap?: (mapId: string) => void;
 };
 
 const ADMIN_QUALITIES: readonly ChestQuality[] = ["green", "blue", "purple", "legendary"];
@@ -25,8 +28,12 @@ export function AdminPanel({
   onSoftResetCharacter,
   adminNoCooldown = false,
   onToggleAdminNoCooldown,
+  onTpToMap,
 }: Props) {
   const [spawnQuality, setSpawnQuality] = useState<ChestQuality>("blue");
+  // Registration happens once at startup, so the list never changes at runtime.
+  const maps = useMemo(() => listMaps().sort((a, b) => a.name.localeCompare(b.name)), []);
+  const [mapId, setMapId] = useState(() => maps[0]?.id ?? "");
 
   if (!open) return null;
 
@@ -82,6 +89,31 @@ export function AdminPanel({
             </button>
           ) : null}
         </div>
+        {onTpToMap && maps.length > 0 ? (
+          <div className="bb-list-row flex flex-wrap items-center gap-2">
+            <select
+              className="bb-input"
+              value={mapId}
+              aria-label="Map"
+              onChange={(e) => setMapId(e.target.value)}
+            >
+              {maps.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                  {m.kind === "doc" ? " (authored)" : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="bb-btn-brass"
+              disabled={!mapId}
+              onClick={() => onTpToMap(mapId)}
+            >
+              Go to map
+            </button>
+          </div>
+        ) : null}
       </section>
     </GamePanelShell>
   );
