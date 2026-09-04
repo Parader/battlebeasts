@@ -2112,6 +2112,116 @@
   gap: 0.35rem;
 }
 
+/* WoW-style cast / channel / charge bar (above ability bar). */
+.bb-cast-bar {
+  width: min(18rem, 56vw);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+}
+
+.bb-cast-bar__row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.bb-cast-bar__icon {
+  flex-shrink: 0;
+  border-radius: 0.35rem;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.bb-cast-bar__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.bb-cast-bar__label {
+  font-family: var(--bb-font-display);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #f3e6c0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bb-cast-bar__track {
+  position: relative;
+  width: 100%;
+  height: 0.7rem;
+  border-radius: 0.2rem;
+  overflow: hidden;
+  background: rgba(8, 8, 12, 0.88);
+  border: 1px solid rgba(201, 178, 122, 0.4);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+.bb-cast-bar__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1d4ed8 0%, #3b82f6 50%, #93c5fd 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: none;
+}
+
+.bb-cast-bar--channel .bb-cast-bar__fill {
+  background: linear-gradient(90deg, #5b21b6 0%, #8b5cf6 55%, #c4b5fd 100%);
+}
+
+.bb-cast-bar--charge .bb-cast-bar__fill {
+  background: linear-gradient(90deg, #b45309 0%, #ea580c 55%, #fbbf24 100%);
+}
+
+.bb-cast-bar--charge .bb-cast-bar__label {
+  color: #fecaca;
+}
+
+.bb-cast-bar__fill--max {
+  animation: bb-cast-bar-pulse 0.55s ease-in-out infinite alternate;
+}
+
+.bb-cast-bar__hold {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+
+.bb-cast-bar__spark {
+  position: absolute;
+  top: 50%;
+  right: 0.15rem;
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 999px;
+  transform: translateY(-50%);
+  background: #fef9c3;
+  box-shadow: 0 0 6px 2px rgba(250, 250, 180, 0.75);
+  pointer-events: none;
+}
+
+.bb-cast-bar--interruptible .bb-cast-bar__track {
+  border-color: rgba(250, 204, 21, 0.45);
+}
+
+@keyframes bb-cast-bar-pulse {
+  from {
+    filter: brightness(1);
+  }
+  to {
+    filter: brightness(1.25);
+  }
+}
+
 .bb-charge-channel__label {
   font-family: var(--bb-font-display);
   font-size: 0.72rem;

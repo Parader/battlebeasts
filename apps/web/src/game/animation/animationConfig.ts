@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, POISON_CLOUD_CAST, SMOKE_BOMB_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BOLT_CAST, BARRIER_CAST, HEAL_BEAM_CAST, LIFE_LEECH_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, HOLY_GROUND_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, FIREBALL_CAST, RIFT_FISSURE_CAST, fireballThrowSeekSec, fireballReleaseSec, fireballFollowThroughEndSec, EMOTES } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, POISON_CLOUD_CAST, SMOKE_BOMB_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BOLT_CAST, BARRIER_CAST, HEAL_BEAM_CAST, LIFE_LEECH_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, HOLY_GROUND_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, FIREBALL_CAST, RIFT_FISSURE_CAST, SOUL_MARK_CAST, VOID_DISC_CAST, RUNIC_SHARD_CAST, ORBITING_WISP_CAST, CRUSHING_SIGIL_CAST, PRISM_LANCE_CAST, fireballThrowSeekSec, fireballReleaseSec, fireballFollowThroughEndSec, EMOTES } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -37,6 +37,8 @@ export type CharacterAnimationConfig = {
   castMagmaOrbs?: string;
   /** Poison Dart / Right Hook. */
   castPoisonDart?: string;
+  /** Arc Blade / Dual Weapon Combo spin. */
+  castArcBlade?: string;
   /** Ice Lance / Baseball Pitching. */
   castIceLance?: string;
   /** Counter / Female Dance Pose. */
@@ -100,6 +102,7 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castProtectionBubble: "Standing 2H Magic Area Attack 01",
   castMagmaOrbs: "Standing 2H Magic Attack 05",
   castPoisonDart: "Right Hook",
+  castArcBlade: "attack_combo",
   castIceLance: "Baseball Pitching",
   castCounter: "Female Dance Pose",
   castBlockStart: "Standing Block Start",
@@ -280,6 +283,10 @@ export const abilityAnimationBindings: Record<
     // Hold the punch extension through the tether window.
     upperHoldAtSec: BOLT_CAST.releaseFrame / BOLT_CAST.fps,
   },
+  soulMark: {
+    upper: "castFrost",
+    upperTimeScale: SOUL_MARK_CAST.playbackRate,
+  },
   grasp: { upper: "castPrimary" },
   chainJump: { upper: "castPrimary" },
   fireball: {
@@ -354,6 +361,62 @@ export const abilityAnimationBindings: Record<
   poisonDart: {
     upper: "castPoisonDart",
     upperTimeScale: POISON_DART_CAST.playbackRate,
+  },
+  voidDisc: {
+    upper: "castPoisonDart",
+    upperTimeScale: VOID_DISC_CAST.playbackRate,
+  },
+  runicShard: {
+    upper: "castIceLance",
+    upperTimeScale: RUNIC_SHARD_CAST.playbackRate,
+  },
+  orbitingWisp: {
+    upper: "castPrimary",
+    upperTimeScale: ORBITING_WISP_CAST.playbackRate,
+  },
+  astralChain: {
+    upper: "castPrimary",
+  },
+  undergroundPulse: {
+    upper: "castBarrier",
+  },
+  slipstream: {
+    upper: "castPrimary",
+    upperTimeScale: 1.35,
+  },
+  soulRelay: {
+    upper: "castBarrier",
+    upperTimeScale: 1.2,
+  },
+  crushingSigil: {
+    /** Standing 1H Cast Spell 01 — stamp / conjure rune into the ground. */
+    upper: "castBarrier",
+    upperTimeScale: CRUSHING_SIGIL_CAST.playbackRate,
+  },
+  gravityWell: {
+    /** Standing 2H Magic Area Attack 01 — short slice for compact well cast. */
+    upper: "castFirewall",
+    upperTimeScale: 1.85,
+  },
+  prismLance: {
+    /** Standing 2H Magic Attack 04 — release synced to lance spawn. */
+    upper: "castHealBeam",
+    upperTimeScale: PRISM_LANCE_CAST.playbackRate,
+  },
+  soulSever: {
+    /** Right Hook — sharp sideways sever gesture. */
+    upper: "castPoisonDart",
+    upperTimeScale: 1.25,
+  },
+  arcBlade: {
+    /** Dual Weapon Combo — snappy single spin. */
+    upper: "castArcBlade",
+    upperTimeScale: 1.55,
+  },
+  bloomingPath: {
+    /** Standing 1H Cast Spell 01 — quick hand sweep, vine erupts forward. */
+    upper: "castBarrier",
+    upperTimeScale: 1.25,
   },
   silenceSweep: {
     upper: "castPoisonDart",

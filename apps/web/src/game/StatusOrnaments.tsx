@@ -6,6 +6,8 @@ import { createLightningBoltMaterial, tickLightningBolt } from "./vfx/materials/
 import { createCirclePointMaterial } from "./vfx/materials/circlePoint";
 import { CounterStatusFx } from "./CounterStatusFx";
 import { HandShieldFx } from "./HandShieldFx";
+import { SoulMarkOrnament } from "./SoulMarkOrnament";
+import { SoulRelayOrnament } from "./SoulRelayOrnament";
 
 export type StatusRowLite = {
   statusId: string;
@@ -87,6 +89,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
   const burn = useRef<THREE.Group>(null);
   const burnWisps = useRef<(THREE.Mesh | null)[]>([]);
   const bleed = useRef<THREE.Group>(null);
+  const soulSever = useRef<THREE.Group>(null);
   const slow = useRef<THREE.Group>(null);
   const rooted = useRef<THREE.Group>(null);
   const rootShards = useRef<(THREE.Mesh | null)[]>([]);
@@ -186,6 +189,10 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     [],
   );
   const bleedMats = useMemo(() => [0, 1, 2, 3].map(() => basicMat("#f87171", 0.65)), []);
+  const soulSeverMats = useMemo(
+    () => [0, 1, 2, 3, 4].map(() => basicMat("#EF4444", 0.55)),
+    [],
+  );
   const slowMat = useMemo(() => basicMat("#93c5fd", 0.5), []);
   const rootIceMat = useMemo(
     () =>
@@ -382,6 +389,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       if (weaken.current) weaken.current.visible = false;
       if (burn.current) burn.current.visible = false;
       if (bleed.current) bleed.current.visible = false;
+      if (soulSever.current) soulSever.current.visible = false;
       if (slow.current) slow.current.visible = false;
       if (surge.current) surge.current.visible = false;
       moveSeeded.current = false;
@@ -488,6 +496,19 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
           d.position.y = -0.05 - cycle;
           const mat = bleedMats[i];
           if (mat) mat.opacity = 0.25 + 0.45 * (1 - cycle / 0.55);
+        }
+      }
+    }
+    if (soulSever.current) {
+      soulSever.current.visible = has("soulSevered");
+      if (soulSever.current.visible) {
+        for (let i = 0; i < soulSever.current.children.length; i++) {
+          const d = soulSever.current.children[i]!;
+          const phase = i * 1.35;
+          const cycle = (t * 0.7 + phase) % 0.7;
+          d.position.y = -0.02 - cycle * 1.05;
+          const mat = soulSeverMats[i];
+          if (mat) mat.opacity = 0.2 + 0.5 * (1 - cycle / 0.7);
         }
       }
     }
@@ -650,6 +671,16 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         ))}
       </group>
 
+      {/* Soul Sever — violet soul-bleed drips while imprint is active. */}
+      <group ref={soulSever} position={[0, 1.4, 0.12]} visible={false}>
+        {soulSeverMats.map((mat, i) => (
+          <mesh key={i} position={[(i - 2) * 0.07, 0, (i % 2) * 0.06]}>
+            <sphereGeometry args={[0.038, 6, 6]} />
+            <primitive object={mat} attach="material" />
+          </mesh>
+        ))}
+      </group>
+
       <group ref={slow} position={[0, 0.12, 0]} visible={false}>
         <mesh rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[0.42, 0.55, 24]} />
@@ -750,6 +781,18 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
 
       <CounterStatusFx characterRoot={characterRoot} getStatuses={getStatuses} />
       <HandShieldFx characterRoot={characterRoot} getStatuses={getStatuses} />
+      <SoulRelayOrnament
+        getActive={() => getStatuses().some((r) => r.statusId === "soulRelayLinked")}
+      />
+      <SoulMarkOrnament
+        getStacks={() => {
+          let max = 0;
+          for (const r of getStatuses()) {
+            if (r.statusId === "soulMarked") max = Math.max(max, r.stacks ?? 1);
+          }
+          return max;
+        }}
+      />
     </group>
   );
 }

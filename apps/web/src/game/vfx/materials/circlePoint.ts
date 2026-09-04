@@ -78,3 +78,10 @@ export function createCirclePointMaterial(color = "#e0f2fe"): THREE.ShaderMateri
   if (mat.uniforms.uMap) mat.uniforms.uMap.value = getVfxCircleTexture();
   return mat;
 }
+
+/** Dark smoke motes — normal blend for contrast against additive glow. */
+export function createSmokePointMaterial(color = "#100914"): THREE.ShaderMaterial {
+  const mat = createCirclePointMaterial(color);
+  mat.blending = THREE.NormalBlending;
+  return mat;
+}

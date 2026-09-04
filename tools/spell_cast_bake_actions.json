@@ -8,7 +8,7 @@
     },
     {
       "name": "Standing 1H Magic Attack 02",
-      "spells": ["frostBall", "castFrost"]
+      "spells": ["frostBall", "soulMark", "castFrost"]
     },
     {
       "name": "Standing 1H Cast Spell 01",

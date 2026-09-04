@@ -1338,7 +1338,8 @@ export class ContentRoom extends ServicedRoom {
         if (Math.abs(input.moveX) + Math.abs(input.moveZ) > 0.05) {
           this.activityOf(sessionId).moveTicks += 1;
         }
-        const next = this.combat.movePlayer(sessionId, from, desired);
+        const tethered = this.combat.constrainAstralChainDesired(sessionId, desired);
+        const next = this.combat.movePlayer(sessionId, from, tethered);
         player.x = next.x;
         player.z = next.z;
 

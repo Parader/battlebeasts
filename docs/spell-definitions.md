@@ -2,7 +2,7 @@
 
 **Purpose:** Share this document with designers / LLMs to author new spells that plug into the live game.  
 **Code source of truth:** `packages/shared/src/abilities.ts` (`ABILITIES` record).  
-**Last synced:** 35 player spells across 7 slot families.
+**Last synced:** includes Gravity Well + Prism Lance (E); prefer `abilities.ts` for full catalog.
 
 ---
 
@@ -236,6 +236,10 @@ interface StatusApplication {
 | `spiritForm` | Husk + spirit split + link stun. | Recast snaps back. |
 | `riftFissure` | Two linked walk-through portals. | Two-step placement. |
 | `fireball` | Charge-scaled projectile + burn zone. | `confirmOnRelease`, charge lerp. |
+| `prismLance` | Thin pierce skillshot; damage scales with travel from spawn. | `pierce`, `minDamage`/`maxDamage`, ramp distances. |
+| `soulSever` | Hit stores imprint; delayed snap damage scales with displacement from origin. | `severDurationMs`, `severMin/MaxDamage`, `severMaxDistance`. |
+| `arcBlade` | Fast self 360° spin; 3 consecutive hits (60 / 60 / 80). | `hitCount`, `hitIntervalMs`, `damageByHit`. |
+| `bloomingPath` | Slow ground vine skillshot; heal while standing in the corridor. | corridor HoT (self + allies) while laid + linger; pierce. |
 
 **Adding a new `effectKind` requires:** handler in `apps/game-server/src/combat/CombatSystem.ts`, optional VFX in `apps/web/src/game/vfx/`, and telegraph rules in `castAimPreview.ts`.
 
@@ -296,18 +300,18 @@ Spells need a clip from `hero.glb` (Mixamo). Configure in `apps/web/src/game/ani
 |-----------------------|----------------|
 | `magic_1h` (Standing 1H Magic Attack 01) | bolt, grasp, chainJump, surge |
 | Standing 1H Magic Attack 02 | frostBall |
-| Standing 1H Cast Spell 01 | barrier, shrooms, riftFissure |
+| Standing 1H Cast Spell 01 | barrier, shrooms, riftFissure, bloomingPath |
 | Standing 1H Magic Attack 03 | spikes |
 | Standing 2H Magic Attack 03 | frostMist, lifeLeech |
 | Casting Spell | fireball (charge + throw) |
-| Standing 2H Magic Attack 04 | healBeam |
-| Standing 2H Magic Area Attack 01 | firewall, holyGround, volcano, protectionBubble |
+| Standing 2H Magic Attack 04 | healBeam, prismLance |
+| Standing 2H Magic Area Attack 01 | firewall, holyGround, volcano, protectionBubble, gravityWell |
 | Standing 2H Magic Attack 05 | magmaOrbs |
-| Right Hook | poisonDart, silenceSweep |
+| Right Hook | poisonDart, silenceSweep, soulSever |
 | Baseball Pitching | iceLance |
 | magic_aoe | gust (Push Back) |
 | Standing Melee Attack Downward | poisonCloud, smokeBomb, crescent |
-| Dual Weapon Combo | crescent combo chain |
+| Dual Weapon Combo | crescent, arcBlade |
 | Jump Attack | smash (Jump Slam) |
 | dive | dash |
 | Female Dance Pose | counter, revenge |
@@ -492,7 +496,7 @@ Damage/heal shown as **in-game HP** (after `combatMag` ×10). Essence `0` = star
 | `decoy` | Decoy | 14s | 0 | 0 | 100 | decoy | Clone + 2s cloak |
 | `smokeBomb` | Smoke Bomb | 14s | 0 | 0 | 100 | smokeBomb | Weaken cloud + cloak in smoke |
 
-### E (5 spells)
+### E (10 spells)
 
 | id | name | CD | range | dmg | essence | effectKind | notes |
 |----|------|-----|-------|-----|---------|------------|-------|
@@ -501,6 +505,11 @@ Damage/heal shown as **in-game HP** (after `combatMag` ×10). Essence `0` = star
 | `chainJump` | Chain Hook | 10s | 12 | 50 | 100 | standard | Leap to target; root 0.5s |
 | `poisonCloud` | Poison Cloud | 10s | 9 | 0 | 100 | poisonCloud | Zone poison + miasma slow |
 | `silenceSweep` | Silence | 12s | 8 | 0 | 100 | silenceSweep | Cone sweep; silence |
+| `gravityWell` | Gravity Well | 9.5s | 10 | 80 | 100 | standard | Delayed seed; snap pull 2.85m / r3.5 |
+| `prismLance` | Prism Lance | 8.5s | 20 | 80–240 | 110 | prismLance | Thin pierce; dmg scales with travel |
+| `soulSever` | Soul Sever | 9s | 11 | 10 + 10–300 | 110 | soulSever | Imprint snap 2.2s; dmg from displacement |
+| `arcBlade` | Arc Blade | 6.5s | 0 | 60 / 60 / 80 | 100 | arcBlade | Self spin ×3; r2.55 |
+| `bloomingPath` | Blooming Path | 8s | 10.5 | 20/tick heal | 100 | bloomingPath | Very slow vine; stand-in HoT (self+ally); trail lingers ~3.2s |
 
 ### R (5 spells)
 

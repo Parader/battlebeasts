@@ -10,8 +10,12 @@ import {
   LIFE_LEECH_CAST,
   ICE_LANCE_CAST,
   POISON_DART_CAST,
+  SOUL_MARK_CAST,
+  VOID_DISC_CAST,
+  RUNIC_SHARD_CAST,
 } from "@battlebeasts/shared";
 import type { AbilityVfxProfile, AbilityVfxAssets } from "./types";
+import { VFX_WIND_STREAK_URL, VFX_CRUSHING_SIGIL_FLARE_URL, VFX_BLOOMING_VINE_STREAK_URL } from "../vfxUrls";
 import {
   BARRIER_CHARGE_PAD_MS,
   BARRIER_DISSOLVE_MS,
@@ -33,6 +37,53 @@ const MUZZLE_BOLT: AbilityVfxProfile = {
   combatFx: { onHit: "sfxOnly", skipLegacyBurst: false },
 };
 
+const MUZZLE_PRISM_LANCE: AbilityVfxProfile = {
+  castEngine: "muzzleLead",
+  muzzleLead: {
+    forward: 0.7,
+    handY: 1.15,
+    leadMs: 0,
+  },
+  projectile: "catalog",
+  combatFx: {
+    onHit: "catalogImpact",
+    hitY: 1.0,
+    skipLegacyBurst: true,
+  },
+};
+
+const MUZZLE_BLOOMING_PATH: AbilityVfxProfile = {
+  castEngine: "muzzleLead",
+  muzzleLead: {
+    forward: 0.45,
+    handY: 0.35,
+    leadMs: 0,
+  },
+  projectile: "catalog",
+  combatFx: {
+    onAoe: "bloomingPath",
+    onHit: "catalogImpact",
+    hitY: 0.2,
+    skipLegacyBurst: true,
+  },
+  assets: { textures: [VFX_BLOOMING_VINE_STREAK_URL] },
+};
+
+const MUZZLE_SOUL_SEVER: AbilityVfxProfile = {
+  castEngine: "muzzleLead",
+  muzzleLead: {
+    forward: 0.55,
+    handY: 1.1,
+    leadMs: 0,
+  },
+  projectile: "catalog",
+  combatFx: {
+    onAoe: "soulSever",
+    onHit: "sfxOnly",
+    skipLegacyBurst: true,
+  },
+};
+
 const MUZZLE_POISON: AbilityVfxProfile = {
   castEngine: "muzzleLead",
   muzzleLead: {
@@ -45,6 +96,37 @@ const MUZZLE_POISON: AbilityVfxProfile = {
     onHit: "catalogImpact",
     hitY: 0.7,
     skipLegacyBurst: false,
+  },
+};
+
+const MUZZLE_VOID_DISC: AbilityVfxProfile = {
+  castEngine: "muzzleLead",
+  muzzleLead: {
+    forward: VOID_DISC_CAST.spawnOffset,
+    handY: VOID_DISC_CAST.handY,
+    leadMs: 0,
+  },
+  projectile: "catalog",
+  combatFx: {
+    onHit: "catalogImpact",
+    hitY: 0.7,
+    skipLegacyBurst: false,
+  },
+};
+
+const MUZZLE_RUNIC_SHARD: AbilityVfxProfile = {
+  castEngine: "muzzleLead",
+  muzzleLead: {
+    forward: RUNIC_SHARD_CAST.spawnOffset,
+    handY: RUNIC_SHARD_CAST.handY,
+    leadMs: 0,
+  },
+  projectile: "catalog",
+  combatFx: {
+    onHit: "catalogImpact",
+    hitY: 1.0,
+    onAoe: "runicShard",
+    skipLegacyBurst: true,
   },
 };
 
@@ -124,6 +206,18 @@ const BRIDGED_GUST: AbilityVfxProfile = {
   combatFx: { onAoe: "none", skipLegacyBurst: true },
 };
 
+const BRIDGED_ARC_BLADE: AbilityVfxProfile = {
+  castEngine: "bridgedAoe",
+  bridgedAoe: { lifePadMs: 220, y: 1.0 },
+  projectile: "none",
+  combatFx: {
+    onAoe: "arcBlade",
+    onHit: "catalogImpact",
+    hitY: 1.1,
+    skipLegacyBurst: true,
+  },
+};
+
 const CRESCENT: AbilityVfxProfile = {
   castEngine: "combatFxOnly",
   projectile: "none",
@@ -183,6 +277,17 @@ const PROTECTION_BUBBLE: AbilityVfxProfile = {
   combatFx: { skipLegacyBurst: true },
 };
 
+const ORBITING_WISP: AbilityVfxProfile = {
+  // Schema mesh (OrbitingWisps) owns the spirits; hits use catalog flash.
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: {
+    onHit: "catalogImpact",
+    hitY: 1.15,
+    skipLegacyBurst: true,
+  },
+};
+
 const SHROOMS: AbilityVfxProfile = {
   castEngine: "combatFxOnly",
   projectile: "none",
@@ -211,6 +316,22 @@ const ARC_THREAD: AbilityVfxProfile = {
   castEngine: "combatFxOnly",
   projectile: "none",
   combatFx: { onAoe: "arcThread", skipLegacyBurst: true },
+};
+
+const SOUL_MARK: AbilityVfxProfile = {
+  castEngine: "muzzleLead",
+  muzzleLead: {
+    forward: SOUL_MARK_CAST.spawnOffset,
+    handY: SOUL_MARK_CAST.handY,
+    leadMs: MUZZLE_LEAD_MS,
+  },
+  projectile: "catalog",
+  combatFx: {
+    onHit: "none",
+    hitY: 1.05,
+    onAoe: "soulMark",
+    skipLegacyBurst: true,
+  },
 };
 
 const FROST_MIST: AbilityVfxProfile = {
@@ -255,6 +376,48 @@ const CHAIN_JUMP: AbilityVfxProfile = {
   projectile: "catalog",
 };
 
+const ASTRAL_CHAIN: AbilityVfxProfile = {
+  castEngine: "none",
+  projectile: "catalog",
+  combatFx: {
+    onHit: "none",
+    onAoe: "astralChain",
+    skipLegacyBurst: true,
+  },
+};
+
+const UNDERGROUND_PULSE: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "undergroundPulse", skipLegacyBurst: true },
+};
+
+const SLIPSTREAM: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "slipstream", skipLegacyBurst: true },
+  assets: { textures: [VFX_WIND_STREAK_URL] },
+};
+
+const SOUL_RELAY: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "soulRelay", skipLegacyBurst: true },
+};
+
+const CRUSHING_SIGIL: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "crushingSigil", skipLegacyBurst: true },
+  assets: { textures: [VFX_CRUSHING_SIGIL_FLARE_URL] },
+};
+
+const GRAVITY_WELL: AbilityVfxProfile = {
+  castEngine: "combatFxOnly",
+  projectile: "none",
+  combatFx: { onAoe: "gravityWell", skipLegacyBurst: true },
+};
+
 const PORTAL: AbilityVfxProfile = {
   castEngine: "none",
   projectile: "none",
@@ -271,12 +434,16 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
     },
   },
   arcThread: ARC_THREAD,
+  soulMark: SOUL_MARK,
+  voidDisc: MUZZLE_VOID_DISC,
+  runicShard: MUZZLE_RUNIC_SHARD,
   poisonDart: MUZZLE_POISON,
   frostBall: CHARGE_FROST,
   fireball: CHARGE_FIREBALL,
   iceLance: CHARGE_ICE_LANCE,
   barrier: CHARGE_BARRIER,
   gust: BRIDGED_GUST,
+  arcBlade: BRIDGED_ARC_BLADE,
   crescent: CRESCENT,
   smash: SMASH,
   spikes: SPIKES,
@@ -286,6 +453,16 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
   holyGround: HOLY_GROUND,
   volcano: VOLCANO,
   protectionBubble: PROTECTION_BUBBLE,
+  orbitingWisp: ORBITING_WISP,
+  astralChain: ASTRAL_CHAIN,
+  undergroundPulse: UNDERGROUND_PULSE,
+  slipstream: SLIPSTREAM,
+  soulRelay: SOUL_RELAY,
+  crushingSigil: CRUSHING_SIGIL,
+  gravityWell: GRAVITY_WELL,
+  prismLance: MUZZLE_PRISM_LANCE,
+  soulSever: MUZZLE_SOUL_SEVER,
+  bloomingPath: MUZZLE_BLOOMING_PATH,
   shrooms: SHROOMS,
   riftFissure: RIFT_FISSURE,
   magmaOrbs: MAGMA_ORBS,

@@ -27,6 +27,7 @@ export type CastPreviewKind =
   | "none"
   | "placeCircle"
   | "selfCircle"
+  | "allyBind"
   | "cone"
   | "wall"
   | "line"
@@ -43,6 +44,8 @@ export type CastPreview = {
   color: string;
   /** Soft max-range ring at caster feet (0 = none). */
   rangeRing: number;
+  /** When true, range ring reads as refused (thin red). */
+  rangeRingOutOfRange: boolean;
   /** Self / cone / melee size at feet. */
   feetRadius: number;
   halfAngle: number;
@@ -67,6 +70,7 @@ export type CastPreview = {
 const EMPTY: Omit<CastPreview, "abilityId" | "color"> = {
   kind: "none",
   rangeRing: 0,
+  rangeRingOutOfRange: false,
   feetRadius: 0,
   halfAngle: 0.7,
   aimX: 0,
@@ -156,9 +160,11 @@ export function castPreviewKindFor(def: AbilityDef): CastPreviewKind {
     return "placeCircle";
   }
   if (kind === "firewall") return "wall";
-  if (kind === "spikeWave") return "line";
+  if (kind === "slipstream" || kind === "spikeWave") return "line";
   if (kind === "coneChannel" || kind === "silenceSweep") return "cone";
-  if (kind === "lifeLeech" || kind === "healBeam" || kind === "arcThread") return "line";
+  if (kind === "arcThread") return "none";
+  if (kind === "soulRelay") return "allyBind";
+  if (kind === "lifeLeech" || kind === "healBeam") return "line";
   if (kind === "riftFissure") return "placeCircle";
   if (
     kind === "smokeBomb" ||
@@ -196,6 +202,8 @@ export type CastPreviewInput = {
   owner: { x: number; z: number; yaw: number };
   aim: { x: number; z: number } | null;
   statics: readonly StaticCollider[];
+  /** Optional healable bodies for ally-bind aim (players / dummies). */
+  healables?: readonly { id: string; x: number; z: number }[];
 };
 
 /** Build a frame of cast-aim geometry (world XZ). */
@@ -269,6 +277,74 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
         aimRadius: Math.max(0.6, def.radius ?? 2),
       };
     }
+    case "allyBind": {
+      const range = Math.max(1, def.range > 0 ? def.range : 8.5);
+      const fx = Math.sin(owner.yaw);
+      const fz = Math.cos(owner.yaw);
+      const aimPt =
+        aim && Number.isFinite(aim.x) && Number.isFinite(aim.z)
+          ? aim
+          : { x: owner.x, z: owner.z };
+
+      let best: {
+        id: string;
+        x: number;
+        z: number;
+        aimDist: number;
+        casterDist: number;
+        isSelf: boolean;
+      } = {
+        id: "",
+        x: owner.x,
+        z: owner.z,
+        aimDist: Math.hypot(owner.x - aimPt.x, owner.z - aimPt.z),
+        casterDist: 0,
+        isSelf: true,
+      };
+
+      const consider = (
+        id: string,
+        x: number,
+        z: number,
+        isSelf: boolean,
+      ) => {
+        const dx = x - owner.x;
+        const dz = z - owner.z;
+        const casterDist = Math.hypot(dx, dz);
+        if (!isSelf) {
+          if (casterDist < 0.05) return;
+          const dot = (dx * fx + dz * fz) / casterDist;
+          if (dot < 0.5) return;
+        }
+        const aimDist = Math.hypot(x - aimPt.x, z - aimPt.z);
+        if (
+          aimDist < best.aimDist - 1e-4 ||
+          (Math.abs(aimDist - best.aimDist) <= 1e-4 && casterDist < best.casterDist)
+        ) {
+          best = { id, x, z, aimDist, casterDist, isSelf };
+        }
+      };
+
+      consider("", owner.x, owner.z, true);
+      for (const h of input.healables ?? []) {
+        if (h.id === "") continue;
+        consider(h.id, h.x, h.z, false);
+      }
+
+      const inRange = best.casterDist <= range;
+      const oorIntent = !best.isSelf && !inRange;
+      const selfIntent = best.isSelf;
+      return {
+        ...base,
+        rangeRing: range,
+        rangeRingOutOfRange: oorIntent,
+        feetRadius: 0,
+        aimX: !oorIntent && !selfIntent ? best.x : owner.x,
+        aimZ: !oorIntent && !selfIntent ? best.z : owner.z,
+        // Ally in range: target ring. Self / no lock: soft self ring. OOR: range only.
+        aimRadius: !oorIntent && !selfIntent ? 0.85 : oorIntent ? 0 : 0.65,
+      };
+    }
     case "cone": {
       const length = Math.max(
         1,
@@ -307,14 +383,11 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
     }
     case "line": {
       const length = Math.max(1, def.range > 0 ? def.range : 10);
-      const halfWidth =
-        def.id === "arcThread"
-          ? 0.12
-          : Math.max(
-              0.25,
-              def.radius ??
-                (def.coneHalfAngle != null ? length * Math.tan(def.coneHalfAngle) : 0.55),
-            );
+      const halfWidth = Math.max(
+        0.25,
+        def.radius ??
+          (def.coneHalfAngle != null ? length * Math.tan(def.coneHalfAngle) : 0.55),
+      );
       const midDist = length * 0.5;
       const mid = pointInFront(owner, owner.yaw, midDist);
       // Capsule length is along local +X; rotate yaw+π/2 so it runs along facing.
@@ -370,7 +443,9 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
       const rawRange = Math.max(1, def.range > 0 ? def.range : 12);
       // Long / "infinite" ranges get a readable fixed corridor (not cursor-scaled).
       const length = rawRange > 24 ? 12 : rawRange;
-      const halfWidth = Math.max(0.4, Math.min(1.05, def.radius ?? 0.55));
+      const r = def.radius ?? 0.55;
+      // Thin skillshots (Prism Lance) keep a readable but narrow corridor.
+      const halfWidth = Math.max(r < 0.35 ? 0.12 : 0.4, Math.min(1.05, r));
       const mid = pointInFront(owner, owner.yaw, length * 0.5);
       const tip = pointInFront(owner, owner.yaw, length);
       return {
@@ -392,7 +467,8 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
       // Legacy alias — treat as skillshot.
       const rawRange = Math.max(1, def.range > 0 ? def.range : 12);
       const length = rawRange > 24 ? 12 : rawRange;
-      const halfWidth = Math.max(0.4, Math.min(1.05, def.radius ?? 0.55));
+      const r = def.radius ?? 0.55;
+      const halfWidth = Math.max(r < 0.35 ? 0.12 : 0.4, Math.min(1.05, r));
       const mid = pointInFront(owner, owner.yaw, length * 0.5);
       const tip = pointInFront(owner, owner.yaw, length);
       return {

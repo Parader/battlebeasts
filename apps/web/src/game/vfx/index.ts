@@ -52,6 +52,10 @@ export {
   PoisonDartProjectileEffect,
   IceLanceCastEffect,
   IceLanceExplodeEffect,
+  SoulMarkProjectileEffect,
+  VoidDiscProjectileEffect,
+  RunicShardProjectileEffect,
+  AstralChainProjectileEffect,
   renderOneShot,
 } from "./catalog";
 
@@ -114,6 +118,41 @@ export {
 } from "./materials";
 
 export { ObjectPool, createVec3Pool } from "./pool";
+
+export {
+  applyAtlasFrame,
+  atlasTile,
+  cloneAtlasFrameMaterial,
+  type AtlasFrame,
+  type AtlasSize,
+} from "./atlasFrame";
+
+export {
+  SPELL_EFFECTS_ATLAS,
+  SPELL_FX,
+  spellEffectsCell,
+  spellEffectsTile,
+  getSpellEffectsTexture,
+  applySpellEffectsFrame,
+  cloneSpellEffectsMaterial,
+  type SpellEffectsFrame,
+} from "./spellEffectsTexture";
+
+export {
+  SHADOW_SPELL_ATLAS,
+  SHADOW_SIGIL_FRAMES,
+  SHADOW_PROJECTILE_FRAME,
+  SHADOW_PROJECTILE_LARGE_FRAME,
+  SHADOW_BURST_FRAME,
+  SHADOW_MIST_FRAME,
+  getShadowSpellTexture,
+  applyShadowSpellFrame,
+  cloneShadowFrameMaterial,
+  sigilFrameForStacks,
+  type ShadowSpellFrame,
+} from "./shadowSpellTexture";
+
+export { VFX_SPELL_EFFECTS_URL, VFX_SHADOW_SPELL_URL } from "./vfxUrls";
 
 export { AoeRimMarker } from "./components/AoeRimMarker";
 export type { AoeRimMarkerProps } from "./components/AoeRimMarker";

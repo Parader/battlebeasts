@@ -1563,7 +1563,8 @@ export class BaseCityRoom extends ServicedRoom {
           { moveX: input.moveX, moveZ: input.moveZ, dt: input.dt || dt },
           speed,
         );
-        const next = this.combat.movePlayer(sessionId, from, desired);
+        const tethered = this.combat.constrainAstralChainDesired(sessionId, desired);
+        const next = this.combat.movePlayer(sessionId, from, tethered);
         player.x = next.x;
         player.z = next.z;
         const shieldTurning = this.combat.statuses.has(sessionId, "handShielding");

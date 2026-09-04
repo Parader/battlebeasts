@@ -28,6 +28,10 @@ export type ParticleBurstOpts = {
   fadeIn?: number;
   /** Max spawn delay as a fraction of `life` so the burst isn't instant. */
   stagger?: number;
+  /** Extra wait before the first particle (seconds). */
+  startDelay?: number;
+  /** Optional sprite map (defaults to circle.png). */
+  map?: THREE.Texture | null;
 };
 
 type Particle = {
@@ -80,6 +84,8 @@ export function AdditiveParticleBurst({
   gravity = 4.5,
   fadeIn = 0.25,
   stagger = 0.2,
+  startDelay = 0,
+  map = null,
   origin = [0, 0, 0] as [number, number, number],
   trigger = 0,
 }: ParticleBurstOpts & {
@@ -107,7 +113,10 @@ export function AdditiveParticleBurst({
   useEffect(() => {
     const u = material.uniforms.uColor?.value as THREE.Color | undefined;
     u?.set(color);
-  }, [material, color]);
+    if (map && material.uniforms.uMap) {
+      material.uniforms.uMap.value = map;
+    }
+  }, [material, color, map]);
 
   const burst = () => {
     for (const p of active.current) pool.release(p);
@@ -116,7 +125,7 @@ export function AdditiveParticleBurst({
       const p = pool.acquire();
       p.alive = true;
       p.age = 0;
-      p.delay = Math.random() * life * stagger;
+      p.delay = startDelay + Math.random() * life * stagger;
       p.life = life * (0.75 + Math.random() * 0.5);
       p.x = origin[0];
       p.y = origin[1];
@@ -148,7 +157,7 @@ export function AdditiveParticleBurst({
   useEffect(() => {
     burst();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reburst on trigger / color mount
-  }, [trigger, count, life]);
+  }, [trigger, count, life, startDelay]);
 
   useFrame((_, dt) => {
     const pts = points.current;

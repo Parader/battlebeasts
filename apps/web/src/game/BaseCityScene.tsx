@@ -15,7 +15,7 @@ import { useHubBallIds } from "./useColyseusMapKeys";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, ProtectionBubbles, RiftPortals, Shrooms, SpiritHusks } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, ProtectionBubbles, OrbitingWisps, AstralChains, SoulSevers, RiftPortals, Shrooms, SpiritHusks } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
@@ -497,6 +497,9 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
             <HubPushBalls room={room} />
             <Volcanoes room={room} />
             <ProtectionBubbles room={room} />
+            <OrbitingWisps room={room} />
+            <AstralChains room={room} />
+            <SoulSevers room={room} />
             <RiftPortals room={room} />
             <Shrooms room={room} localSessionId={localSessionId} />
             <SpiritHusks

@@ -13,25 +13,53 @@ import {
   totalShieldAbsorb,
   type CosmeticsEquipped,
 } from "@battlebeasts/shared";
-import { abilityVfxColor, BoltProjectileEffect, GraspProjectileEffect, ChainJumpProjectileEffect, PoisonDartProjectileEffect, hasCatalogProjectile, isOwnedByCastProjectile } from "./vfx";
+import {
+  abilityVfxColor,
+  BoltProjectileEffect,
+  GraspProjectileEffect,
+  ChainJumpProjectileEffect,
+  PoisonDartProjectileEffect,
+  SoulMarkProjectileEffect,
+  VoidDiscProjectileEffect,
+  RunicShardProjectileEffect,
+  AstralChainProjectileEffect,
+  hasCatalogProjectile,
+  isOwnedByCastProjectile,
+} from "./vfx";
+import { PrismLanceProjectileEffect } from "./vfx/effects/prismLanceProjectile";
+import { SoulSeverProjectileEffect } from "./vfx/effects/soulSeverProjectile";
+import { BloomingPathProjectileEffect } from "./vfx/effects/bloomingPathProjectile";
 import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { ZOMBIE_URL, zombieAnimationConfig } from "./zombieAsset";
 import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
+import { SoulMarkOrnament } from "./SoulMarkOrnament";
 import {
   StatusHpBadgeStack,
   readBleedingBadge,
   readBurningBadge,
+  readChillBadge,
   readPoisonBadge,
   readRejuvenationBadge,
   readSilenceBadge,
   readHolyBadge,
+  readSoulMarkBadge,
+  readSoulSeverBadge,
+  readSlowBadge,
+  readHasteBadge,
+  readRelayBadge,
   syncBleedingBadge,
   syncBurningBadge,
+  syncChillBadge,
   syncPoisonBadge,
   syncRejuvenationBadge,
   syncSilenceBadge,
   syncHolyBadge,
+  syncSoulMarkBadge,
+  syncSoulSeverBadge,
+  syncSlowBadge,
+  syncHasteBadge,
+  syncRelayBadge,
   type StatusRowLite,
 } from "./StatusHpBadgeStack";
 import { syncAbilityCast } from "./syncPlayerCast";
@@ -49,6 +77,9 @@ import { EquippedCosmetics } from "./EquippedCosmetics";
 
 export { Volcanoes } from "./vfx/Volcanoes";
 export { ProtectionBubbles } from "./vfx/ProtectionBubbles";
+export { OrbitingWisps } from "./vfx/OrbitingWisps";
+export { AstralChains } from "./vfx/AstralChains";
+export { SoulSevers } from "./vfx/SoulSevers";
 export { RiftPortals } from "./vfx/RiftPortals";
 export { Shrooms } from "./vfx/Shrooms";
 export { SpiritHusks } from "./vfx/SpiritHusks";
@@ -137,7 +168,14 @@ const PROJECTILE_RENDERERS: Record<
     grasp: ({ room, id }) => <GraspProjectileEffect room={room} id={id} />,
     chainJump: ({ room, id }) => <ChainJumpProjectileEffect room={room} id={id} />,
     poisonDart: ({ room, id }) => <PoisonDartProjectileEffect room={room} id={id} />,
+    soulMark: ({ room, id }) => <SoulMarkProjectileEffect room={room} id={id} />,
+    voidDisc: ({ room, id }) => <VoidDiscProjectileEffect room={room} id={id} />,
+    runicShard: ({ room, id }) => <RunicShardProjectileEffect room={room} id={id} />,
+    astralChain: ({ room, id }) => <AstralChainProjectileEffect room={room} id={id} />,
     bolt: ({ room, id }) => <BoltProjectileEffect room={room} id={id} />,
+    prismLance: ({ room, id }) => <PrismLanceProjectileEffect room={room} id={id} />,
+    soulSever: ({ room, id }) => <SoulSeverProjectileEffect room={room} id={id} />,
+    bloomingPath: ({ room, id }) => <BloomingPathProjectileEffect room={room} id={id} />,
 };
 
 function ProjectileRouter({
@@ -166,6 +204,9 @@ function ProjectileRouter({
             console.warn(`[vfx] missing projectile renderer for abilityId=${abilityId}; using legacy sphere`);
         }
     }
+    // Wait for abilityId before showing anything — avoids a brief legacy sphere
+    // (e.g. astralChain ground-shadow) stacking on top of the real mesh.
+    if (!abilityId) return null;
     if (!room.state?.projectiles?.get(id)) return null;
     return <LegacyProjectileMesh room={room} id={id} />;
 }
@@ -406,6 +447,27 @@ function PropTargetBar({ room, targetId }: { room: Room | null; targetId: string
 
     return (
         <group ref={root}>
+            <StatusOrnaments
+                headY={1.6}
+                getStatuses={() => {
+                    const t = room?.state?.targets?.get(targetId) as
+                        | { statuses?: Parameters<typeof collectStatusRows>[0] }
+                        | undefined;
+                    return collectStatusRows(t?.statuses);
+                }}
+            />
+            <SoulMarkOrnament
+                getStacks={() => {
+                    const t = room?.state?.targets?.get(targetId) as
+                        | { statuses?: Parameters<typeof collectStatusRows>[0] }
+                        | undefined;
+                    let max = 0;
+                    for (const r of collectStatusRows(t?.statuses)) {
+                        if (r.statusId === "soulMarked") max = Math.max(max, r.stacks ?? 1);
+                    }
+                    return max;
+                }}
+            />
             <HpBillboard room={room} targetId={targetId} y={3} />
         </group>
     );
@@ -557,6 +619,16 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
     <group ref={root}>
       <group ref={body}>
         <primitive object={scene} />
+        <StatusOrnaments
+          characterRoot={scene}
+          headY={2.05}
+          getStatuses={() => {
+            const t = room?.state?.targets?.get(targetId) as
+              | { statuses?: Parameters<typeof collectStatusRows>[0] }
+              | undefined;
+            return collectStatusRows(t?.statuses);
+          }}
+        />
       </group>
       <ZombieHpBar frac={barFrac} />
     </group>
@@ -977,9 +1049,25 @@ function HpBillboard({
     const silenceRing = useRef<SVGCircleElement>(null);
     const holyBadge = useRef<HTMLDivElement>(null);
     const holyRing = useRef<SVGCircleElement>(null);
+    const soulMarkBadge = useRef<HTMLDivElement>(null);
+    const soulMarkStacksEl = useRef<HTMLSpanElement>(null);
+    const soulMarkRing = useRef<SVGCircleElement>(null);
+    const soulSeverBadge = useRef<HTMLDivElement>(null);
+    const soulSeverRing = useRef<SVGCircleElement>(null);
+    const chillBadge = useRef<HTMLDivElement>(null);
+    const chillStacksEl = useRef<HTMLSpanElement>(null);
+    const chillRing = useRef<SVGCircleElement>(null);
+    const slowBadge = useRef<HTMLDivElement>(null);
+    const slowRing = useRef<SVGCircleElement>(null);
+    const hasteBadge = useRef<HTMLDivElement>(null);
+    const hasteRing = useRef<SVGCircleElement>(null);
+    const relayBadge = useRef<HTMLDivElement>(null);
+    const relayRing = useRef<SVGCircleElement>(null);
     const lastPoisonStacks = useRef(0);
     const lastBleedingStacks = useRef(0);
     const lastRejuvenationStacks = useRef(0);
+    const lastSoulMarkStacks = useRef(0);
+    const lastChillStacks = useRef(0);
     useFrame(() => {
         const t = room?.state?.targets?.get(targetId) as
             | {
@@ -1021,6 +1109,36 @@ function HpBillboard({
                 expiresAt: 0,
             });
             syncHolyBadge(holyBadge.current, holyRing.current, {
+                stacks: 0,
+                expiresAt: 0,
+            });
+            syncSoulMarkBadge(
+                soulMarkBadge.current,
+                soulMarkStacksEl.current,
+                soulMarkRing.current,
+                { stacks: 0, expiresAt: 0 },
+                lastSoulMarkStacks,
+            );
+            syncSoulSeverBadge(soulSeverBadge.current, soulSeverRing.current, {
+                stacks: 0,
+                expiresAt: 0,
+            });
+            syncChillBadge(
+                chillBadge.current,
+                chillStacksEl.current,
+                chillRing.current,
+                { stacks: 0, expiresAt: 0 },
+                lastChillStacks,
+            );
+            syncHasteBadge(hasteBadge.current, hasteRing.current, {
+                stacks: 0,
+                expiresAt: 0,
+            });
+            syncRelayBadge(relayBadge.current, relayRing.current, {
+                stacks: 0,
+                expiresAt: 0,
+            });
+            syncSlowBadge(slowBadge.current, slowRing.current, {
                 stacks: 0,
                 expiresAt: 0,
             });
@@ -1070,6 +1188,28 @@ function HpBillboard({
         );
         syncSilenceBadge(silenceBadge.current, silenceRing.current, readSilenceBadge(rows));
         syncHolyBadge(holyBadge.current, holyRing.current, readHolyBadge(rows));
+        syncSoulMarkBadge(
+            soulMarkBadge.current,
+            soulMarkStacksEl.current,
+            soulMarkRing.current,
+            readSoulMarkBadge(rows),
+            lastSoulMarkStacks,
+        );
+        syncSoulSeverBadge(
+            soulSeverBadge.current,
+            soulSeverRing.current,
+            readSoulSeverBadge(rows),
+        );
+        syncChillBadge(
+            chillBadge.current,
+            chillStacksEl.current,
+            chillRing.current,
+            readChillBadge(rows),
+            lastChillStacks,
+        );
+        syncSlowBadge(slowBadge.current, slowRing.current, readSlowBadge(rows));
+        syncHasteBadge(hasteBadge.current, hasteRing.current, readHasteBadge(rows));
+        syncRelayBadge(relayBadge.current, relayRing.current, readRelayBadge(rows));
     });
     return (
         <group position={[0, y, 0]}>
@@ -1101,6 +1241,20 @@ function HpBillboard({
                 silenceRingRef={silenceRing}
                 holyBadgeRef={holyBadge}
                 holyRingRef={holyRing}
+                soulMarkBadgeRef={soulMarkBadge}
+                soulMarkStacksRef={soulMarkStacksEl}
+                soulMarkRingRef={soulMarkRing}
+                soulSeverBadgeRef={soulSeverBadge}
+                soulSeverRingRef={soulSeverRing}
+                chillBadgeRef={chillBadge}
+                chillStacksRef={chillStacksEl}
+                chillRingRef={chillRing}
+                slowBadgeRef={slowBadge}
+                slowRingRef={slowRing}
+                hasteBadgeRef={hasteBadge}
+                hasteRingRef={hasteRing}
+                relayBadgeRef={relayBadge}
+                relayRingRef={relayRing}
             />
         </group>
     );

@@ -21,6 +21,24 @@ export const SILENCE_BADGE_IDS = new Set(["silenced"]);
 /** Status ids that show the holy blessing badge above HP bars. */
 export const HOLY_BADGE_IDS = new Set(["holyBlessed"]);
 
+/** Status ids that show the Soul Mark badge above HP bars. */
+export const SOUL_MARK_BADGE_IDS = new Set(["soulMarked"]);
+
+/** Status ids that show the Soul Sever badge above HP bars. */
+export const SOUL_SEVER_BADGE_IDS = new Set(["soulSevered"]);
+
+/** Status ids that show the Chilled badge above HP bars (Frost Mist / Runic Shard). */
+export const CHILL_BADGE_IDS = new Set(["frostChill"]);
+
+/** Status ids that show the Slowed badge above HP bars (Underground Pulse, etc.). */
+export const SLOW_BADGE_IDS = new Set(["slowed"]);
+
+/** Status ids that show the Slipstream Haste badge above HP bars. */
+export const HASTE_BADGE_IDS = new Set(["slipstreamHaste"]);
+
+/** Status ids that show the Soul Relay badge above HP bars. */
+export const RELAY_BADGE_IDS = new Set(["soulRelayLinked"]);
+
 export type StatusRowLite = {
   statusId?: string;
   stacks?: number;
@@ -83,6 +101,38 @@ export function readHolyBadge(rows: StatusRowLite[]): BadgeRead {
   return readBadge(rows, HOLY_BADGE_IDS);
 }
 
+export function readSoulMarkBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, SOUL_MARK_BADGE_IDS);
+}
+
+export function readSoulMarkStacks(rows: StatusRowLite[]): number {
+  return readBadge(rows, SOUL_MARK_BADGE_IDS).stacks;
+}
+
+export function readSoulSeverBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, SOUL_SEVER_BADGE_IDS);
+}
+
+export function readChillBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, CHILL_BADGE_IDS);
+}
+
+export function readChillStacks(rows: StatusRowLite[]): number {
+  return readBadge(rows, CHILL_BADGE_IDS).stacks;
+}
+
+export function readSlowBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, SLOW_BADGE_IDS);
+}
+
+export function readHasteBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, HASTE_BADGE_IDS);
+}
+
+export function readRelayBadge(rows: StatusRowLite[]): BadgeRead {
+  return readBadge(rows, RELAY_BADGE_IDS);
+}
+
 const BADGE_SIZE = 20;
 const RING_R = 8.25;
 const RING_C = 2 * Math.PI * RING_R;
@@ -141,6 +191,20 @@ type StackProps = {
   silenceRingRef: RefObject<SVGCircleElement | null>;
   holyBadgeRef: RefObject<HTMLDivElement | null>;
   holyRingRef: RefObject<SVGCircleElement | null>;
+  soulMarkBadgeRef: RefObject<HTMLDivElement | null>;
+  soulMarkStacksRef: RefObject<HTMLSpanElement | null>;
+  soulMarkRingRef: RefObject<SVGCircleElement | null>;
+  soulSeverBadgeRef: RefObject<HTMLDivElement | null>;
+  soulSeverRingRef: RefObject<SVGCircleElement | null>;
+  chillBadgeRef: RefObject<HTMLDivElement | null>;
+  chillStacksRef: RefObject<HTMLSpanElement | null>;
+  chillRingRef: RefObject<SVGCircleElement | null>;
+  slowBadgeRef: RefObject<HTMLDivElement | null>;
+  slowRingRef: RefObject<SVGCircleElement | null>;
+  hasteBadgeRef: RefObject<HTMLDivElement | null>;
+  hasteRingRef: RefObject<SVGCircleElement | null>;
+  relayBadgeRef: RefObject<HTMLDivElement | null>;
+  relayRingRef: RefObject<SVGCircleElement | null>;
   /** Anchor for the left edge of the icon row (above HP bar). */
   position?: [number, number, number];
 };
@@ -202,6 +266,20 @@ export function StatusHpBadgeStack({
   silenceRingRef,
   holyBadgeRef,
   holyRingRef,
+  soulMarkBadgeRef,
+  soulMarkStacksRef,
+  soulMarkRingRef,
+  soulSeverBadgeRef,
+  soulSeverRingRef,
+  chillBadgeRef,
+  chillStacksRef,
+  chillRingRef,
+  slowBadgeRef,
+  slowRingRef,
+  hasteBadgeRef,
+  hasteRingRef,
+  relayBadgeRef,
+  relayRingRef,
   position = [-0.55, 0.22, 0],
 }: StackProps) {
   return (
@@ -287,6 +365,139 @@ export function StatusHpBadgeStack({
           >
             1
           </span>
+        </div>
+
+        <div
+          ref={soulMarkBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(46, 16, 101, 0.94)",
+            border: "1px solid rgba(167, 139, 250, 0.45)",
+          }}
+          title="Soul Mark"
+        >
+          <DurationRing ringRef={soulMarkRingRef} accent="#a78bfa" />
+          <img
+            src={assetUrl("icons/game/sparkles.svg")}
+            alt=""
+            width={12}
+            height={12}
+            draggable={false}
+            aria-hidden
+            style={{ display: "block", position: "relative", zIndex: 1, filter: "invert(1)" }}
+          />
+          <span
+            ref={soulMarkStacksRef}
+            style={{
+              ...STACK_PILL,
+              background: "#2e1065",
+              border: "1px solid #a78bfa",
+              color: "#ede9fe",
+            }}
+          >
+            1
+          </span>
+        </div>
+
+        <div
+          ref={chillBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(12, 74, 110, 0.94)",
+            border: "1px solid rgba(186, 230, 253, 0.45)",
+          }}
+          title="Chilled"
+        >
+          <DurationRing ringRef={chillRingRef} accent="#7dd3fc" />
+          <img
+            src={assetUrl("icons/game/ice-bolt.svg")}
+            alt=""
+            width={12}
+            height={12}
+            draggable={false}
+            aria-hidden
+            style={{ display: "block", position: "relative", zIndex: 1, filter: "invert(1)" }}
+          />
+          <span
+            ref={chillStacksRef}
+            style={{
+              ...STACK_PILL,
+              background: "#0c4a6e",
+              border: "1px solid #7dd3fc",
+              color: "#e0f2fe",
+            }}
+          >
+            1
+          </span>
+        </div>
+
+        <div
+          ref={slowBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(30, 58, 138, 0.94)",
+            border: "1px solid rgba(147, 197, 253, 0.45)",
+          }}
+          title="Slowed"
+        >
+          <DurationRing ringRef={slowRingRef} accent="#93c5fd" />
+          <img
+            src={assetUrl("icons/game/stopwatch.svg")}
+            alt=""
+            width={12}
+            height={12}
+            draggable={false}
+            aria-hidden
+            style={{ display: "block", position: "relative", zIndex: 1, filter: "invert(1)" }}
+          />
+        </div>
+
+        <div
+          ref={hasteBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(14, 116, 144, 0.94)",
+            border: "1px solid rgba(165, 243, 252, 0.45)",
+          }}
+          title="Slipstream (+50% speed, 25% faster cast)"
+        >
+          <DurationRing ringRef={hasteRingRef} accent="#67e8f9" />
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            aria-hidden
+            style={{ position: "relative", zIndex: 1 }}
+          >
+            <path
+              fill="#a5f3fc"
+              d="M3 8l5-6v4h5l-5 6V8H3z"
+            />
+          </svg>
+        </div>
+
+        <div
+          ref={relayBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(52, 120, 98, 0.94)",
+            border: "1px solid rgba(167, 243, 208, 0.55)",
+          }}
+          title="Soul Relay (next hit heals for damage dealt)"
+        >
+          <DurationRing ringRef={relayRingRef} accent="#86efac" />
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            aria-hidden
+            style={{ position: "relative", zIndex: 1 }}
+          >
+            <path
+              fill="#d1fae5"
+              d="M7 2h2v5h5v2H9v5H7V9H2V7h5V2z"
+            />
+          </svg>
         </div>
 
         <div
@@ -401,6 +612,38 @@ export function StatusHpBadgeStack({
             1
           </span>
         </div>
+
+        <div
+          ref={soulSeverBadgeRef}
+          style={{
+            ...BADGE_BOX,
+            background: "rgba(127, 29, 29, 0.94)",
+            border: "1px solid rgba(239, 68, 68, 0.45)",
+          }}
+          title="Soul Severed"
+        >
+          <DurationRing ringRef={soulSeverRingRef} accent="#EF4444" />
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            aria-hidden
+            style={{ position: "relative", zIndex: 1 }}
+          >
+            <path
+              fill="#FECACA"
+              d="M8 1.5c.12 1.35 1.35 2.4 2.05 3.55.7 1.15.95 2.2.95 3.05 0 1.75-1.45 3-3 3s-3-1.25-3-3c0-.85.25-1.9.95-3.05C6.65 3.9 7.88 2.85 8 1.5z"
+            />
+            <path
+              fill="#EF4444"
+              d="M8 4.6c.1.85.65 1.4 1 2 .3.55.42 1 .42 1.4 0 .85-.65 1.5-1.42 1.5S6.58 8.85 6.58 8c0-.4.12-.85.42-1.4.35-.6.9-1.15 1-2z"
+            />
+            <path
+              fill="#7f1d1d"
+              d="M8 7.3c.05.4.28.62.45.92.14.25.2.46.2.64 0 .4-.3.68-.65.68s-.65-.28-.65-.68c0-.18.06-.39.2-.64.17-.3.4-.52.45-.92z"
+            />
+          </svg>
+        </div>
       </div>
     </Html>
   );
@@ -478,6 +721,20 @@ export function syncBleedingBadge(
   setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("bleeding")));
 }
 
+export function syncSoulSeverBadge(
+  badge: HTMLDivElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+) {
+  if (!badge) return;
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    return;
+  }
+  badge.style.display = "flex";
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("soulSevered")));
+}
+
 export function syncRejuvenationBadge(
   badge: HTMLDivElement | null,
   stacksEl: HTMLSpanElement | null,
@@ -527,4 +784,91 @@ export function syncHolyBadge(
   // Zone-driven refresh uses remaining zone life; fall back to status base duration.
   const span = Math.max(durationMsFor("holyBlessed"), 6500);
   setRingRemain(ring, badgeRemainFrac(read.expiresAt, span));
+}
+
+export function syncSoulMarkBadge(
+  badge: HTMLDivElement | null,
+  stacksEl: HTMLSpanElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+  lastStacks: { current: number },
+) {
+  if (!badge) return;
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    lastStacks.current = 0;
+    return;
+  }
+  badge.style.display = "flex";
+  if (read.stacks !== lastStacks.current) {
+    lastStacks.current = read.stacks;
+    if (stacksEl) stacksEl.textContent = String(read.stacks);
+  }
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("soulMarked")));
+}
+
+export function syncChillBadge(
+  badge: HTMLDivElement | null,
+  stacksEl: HTMLSpanElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+  lastStacks: { current: number },
+) {
+  if (!badge) return;
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    lastStacks.current = 0;
+    return;
+  }
+  badge.style.display = "flex";
+  if (read.stacks !== lastStacks.current) {
+    lastStacks.current = read.stacks;
+    if (stacksEl) stacksEl.textContent = String(read.stacks);
+  }
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("frostChill")));
+}
+
+export function syncHasteBadge(
+  badge: HTMLDivElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+) {
+  if (!badge) return;
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    return;
+  }
+  badge.style.display = "flex";
+  // Detect if this is the short lane-refresh (≤600ms remaining) or the full 3s tailwind grant
+  const remaining = Math.max(0, read.expiresAt - Date.now());
+  const span = remaining > 700 ? 3000 : 600;
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, span));
+}
+
+export function syncRelayBadge(
+  badge: HTMLDivElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+) {
+  if (!badge) return;
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    return;
+  }
+  badge.style.display = "flex";
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, 3500));
+}
+
+export function syncSlowBadge(
+  badge: HTMLDivElement | null,
+  ring: SVGCircleElement | null,
+  read: BadgeRead,
+) {
+  if (!badge) return;
+  if (read.stacks <= 0) {
+    badge.style.display = "none";
+    return;
+  }
+  badge.style.display = "flex";
+  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("slowed")));
 }

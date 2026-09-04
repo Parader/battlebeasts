@@ -17,6 +17,13 @@ import {
   POISON_CLOUD_CAST,
   SMOKE_BOMB_CAST,
   HOLY_GROUND_CAST,
+  SLIPSTREAM_CAST,
+  SOUL_RELAY_CAST,
+  SOUL_SEVER_CAST,
+  soulSeverSnapDamage,
+  ARC_BLADE_CAST,
+  arcBladeHitDamage,
+  BLOOMING_PATH_CAST,
   RIFT_FISSURE_CAST,
   VOLCANO_CAST,
   MAGMA_ORBS_CAST,
@@ -30,12 +37,14 @@ import {
   SHROOM_CAST,
   SPIRIT_FORM_CAST,
   ARC_THREAD_CAST,
+  ASTRAL_CHAIN_CAST,
   STARTER_COLORS,
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
   REVENGE_CAST,
   HAND_SHIELD_CAST,
   HAND_SHIELD_ARMED_MS,
+  abilityBreaksAstralChain,
   abilityEffectKind,
   abilityTriggersCounter,
   abilityCanProcFifthCadence,
@@ -58,6 +67,13 @@ import {
   PROTECTIVE_INSTINCT_DURATION_MS,
   COMBAT_FX_VARIANT_WALL_HIT,
   createProjectile,
+  createReturningProjectile,
+  createRunicFragment,
+  runicShardFragmentYaws,
+  orbitingWispRetargetPhases,
+  orbitingWispWorldPos,
+  lerpOrbitPhase,
+  constrainAstralTetherDesired,
   dashOffset,
   isComboAbility,
   isInIFrameWindow,
@@ -74,6 +90,8 @@ import {
   volcanoColliders,
   phaseDurationMs,
   pointInFront,
+  pointInSlipstreamLane,
+  slipstreamLaneFromCast,
   buildMagmaOrbsFlightPath,
   magmaOrbsFlightT,
   magmaOrbsMaxFlightTs,
@@ -100,6 +118,8 @@ import {
   firewallWallPoints,
   sweepTravel,
   tickProjectiles,
+  tickReturningProjectiles,
+  isReturningProjectileSim,
   totalCastDurationMs,
   travelDistance,
   travelDurationMs,
@@ -107,6 +127,8 @@ import {
   travelTakeoffDelayMs,
   normalize2,
   nextFrostChillStacks,
+  FROST_CHILL_MAX_STACKS,
+  getStatus,
   type AbilityDef,
   type CastPhaseId,
   type CircleCollider,
@@ -131,12 +153,15 @@ import {
 } from "./effectKindHandlers";
 import {
   BaseCityState,
+  AstralChainState,
   DecoyState,
+  OrbitingWispState,
   PlayerState,
   ProjectileState,
   ProtectionBubbleState,
   RiftPortalState,
   ShroomState,
+  SoulSeverState,
   SpiritHuskState,
   VolcanoState,
   WorldTargetState,
@@ -263,6 +288,45 @@ type PendingSpike = {
   hitIds: Set<string>;
 };
 
+/** Arc Blade — delayed self-centered spin snapshots that follow the caster. */
+type PendingArcBladeHit = {
+  fireAt: number;
+  ownerId: string;
+  abilityId: string;
+  radius: number;
+  /** 0-based spin hit index (for damageByHit). */
+  hitIndex: number;
+};
+
+/** Blooming Path — growing/lingering vine corridor that heals you and allies standing inside. */
+type PendingBloomingPath = {
+  ownerId: string;
+  abilityId: string;
+  /** Live projectile id while tip is traveling; null after tip despawns. */
+  projectileId: string | null;
+  originX: number;
+  originZ: number;
+  tipX: number;
+  tipZ: number;
+  halfWidth: number;
+  heal: number;
+  nextTickAt: number;
+  tickMs: number;
+  /** Set when tip despawns; while growing, treated as still active. */
+  expiresAt: number | null;
+};
+
+/** Ground AoE with `delayedImpactMs` — place first, damage later. */
+type PendingDelayedAoe = {
+  explodeAt: number;
+  x: number;
+  z: number;
+  radius: number;
+  damage: number;
+  ownerId: string;
+  abilityId: string;
+};
+
 /** Silence Sweep — thin blade rotates right→left across a frontal cone. */
 type PendingSilenceSweep = {
   ownerId: string;
@@ -311,6 +375,21 @@ type PendingHolyGround = {
   z: number;
   radius: number;
   expiresAt: number;
+};
+
+/** World-space Slipstream wind lane — haste while inside; Tailwind on qualified exit. */
+type PendingSlipstream = {
+  ownerId: string;
+  abilityId: string;
+  originX: number;
+  originZ: number;
+  yaw: number;
+  length: number;
+  halfWidth: number;
+  expiresAt: number;
+  insideAccumMs: number;
+  wasInside: boolean;
+  hasGrantedTailwind: boolean;
 };
 
 type PendingVolcanoRock = {
@@ -512,12 +591,18 @@ export class CombatSystem {
   private knockbacks = new Map<string, ActiveKnockback>();
   private combos = new Map<string, ActiveCombo>();
   private pendingSpikes: PendingSpike[] = [];
+  private pendingArcBladeHits: PendingArcBladeHit[] = [];
+  private pendingBloomingPaths: PendingBloomingPath[] = [];
+  private pendingDelayedAoes: PendingDelayedAoe[] = [];
   private pendingSilenceSweeps: PendingSilenceSweep[] = [];
   private pendingFirewalls: PendingFirewall[] = [];
   private pendingPoisonClouds: PendingPoisonCloud[] = [];
   private pendingHolyGrounds: PendingHolyGround[] = [];
   /** Bodies currently holding holyBlessed from a live Holy Ground zone. */
   private holyBlessedBodyIds = new Set<string>();
+  private pendingSlipstreams: PendingSlipstream[] = [];
+  /** Owners currently holding slipstreamHaste from a live Slipstream lane. */
+  private slipstreamHasteBodyIds = new Set<string>();
   /**
    * Rift Fissure — owner → first portal while arming, or both once linked.
    * Traveler cooldowns prevent portal ping-pong.
@@ -554,6 +639,8 @@ export class CombatSystem {
   >();
   /** Husk kept alive while the return dash plays; deleted on travel end. */
   private spiritReturnHusks = new Map<string, string>();
+  /** Target orbit slot phase per wisp id (smooth redistribute). */
+  private orbitingWispTargetPhase = new Map<string, number>();
   /** Original spawn pose for practice dummies (respawn here on death). */
   private targetSpawns = new Map<string, { x: number; z: number }>();
   private nextId = 1;
@@ -590,6 +677,26 @@ export class CombatSystem {
     string,
     { count: number; armedAbilityId: string; armedUntil: number }
   >();
+  /** Pending ally-cast Soul Relay heals (projectile travel delay). */
+  private pendingSoulRelayHeals: {
+    casterId: string;
+    targetId: string;
+    healAmount: number;
+    relayDur: number;
+    resolveAt: number;
+  }[] = [];
+  /** Active Soul Relay per caster — at most one. */
+  private activeSoulRelays = new Map<
+    string,
+    {
+      casterId: string;
+      linkedTargetId: string;
+      startedAt: number;
+      endsAt: number;
+    }
+  >();
+  /** Set by fireEffect — false when the spell did not resolve (e.g. Soul Relay OOR). */
+  private lastFireCommitted = true;
   /** Admin testing — ability CDs skipped while set. */
   private noCooldownSessions = new Set<string>();
   readonly statuses: StatusSystem;
@@ -934,6 +1041,28 @@ export class CombatSystem {
     );
   }
 
+  /**
+   * Strip outward wish movement for the tethered target only.
+   * Caster may walk away; overshoot is resolved by tugging the target.
+   */
+  constrainAstralChainDesired(sessionId: string, desired: Vec2): Vec2 {
+    if (this.room.state.astralChains.size === 0) return desired;
+    let next = desired;
+    this.room.state.astralChains.forEach((chain) => {
+      if (chain.targetId !== sessionId) return;
+      const caster = this.room.state.players.get(chain.casterId);
+      if (!caster) return;
+      next = constrainAstralTetherDesired(
+        caster.x,
+        caster.z,
+        next.x,
+        next.z,
+        chain.maxDistance,
+      );
+    });
+    return next;
+  }
+
   /** Clamp a teleport/dash sample into free space (swept so we can't skip walls). */
   clampPlayerPos(sessionId: string, pos: Vec2): Vec2 {
     const me = this.room.state.players.get(sessionId);
@@ -1131,6 +1260,121 @@ export class CombatSystem {
     if (sim.explodeRadius > 0) sim.explodeRadius *= mul;
   }
 
+  /** Live projectiles owned by a caster for a given ability (returning disc cap). */
+  private activeProjectileCount(sessionId: string, abilityId: string): number {
+    let n = 0;
+    for (const sim of this.sims.values()) {
+      if (sim.ownerId === sessionId && sim.abilityId === abilityId) n += 1;
+    }
+    return n;
+  }
+
+  /** Main Runic Shard only (excludes shatter fragments). */
+  private findActiveRunicShard(sessionId: string): ProjectileSim | null {
+    for (const sim of this.sims.values()) {
+      if (
+        sim.ownerId === sessionId &&
+        sim.abilityId === "runicShard" &&
+        !sim.isRunicFragment
+      ) {
+        return sim;
+      }
+    }
+    return null;
+  }
+
+  private activeRunicShardCount(sessionId: string): number {
+    let n = 0;
+    for (const sim of this.sims.values()) {
+      if (
+        sim.ownerId === sessionId &&
+        sim.abilityId === "runicShard" &&
+        !sim.isRunicFragment
+      ) {
+        n += 1;
+      }
+    }
+    return n;
+  }
+
+  /** Main shard or any shatter fragment still in flight. */
+  private hasRunicShardVolley(sessionId: string): boolean {
+    for (const sim of this.sims.values()) {
+      if (sim.ownerId === sessionId && sim.abilityId === "runicShard") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Manual recast — radial fragment burst; main shard can shatter multiple times. */
+  private shatterRunicShard(sessionId: string, shard: ProjectileSim, now: number) {
+    const def = ABILITIES.runicShard;
+    if (!def?.runicShard) {
+      this.sims.delete(shard.id);
+      this.room.state.projectiles.delete(shard.id);
+      return;
+    }
+    const cfg = def.runicShard;
+    const yaw = Math.atan2(shard.vx, shard.vz);
+    const origin = { x: shard.x, z: shard.z };
+
+    const maxCharges = cfg.shatterCharges ?? 2;
+    const before = shard.shatterChargesRemaining ?? maxCharges;
+    const charges = Math.max(0, before - 1);
+    shard.shatterChargesRemaining = charges;
+    shard.shatterReadyAt = now + (cfg.shatterArmingMs ?? 320);
+    const consumeMain = charges <= 0;
+
+    if (consumeMain) {
+      this.sims.delete(shard.id);
+      this.room.state.projectiles.delete(shard.id);
+    }
+
+    this.fx({
+      kind: "aoe",
+      abilityId: "runicShard",
+      x: origin.x,
+      z: origin.z,
+      y: 0.95,
+      radius: 0.85,
+      ownerId: sessionId,
+      variant: 1,
+    });
+
+    const budget = new Map<string, number>();
+    const yaws = runicShardFragmentYaws(yaw, cfg.fragmentCount, cfg.fragmentConeDegrees);
+    for (const fragYaw of yaws) {
+      if (this.sims.size >= COMBAT.maxProjectiles) break;
+      const id = `p_${this.nextId++}`;
+      const frag = createRunicFragment(
+        id,
+        sessionId,
+        def.id,
+        origin,
+        fragYaw,
+        def,
+        budget,
+      );
+      if (!frag) continue;
+      this.stampProjectileBubblePass(frag, now);
+      this.sims.set(id, frag);
+      const st = new ProjectileState();
+      st.id = id;
+      st.ownerSessionId = sessionId;
+      st.abilityId = def.id;
+      st.x = frag.x;
+      st.z = frag.z;
+      st.vx = frag.vx;
+      st.vz = frag.vz;
+      st.radius = frag.hitRadius;
+      st.slowRadius = 0;
+      st.mode = frag.mode;
+      st.stuckTargetId = "";
+      this.room.state.projectiles.set(id, st);
+    }
+  }
+
   /**
    * Spawn a projectile from an arbitrary body (e.g. practice dummy retaliation).
    * Aim with `body.yaw` (`atan2(dx, dz)` toward the target).
@@ -1193,9 +1437,15 @@ export class CombatSystem {
     this.counterMistRiposted.delete(sessionId);
     this.revengeMistBlinked.delete(sessionId);
     this.clearOwnedDecoys(sessionId);
+    this.clearOwnedOrbitingWisps(sessionId);
+    this.clearAstralChainsForSession(sessionId);
     this.clearOwnerRifts(sessionId);
     this.clearSpiritForm(sessionId, Date.now(), false);
     this.clearSpiritReturn(sessionId);
+    this.clearSoulRelay(sessionId);
+    this.pendingSoulRelayHeals = this.pendingSoulRelayHeals.filter(
+      (p) => p.casterId !== sessionId && p.targetId !== sessionId,
+    );
     for (const [id, sim] of this.sims) {
       if (sim.ownerId === sessionId) {
         this.sims.delete(id);
@@ -1214,6 +1464,9 @@ export class CombatSystem {
     this.room.state.shrooms.clear();
     this.room.state.volcanoes.clear();
     this.room.state.protectionBubbles.clear();
+    this.room.state.orbitingWisps.clear();
+    this.orbitingWispTargetPhase.clear();
+    this.clearAllAstralChains("silent");
     // Drop any remaining projectiles so arena floors reset cleanly.
     this.sims.clear();
     this.room.state.projectiles.clear();
@@ -1236,6 +1489,397 @@ export class CombatSystem {
       if (d.ownerSessionId === sessionId) toDelete.push(id);
     });
     for (const id of toDelete) this.room.state.decoys.delete(id);
+  }
+
+  clearOwnedOrbitingWisps(sessionId: string) {
+    const toDelete: string[] = [];
+    this.room.state.orbitingWisps.forEach((w, id) => {
+      if (w.ownerSessionId === sessionId) toDelete.push(id);
+    });
+    for (const id of toDelete) {
+      this.orbitingWispTargetPhase.delete(id);
+      this.room.state.orbitingWisps.delete(id);
+    }
+  }
+
+  /** Summon one orbiting wisp; at max, replace oldest. Never rejects for being full. */
+  private commitOrbitingWisp(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cfg = def.orbitingWisp;
+    if (!cfg) return;
+
+    const owned: { id: string; spawnedAt: number }[] = [];
+    this.room.state.orbitingWisps.forEach((w, id) => {
+      if (w.ownerSessionId === sessionId) {
+        owned.push({ id, spawnedAt: w.spawnedAt });
+      }
+    });
+    owned.sort((a, b) => a.spawnedAt - b.spawnedAt);
+
+    const max = Math.max(1, cfg.maxCount);
+    if (owned.length >= max) {
+      const oldest = owned[0]!;
+      const old = this.room.state.orbitingWisps.get(oldest.id);
+      if (old) {
+        this.fx({
+          kind: "hit",
+          abilityId: def.id,
+          x: old.x,
+          z: old.z,
+          y: old.y,
+          ownerId: sessionId,
+          damage: 0,
+          variant: 2,
+        });
+      }
+      this.orbitingWispTargetPhase.delete(oldest.id);
+      this.room.state.orbitingWisps.delete(oldest.id);
+      owned.shift();
+    }
+
+    const id = `wisp_${this.nextId++}`;
+    const slotsAfter = owned.length + 1;
+    const currentPhases = owned.map((o) => {
+      const w = this.room.state.orbitingWisps.get(o.id);
+      return w?.orbitPhase ?? 0;
+    });
+    const targets = orbitingWispRetargetPhases(currentPhases, slotsAfter);
+    // New wisp starts near hand (phase ≈ facing) then lerps to its slot.
+    const handPhase = player.yaw - Math.PI / 2;
+    const st = new OrbitingWispState();
+    st.id = id;
+    st.ownerSessionId = sessionId;
+    st.abilityId = def.id;
+    st.spawnedAt = now;
+    st.armedAt = now + (cfg.armingMs ?? 180);
+    st.expiresAt = now + cfg.durationMs;
+    st.orbitPhase = handPhase;
+    const pos = orbitingWispWorldPos(player.x, player.z, st.orbitPhase, now, cfg);
+    // Spawn closer to caster during arming spiral (client lerps out).
+    st.x = player.x + (pos.x - player.x) * 0.35;
+    st.z = player.z + (pos.z - player.z) * 0.35;
+    st.y = cfg.height;
+    this.room.state.orbitingWisps.set(id, st);
+    this.orbitingWispTargetPhase.set(id, targets[slotsAfter - 1]!);
+
+    // Retarget existing wisps to even spacing (oldest → slot 0).
+    for (let i = 0; i < owned.length; i++) {
+      this.orbitingWispTargetPhase.set(owned[i]!.id, targets[i]!);
+    }
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: player.x,
+      z: player.z,
+      y: cfg.height,
+      ownerId: sessionId,
+      radius: cfg.radius,
+      variant: 0,
+    });
+  }
+
+  /** Orbit follow + collision + natural expire. */
+  private advanceOrbitingWisps(dt: number, now: number) {
+    if (this.room.state.orbitingWisps.size === 0) return;
+    const dtMs = Math.max(0, dt * 1000);
+    const bodies = this.collectBodies();
+    const toRemove: string[] = [];
+    const ownersTouched = new Set<string>();
+
+    this.room.state.orbitingWisps.forEach((w, id) => {
+      if (now >= w.expiresAt) {
+        this.fx({
+          kind: "hit",
+          abilityId: w.abilityId || "orbitingWisp",
+          x: w.x,
+          z: w.z,
+          y: w.y,
+          ownerId: w.ownerSessionId,
+          damage: 0,
+          variant: 2,
+        });
+        toRemove.push(id);
+        ownersTouched.add(w.ownerSessionId);
+        return;
+      }
+
+      const owner = this.room.state.players.get(w.ownerSessionId);
+      if (!owner || owner.hp <= 0 || owner.disconnected) {
+        toRemove.push(id);
+        ownersTouched.add(w.ownerSessionId);
+        return;
+      }
+
+      const def = ABILITIES[w.abilityId] ?? ABILITIES.orbitingWisp;
+      const cfg = def?.orbitingWisp;
+      if (!cfg) {
+        toRemove.push(id);
+        return;
+      }
+
+      const targetPhase =
+        this.orbitingWispTargetPhase.get(id) ?? w.orbitPhase;
+      w.orbitPhase = lerpOrbitPhase(
+        w.orbitPhase,
+        targetPhase,
+        dtMs,
+        cfg.redistributeMs ?? 220,
+      );
+      const pos = orbitingWispWorldPos(owner.x, owner.z, w.orbitPhase, now, cfg);
+      // During arming, ease from spawn toward full orbit radius.
+      const armT =
+        cfg.armingMs && cfg.armingMs > 0
+          ? Math.max(0, Math.min(1, (now - w.spawnedAt) / cfg.armingMs))
+          : 1;
+      const ease = armT * armT * (3 - 2 * armT);
+      w.x = owner.x + (pos.x - owner.x) * ease;
+      w.z = owner.z + (pos.z - owner.z) * ease;
+      w.y = cfg.height;
+
+      if (now < w.armedAt) return;
+
+      const hitR = cfg.collisionRadius;
+      for (const body of bodies) {
+        if (body.id === w.ownerSessionId) continue;
+        if (body.vulnerable === false || body.hp <= 0) continue;
+        if (!this.canHurt(w.ownerSessionId, body.id)) continue;
+        if (
+          !circlesOverlap(w.x, w.z, hitR, body.x, body.z, hitRadiusOf(body))
+        ) {
+          continue;
+        }
+        const dmg = def?.damage ?? 0;
+        this.applyRawDamage(body.id, dmg, w.ownerSessionId, w.abilityId || "orbitingWisp");
+        toRemove.push(id);
+        ownersTouched.add(w.ownerSessionId);
+        break;
+      }
+    });
+
+    for (const id of toRemove) {
+      this.orbitingWispTargetPhase.delete(id);
+      this.room.state.orbitingWisps.delete(id);
+    }
+
+    // Re-space remaining slots after removals.
+    for (const ownerId of ownersTouched) {
+      const remaining: { id: string; spawnedAt: number }[] = [];
+      this.room.state.orbitingWisps.forEach((w, id) => {
+        if (w.ownerSessionId === ownerId) {
+          remaining.push({ id, spawnedAt: w.spawnedAt });
+        }
+      });
+      if (remaining.length === 0) continue;
+      remaining.sort((a, b) => a.spawnedAt - b.spawnedAt);
+      const currentPhases = remaining.map((r) => {
+        const w = this.room.state.orbitingWisps.get(r.id);
+        return w?.orbitPhase ?? 0;
+      });
+      const slots = orbitingWispRetargetPhases(currentPhases, remaining.length);
+      for (let i = 0; i < remaining.length; i++) {
+        this.orbitingWispTargetPhase.set(remaining[i]!.id, slots[i]!);
+      }
+    }
+  }
+
+  /** Drop every chain involving this session (caster or target). */
+  clearAstralChainsForSession(sessionId: string) {
+    const toBreak: string[] = [];
+    this.room.state.astralChains.forEach((c, id) => {
+      if (c.casterId === sessionId || c.targetId === sessionId) toBreak.push(id);
+    });
+    for (const id of toBreak) this.breakAstralChain(id, "hard");
+  }
+
+  clearAllAstralChains(reason: "expire" | "escape" | "hard" | "silent") {
+    const ids: string[] = [];
+    this.room.state.astralChains.forEach((_, id) => ids.push(id));
+    for (const id of ids) this.breakAstralChain(id, reason);
+  }
+
+  /** Target Dash/Blink mobility snaps their leash. */
+  private tryBreakAstralChainOnEscape(
+    sessionId: string,
+    def: AbilityDef,
+    _now: number,
+  ) {
+    if (!abilityBreaksAstralChain(def)) return;
+    const toBreak: string[] = [];
+    this.room.state.astralChains.forEach((c, id) => {
+      if (c.targetId === sessionId) toBreak.push(id);
+    });
+    for (const id of toBreak) this.breakAstralChain(id, "escape");
+  }
+
+  private applyAstralChainHit(
+    targetId: string,
+    damage: number,
+    attackerSessionId: string,
+    abilityId: string,
+    now: number,
+  ) {
+    const def = ABILITIES[abilityId] ?? ABILITIES.astralChain;
+    if (!def) return;
+    this.applyDamage(targetId, damage, attackerSessionId, abilityId, now);
+
+    const caster = this.room.state.players.get(attackerSessionId);
+    const target =
+      this.room.state.players.get(targetId) ?? this.room.state.targets.get(targetId);
+    if (!caster || !target || caster.hp <= 0) return;
+    if ("hp" in target && target.hp <= 0) return;
+
+    // One active leash per caster — replace existing.
+    const replace: string[] = [];
+    this.room.state.astralChains.forEach((c, id) => {
+      if (c.casterId === attackerSessionId) replace.push(id);
+    });
+    for (const id of replace) this.breakAstralChain(id, "hard");
+
+    const dist = Math.hypot(target.x - caster.x, target.z - caster.z);
+    const maxDistance = Math.max(
+      dist,
+      ASTRAL_CHAIN_CAST.minTetherDistance,
+    );
+    const durationMs = def.tetherDurationMs ?? ASTRAL_CHAIN_CAST.tetherDurationMs;
+    const id = `achain_${this.nextId++}`;
+    const st = new AstralChainState();
+    st.id = id;
+    st.casterId = attackerSessionId;
+    st.targetId = targetId;
+    st.abilityId = def.id;
+    st.startedAt = now;
+    st.endsAt = now + durationMs;
+    st.maxDistance = maxDistance;
+    this.room.state.astralChains.set(id, st);
+
+    this.statuses.apply(attackerSessionId, "astralChainBurden", attackerSessionId, now, {
+      durationMs,
+    });
+  }
+
+  private advanceAstralChains(now: number) {
+    if (this.room.state.astralChains.size === 0) return;
+    const toBreak: { id: string; reason: "expire" | "hard" }[] = [];
+
+    this.room.state.astralChains.forEach((chain, id) => {
+      if (now >= chain.endsAt) {
+        toBreak.push({ id, reason: "expire" });
+        return;
+      }
+      const caster = this.room.state.players.get(chain.casterId);
+      const targetPlayer = this.room.state.players.get(chain.targetId);
+      const targetDummy = this.room.state.targets.get(chain.targetId);
+      const target = targetPlayer ?? targetDummy;
+
+      if (
+        !caster ||
+        caster.hp <= 0 ||
+        caster.disconnected ||
+        !target ||
+        target.hp <= 0
+      ) {
+        toBreak.push({ id, reason: "hard" });
+        return;
+      }
+
+      // Keep burden status locked to remaining tether time.
+      const remain = Math.max(1, chain.endsAt - now);
+      if (!this.statuses.has(chain.casterId, "astralChainBurden")) {
+        this.statuses.apply(chain.casterId, "astralChainBurden", chain.casterId, now, {
+          durationMs: remain,
+        });
+      }
+
+      // Target cannot walk out. Caster may walk away — then soft-tug the target.
+      const dist = Math.hypot(target.x - caster.x, target.z - caster.z);
+      const slack = 0.04;
+      if (dist <= chain.maxDistance + slack) return;
+
+      const pullStrength = ASTRAL_CHAIN_CAST.casterPullStrength;
+      const softStretch = ASTRAL_CHAIN_CAST.softStretchMeters;
+      const excess = dist - chain.maxDistance;
+      const inv = 1 / dist;
+      const nx = (target.x - caster.x) * inv;
+      const nz = (target.z - caster.z) * inv;
+
+      // Map props are immovable — no drag; caster hits the leash instead.
+      if (targetDummy?.kind === PROP_TARGET_KIND) {
+        const clampedCaster = constrainAstralTetherDesired(
+          target.x,
+          target.z,
+          caster.x,
+          caster.z,
+          chain.maxDistance,
+        );
+        const resolved = this.clampPlayerPos(chain.casterId, clampedCaster);
+        caster.x = resolved.x;
+        caster.z = resolved.z;
+        return;
+      }
+
+      // Soft tug on players / dummies: only a fraction of excess. Hard clamp past soft stretch.
+      const tug =
+        dist > chain.maxDistance + softStretch
+          ? excess
+          : excess * Math.max(0, Math.min(1, pullStrength));
+
+      if (targetPlayer) {
+        const nextTarget = {
+          x: targetPlayer.x - nx * tug,
+          z: targetPlayer.z - nz * tug,
+        };
+        const resolved = this.clampPlayerPos(chain.targetId, nextTarget);
+        targetPlayer.x = resolved.x;
+        targetPlayer.z = resolved.z;
+      } else if (targetDummy) {
+        targetDummy.x -= nx * tug;
+        targetDummy.z -= nz * tug;
+      }
+    });
+
+    for (const { id, reason } of toBreak) this.breakAstralChain(id, reason);
+  }
+
+  private breakAstralChain(
+    id: string,
+    reason: "expire" | "escape" | "hard" | "silent",
+  ) {
+    const chain = this.room.state.astralChains.get(id);
+    if (!chain) return;
+    const caster = this.room.state.players.get(chain.casterId);
+    const target =
+      this.room.state.players.get(chain.targetId) ??
+      this.room.state.targets.get(chain.targetId);
+
+    this.statuses.remove(chain.casterId, "astralChainBurden", chain.casterId);
+    this.room.state.astralChains.delete(id);
+
+    if (reason === "silent") return;
+
+    const cx = caster?.x ?? 0;
+    const cz = caster?.z ?? 0;
+    const tx = target?.x ?? cx;
+    const tz = target?.z ?? cz;
+    // variant: 0 expire, 1 escape snap, 2 hard/death cleanup
+    const variant = reason === "expire" ? 0 : reason === "escape" ? 1 : 2;
+    this.fx({
+      kind: "aoe",
+      abilityId: chain.abilityId || "astralChain",
+      x: cx,
+      z: cz,
+      x2: tx,
+      z2: tz,
+      y: ASTRAL_CHAIN_CAST.handY,
+      ownerId: chain.casterId,
+      targetId: chain.targetId,
+      radius: chain.maxDistance,
+      variant,
+    });
   }
 
   /** Drop husk without snapping (leave / death). */
@@ -1520,6 +2164,26 @@ export class CombatSystem {
       return true;
     }
 
+    // Runic Shard recast: shatter active main shard (no cast anim / no CD refresh).
+    if (castId === "runicShard") {
+      const shard = this.findActiveRunicShard(sessionId);
+      if (shard) {
+        // Hold-LMB re-sends every frame — ignore until arming clears.
+        if ((shard.shatterReadyAt ?? 0) > now) {
+          this.phaseFx(sessionId, player, "runicShard", "idle", now);
+          return true;
+        }
+        this.shatterRunicShard(sessionId, shard, now);
+        // Ack client awaitingCastAck without starting a cast.
+        this.phaseFx(sessionId, player, "runicShard", "idle", now);
+        return true;
+      }
+      // Volley still resolving (fragments / stale state) — no new throw.
+      if (this.hasRunicShardVolley(sessionId)) {
+        return reject();
+      }
+    }
+
     // Rift Fissure second plant: allow during CD while arming portal B.
     const riftArming =
       castId === "riftFissure" &&
@@ -1581,6 +2245,7 @@ export class CombatSystem {
 
     // Any successful new cast breaks cloak (including re-casting Decoy).
     this.revealCloak(sessionId);
+    this.tryBreakAstralChainOnEscape(sessionId, def, now);
 
     const moveX = opts?.moveX ?? 0;
     const moveZ = opts?.moveZ ?? 0;
@@ -1605,8 +2270,10 @@ export class CombatSystem {
         originX: player.x,
         originZ: player.z,
       });
-      this.fireEffect(sessionId, player, def, now);
-      const cooldownMs = this.onEffectResolved(sessionId, def, now);
+      const committed = this.fireEffect(sessionId, player, def, now);
+      const cooldownMs = committed
+        ? this.onEffectResolved(sessionId, def, now)
+        : undefined;
       this.enterPhase(sessionId, player, def, "impact", now, now, {
         cooldownMs,
         comboHit: this.comboHitFor(sessionId, def.id),
@@ -1985,10 +2652,16 @@ export class CombatSystem {
     this.advanceCasts(now);
     this.advanceCombos(now);
     this.advancePendingSpikes(now);
+    this.advancePendingArcBladeHits(now);
+    this.advancePendingBloomingPaths(now);
+    this.advancePendingDelayedAoes(now);
     this.advancePendingSilenceSweeps(now);
     this.advancePendingFirewalls(now);
     this.advancePendingPoisonClouds(now);
     this.advancePendingHolyGrounds(now);
+    this.advancePendingSlipstreams(dt, now);
+    this.tickSoulRelays(now);
+    this.advancePendingSoulRelayHeals(now);
     this.advancePendingRifts(now);
     this.advancePendingFireballBurns(now);
     this.advancePendingVolcanoes(now);
@@ -2002,6 +2675,9 @@ export class CombatSystem {
     this.advancePendingArcThreads(now);
     this.advancePendingBarrier(now);
     this.advanceDecoys(dt, now);
+    this.advanceOrbitingWisps(dt, now);
+    this.advanceAstralChains(now);
+    this.advanceSoulSevers(now);
     this.advanceSpiritForms(now);
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
@@ -2009,26 +2685,80 @@ export class CombatSystem {
     if (this.sims.size === 0) return;
 
     const bodies = this.collectBodies();
-    this.simList.length = 0;
-    for (const sim of this.sims.values()) this.simList.push(sim);
-    const { removedIds, hits, slows, explodes, wallHits } = tickProjectiles(
-      this.simList,
+    const normalSims: ProjectileSim[] = [];
+    const returningSims: ProjectileSim[] = [];
+    for (const sim of this.sims.values()) {
+      if (isReturningProjectileSim(sim)) returningSims.push(sim);
+      else normalSims.push(sim);
+    }
+    const blockers = this.collectProjectileBlockColliders(now);
+    const canHurt = (o: string, t: string) => this.canHurt(o, t);
+    const canHeal = (o: string, t: string) => this.canHealTarget(o, t);
+    const normalTick = tickProjectiles(
+      normalSims,
       dt,
       bodies,
-      (o, t) => this.canHurt(o, t),
+      canHurt,
       this.wallColliders,
       (abilityId) => {
         const delay = ABILITIES[abilityId]?.detonate?.delayMs ?? 0;
         return delay > 0 ? delay / 1000 : 0;
       },
-      this.collectProjectileBlockColliders(now),
+      blockers,
+      this.circleColliders,
+      this.boxColliders,
+      canHeal,
+    );
+    // Signature differs from tickProjectiles (no detonate delay callback).
+    const returningTick = tickReturningProjectiles(
+      returningSims,
+      dt,
+      bodies,
+      canHurt,
+      this.wallColliders,
+      blockers,
       this.circleColliders,
       this.boxColliders,
     );
+    const removedIds = [...normalTick.removedIds, ...returningTick.removedIds];
+    const hits = [...normalTick.hits, ...returningTick.hits];
+    const slows = [...normalTick.slows, ...returningTick.slows];
+    const explodes = [...normalTick.explodes, ...returningTick.explodes];
+    const wallHits = [...normalTick.wallHits, ...returningTick.wallHits];
 
     for (const hit of hits) {
       // Aura ticks: damage only (slows applied separately). Contact: damage + applyOnHit.
       const def = ABILITIES[hit.abilityId];
+      if (abilityEffectKind(def) === "soulMark") {
+        this.applySoulMarkHit(hit.targetId, hit.damage, hit.ownerId, hit.abilityId, now);
+        continue;
+      }
+      if (abilityEffectKind(def) === "soulSever") {
+        this.applySoulSeverHit(hit.targetId, hit.damage, hit.ownerId, hit.abilityId, now);
+        continue;
+      }
+      if (abilityEffectKind(def) === "astralChain") {
+        this.applyAstralChainHit(hit.targetId, hit.damage, hit.ownerId, hit.abilityId, now);
+        continue;
+      }
+      if (abilityEffectKind(def) === "runicShard") {
+        const dealt = this.applyRawDamage(
+          hit.targetId,
+          hit.damage,
+          hit.ownerId,
+          hit.abilityId,
+        );
+        const sim = this.sims.get(hit.projectileId);
+        if (dealt > 0 && sim?.isRunicFragment) {
+          this.applyRunicShardChill(hit.targetId, hit.ownerId, now);
+        }
+        if (dealt > 0) this.trySoulRelayTrigger(hit.ownerId, hit.abilityId, dealt);
+        continue;
+      }
+      if (abilityEffectKind(def) === "bloomingPath") {
+        // Corridor zone owns healing — tip contact does not pulse-heal.
+        continue;
+      }
       if (def?.aura) {
         this.applyRawDamage(hit.targetId, hit.damage, hit.ownerId, hit.abilityId);
       } else {
@@ -2114,10 +2844,35 @@ export class CombatSystem {
       }
     }
     for (const id of removedIds) {
+      const sim = this.sims.get(id);
+      if (sim && abilityEffectKind(ABILITIES[sim.abilityId]) === "bloomingPath") {
+        this.finalizeBloomingPathZone(id, sim.x, sim.z, now);
+        // Linger trail after tip despawns (life end or wall).
+        this.fx({
+          kind: "aoe",
+          abilityId: sim.abilityId,
+          x: sim.x,
+          z: sim.z,
+          x2: sim.spawnX ?? sim.x,
+          z2: sim.spawnZ ?? sim.z,
+          y: 0.08,
+          ownerId: sim.ownerId,
+          variant: 1,
+          radius: sim.hitRadius,
+        });
+      }
       this.sims.delete(id);
       this.room.state.projectiles.delete(id);
     }
     for (const wall of wallHits) {
+      if (abilityEffectKind(ABILITIES[wall.abilityId]) === "bloomingPath") {
+        // Vine linger FX already spawned from removedIds — skip wall fizzle.
+        const bubbleId = wall.blockBubbleId;
+        if (bubbleId?.startsWith("handShield_")) {
+          this.fireHandShieldRetaliate(bubbleId.slice("handShield_".length), now);
+        }
+        continue;
+      }
       if (!wall.detonatedOnBlock) {
         this.fx({
           kind: "hit",
@@ -2176,7 +2931,7 @@ export class CombatSystem {
         }
       } else {
         const target = this.room.state.targets.get(id);
-        if (!target) {
+        if (!target || target.kind === PROP_TARGET_KIND) {
           this.knockbacks.delete(id);
           continue;
         }
@@ -2430,9 +3185,11 @@ export class CombatSystem {
         } else {
           const yawBefore = player.yaw;
           player.yaw = cast.yaw;
-          this.fireEffect(sessionId, player, def, now);
+          const committed = this.fireEffect(sessionId, player, def, now);
           player.yaw = yawBefore;
-          const cooldownMs = this.onEffectResolved(sessionId, def, now);
+          const cooldownMs = committed
+            ? this.onEffectResolved(sessionId, def, now)
+            : undefined;
           this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
             cooldownMs,
             comboHit: this.comboHitFor(sessionId, def.id),
@@ -2506,10 +3263,16 @@ export class CombatSystem {
       durationMs?: number;
     },
   ) {
-    const duration = Math.max(
+    let duration = Math.max(
       16,
       fxExtra?.durationMs ?? phaseDurationMs(def, phase),
     );
+    if ((phase === "anticipation" || phase === "cast") && fxExtra?.durationMs == null) {
+      const antMul = this.statuses.getAnticipationMul(sessionId);
+      if (antMul !== 1) {
+        duration = Math.max(16, duration * antMul);
+      }
+    }
 
     const prev = this.casts.get(sessionId);
     const cast: ActiveCast = {
@@ -2629,6 +3392,8 @@ export class CombatSystem {
       smokeBomb: (a) => this.scheduleSmokeBomb(a.sessionId, a.ownerBody, a.def, a.now),
       holyGround: (a) =>
         this.scheduleHolyGround(a.sessionId, a.ownerBody, a.def, a.now),
+      slipstream: (a) =>
+        this.scheduleSlipstream(a.sessionId, a.ownerBody, a.def, a.now),
       riftFissure: (a) =>
         this.scheduleRiftFissure(a.sessionId, a.ownerBody, a.def, a.now),
       volcano: (a) => this.scheduleVolcano(a.sessionId, a.ownerBody, a.def, a.now),
@@ -2637,11 +3402,21 @@ export class CombatSystem {
       shrooms: (a) => this.armShrooms(a.sessionId, a.now),
       spiritForm: (a) =>
         this.commitSpiritForm(a.sessionId, a.player, a.def, a.now),
+      orbitingWisp: (a) =>
+        this.commitOrbitingWisp(a.sessionId, a.player, a.def, a.now),
       magmaOrbs: (a) => this.scheduleMagmaOrbs(a.sessionId, a.ownerBody, a.def, a.now),
       coneChannel: (a) => this.scheduleFrostMist(a.sessionId, a.def, a.now),
       healBeam: (a) => this.scheduleHealBeam(a.sessionId, a.def, a.now),
       lifeLeech: (a) => this.scheduleLifeLeech(a.sessionId, a.def, a.now),
       arcThread: (a) => this.scheduleArcThread(a.sessionId, a.player, a.def, a.now),
+      soulRelay: (a) => {
+        this.lastFireCommitted = this.fireSoulRelay(
+          a.sessionId,
+          a.player,
+          a.def,
+          a.now,
+        );
+      },
       pulseHeal: (a) => {
         const center = { x: a.player.x, z: a.player.z };
         const radius = a.def.radius ?? 7;
@@ -2655,11 +3430,13 @@ export class CombatSystem {
         });
         this.scheduleGrooveHeal(a.sessionId, a.def, a.now);
       },
+      arcBlade: (a) => this.scheduleArcBlade(a.sessionId, a.player, a.def, a.now),
     };
     return this._effectKindFireHandlers;
   }
 
-  private fireEffect(sessionId: string, player: PlayerState, def: AbilityDef, now: number) {
+  private fireEffect(sessionId: string, player: PlayerState, def: AbilityDef, now: number): boolean {
+    this.lastFireCommitted = true;
     const ownerBody = this.playerBody(sessionId, player);
     const travel = resolveTravel(def);
     const deferHit = travel.mode === "translate" && travel.effectOnArrive === true;
@@ -2718,7 +3495,7 @@ export class CombatSystem {
 
     if (kind === "decoy") {
       // Clone + cloak already committed at cast begin (see commitDecoyCast).
-      return;
+      return this.lastFireCommitted;
     }
 
     const fireArgs: EffectKindFireArgs = {
@@ -2740,7 +3517,24 @@ export class CombatSystem {
     } else if (def.shape === "projectile") {
       if (this.sims.size < COMBAT.maxProjectiles) {
         const id = `p_${this.nextId++}`;
-        const sim = createProjectile(id, ownerBody, def);
+        const isReturning = abilityEffectKind(def) === "returningProjectile";
+        const isRunic = abilityEffectKind(def) === "runicShard";
+        if (
+          isReturning &&
+          this.activeProjectileCount(sessionId, def.id) >=
+            (def.returningProjectile?.maxActivePerCaster ?? 1)
+        ) {
+          return this.lastFireCommitted;
+        }
+        if (
+          isRunic &&
+          this.hasRunicShardVolley(sessionId)
+        ) {
+          return this.lastFireCommitted;
+        }
+        const sim = isReturning
+          ? createReturningProjectile(id, ownerBody, def)
+          : createProjectile(id, ownerBody, def);
         if (sim) {
           if (abilityEffectKind(def) === "fireball") {
             const live = this.casts.get(sessionId);
@@ -2748,8 +3542,16 @@ export class CombatSystem {
           } else {
             this.applyTalentProjectileRadii(sessionId, sim);
           }
+          if (isRunic) {
+            sim.shatterChargesRemaining = def.runicShard?.shatterCharges ?? 2;
+            // Hold-LMB must not shatter on the same press that threw the shard.
+            sim.shatterReadyAt = now + (def.runicShard?.shatterArmingMs ?? 320);
+          }
           this.stampProjectileBubblePass(sim, now);
           this.sims.set(id, sim);
+          if (abilityEffectKind(def) === "bloomingPath") {
+            this.beginBloomingPathZone(id, sim, def, now);
+          }
           const st = new ProjectileState();
           st.id = id;
           st.ownerSessionId = sessionId;
@@ -2786,8 +3588,29 @@ export class CombatSystem {
         comboHit != null ? abilityComboHitDamage(def, comboHit) : def.damage;
       this.applyInstant(center, radius, meleeDmg, sessionId, def.id, now);
     } else if (def.shape === "aoe" && !deferHit) {
-      const center = travelLanding ?? { x: player.x, z: player.z };
-      const radius = def.radius ?? 3;
+      let center = travelLanding ?? { x: player.x, z: player.z };
+      // Ground-targeted AoE (range > 0): place at clamped aim, not at feet.
+      if (!travelLanding && def.range > 0) {
+        const cast = this.casts.get(sessionId);
+        const aim =
+          cast?.aimX != null && cast?.aimZ != null
+            ? { x: cast.aimX, z: cast.aimZ }
+            : undefined;
+        const aimed = clampGroundAim(
+          { x: player.x, z: player.z, yaw: cast?.yaw ?? player.yaw },
+          aim,
+          def.range,
+        );
+        center = clampTargetBeforeWalls(
+          { x: player.x, z: player.z },
+          aimed,
+          0.35,
+          this.wallColliders,
+          this.circleColliders,
+          this.boxColliders,
+        );
+      }
+      const radius = this.talentRadius(sessionId, def.id, def.radius ?? 3);
       this.fx({
         kind: "aoe",
         abilityId: def.id,
@@ -2796,9 +3619,27 @@ export class CombatSystem {
         radius,
         ownerId: sessionId,
       });
-      this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+      const delayMs = Math.max(0, def.delayedImpactMs ?? 0);
+      if (delayMs > 0) {
+        // Place telegraph only — damage resolves later (Crushing Sigil, etc.).
+        this.pendingDelayedAoes.push({
+          explodeAt: now + delayMs,
+          x: center.x,
+          z: center.z,
+          radius,
+          damage: def.damage,
+          ownerId: sessionId,
+          abilityId: def.id,
+        });
+      } else {
+        this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+      }
     }
     // dash / buff / deferred landing: travel-only here (+ optional self statuses)
+
+    if (!this.lastFireCommitted) {
+      return false;
+    }
 
     if (def.id === "barrier") {
       this.finalizeBarrierCast(sessionId, now);
@@ -2812,6 +3653,7 @@ export class CombatSystem {
 
     this.tryProcProtectiveInstinct(sessionId, player, def.id, now);
     this.tryAdvanceFifthCadence(sessionId, def.id, now);
+    return true;
   }
 
   /**
@@ -3075,6 +3917,47 @@ export class CombatSystem {
     }
   }
 
+  private scheduleArcBlade(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const radius = this.talentRadius(
+      sessionId,
+      def.id,
+      def.radius ?? ARC_BLADE_CAST.radius,
+    );
+    const hits = Math.max(1, def.hitCount ?? ARC_BLADE_CAST.hitCount);
+    const interval = Math.max(16, def.hitIntervalMs ?? ARC_BLADE_CAST.hitIntervalMs);
+    // Bridged cast owns the sweep VFX; fire-time AoE is ignored client-side.
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: player.x,
+      z: player.z,
+      radius,
+      ownerId: sessionId,
+    });
+    this.applyInstant(
+      { x: player.x, z: player.z },
+      radius,
+      arcBladeHitDamage(0),
+      sessionId,
+      def.id,
+      now,
+    );
+    for (let i = 1; i < hits; i++) {
+      this.pendingArcBladeHits.push({
+        fireAt: now + i * interval,
+        ownerId: sessionId,
+        abilityId: def.id,
+        radius,
+        hitIndex: i,
+      });
+    }
+  }
+
   private scheduleSilenceSweep(
     sessionId: string,
     ownerBody: CombatBody,
@@ -3159,7 +4042,9 @@ export class CombatSystem {
           for (const hit of hits) {
             if (hitIds.has(hit.targetId)) continue;
             hitIds.add(hit.targetId);
-            this.applyDamage(hit.targetId, hit.damage, zone.ownerId, zone.abilityId, now);
+            this.applyDamage(hit.targetId, hit.damage, zone.ownerId, zone.abilityId, now, {
+              directSpell: false,
+            });
           }
         }
         zone.nextTickAt += zone.tickMs;
@@ -3416,6 +4301,450 @@ export class CombatSystem {
     }
     this.holyBlessedBodyIds = blessed;
     this.pendingHolyGrounds = remain;
+  }
+
+  /** Directional wind lane from caster toward aim — haste inside, Tailwind on exit. */
+  private scheduleSlipstream(
+    sessionId: string,
+    ownerBody: CombatBody,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const yaw = cast?.yaw ?? ownerBody.yaw;
+    const length = Math.max(1, SLIPSTREAM_CAST.length);
+    const halfWidth = Math.max(
+      0.25,
+      def.radius ?? SLIPSTREAM_CAST.halfWidth,
+    );
+    const durationMs = Math.max(
+      800,
+      def.zoneDurationMs ?? SLIPSTREAM_CAST.zoneDurationMs,
+    );
+    const origin = { x: ownerBody.x, z: ownerBody.z };
+    const lane = slipstreamLaneFromCast(origin, yaw, length, halfWidth);
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: lane.origin.x,
+      z: lane.origin.z,
+      x2: lane.end.x,
+      z2: lane.end.z,
+      radius: halfWidth,
+      yaw,
+      ownerId: sessionId,
+    });
+
+    this.pendingSlipstreams.push({
+      ownerId: sessionId,
+      abilityId: def.id,
+      originX: lane.origin.x,
+      originZ: lane.origin.z,
+      yaw,
+      length: lane.length,
+      halfWidth: lane.halfWidth,
+      expiresAt: now + durationMs,
+      insideAccumMs: 0,
+      wasInside: false,
+      hasGrantedTailwind: false,
+    });
+  }
+
+  private grantSlipstreamTailwind(
+    zone: PendingSlipstream,
+    playerX: number,
+    playerZ: number,
+    now: number,
+  ) {
+    if (zone.hasGrantedTailwind) return;
+    if (zone.insideAccumMs < SLIPSTREAM_CAST.qualifyMs) return;
+    zone.hasGrantedTailwind = true;
+    this.statuses.applyApplications(
+      zone.ownerId,
+      [
+        {
+          statusId: "slipstreamHaste",
+          durationMs: 3000,
+          chance: 1,
+        },
+      ],
+      zone.ownerId,
+      now,
+    );
+    this.fx({
+      kind: "aoe",
+      abilityId: "slipstream",
+      x: playerX,
+      z: playerZ,
+      y: 1.05,
+      ownerId: zone.ownerId,
+      variant: 1,
+    });
+  }
+
+  private advancePendingSlipstreams(dt: number, now: number) {
+    if (this.pendingSlipstreams.length === 0 && this.slipstreamHasteBodyIds.size === 0) {
+      return;
+    }
+    const remain: PendingSlipstream[] = [];
+    const hasted = new Set<string>();
+    const dtMs = Math.max(0, dt * 1000);
+
+    for (const zone of this.pendingSlipstreams) {
+      const expired = now >= zone.expiresAt;
+      const owner = this.room.state.players.get(zone.ownerId);
+      const alive =
+        owner && !owner.disconnected && typeof owner.hp === "number" && owner.hp > 0;
+
+      if (!alive) {
+        if (this.statuses.has(zone.ownerId, "slipstreamHaste")) {
+          this.statuses.remove(zone.ownerId, "slipstreamHaste");
+        }
+        continue;
+      }
+
+      const inLane = pointInSlipstreamLane(
+        {
+          originX: zone.originX,
+          originZ: zone.originZ,
+          yaw: zone.yaw,
+          length: zone.length,
+          halfWidth: zone.halfWidth,
+        },
+        { x: owner.x, z: owner.z },
+      );
+      const inside = !expired && inLane;
+
+      if (inside) {
+        zone.insideAccumMs += dtMs;
+        zone.wasInside = true;
+        hasted.add(zone.ownerId);
+        // Only refresh the short 600ms haste if we haven't already granted the full 3s version
+        if (!zone.hasGrantedTailwind) {
+          this.statuses.applyApplications(
+            zone.ownerId,
+            [{ statusId: "slipstreamHaste", durationMs: 600, chance: 1 }],
+            zone.ownerId,
+            now,
+          );
+        }
+      } else if (zone.wasInside) {
+        this.grantSlipstreamTailwind(zone, owner.x, owner.z, now);
+        zone.wasInside = false;
+      }
+
+      if (expired) {
+        if (inLane) {
+          this.grantSlipstreamTailwind(zone, owner.x, owner.z, now);
+        }
+        continue;
+      }
+
+      remain.push(zone);
+    }
+
+    this.slipstreamHasteBodyIds = hasted;
+    this.pendingSlipstreams = remain;
+  }
+
+  // ─── Soul Relay ──────────────────────────────────────────────────
+
+  /** Alive healable body (player or practice dummy) for Soul Relay. */
+  private soulRelayBody(targetId: string): { x: number; z: number; hp: number } | null {
+    const player = this.room.state.players.get(targetId);
+    if (player) {
+      if (player.disconnected || player.hp <= 0) return null;
+      return { x: player.x, z: player.z, hp: player.hp };
+    }
+    const dummy = this.room.state.targets.get(targetId);
+    if (dummy && dummy.hp > 0) return { x: dummy.x, z: dummy.z, hp: dummy.hp };
+    return null;
+  }
+
+  /**
+   * Fire Soul Relay: bind the healable closest to aim (self included).
+   * Ally / dummy out of range and nearer the cursor than you → refuse (range feedback).
+   * Otherwise cast on the closest in-range pick (often self when aiming near your feet).
+   */
+  /** @returns false when the cast was refused (e.g. out of range) — no cooldown. */
+  private fireSoulRelay(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ): boolean {
+    const healAmount = def.heal ?? SOUL_RELAY_CAST.initialHeal;
+    const relayDur = SOUL_RELAY_CAST.relayDurationMs;
+    const range = Math.max(1, def.range > 0 ? def.range : SOUL_RELAY_CAST.range);
+
+    const cast = this.casts.get(sessionId);
+    const aim =
+      cast?.aimX != null &&
+      cast?.aimZ != null &&
+      Number.isFinite(cast.aimX) &&
+      Number.isFinite(cast.aimZ)
+        ? { x: cast.aimX, z: cast.aimZ }
+        : null;
+
+    const pick = this.findSoulRelayAimTarget(sessionId, player, range, aim);
+    if (pick && pick.id !== sessionId && !pick.inRange) {
+      // Aimed at someone too far — refuse self-cast so range is readable.
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: player.x,
+        z: player.z,
+        ownerId: sessionId,
+        radius: range,
+        variant: 3, // out-of-range feedback
+      });
+      return false;
+    }
+
+    const targetId = pick?.id ?? sessionId;
+    const isSelf = targetId === sessionId;
+    const target = this.soulRelayBody(targetId);
+    if (!target) return false;
+
+    if (!isSelf) {
+      const dist = Math.hypot(target.x - player.x, target.z - player.z);
+      const speed = def.speed ?? SOUL_RELAY_CAST.speed;
+      const travelMs = Math.max(50, Math.round((dist / speed) * 1000));
+
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: player.x,
+        z: player.z,
+        ownerId: sessionId,
+        targetId,
+        x2: target.x,
+        z2: target.z,
+        variant: 1,
+      });
+
+      this.pendingSoulRelayHeals.push({
+        casterId: sessionId,
+        targetId,
+        healAmount,
+        relayDur,
+        resolveAt: now + travelMs,
+      });
+    } else {
+      this.applyHealAmount(sessionId, healAmount, sessionId, def.id);
+      this.applySoulRelayLink(sessionId, sessionId, now, relayDur);
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: player.x,
+        z: player.z,
+        ownerId: sessionId,
+        variant: 0,
+      });
+    }
+    return true;
+  }
+
+  /**
+   * Soft-target Soul Relay: pick the healable closest to the ground aim,
+   * including the caster. Allies must sit in the forward cone to compete.
+   */
+  private findSoulRelayAimTarget(
+    casterId: string,
+    caster: PlayerState,
+    range: number,
+    aim: { x: number; z: number } | null,
+  ): { id: string; inRange: boolean } | null {
+    const fx = Math.sin(caster.yaw);
+    const fz = Math.cos(caster.yaw);
+    const aimX = aim?.x ?? caster.x;
+    const aimZ = aim?.z ?? caster.z;
+
+    let bestId: string | null = null;
+    let bestAimDist = Infinity;
+    let bestCasterDist = 0;
+
+    const consider = (id: string, x: number, z: number, requireCone: boolean) => {
+      const dx = x - caster.x;
+      const dz = z - caster.z;
+      const casterDist = Math.hypot(dx, dz);
+      if (requireCone) {
+        if (casterDist < 0.01) return;
+        const dot = (dx * fx + dz * fz) / casterDist;
+        // ~60° forward cone
+        if (dot < 0.5) return;
+      }
+      const aimDist = Math.hypot(x - aimX, z - aimZ);
+      if (
+        aimDist < bestAimDist - 1e-4 ||
+        (Math.abs(aimDist - bestAimDist) <= 1e-4 && casterDist < bestCasterDist)
+      ) {
+        bestAimDist = aimDist;
+        bestId = id;
+        bestCasterDist = casterDist;
+      }
+    };
+
+    // Caster always competes — aiming near your feet self-casts.
+    consider(casterId, caster.x, caster.z, false);
+
+    for (const [id, p] of this.room.state.players) {
+      if (id === casterId) continue;
+      if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      if (!this.canHealTarget(casterId, id)) continue;
+      consider(id, p.x, p.z, true);
+    }
+    for (const [id, t] of this.room.state.targets) {
+      if (t.hp <= 0) continue;
+      if (!this.canHealTarget(casterId, id)) continue;
+      consider(id, t.x, t.z, true);
+    }
+
+    if (!bestId) return null;
+    return { id: bestId, inRange: bestCasterDist <= range };
+  }
+
+  /**
+   * Create the relay link: status on target + server state.
+   * Replaces any existing relay for this caster.
+   */
+  private applySoulRelayLink(
+    casterId: string,
+    linkedTargetId: string,
+    now: number,
+    durationMs: number,
+  ) {
+    // Remove old relay
+    const old = this.activeSoulRelays.get(casterId);
+    if (old) {
+      this.statuses.remove(old.linkedTargetId, "soulRelayLinked");
+    }
+
+    this.activeSoulRelays.set(casterId, {
+      casterId,
+      linkedTargetId,
+      startedAt: now,
+      endsAt: now + durationMs,
+    });
+
+    this.statuses.apply(linkedTargetId, "soulRelayLinked", casterId, now, {
+      durationMs,
+    });
+  }
+
+  /**
+   * Called when a caster with an active relay deals direct damage.
+   * Consumes the relay and heals the linked target for the damage dealt.
+   */
+  private trySoulRelayTrigger(
+    attackerSessionId: string,
+    abilityId: string,
+    damageDealt: number,
+  ): boolean {
+    const relay = this.activeSoulRelays.get(attackerSessionId);
+    if (!relay) return false;
+
+    const now = Date.now();
+    if (now >= relay.endsAt) {
+      this.clearSoulRelay(attackerSessionId);
+      return false;
+    }
+
+    // Don't trigger from Soul Relay's own projectile
+    if (abilityId === "soulRelay") return false;
+    if (!(damageDealt > 0)) return false;
+
+    const target =
+      this.room.state.players.get(relay.linkedTargetId) ??
+      this.room.state.targets.get(relay.linkedTargetId);
+    if (!target || ("disconnected" in target && target.disconnected) || target.hp <= 0) {
+      this.clearSoulRelay(attackerSessionId);
+      return false;
+    }
+
+    const heal = Math.max(
+      SOUL_RELAY_CAST.relayHealMin,
+      Math.round(damageDealt * SOUL_RELAY_CAST.relayHealMul),
+    );
+    this.applyHealAmount(relay.linkedTargetId, heal, attackerSessionId, "soulRelay");
+
+    this.fx({
+      kind: "aoe",
+      abilityId: "soulRelay",
+      x: target.x,
+      z: target.z,
+      ownerId: attackerSessionId,
+      targetId: relay.linkedTargetId,
+      variant: 2,
+    });
+
+    this.clearSoulRelay(attackerSessionId);
+    return true;
+  }
+
+  /** Remove relay state + status cleanly. */
+  private clearSoulRelay(casterId: string) {
+    const relay = this.activeSoulRelays.get(casterId);
+    if (!relay) return;
+    this.statuses.remove(relay.linkedTargetId, "soulRelayLinked");
+    this.activeSoulRelays.delete(casterId);
+  }
+
+  /** Tick: expire stale relays + clean up on death/disconnect. */
+  private tickSoulRelays(now: number) {
+    for (const [casterId, relay] of this.activeSoulRelays) {
+      if (now >= relay.endsAt) {
+        this.clearSoulRelay(casterId);
+        continue;
+      }
+      const caster = this.room.state.players.get(casterId);
+      if (!caster || caster.disconnected || caster.hp <= 0) {
+        this.clearSoulRelay(casterId);
+        continue;
+      }
+      if (!this.soulRelayBody(relay.linkedTargetId)) {
+        this.clearSoulRelay(casterId);
+      }
+    }
+  }
+
+  /** Resolve ally-cast Soul Relay heals after projectile travel. */
+  private advancePendingSoulRelayHeals(now: number) {
+    if (this.pendingSoulRelayHeals.length === 0) return;
+    const remain: typeof this.pendingSoulRelayHeals = [];
+    for (const pending of this.pendingSoulRelayHeals) {
+      if (now < pending.resolveAt) {
+        remain.push(pending);
+        continue;
+      }
+      const target = this.soulRelayBody(pending.targetId);
+      if (!target) continue;
+      const caster = this.room.state.players.get(pending.casterId);
+      if (!caster || caster.disconnected || caster.hp <= 0) continue;
+      this.applyHealAmount(
+        pending.targetId,
+        pending.healAmount,
+        pending.casterId,
+        "soulRelay",
+      );
+      this.applySoulRelayLink(
+        pending.casterId,
+        pending.targetId,
+        now,
+        pending.relayDur,
+      );
+      this.fx({
+        kind: "aoe",
+        abilityId: "soulRelay",
+        x: target.x,
+        z: target.z,
+        ownerId: pending.casterId,
+        targetId: pending.targetId,
+        variant: 0,
+      });
+    }
+    this.pendingSoulRelayHeals = remain;
   }
 
   /** True while this session is mid-cast on Rift Fissure (any phase). */
@@ -4055,7 +5384,9 @@ export class CombatSystem {
         (o, t) => this.canHurt(o, t),
       );
       for (const hit of hits) {
-        this.applyDamage(hit.targetId, hit.damage, orb.ownerId, orb.abilityId, now);
+        this.applyDamage(hit.targetId, hit.damage, orb.ownerId, orb.abilityId, now, {
+          directSpell: false,
+        });
       }
       this.fx({
         kind: "aoe",
@@ -4677,6 +6008,8 @@ export class CombatSystem {
 
     this.room.state.targets.forEach((t) => {
       if (t.hp <= 0) return;
+      // Map props stay at authored placement (mesh + static collider).
+      if (t.kind === PROP_TARGET_KIND) return;
       const dist = Math.hypot(t.x - center.x, t.z - center.z);
       const dummyNeed = volcanoRadius + COLLISION.dummyRadius + COLLISION.skin;
       if (dist >= dummyNeed - 1e-4) return;
@@ -4762,7 +6095,9 @@ export class CombatSystem {
               (o, t) => this.canHurt(o, t),
             );
             for (const hit of hits) {
-              this.applyDamage(hit.targetId, hit.damage, zone.ownerId, zone.abilityId, now);
+              this.applyDamage(hit.targetId, hit.damage, zone.ownerId, zone.abilityId, now, {
+              directSpell: false,
+            });
             }
             this.fx({
               kind: "aoe",
@@ -4939,10 +6274,6 @@ export class CombatSystem {
         softOcclude: true,
       },
     );
-    if (!hit) return;
-
-    // Initial contact — damage only. Slow/discharge statuses wait for completion.
-    this.applyRawDamage(hit.targetId, def.damage, sessionId, def.id);
 
     // Lock tether end to impact phase end so discharge lands with anim recovery.
     const liveCast = this.casts.get(sessionId);
@@ -4954,6 +6285,38 @@ export class CombatSystem {
       liveCast?.phase === "impact" && liveCast.phaseEndsAt > now
         ? liveCast.phaseEndsAt
         : now + fallbackMs;
+
+    if (!hit) {
+      const maxLen = coneRayMaxLength(
+        origin,
+        player.yaw,
+        range,
+        this.wallColliders,
+        this.collectBodies(),
+        sessionId,
+        {
+          circles: this.circleColliders,
+          boxes: this.boxColliders,
+        },
+      );
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: player.x,
+        z: player.z,
+        x2: origin.x + Math.sin(player.yaw) * maxLen,
+        z2: origin.z + Math.cos(player.yaw) * maxLen,
+        yaw: player.yaw,
+        ownerId: sessionId,
+        radius: range,
+        comboHit: 1,
+        phaseEndsAt: endsAt,
+      });
+      return;
+    }
+
+    // Initial contact — damage only. Slow/discharge statuses wait for completion.
+    this.applyRawDamage(hit.targetId, def.damage, sessionId, def.id);
     const tolDeg =
       def.threadAimToleranceDegrees ?? ARC_THREAD_CAST.threadAimToleranceDegrees;
     this.pendingArcThreads.push({
@@ -5352,6 +6715,27 @@ export class CombatSystem {
     this.pendingGrooveHeal = remain;
   }
 
+  private advancePendingDelayedAoes(now: number) {
+    if (this.pendingDelayedAoes.length === 0) return;
+    const remain: PendingDelayedAoe[] = [];
+    for (const zone of this.pendingDelayedAoes) {
+      if (now < zone.explodeAt) {
+        remain.push(zone);
+        continue;
+      }
+      // Single pulse — no second FX; place VFX owns the detonation timeline.
+      this.applyInstant(
+        { x: zone.x, z: zone.z },
+        zone.radius,
+        zone.damage,
+        zone.ownerId,
+        zone.abilityId,
+        now,
+      );
+    }
+    this.pendingDelayedAoes = remain;
+  }
+
   private advancePendingSpikes(now: number) {
     if (this.pendingSpikes.length === 0) return;
     const remain: PendingSpike[] = [];
@@ -5383,6 +6767,121 @@ export class CombatSystem {
       }
     }
     this.pendingSpikes = remain;
+  }
+
+  private advancePendingArcBladeHits(now: number) {
+    if (this.pendingArcBladeHits.length === 0) return;
+    const remain: PendingArcBladeHit[] = [];
+    for (const hit of this.pendingArcBladeHits) {
+      if (now < hit.fireAt) {
+        remain.push(hit);
+        continue;
+      }
+      const owner = this.room.state.players.get(hit.ownerId);
+      if (!owner || owner.hp <= 0) continue;
+      this.applyInstant(
+        { x: owner.x, z: owner.z },
+        hit.radius,
+        arcBladeHitDamage(hit.hitIndex),
+        hit.ownerId,
+        hit.abilityId,
+        now,
+      );
+    }
+    this.pendingArcBladeHits = remain;
+  }
+
+  private beginBloomingPathZone(
+    projectileId: string,
+    sim: ProjectileSim,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const originX = sim.spawnX ?? sim.x;
+    const originZ = sim.spawnZ ?? sim.z;
+    this.pendingBloomingPaths.push({
+      ownerId: sim.ownerId,
+      abilityId: sim.abilityId,
+      projectileId,
+      originX,
+      originZ,
+      tipX: sim.x,
+      tipZ: sim.z,
+      halfWidth: Math.max(0.25, def.radius ?? BLOOMING_PATH_CAST.radius),
+      heal: def.heal ?? BLOOMING_PATH_CAST.heal,
+      nextTickAt: now,
+      tickMs: Math.max(120, def.tickMs ?? BLOOMING_PATH_CAST.healTickMs),
+      expiresAt: null,
+    });
+  }
+
+  private finalizeBloomingPathZone(
+    projectileId: string,
+    tipX: number,
+    tipZ: number,
+    now: number,
+  ) {
+    const linger = Math.max(
+      400,
+      ABILITIES.bloomingPath?.zoneDurationMs ?? BLOOMING_PATH_CAST.trailLingerMs,
+    );
+    for (const zone of this.pendingBloomingPaths) {
+      if (zone.projectileId !== projectileId) continue;
+      zone.projectileId = null;
+      zone.tipX = tipX;
+      zone.tipZ = tipZ;
+      zone.expiresAt = now + linger;
+    }
+  }
+
+  private advancePendingBloomingPaths(now: number) {
+    if (this.pendingBloomingPaths.length === 0) return;
+    const remain: PendingBloomingPath[] = [];
+    const bodies = this.collectBodies();
+
+    for (const zone of this.pendingBloomingPaths) {
+      if (zone.projectileId) {
+        const sim = this.sims.get(zone.projectileId);
+        if (sim) {
+          zone.tipX = sim.x;
+          zone.tipZ = sim.z;
+        }
+      }
+
+      const expired = zone.expiresAt != null && now >= zone.expiresAt;
+      if (expired) continue;
+
+      const dx = zone.tipX - zone.originX;
+      const dz = zone.tipZ - zone.originZ;
+      const length = Math.max(0.35, Math.hypot(dx, dz));
+      const yaw = Math.atan2(dx, dz);
+
+      while (zone.nextTickAt <= now && (zone.expiresAt == null || zone.nextTickAt < zone.expiresAt)) {
+        for (const body of bodies) {
+          if (!this.canHealTarget(zone.ownerId, body.id, { allowSelf: true })) continue;
+          if (
+            !pointInSlipstreamLane(
+              {
+                originX: zone.originX,
+                originZ: zone.originZ,
+                yaw,
+                length,
+                halfWidth: zone.halfWidth,
+              },
+              { x: body.x, z: body.z },
+            )
+          ) {
+            continue;
+          }
+          this.applyHealAmount(body.id, zone.heal, zone.ownerId, zone.abilityId);
+        }
+        zone.nextTickAt += zone.tickMs;
+      }
+
+      remain.push(zone);
+    }
+
+    this.pendingBloomingPaths = remain;
   }
 
   private advancePendingSilenceSweeps(now: number) {
@@ -5527,6 +7026,17 @@ export class CombatSystem {
       }
       this.applyDamage(hit.targetId, hit.damage, ownerId, abilityId, now);
       if (knock > 0) this.applyKnockback(center, hit.targetId, knock, knockMs, now);
+      const pull = def?.pull ?? 0;
+      if (pull > 0) {
+        this.applyPullToward(
+          center,
+          hit.targetId,
+          pull,
+          def?.pullMs ?? 280,
+          now,
+          def?.pullStopDistance,
+        );
+      }
     }
   }
 
@@ -5696,6 +7206,11 @@ export class CombatSystem {
     }
   }
 
+  /** Authored map props: hitbox HP only — mesh and collider never move. */
+  private isImmovableTarget(targetId: string): boolean {
+    return this.room.state.targets.get(targetId)?.kind === PROP_TARGET_KIND;
+  }
+
   /** Schedule a radial shove (translated over knockbackMs, not teleported). */
   private applyKnockback(
     center: { x: number; z: number },
@@ -5704,6 +7219,7 @@ export class CombatSystem {
     durationMs: number,
     now: number,
   ) {
+    if (this.isImmovableTarget(targetId)) return;
     const dur = Math.max(80, durationMs);
 
     const player = this.room.state.players.get(targetId);
@@ -5765,11 +7281,11 @@ export class CombatSystem {
   }
 
   /**
-   * Yank a target toward the owner (Grasp). Stops at `stopDistance` so they
-   * don't occupy the caster.
+   * Yank a target toward an origin (Gravity Well center, or Grasp caster).
+   * Stops at `stopDistance` so bodies don't stack on the singularity / caster.
    */
-  private applyPull(
-    ownerId: string,
+  private applyPullToward(
+    origin: { x: number; z: number },
     targetId: string,
     distance: number,
     durationMs: number,
@@ -5777,10 +7293,8 @@ export class CombatSystem {
     stopDistance = 1.2,
   ) {
     if (distance <= 0) return;
-    const owner = this.room.state.players.get(ownerId);
-    if (!owner) return;
+    if (this.isImmovableTarget(targetId)) return;
 
-    const origin = { x: owner.x, z: owner.z };
     const minDist = Math.max(0.6, stopDistance);
     const dur = Math.max(80, durationMs);
 
@@ -5828,6 +7342,30 @@ export class CombatSystem {
     if (target) {
       schedule("target", target.x, target.z);
     }
+  }
+
+  /**
+   * Yank a target toward the owner (Grasp). Stops at `stopDistance` so they
+   * don't occupy the caster.
+   */
+  private applyPull(
+    ownerId: string,
+    targetId: string,
+    distance: number,
+    durationMs: number,
+    now: number,
+    stopDistance = 1.2,
+  ) {
+    const owner = this.room.state.players.get(ownerId);
+    if (!owner) return;
+    this.applyPullToward(
+      { x: owner.x, z: owner.z },
+      targetId,
+      distance,
+      durationMs,
+      now,
+      stopDistance,
+    );
   }
 
   /**
@@ -5895,13 +7433,225 @@ export class CombatSystem {
     attackerSessionId: string,
     abilityId: string,
     now = Date.now(),
+    opts?: {
+      /** Default true — set false for ground ticks / orb pulses. */
+      directSpell?: boolean;
+      /** Passed through to combat_fx hit (e.g. Arc Blade outer edge). */
+      fxVariant?: number;
+    },
   ) {
-    const dealt = this.applyRawDamage(targetId, damage, attackerSessionId, abilityId);
+    const dealt = this.applyRawDamage(targetId, damage, attackerSessionId, abilityId, {
+      fxVariant: opts?.fxVariant,
+    });
     if (!dealt) return;
+    if (opts?.directSpell !== false) {
+      this.trySoulRelayTrigger(attackerSessionId, abilityId, dealt);
+    }
     const def = ABILITIES[abilityId];
     if (def?.applyOnHit?.length) {
       this.applyOutgoingStatusApps(targetId, def.applyOnHit, attackerSessionId, now);
     }
+  }
+
+  /** +1 frostChill stack per shatter fragment hit (main crystal does not chill). */
+  private applyRunicShardChill(targetId: string, sourceId: string, now: number) {
+    const current = this.statuses.getStacks(targetId, "frostChill");
+    const next = Math.min(FROST_CHILL_MAX_STACKS, current + 1);
+    const mul = this.kits.get(sourceId)?.secondaryEffectMul ?? 1;
+    const baseDur = getStatus("frostChill")?.durationMs ?? 2200;
+    this.statuses.apply(targetId, "frostChill", sourceId, now, {
+      stacks: next,
+      setStacks: true,
+      durationMs: Math.max(1, Math.round(baseDur * mul)),
+    });
+  }
+
+  /**
+   * Soul Mark projectile hit — stacks per caster; at max stacks the next hit
+   * deals projectile damage + Soul Rupture and clears that caster's marks.
+   */
+  private applySoulMarkHit(
+    targetId: string,
+    damage: number,
+    attackerSessionId: string,
+    abilityId: string,
+    now: number,
+  ) {
+    const def = ABILITIES[abilityId];
+    if (!def) return;
+    const maxStacks = def.soulMarkMaxStacks ?? 3;
+    const durationMs = def.soulMarkDurationMs ?? 4000;
+    const stacks = this.statuses.getStacks(targetId, "soulMarked", attackerSessionId);
+    const fullyMarked = stacks >= maxStacks;
+
+    if (fullyMarked) {
+      const rupture = def.ruptureDamage ?? 0;
+      const total = damage + rupture;
+      const dealt = this.applyRawDamage(
+        targetId,
+        total,
+        attackerSessionId,
+        abilityId,
+      );
+      if (!dealt) return;
+
+      this.trySoulRelayTrigger(attackerSessionId, abilityId, dealt);
+      this.statuses.remove(targetId, "soulMarked", attackerSessionId);
+      const host =
+        this.room.state.players.get(targetId) ?? this.room.state.targets.get(targetId);
+      this.fx({
+        kind: "aoe",
+        abilityId,
+        x: host?.x ?? 0,
+        z: host?.z ?? 0,
+        y: this.combatFxTorsoY(targetId),
+        radius: def.radius ?? 0.5,
+        ownerId: attackerSessionId,
+        targetId,
+        variant: 1,
+      });
+      return;
+    }
+
+    const dealt = this.applyRawDamage(targetId, damage, attackerSessionId, abilityId);
+    if (!dealt) return;
+
+    this.trySoulRelayTrigger(attackerSessionId, abilityId, dealt);
+    this.statuses.apply(targetId, "soulMarked", attackerSessionId, now, {
+      durationMs,
+      stacks: 1,
+    });
+  }
+
+  /**
+   * Soul Sever projectile hit — initial damage, then positional debt imprint.
+   * Reapply from the same caster detonates the existing sever first.
+   */
+  private applySoulSeverHit(
+    targetId: string,
+    damage: number,
+    attackerSessionId: string,
+    abilityId: string,
+    now: number,
+  ) {
+    const def = ABILITIES[abilityId] ?? ABILITIES.soulSever;
+    if (!def) return;
+
+    const existing: string[] = [];
+    this.room.state.soulSevers.forEach((s, id) => {
+      if (s.casterId === attackerSessionId && s.targetId === targetId) existing.push(id);
+    });
+    for (const id of existing) this.resolveSoulSever(id, now, true);
+
+    const dealt = this.applyRawDamage(targetId, damage, attackerSessionId, abilityId);
+    if (!(dealt > 0)) return;
+    this.trySoulRelayTrigger(attackerSessionId, abilityId, dealt);
+
+    const host =
+      this.room.state.players.get(targetId) ?? this.room.state.targets.get(targetId);
+    if (!host || host.hp <= 0) return;
+
+    const durationMs = def.severDurationMs ?? SOUL_SEVER_CAST.severDurationMs;
+    const id = `ssever_${this.nextId++}`;
+    const st = new SoulSeverState();
+    st.id = id;
+    st.casterId = attackerSessionId;
+    st.targetId = targetId;
+    st.abilityId = def.id;
+    st.originX = host.x;
+    st.originZ = host.z;
+    st.startedAt = now;
+    st.endsAt = now + durationMs;
+    this.room.state.soulSevers.set(id, st);
+
+    this.statuses.apply(targetId, "soulSevered", attackerSessionId, now, {
+      durationMs,
+    });
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: host.x,
+      z: host.z,
+      y: this.combatFxTorsoY(targetId),
+      radius: 0.4,
+      ownerId: attackerSessionId,
+      targetId,
+      variant: 0,
+    });
+  }
+
+  private advanceSoulSevers(now: number) {
+    if (this.room.state.soulSevers.size === 0) return;
+    const toResolve: string[] = [];
+    const toDrop: string[] = [];
+
+    this.room.state.soulSevers.forEach((sever, id) => {
+      const host =
+        this.room.state.players.get(sever.targetId) ??
+        this.room.state.targets.get(sever.targetId);
+      if (!host || host.hp <= 0) {
+        toDrop.push(id);
+        return;
+      }
+      if (now >= sever.endsAt) toResolve.push(id);
+    });
+
+    for (const id of toDrop) this.clearSoulSever(id, true);
+    for (const id of toResolve) this.resolveSoulSever(id, now, true);
+  }
+
+  /** Snap or clear a sever. `dealDamage` false when target died early. */
+  private resolveSoulSever(id: string, now: number, dealDamage: boolean) {
+    const sever = this.room.state.soulSevers.get(id);
+    if (!sever) return;
+
+    const host =
+      this.room.state.players.get(sever.targetId) ??
+      this.room.state.targets.get(sever.targetId);
+
+    if (dealDamage && host && host.hp > 0) {
+      const displacement = Math.hypot(host.x - sever.originX, host.z - sever.originZ);
+      const dmg = soulSeverSnapDamage(displacement);
+      const dealt = this.applyRawDamage(
+        sever.targetId,
+        dmg,
+        sever.casterId,
+        sever.abilityId,
+      );
+      if (dealt > 0) {
+        this.trySoulRelayTrigger(sever.casterId, sever.abilityId, dealt);
+      }
+      const power01 = Math.max(
+        0,
+        Math.min(1, displacement / Math.max(1e-4, SOUL_SEVER_CAST.severMaxDistance)),
+      );
+      this.fx({
+        kind: "aoe",
+        abilityId: sever.abilityId,
+        x: host.x,
+        z: host.z,
+        x2: sever.originX,
+        z2: sever.originZ,
+        y: this.combatFxTorsoY(sever.targetId),
+        radius: 0.35 + power01 * 0.45,
+        ownerId: sever.casterId,
+        targetId: sever.targetId,
+        variant: 1,
+        damage: dmg,
+      });
+    }
+
+    this.clearSoulSever(id, true);
+  }
+
+  private clearSoulSever(id: string, removeStatus: boolean) {
+    const sever = this.room.state.soulSevers.get(id);
+    if (!sever) return;
+    if (removeStatus) {
+      this.statuses.remove(sever.targetId, "soulSevered", sever.casterId);
+    }
+    this.room.state.soulSevers.delete(id);
   }
 
   /** Apply enemy debuffs with Intensified Elements potency when the source has the talent. */
@@ -5988,7 +7738,11 @@ export class CombatSystem {
     damage: number,
     attackerSessionId: string,
     abilityId: string,
-    opts?: { /** Default true — set false for fuse blasts / aura-like ticks. */ triggersCounter?: boolean },
+    opts?: {
+      /** Default true — set false for fuse blasts / aura-like ticks. */
+      triggersCounter?: boolean;
+      fxVariant?: number;
+    },
   ): number {
     const now = Date.now();
     const dealtMul = this.statuses.getDamageDealtMul(attackerSessionId);
@@ -6044,6 +7798,7 @@ export class CombatSystem {
         targetId,
         damage: dealt,
         crit: crit && dealt > 0 ? true : undefined,
+        variant: opts?.fxVariant,
       });
       return damageForLeech;
     }
@@ -6066,6 +7821,7 @@ export class CombatSystem {
         targetId,
         damage: dealt,
         crit: crit && dealt > 0 ? true : undefined,
+        variant: opts?.fxVariant,
       });
       if (decoy.hp <= 0) {
         this.room.state.decoys.delete(targetId);
@@ -6096,6 +7852,7 @@ export class CombatSystem {
         targetId,
         damage: dealt,
         crit: crit && dealt > 0 ? true : undefined,
+        variant: opts?.fxVariant,
       });
       if (target.hp <= 0) {
         this.hooks.onTargetKilled?.(targetId, attackerSessionId);
@@ -6443,6 +8200,15 @@ export class CombatSystem {
       comboHit: extra?.comboHit,
       radius: extra?.radius,
     });
+  }
+
+  /** Torso / center mass height for combat FX on players, dummies, and map props. */
+  private combatFxTorsoY(targetId: string): number {
+    if (this.room.state.players.has(targetId)) return 1.15;
+    const target = this.room.state.targets.get(targetId);
+    if (!target) return 1.15;
+    const footprint = target.radius > 0 ? target.radius : 0.45;
+    return (target.y ?? 0) + footprint * 0.55;
   }
 
   private fx(event: CombatFxEvent) {

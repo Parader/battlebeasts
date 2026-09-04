@@ -11,7 +11,17 @@ import {
   VFX_FIRE_URL,
   VFX_LAVA_URL,
   VFX_SMOKE_URL,
+  VFX_SHADOW_SPELL_URL,
+  VFX_SPELL_EFFECTS_URL,
+  VFX_WIND_STREAK_URL,
+  VFX_BLOOMING_VINE_STREAK_URL,
+  VFX_CRUSHING_SIGIL_FLARE_URL,
 } from "./vfxUrls";
+import { setShadowSpellTexture } from "./shadowSpellTexture";
+import { setSpellEffectsTexture } from "./spellEffectsTexture";
+import { setWindStreakTexture } from "./windStreakTexture";
+import { setBloomingVineStreakTexture } from "./bloomingVineTexture";
+import { setCrushingSigilFlareTexture } from "./crushingSigilFlareTexture";
 
 let primed = false;
 const waiters: Array<() => void> = [];
@@ -67,12 +77,22 @@ export async function preloadSpellVfxTextures(): Promise<void> {
     const lava = byUrl.get(VFX_LAVA_URL);
     const circle = byUrl.get(VFX_CIRCLE_URL);
     const chain = byUrl.get(VFX_CHAIN_URL);
+    const shadow = byUrl.get(VFX_SHADOW_SPELL_URL);
+    const spellFx = byUrl.get(VFX_SPELL_EFFECTS_URL);
+    const wind = byUrl.get(VFX_WIND_STREAK_URL);
+    const bloomingVine = byUrl.get(VFX_BLOOMING_VINE_STREAK_URL);
+    const sigilFlare = byUrl.get(VFX_CRUSHING_SIGIL_FLARE_URL);
 
     if (fire) setFireTexture(VFX_FIRE_URL, fire);
     if (smoke) setSmokeTexture(smoke);
     if (lava) setLavaTexture(lava);
     if (circle) setCircleTexture(circle);
     if (chain) setChainTexture(chain);
+    if (shadow) setShadowSpellTexture(shadow);
+    if (spellFx) setSpellEffectsTexture(spellFx);
+    if (wind) setWindStreakTexture(wind);
+    if (bloomingVine) setBloomingVineStreakTexture(bloomingVine);
+    if (sigilFlare) setCrushingSigilFlareTexture(sigilFlare);
   } finally {
     // Always unblock GPU warmup (even on fetch failure).
     markPrimed();

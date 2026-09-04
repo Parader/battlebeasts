@@ -8,6 +8,9 @@ import {
   VFX_FIRE_URL,
   VFX_LAVA_URL,
   VFX_SMOKE_URL,
+  VFX_SHADOW_SPELL_URL,
+  VFX_SPELL_EFFECTS_URL,
+  VFX_WIND_STREAK_URL,
 } from "./vfxUrls";
 import { getRegisteredSpellVfxAssets } from "./profiles/registry";
 
@@ -34,6 +37,9 @@ export const CORE_SPELL_VFX_TEXTURES = [
   VFX_LAVA_URL,
   VFX_CIRCLE_URL,
   VFX_CHAIN_URL,
+  VFX_SHADOW_SPELL_URL,
+  VFX_SPELL_EFFECTS_URL,
+  VFX_WIND_STREAK_URL,
 ] as const;
 
 /** Shared meshes used by multiple spells / UI. */

@@ -32,12 +32,16 @@ const RIM = {
   opacity: 0.42,
 } as const;
 
+const RANGE_RING_OK = CAST_AIM_COLOR;
+const RANGE_RING_OOR = "#ef4444";
+
 function emptyPreview(abilityId: string): CastPreview {
   return {
     kind: "none",
     abilityId,
     color: CAST_AIM_COLOR,
     rangeRing: 0,
+    rangeRingOutOfRange: false,
     feetRadius: 0,
     halfAngle: 0.7,
     aimX: 0,
@@ -100,7 +104,14 @@ export function CastAimTelegraph({
   const aimGroup = useRef<THREE.Group>(null);
   const midGroup = useRef<THREE.Group>(null);
   const lineMesh = useRef<THREE.Mesh>(null);
-  const rangeRing = useRef<THREE.Mesh>(null);
+  const rangeRing = useRef<THREE.Group>(null);
+  const rangeRingOk = useRef<THREE.Mesh>(null);
+  const rangeRingOor = useRef<THREE.Mesh>(null);
+  /** 0..1 smoothed visibility for the OOR range ring. */
+  const rangeRingOorFade = useRef(0);
+  /** Last feet pose — keep the OOR ring planted while it fades after aim clears. */
+  const lastFeetPos = useRef({ x: 0, z: 0 });
+  const lastRangeRingR = useRef(8.5);
   const curveLeft = useRef<THREE.Line>(null);
   const curveRight = useRef<THREE.Line>(null);
   const previewRef = useRef<CastPreview>(emptyPreview(""));
@@ -152,7 +163,7 @@ export function CastAimTelegraph({
     });
   }, []);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     // Schema fallback if optimistic bus missed a frame (never after cancel).
     if (!castAimRuntime.isAimPreviewActive() && castAimRuntime.isSchemaFallbackAllowed()) {
       const p = room.state?.players?.get(sessionId) as CastLite | undefined;
@@ -192,24 +203,85 @@ export function CastAimTelegraph({
     const id = castAimRuntime.abilityId;
     const active = castAimRuntime.isAimPreviewActive() && Boolean(id && ABILITIES[id]);
 
+    const tickOorFade = (wantOor: boolean) => {
+      const fadeSpeed = wantOor ? 6 : 3.2;
+      const fadeTarget = wantOor ? 1 : 0;
+      rangeRingOorFade.current +=
+        (fadeTarget - rangeRingOorFade.current) * Math.min(1, delta * fadeSpeed);
+      if (Math.abs(rangeRingOorFade.current - fadeTarget) < 0.002) {
+        rangeRingOorFade.current = fadeTarget;
+      }
+      const oorFade = rangeRingOorFade.current;
+      if (rangeRingOor.current) {
+        const oorMat = rangeRingOor.current.material as THREE.MeshBasicMaterial;
+        const pulse = 0.78 + 0.22 * (0.5 + 0.5 * Math.sin(performance.now() * 0.0042));
+        oorMat.opacity = 0.26 * pulse * oorFade;
+        rangeRingOor.current.visible = oorFade > 0.01;
+      }
+      return oorFade;
+    };
+
     if (!active || !id) {
-      if (feet.current) feet.current.visible = false;
       if (aimGroup.current) aimGroup.current.visible = false;
       if (midGroup.current) midGroup.current.visible = false;
       if (lineMesh.current) lineMesh.current.visible = false;
       if (curveLeft.current) curveLeft.current.visible = false;
       if (curveRight.current) curveRight.current.visible = false;
+      if (rangeRingOk.current) rangeRingOk.current.visible = false;
+
+      const oorFade = tickOorFade(false);
+      if (oorFade > 0.01 && rangeRing.current) {
+        if (feet.current) {
+          feet.current.visible = true;
+          feet.current.position.set(lastFeetPos.current.x, 0, lastFeetPos.current.z);
+        }
+        rangeRing.current.visible = true;
+        rangeRing.current.scale.set(lastRangeRingR.current, 1, lastRangeRingR.current);
+      } else {
+        if (feet.current) feet.current.visible = false;
+        if (rangeRing.current) rangeRing.current.visible = false;
+      }
       return;
     }
 
     const pos = getPos();
     const yaw = getYaw();
+    const healables: { id: string; x: number; z: number }[] = [];
+    if (id === "soulRelay") {
+      const players = room.state?.players;
+      players?.forEach((p, pid) => {
+        if (pid === sessionId) return;
+        const pl = p as {
+          x?: number;
+          z?: number;
+          hp?: number;
+          disconnected?: boolean;
+          role?: string;
+          roundDead?: boolean;
+        };
+        if (pl.disconnected || (pl.hp ?? 0) <= 0 || pl.role === "spectator" || pl.roundDead) {
+          return;
+        }
+        if (typeof pl.x === "number" && typeof pl.z === "number") {
+          healables.push({ id: pid, x: pl.x, z: pl.z });
+        }
+      });
+      const targets = room.state?.targets;
+      targets?.forEach((t, tid) => {
+        const tg = t as { x?: number; z?: number; hp?: number };
+        if ((tg.hp ?? 0) <= 0) return;
+        if (typeof tg.x === "number" && typeof tg.z === "number") {
+          healables.push({ id: tid, x: tg.x, z: tg.z });
+        }
+      });
+    }
     const preview = resolveCastPreview({
       abilityId: id,
       color: CAST_AIM_COLOR,
       owner: { x: pos.x, z: pos.z, yaw },
       aim: getGroundAim(),
       statics: getWorldStaticColliders(),
+      healables,
     });
     previewRef.current = preview;
 
@@ -227,13 +299,26 @@ export function CastAimTelegraph({
       feet.current.visible = true;
       feet.current.position.set(pos.x, 0, pos.z);
       feet.current.rotation.set(0, yaw, 0);
+      lastFeetPos.current = { x: pos.x, z: pos.z };
     }
 
     if (rangeRing.current) {
       const r = preview.rangeRing;
-      rangeRing.current.visible = r > 0.05;
-      if (r > 0.05) {
-        rangeRing.current.scale.set(r, r, 1);
+      const wantRing = r > 0.05;
+      if (wantRing) {
+        lastRangeRingR.current = r;
+        rangeRing.current.scale.set(r, 1, r);
+      }
+
+      const wantOor = wantRing && preview.rangeRingOutOfRange;
+      const oorFade = tickOorFade(wantOor);
+      rangeRing.current.visible = wantRing || oorFade > 0.01;
+
+      // Never stack cyan + red — only one range ring at a time.
+      if (rangeRingOk.current) {
+        const okMat = rangeRingOk.current.material as THREE.MeshBasicMaterial;
+        okMat.opacity = 0.32;
+        rangeRingOk.current.visible = wantRing && !wantOor && oorFade < 0.02;
       }
     }
 
@@ -241,7 +326,9 @@ export function CastAimTelegraph({
       preview.kind === "placeCircle" ||
       preview.kind === "magmaOrbs" ||
       preview.kind === "blink" ||
-      preview.kind === "forwardPlace";
+      preview.kind === "forwardPlace" ||
+      preview.kind === "allyBind" ||
+      preview.kind === "selfCircle";
     if (aimGroup.current) {
       aimGroup.current.visible = showAim && (preview.kind === "blink" || preview.aimRadius > 0.05);
       if (aimGroup.current.visible) {
@@ -355,16 +442,29 @@ export function CastAimTelegraph({
   return (
     <>
       <group ref={feet} visible={false}>
-        <mesh ref={rangeRing} rotation={[-Math.PI / 2, 0, 0]} position={[0, Y, 0]} visible={false}>
-          <ringGeometry args={[0.985, 1, 72]} />
-          <meshBasicMaterial
-            color={CAST_AIM_COLOR}
-            transparent
-            opacity={0.32}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
+        <group ref={rangeRing} position={[0, Y, 0]} visible={false}>
+          <mesh ref={rangeRingOk} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+            <ringGeometry args={[0.985, 1, 72]} />
+            <meshBasicMaterial
+              color={RANGE_RING_OK}
+              transparent
+              opacity={0.32}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+          <mesh ref={rangeRingOor} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+            <ringGeometry args={[0.996, 1.002, 96]} />
+            <meshBasicMaterial
+              color={RANGE_RING_OOR}
+              transparent
+              opacity={0}
+              depthWrite={false}
+              toneMapped={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        </group>
 
         {(kind === "cone" || kind === "meleeArc") && (
           <>
@@ -435,6 +535,23 @@ export function CastAimTelegraph({
               pulse={false}
               y={Y}
             />
+            {/* Arc Blade — brighter outer band (~40%) to hint the sweet spot. */}
+            {abilityId === "arcBlade" && (
+              <AoeRimMarker
+                radius={selfR}
+                shape="circle"
+                color="#38BDF8"
+                hotColor="#A5F3FC"
+                fill={0.08}
+                rimWidth={RIM.rimWidth * 1.2}
+                glowWidth={RIM.glowWidth * 1.15}
+                noise={RIM.noise}
+                opacity={0.5}
+                opacityMulRef={opacityRef}
+                pulse={false}
+                y={Y + 0.003}
+              />
+            )}
             <group scale={[selfR, 1, selfR]}>
               <CastAimReticle color={CAST_AIM_COLOR} y={Y + 0.002} />
             </group>
@@ -443,7 +560,10 @@ export function CastAimTelegraph({
       </group>
 
       <group ref={aimGroup} visible={false}>
-        {(kind === "placeCircle" || kind === "forwardPlace" || kind === "magmaOrbs") && (
+        {(kind === "placeCircle" ||
+          kind === "forwardPlace" ||
+          kind === "magmaOrbs" ||
+          kind === "allyBind") && (
           <>
             <AoeRimMarker
               radius={1}

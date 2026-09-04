@@ -11,6 +11,15 @@ import {
   GEO_SPIKE_TIP,
 } from "../sharedGeo";
 
+/** Poison spike palette — dark bark → toxic lime. */
+const POISON_SPIKE_COLORS = [
+  { bark: "#03170c", tip: "#4ade80" },
+  { bark: "#0a2e14", tip: "#a3e635" },
+  { bark: "#14532d", tip: "#84cc16" },
+  { bark: "#052e16", tip: "#bef264" },
+  { bark: "#1a3d12", tip: "#65a30d" },
+] as const;
+
 type RootSpec = {
   ox: number;
   oz: number;
@@ -20,10 +29,10 @@ type RootSpec = {
   twist: number;
   height: number;
   thick: number;
-  /** Side thorn lean relative to main stalk. */
   thornLean: number;
   thornYaw: number;
   thornScale: number;
+  colorIdx: number;
 };
 
 type MistSpec = {
@@ -37,7 +46,7 @@ type MistSpec = {
 };
 
 /**
- * Poisonous root burst — long twisted stalks + mist, no ground rings.
+ * Poisonous root burst — sharp cone spikes + mist (E Spikes).
  */
 export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
   const root = useRef<THREE.Group>(null);
@@ -47,23 +56,24 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
   const roots = useMemo((): RootSpec[] => {
     const seed = shot.key * 7919;
     const out: RootSpec[] = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       const a = ((seed + i * 97) % 1000) / 1000;
       const b = ((seed + i * 53) % 1000) / 1000;
       const ang = a * Math.PI * 2;
-      const dist = 0.06 + b * 0.2;
+      const dist = 0.04 + b * 0.16;
       out.push({
         ox: Math.cos(ang) * dist,
         oz: Math.sin(ang) * dist,
-        yaw: ang + ((seed + i * 13) % 100) / 100 * 0.6,
-        leanX: (a - 0.5) * 0.55,
-        leanZ: (b - 0.5) * 0.55,
-        twist: ((seed + i * 29) % 100) / 100 * 0.35 - 0.17,
-        height: 1.15 + ((seed + i * 41) % 100) / 100 * 0.45,
-        thick: 0.7 + ((seed + i * 17) % 100) / 100 * 0.35,
-        thornLean: 0.55 + ((seed + i * 7) % 100) / 100 * 0.4,
+        yaw: ang + (((seed + i * 13) % 100) / 100) * 0.6,
+        leanX: (a - 0.5) * 0.5,
+        leanZ: (b - 0.5) * 0.5,
+        twist: ((seed + i * 29) % 100) / 100 * 0.3 - 0.15,
+        height: 0.95 + ((seed + i * 41) % 100) / 100 * 0.4,
+        thick: 0.52 + ((seed + i * 17) % 100) / 100 * 0.28,
+        thornLean: 0.5 + ((seed + i * 7) % 100) / 100 * 0.35,
         thornYaw: ang + Math.PI * (0.35 + ((seed + i) % 50) / 100),
-        thornScale: 0.45 + ((seed + i * 23) % 100) / 100 * 0.25,
+        thornScale: 0.35 + ((seed + i * 23) % 100) / 100 * 0.22,
+        colorIdx: (seed + i * 11) % POISON_SPIKE_COLORS.length,
       });
     }
     return out;
@@ -74,59 +84,64 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
     return Array.from({ length: 5 }, (_, i) => {
       const a = ((seed + i * 71) % 1000) / 1000;
       const ang = a * Math.PI * 2;
-      const dist = 0.05 + ((seed + i * 19) % 100) / 100 * 0.18;
+      const dist = 0.04 + ((seed + i * 19) % 100) / 100 * 0.14;
       return {
         ox: Math.cos(ang) * dist,
         oz: Math.sin(ang) * dist,
-        rise: 0.35 + ((seed + i * 11) % 100) / 100 * 0.55,
-        driftX: (a - 0.5) * 0.35,
-        driftZ: (((seed + i * 37) % 100) / 100 - 0.5) * 0.35,
-        size: 0.06 + ((seed + i * 5) % 100) / 100 * 0.07,
+        rise: 0.28 + ((seed + i * 11) % 100) / 100 * 0.4,
+        driftX: (a - 0.5) * 0.28,
+        driftZ: (((seed + i * 37) % 100) / 100 - 0.5) * 0.28,
+        size: 0.045 + ((seed + i * 5) % 100) / 100 * 0.05,
         delay: ((seed + i * 43) % 100) / 100 * 0.2,
       };
     });
   }, [shot.key]);
 
-  const barkMat = useMemo(
+  const barkMats = useMemo(
     () =>
-      new THREE.MeshStandardMaterial({
-        color: "#03170c",
-        emissive: "#0b3d22",
-        emissiveIntensity: 0.35,
-        roughness: 0.85,
-        metalness: 0.05,
-        transparent: true,
-        opacity: 0.96,
-      }),
+      POISON_SPIKE_COLORS.map(
+        (c) =>
+          new THREE.MeshStandardMaterial({
+            color: c.bark,
+            emissive: c.bark,
+            emissiveIntensity: 0.35,
+            roughness: 0.85,
+            metalness: 0.05,
+            transparent: true,
+            opacity: 0.96,
+          }),
+      ),
     [],
   );
-  const tipMat = useMemo(
+  const tipMats = useMemo(
     () =>
-      new THREE.MeshBasicMaterial({
-        color: shot.color,
-        transparent: true,
-        opacity: 0.55,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      }),
-    [shot.color],
-  );
-  const mistMats = useMemo(
-    () =>
-      Array.from(
-        { length: mist.length },
-        () =>
+      POISON_SPIKE_COLORS.map(
+        (c) =>
           new THREE.MeshBasicMaterial({
-            color: shot.color,
+            color: c.tip,
             transparent: true,
-            opacity: 0.28,
+            opacity: 0.7,
             depthWrite: false,
             blending: THREE.AdditiveBlending,
             toneMapped: false,
           }),
       ),
-    [mist.length, shot.color],
+    [],
+  );
+  const mistMats = useMemo(
+    () =>
+      Array.from({ length: mist.length }, (_, i) => {
+        const tip = POISON_SPIKE_COLORS[i % POISON_SPIKE_COLORS.length]!.tip;
+        return new THREE.MeshBasicMaterial({
+          color: tip,
+          transparent: true,
+          opacity: 0.28,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          toneMapped: false,
+        });
+      }),
+    [mist.length],
   );
 
   useFrame(() => {
@@ -149,12 +164,20 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
         const spec = roots[i];
         if (!spec) continue;
         const h = rise * spec.height;
-        group.scale.set(spec.thick * (0.55 + rise * 0.45), Math.max(0.05, h), spec.thick * (0.55 + rise * 0.45));
+        group.scale.set(
+          spec.thick * (0.55 + rise * 0.45),
+          Math.max(0.05, h),
+          spec.thick * (0.55 + rise * 0.45),
+        );
         group.position.set(spec.ox, 0, spec.oz);
       }
-      barkMat.opacity = amp * 0.96;
-      barkMat.emissiveIntensity = 0.2 + amp * 0.45;
-      tipMat.opacity = amp * 0.5;
+      for (const mat of barkMats) {
+        mat.opacity = amp * 0.96;
+        mat.emissiveIntensity = 0.2 + amp * 0.45;
+      }
+      for (const mat of tipMats) {
+        mat.opacity = amp * 0.75;
+      }
     }
 
     if (mistRef.current) {
@@ -163,7 +186,11 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
         const spec = mist[i];
         const mat = mistMats[i];
         if (!spec || !mat) continue;
-        const local = THREE.MathUtils.clamp((age - spec.delay) / Math.max(0.01, 1 - spec.delay), 0, 1);
+        const local = THREE.MathUtils.clamp(
+          (age - spec.delay) / Math.max(0.01, 1 - spec.delay),
+          0,
+          1,
+        );
         const fade = softEnvelope(local, 0.15, 0.45);
         mesh.position.set(
           spec.ox + local * spec.driftX,
@@ -180,29 +207,46 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
   return (
     <group ref={root} position={[shot.x, 0, shot.z]}>
       <group ref={stalksRef}>
-        {roots.map((r, i) => (
-          <group
-            key={i}
-            rotation={[r.leanX, r.yaw, r.leanZ + r.twist]}
-            position={[r.ox, 0, r.oz]}
-          >
-            <mesh material={barkMat} position={[0, 0.5, 0]} geometry={GEO_SPIKE_STALK} />
-            <mesh
-              material={barkMat}
-              position={[0, 0.28, 0]}
-              scale={[1.15, 0.22, 1.15]}
-              geometry={GEO_SPIKE_KNOB}
-            />
-            <mesh
-              material={barkMat}
-              position={[0.04, 0.38, 0]}
-              rotation={[r.thornLean, r.thornYaw, 0.2]}
-              scale={[r.thornScale, r.thornScale * 0.85, r.thornScale]}
-              geometry={GEO_SPIKE_THORN}
-            />
-            <mesh material={tipMat} position={[0, 0.92, 0]} geometry={GEO_SPIKE_TIP} />
-          </group>
-        ))}
+        {roots.map((r, i) => {
+          const bark = barkMats[r.colorIdx]!;
+          const tip = tipMats[r.colorIdx]!;
+          return (
+            <group
+              key={i}
+              rotation={[r.leanX, r.yaw, r.leanZ + r.twist]}
+              position={[r.ox, 0, r.oz]}
+            >
+              <mesh material={bark} position={[0, 0.5, 0]} geometry={GEO_SPIKE_STALK} />
+              <mesh
+                material={bark}
+                position={[0, 0.08, 0]}
+                rotation={[Math.PI, 0, 0]}
+                scale={[1.35, 0.55, 1.35]}
+                geometry={GEO_SPIKE_KNOB}
+              />
+              <mesh
+                material={bark}
+                position={[0.04, 0.38, 0]}
+                rotation={[r.thornLean, r.thornYaw, 0.2]}
+                scale={[r.thornScale, r.thornScale * 0.85, r.thornScale]}
+                geometry={GEO_SPIKE_THORN}
+              />
+              <mesh
+                material={bark}
+                position={[-0.035, 0.52, 0.02]}
+                rotation={[r.thornLean * 0.75, r.thornYaw + 1.7, -0.15]}
+                scale={[r.thornScale * 0.65, r.thornScale * 0.7, r.thornScale * 0.65]}
+                geometry={GEO_SPIKE_THORN}
+              />
+              <mesh
+                material={tip}
+                position={[0, 0.9, 0]}
+                scale={[0.85, 1.15, 0.85]}
+                geometry={GEO_SPIKE_TIP}
+              />
+            </group>
+          );
+        })}
       </group>
       <group ref={mistRef}>
         {mist.map((_, i) => (

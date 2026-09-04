@@ -24,7 +24,18 @@ export type EffectKindFireHandlers = Partial<
 
 /** True when this kind owns fire (skip shape fallback). Decoy always owns. */
 export function effectKindOwnsFire(kind: AbilityEffectKind): boolean {
-  return kind !== "standard" && kind !== "fireball";
+  // Projectile-shaped kinds that use createProjectile / shape path (no bespoke fire).
+  return (
+    kind !== "standard" &&
+    kind !== "fireball" &&
+    kind !== "soulMark" &&
+    kind !== "returningProjectile" &&
+    kind !== "runicShard" &&
+    kind !== "astralChain" &&
+    kind !== "prismLance" &&
+    kind !== "soulSever" &&
+    kind !== "bloomingPath"
+  );
 }
 
 /**

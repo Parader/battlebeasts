@@ -6,18 +6,33 @@ import type {
   VfxPose,
   VfxSpawnOpts,
 } from "./types";
+import { BLOOMING_PATH_CAST } from "@battlebeasts/shared";
 import { abilityVfxColor } from "./colors";
 
 type Listener = () => void;
 
 const CAST_LIFE_MS: Record<string, number> = {
   bolt: 320,
+  soulMark: 340,
   crescent: 260,
   poisonDart: 380,
 };
 
 const IMPACT_LIFE_MS: Record<string, number> = {
   bolt: 380,
+  soulMark: 420,
+  runicShard: 280,
+  orbitingWisp: 180,
+  astralChain: 220,
+  undergroundPulse: 750,
+  slipstream: 3200,
+  soulRelay: 800,
+  crushingSigil: 1200,
+  gravityWell: 700,
+  prismLance: 280,
+  soulSever: 320,
+  arcBlade: 680,
+  bloomingPath: BLOOMING_PATH_CAST.trailLingerMs + 200,
   crescent: 320,
   smash: 900,
   gust: 1200,

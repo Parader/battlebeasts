@@ -37,6 +37,32 @@ import { SpiritReturnTrailEffect } from "./effects/spiritReturnTrail";
 import { MagmaOrbsCastEffect } from "./effects/magmaOrbsCast";
 import { ShroomBurstEffect } from "./effects/shroomBurst";
 import { ArcThreadEffect } from "./effects/arcThread";
+import { SoulMarkRuptureEffect } from "./effects/soulMarkRupture";
+import { SoulMarkProjectileEffect } from "./effects/soulMarkProjectile";
+import { VoidDiscProjectileEffect } from "./effects/voidDiscProjectile";
+import { RunicShardProjectileEffect } from "./effects/runicShardProjectile";
+import { RunicShardShatterEffect } from "./effects/runicShardShatter";
+import { OrbitingWispHitEffect } from "./effects/orbitingWispHit";
+import { AstralChainProjectileEffect } from "./effects/astralChainProjectile";
+import { AstralChainBreakEffect } from "./effects/astralChainBreak";
+import { UndergroundPulseEffect } from "./effects/undergroundPulse";
+import {
+  SlipstreamLaneEffect,
+  SlipstreamTailwindEffect,
+} from "./effects/slipstreamLane";
+import {
+  SoulRelaySelfHealEffect,
+  SoulRelayProjectileEffect,
+  SoulRelayTriggerEffect,
+  SoulRelayOutOfRangeEffect,
+} from "./effects/soulRelay";
+import { CrushingSigilEffect } from "./effects/crushingSigil";
+import { GravityWellEffect } from "./effects/gravityWell";
+import { PrismLanceImpactEffect } from "./effects/prismLanceImpact";
+import { SoulSeverHitEffect, SoulSeverSnapEffect } from "./effects/soulSeverSnap";
+import { ArcBladeEffect, ArcBladeHitEffect, ArcBladeOuterPulseEffect } from "./effects/arcBlade";
+import { BloomingPathBlossomEffect } from "./effects/bloomingPathBlossom";
+import { BloomingPathTrailLingerEffect } from "./effects/bloomingPathTrailLinger";
 import { WallFizzleEffect } from "./effects/wallFizzle";
 import {
   getAbilityVfxProfile,
@@ -50,7 +76,7 @@ import {
   profileProjectileCatalogIds,
 } from "./profiles/registry";
 
-export type ProjectileVfxId = "bolt" | "grasp" | "chainJump" | "poisonDart";
+export type ProjectileVfxId = "bolt" | "grasp" | "chainJump" | "poisonDart" | "soulMark" | "voidDisc" | "runicShard" | "astralChain";
 export type CastVfxId =
   | "bolt"
   | "crescent"
@@ -211,12 +237,29 @@ const CAST_RENDERERS: Record<string, ShotRenderer> = {
   barrier: (shot, ctx) => <BarrierCastEffect key={shot.key} shot={shot} follow={ctx} />,
   poisonDart: (shot, ctx) => <PoisonDartCastEffect key={shot.key} shot={shot} follow={ctx} />,
   bolt: (shot, ctx) => <BoltCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  // Projectile mesh is the cast visual — don't fall back to bolt muzzle orb.
+  soulMark: () => null,
+  prismLance: () => null,
+  soulSever: () => null,
+  voidDisc: () => null,
+  runicShard: () => null,
+  astralChain: () => null,
+  bloomingPath: () => null,
 };
 
 const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   crescent: (shot) => <CrescentImpactEffect key={shot.key} shot={shot} />,
   smash: (shot) => <SmashCrackEffect key={shot.key} shot={shot} />,
   gust: (shot, ctx) => <GustWaveEffect key={shot.key} shot={shot} follow={ctx} />,
+  arcBlade: (shot, ctx) => {
+    const v = shot.variant ?? 0;
+    if (v === 2) return <ArcBladeOuterPulseEffect key={shot.key} shot={shot} />;
+    // Bridged cast follows the owner; hit flashes are world-anchored.
+    if (shot.followOwnerId) {
+      return <ArcBladeEffect key={shot.key} shot={shot} follow={ctx} />;
+    }
+    return <ArcBladeHitEffect key={shot.key} shot={shot} />;
+  },
   portal: (shot) => <PortalBlinkEffect key={shot.key} shot={shot} />,
   iceLance: (shot) => <IceLanceExplodeEffect key={shot.key} shot={shot} />,
   poisonDart: (shot) => <BoltImpactEffect key={shot.key} shot={shot} />,
@@ -227,6 +270,44 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   magmaOrbs: (shot, ctx) => <MagmaOrbsCastEffect key={shot.key} shot={shot} follow={ctx} />,
   shrooms: (shot) => <ShroomBurstEffect key={shot.key} shot={shot} />,
   arcThread: (shot, ctx) => <ArcThreadEffect key={shot.key} shot={shot} follow={ctx} />,
+  soulMark: (shot) => <SoulMarkRuptureEffect key={shot.key} shot={shot} />,
+  runicShard: (shot) =>
+    (shot.variant ?? 0) === 1 ? (
+      <RunicShardShatterEffect key={shot.key} shot={shot} />
+    ) : (
+      <BoltImpactEffect key={shot.key} shot={shot} />
+    ),
+  orbitingWisp: (shot) => <OrbitingWispHitEffect key={shot.key} shot={shot} />,
+  astralChain: (shot) => <AstralChainBreakEffect key={shot.key} shot={shot} />,
+  undergroundPulse: (shot) => <UndergroundPulseEffect key={shot.key} shot={shot} />,
+  slipstream: (shot) =>
+    (shot.variant ?? 0) === 1 || (shot.variant ?? 0) === 2 ? (
+      <SlipstreamTailwindEffect key={shot.key} shot={shot} />
+    ) : (
+      <SlipstreamLaneEffect key={shot.key} shot={shot} />
+    ),
+  soulRelay: (shot) => {
+    const v = shot.variant ?? 0;
+    if (v === 1) return <SoulRelayProjectileEffect key={shot.key} shot={shot} />;
+    if (v === 2) return <SoulRelayTriggerEffect key={shot.key} shot={shot} />;
+    if (v === 3) return <SoulRelayOutOfRangeEffect key={shot.key} shot={shot} />;
+    return <SoulRelaySelfHealEffect key={shot.key} shot={shot} />;
+  },
+  crushingSigil: (shot) => <CrushingSigilEffect key={shot.key} shot={shot} />,
+  gravityWell: (shot) => <GravityWellEffect key={shot.key} shot={shot} />,
+  prismLance: (shot) => <PrismLanceImpactEffect key={shot.key} shot={shot} />,
+  soulSever: (shot) =>
+    (shot.variant ?? 0) === 1 ? (
+      <SoulSeverSnapEffect key={shot.key} shot={shot} />
+    ) : (
+      <SoulSeverHitEffect key={shot.key} shot={shot} />
+    ),
+  bloomingPath: (shot) =>
+    (shot.variant ?? 0) === 1 ? (
+      <BloomingPathTrailLingerEffect key={shot.key} shot={shot} />
+    ) : (
+      <BloomingPathBlossomEffect key={shot.key} shot={shot} />
+    ),
   poisonCloud: (shot) => <PoisonCloudGroundEffect key={shot.key} shot={shot} />,
   smokeBomb: (shot) => <SmokeBombGroundEffect key={shot.key} shot={shot} />,
   holyGround: (shot) => <HolyGroundEffect key={shot.key} shot={shot} />,
@@ -276,10 +357,11 @@ export function renderOneShot(shot: OneShotEffect, ctx: VfxFollowContext) {
     }
     const cast = CAST_RENDERERS[shot.abilityId];
     if (cast) return cast(shot, ctx);
+    // Prefer no muzzle over a wrong bolt orb riding along catalog projectiles.
     if (import.meta.env.DEV) {
-      console.warn(`[vfx] missing cast renderer for abilityId=${shot.abilityId}; using bolt muzzle`);
+      console.warn(`[vfx] missing cast renderer for abilityId=${shot.abilityId}; skipping muzzle`);
     }
-    return CAST_RENDERERS.bolt!(shot, ctx);
+    return null;
   }
 
   if (shot.variant === COMBAT_FX_VARIANT_WALL_HIT) {
@@ -325,4 +407,11 @@ export {
   VolcanoRockEffect,
   BloodRushTrailEffect,
   ArcThreadEffect,
+  SoulMarkProjectileEffect,
+  SoulMarkRuptureEffect,
+  VoidDiscProjectileEffect,
+  RunicShardProjectileEffect,
+  RunicShardShatterEffect,
+  AstralChainProjectileEffect,
+  AstralChainBreakEffect,
 };

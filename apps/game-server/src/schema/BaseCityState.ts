@@ -9,7 +9,7 @@ import {
 } from "@battlebeasts/shared";
 
 export class StatusInstanceState extends Schema {
-  /** Same as statusId for map key stability (one row per status id). */
+  /** Map key (usually statusId; per-source statuses use `statusId@sourceId`). */
   @type("string") id = "";
   @type("string") statusId = "";
   @type("number") expiresAt = 0;
@@ -256,6 +256,50 @@ export class RiftPortalState extends Schema {
   @type("number") expiresAt = 0;
 }
 
+/** Orbiting Wisp — persistent orbiting entity synced for client VFX + collision. */
+export class OrbitingWispState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("string") abilityId = "orbitingWisp";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") y = 1.15;
+  /** Slot phase offset (radians); shared clock + this = world angle. */
+  @type("number") orbitPhase = 0;
+  /** Server epoch ms when the wisp was created. */
+  @type("number") spawnedAt = 0;
+  /** Server epoch ms when collision becomes active. */
+  @type("number") armedAt = 0;
+  /** Server epoch ms when the wisp expires if unused. */
+  @type("number") expiresAt = 0;
+}
+
+/** Astral Chain tether — synced for client rope VFX between caster and target. */
+export class AstralChainState extends Schema {
+  @type("string") id = "";
+  @type("string") casterId = "";
+  @type("string") targetId = "";
+  @type("string") abilityId = "astralChain";
+  /** Server epoch ms when the tether started. */
+  @type("number") startedAt = 0;
+  /** Server epoch ms when the tether expires. */
+  @type("number") endsAt = 0;
+  /** Max separation (m) captured at impact. */
+  @type("number") maxDistance = 1.5;
+}
+
+/** Soul Sever imprint — fixed origin + live target for client echo / thread VFX. */
+export class SoulSeverState extends Schema {
+  @type("string") id = "";
+  @type("string") casterId = "";
+  @type("string") targetId = "";
+  @type("string") abilityId = "soulSever";
+  @type("number") originX = 0;
+  @type("number") originZ = 0;
+  @type("number") startedAt = 0;
+  @type("number") endsAt = 0;
+}
+
 /** Hub plaza beach ball (owner-purchased, 0–2 per lobby). */
 export class HubBallState extends Schema {
   @type("string") id = "";
@@ -290,6 +334,9 @@ export class BaseCityState extends Schema {
   @type({ map: ProtectionBubbleState }) protectionBubbles = new MapSchema<ProtectionBubbleState>();
   @type({ map: ShroomState }) shrooms = new MapSchema<ShroomState>();
   @type({ map: RiftPortalState }) riftPortals = new MapSchema<RiftPortalState>();
+  @type({ map: OrbitingWispState }) orbitingWisps = new MapSchema<OrbitingWispState>();
+  @type({ map: AstralChainState }) astralChains = new MapSchema<AstralChainState>();
+  @type({ map: SoulSeverState }) soulSevers = new MapSchema<SoulSeverState>();
   /** How many beach balls the lobby owner has purchased (0–2). */
   @type("number") beachBallCount = 0;
   /** Hub owner's account id (for own-lobby shop gates). */

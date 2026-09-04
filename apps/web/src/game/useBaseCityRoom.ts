@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, COMBAT_ENGAGE_LINGER_MS, EMPTY_FLEX_LOADOUT, flexCost, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, baseCityStaticColliders, mapCollidersFor, mapIdForMode, mapNpcsFor, HUB_NPCS, npcElementIdFrom, npcInteractId, NPC_INTERACT_RADIUS, type NpcPlacement, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, combineStatusMoveMul, getStatus, normalizeFlexLoadout, normalizeLoadout, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, formatRankLabel, normalizeRankSnapshot, type FlexLoadout, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
+import { ABILITIES, ASTRAL_CHAIN_CAST, COMBAT_ENGAGE_LINGER_MS, EMPTY_FLEX_LOADOUT, flexCost, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, baseCityStaticColliders, mapCollidersFor, mapIdForMode, mapNpcsFor, HUB_NPCS, npcElementIdFrom, npcInteractId, NPC_INTERACT_RADIUS, type NpcPlacement, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, castBarShowsChannel, castBarShowsWindup, castWindupMs, phaseDurationMs, combineStatusMoveMul, getStatus, normalizeFlexLoadout, normalizeLoadout, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, formatRankLabel, normalizeRankSnapshot, type FlexLoadout, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { recordWaveBestRun } from "./waveBestRun";
 import { LocalPredictor } from "./LocalPredictor";
@@ -15,7 +15,7 @@ import { spawnImpactEffect, cancelFollowOwnerVfx, usesFrostMistFx, usesGrooveFx,
 import { cancelActiveCastHandle } from "./vfx/runtime/playerVfxRuntime";
 import { dispatchCombatFxVfx } from "./vfx/combatFxDispatch";
 import { takePortalChannelBubbleScale } from "./vfx/portalChannelRuntime";
-import { chargeHudRuntime } from "./chargeHudRuntime";
+import { castBarRuntime, chargeHudRuntime } from "./castBarRuntime";
 import { setActiveEmote, clearActiveEmote, isEmoteActive } from "./emoteRuntime";
 import { getGroundAim } from "./groundAimRuntime";
 import { castAimRuntime } from "./castAimRuntime";
@@ -1091,20 +1091,48 @@ export function useBaseCityRoom(options: Options) {
                             }
                             if (msg.abilityId === "fireball") {
                                 if (msg.phase === "impact") {
-                                    chargeHudRuntime.begin(
-                                        "fireball",
-                                        fireballChargeWindowWallMs(),
-                                        0,
-                                    );
+                                    const fb = ABILITIES.fireball;
+                                    castBarRuntime.begin({
+                                        abilityId: "fireball",
+                                        name: fb?.name ?? "Fireball",
+                                        mode: "charge",
+                                        durationMs: fireballChargeWindowWallMs(),
+                                        holdMs: 0,
+                                        interruptible: true,
+                                    });
                                 } else if (
                                     msg.phase === "anticipation" ||
                                     msg.phase === "cast"
                                 ) {
                                     // Wait for impact (ball appear) before filling.
-                                    chargeHudRuntime.clear();
+                                    castBarRuntime.clear();
                                 } else {
-                                    chargeHudRuntime.clear();
+                                    castBarRuntime.clear();
                                 }
+                            } else if (msg.phase === "impact") {
+                                const chDef = ABILITIES[msg.abilityId];
+                                if (chDef && castBarShowsChannel(chDef)) {
+                                    castBarRuntime.begin({
+                                        abilityId: msg.abilityId,
+                                        name: chDef.name,
+                                        mode: "channel",
+                                        durationMs: Math.max(
+                                            400,
+                                            phaseDurationMs(chDef, "impact"),
+                                        ),
+                                        interruptible: chDef.timing.cancelUntilPhase === "impact",
+                                    });
+                                } else {
+                                    // Windup finished — hide bar when the spell commits.
+                                    castBarRuntime.clear();
+                                }
+                            } else if (
+                                msg.phase === "recovery" ||
+                                msg.phase === "idle" ||
+                                msg.phase === "cancel" ||
+                                msg.phase === "interrupt"
+                            ) {
+                                castBarRuntime.clear();
                             }
                             if (
                                 typeof msg.cooldownMs === "number" &&
@@ -1486,6 +1514,47 @@ export function useBaseCityRoom(options: Options) {
         if (me?.role === "spectator") return;
         const spiritRecast =
             abilityId === "spiritForm" && hasStatusId(me?.statuses, "spiritFormed");
+        const runicVolleyActive =
+            abilityId === "runicShard" &&
+            (() => {
+                const projectiles = room?.state?.projectiles as
+                    | Map<string, { ownerSessionId?: string; abilityId?: string; mode?: string }>
+                    | { forEach: (cb: (raw: { ownerSessionId?: string; abilityId?: string; mode?: string }) => void) => void }
+                    | undefined;
+                if (!projectiles || !room?.sessionId) return false;
+                let found = false;
+                const visit = (raw: { ownerSessionId?: string; abilityId?: string; mode?: string }) => {
+                    if (raw.ownerSessionId !== room.sessionId) return;
+                    if (raw.abilityId !== "runicShard") return;
+                    found = true;
+                };
+                if (typeof (projectiles as Map<string, unknown>).forEach === "function") {
+                    (projectiles as { forEach: (cb: (raw: { ownerSessionId?: string; abilityId?: string; mode?: string }) => void) => void }).forEach(visit);
+                }
+                return found;
+            })();
+        // Runic Shard: LMB while own main shard is flying → shatter (no cast anim / CD gate).
+        const runicShatter =
+            abilityId === "runicShard" &&
+            runicVolleyActive &&
+            (() => {
+                const projectiles = room?.state?.projectiles as
+                    | { forEach: (cb: (raw: { ownerSessionId?: string; abilityId?: string; mode?: string }) => void) => void }
+                    | undefined;
+                if (!projectiles || !room?.sessionId) return false;
+                let found = false;
+                projectiles.forEach((raw) => {
+                    if (raw.ownerSessionId !== room.sessionId) return;
+                    if (raw.abilityId !== "runicShard") return;
+                    if (raw.mode === "fragment") return;
+                    found = true;
+                });
+                return found;
+            })();
+        // Block a fresh throw while any prior shard / fragment is still live.
+        if (abilityId === "runicShard" && runicVolleyActive && !runicShatter) {
+            return;
+        }
         // Rift Fissure: CD starts on portal A; second plant is allowed while arming.
         const riftArmingRecast =
             abilityId === "riftFissure" &&
@@ -1503,10 +1572,11 @@ export function useBaseCityRoom(options: Options) {
                 });
                 return arming;
             })();
-        // Spirit Form / Rift second plant while CD is already ticking — don't block.
+        // Spirit Form / Rift second plant / Runic shatter while CD is already ticking — don't block.
         if (
             !spiritRecast &&
             !riftArmingRecast &&
+            !runicShatter &&
             !adminNoCooldownRef.current &&
             (cooldownUntilRef.current[abilityId] ?? 0) > now
         ) {
@@ -1514,7 +1584,7 @@ export function useBaseCityRoom(options: Options) {
         }
         if (pendingCastRef.current) return;
 
-        if (spiritRecast) {
+        if (spiritRecast || runicShatter) {
             pendingCastRef.current = abilityId;
             awaitingCastAckRef.current = true;
             awaitingCastAckSinceRef.current = performance.now();
@@ -1559,9 +1629,17 @@ export function useBaseCityRoom(options: Options) {
             : 1;
         castAimRuntime.set(abilityId, "anticipation", comboHit);
         predictorRef.current.applyCastMove(abilityId, "anticipation");
-        if (abilityId === "fireball") {
-          // Charge bar starts when impact/channel begins (combat_fx).
-          chargeHudRuntime.clear();
+        if (def && castBarShowsWindup(def)) {
+          castBarRuntime.begin({
+            abilityId,
+            name: def.name,
+            mode: "cast",
+            durationMs: castWindupMs(def),
+            interruptible: def.timing.canCancelAnticipation !== false,
+          });
+        } else {
+          // Instant / short windup — drop any prior bar (e.g. cut into Fireball).
+          castBarRuntime.clear();
         }
         abilityHudRuntime.setFlashId(abilityId);
         window.clearTimeout(castFlashTimerRef.current);
@@ -2271,6 +2349,53 @@ export function useBaseCityRoom(options: Options) {
                     predictor.setStatusMoveMul(combineStatusMoveMul(statusEntries));
                 } else {
                     predictor.setStatusMoveMul(1);
+                }
+
+                // Target leash for prediction; caster free vs players, leashed vs props.
+                {
+                    let tether: { anchorX: number; anchorZ: number; maxDistance: number } | null =
+                        null;
+                    let pullLocal = false;
+                    const chains = (r.state as { astralChains?: Map<string, {
+                        casterId?: string;
+                        targetId?: string;
+                        maxDistance?: number;
+                    }> } | undefined)?.astralChains;
+                    const sid = r.sessionId;
+                    chains?.forEach((chain) => {
+                        if (tether) return;
+                        if (chain.targetId === sid) {
+                            const other = playersMap?.get(chain.casterId ?? "");
+                            if (other && typeof other.x === "number") {
+                                tether = {
+                                    anchorX: other.x,
+                                    anchorZ: other.z,
+                                    maxDistance: chain.maxDistance ?? 1.5,
+                                };
+                                pullLocal = true;
+                            }
+                            return;
+                        }
+                        if (chain.casterId !== sid) return;
+                        const prop = targetsMap?.get(chain.targetId ?? "") as
+                            | { x?: number; z?: number; kind?: string }
+                            | undefined;
+                        if (
+                            prop &&
+                            typeof prop.x === "number" &&
+                            prop.kind === "prop"
+                        ) {
+                            tether = {
+                                anchorX: prop.x,
+                                anchorZ: prop.z,
+                                maxDistance: chain.maxDistance ?? 1.5,
+                            };
+                        }
+                    });
+                    predictor.setAstralTether(tether);
+                    if (tether && pullLocal) {
+                        predictor.applyAstralTetherPull(ASTRAL_CHAIN_CAST.casterPullStrength);
+                    }
                 }
 
                 if (serverMe && !predictor.isSeeded) {

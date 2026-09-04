@@ -39,8 +39,14 @@ export interface StatusDef {
   /**
    * Movement multiplier while active (multiplicative across statuses).
    * Stun/root force 0 regardless.
+   * Ignored when `slowPercentPerStack` is set (stack-scaled slow instead).
    */
   moveMul?: number;
+  /**
+   * When set, slow = `stacks * slowPercentPerStack` (capped by maxStacks).
+   * Used by frostChill instead of a flat `moveMul`.
+   */
+  slowPercentPerStack?: number;
   /**
    * Incoming damage multiplier while active (multiplicative across statuses).
    * 0.6 = 40% resistance.
@@ -51,12 +57,22 @@ export interface StatusDef {
    * 1.2 = +20% damage dealt.
    */
   damageDealtMul?: number;
+  /**
+   * Cast anticipation duration multiplier (multiplicative across statuses).
+   * 0.75 = 25% shorter windup (Tailwind).
+   */
+  anticipationMul?: number;
   /** While active, player.invulnerable syncs true (full block + debuff immunity). */
   grantsInvulnerable?: boolean;
   blocksMove?: boolean;
   blocksCast?: boolean;
   maxStacks?: number;
   stackRule?: StatusStackRule;
+  /**
+   * When true, each caster keeps an independent row (`statusId@sourceId` map key).
+   * Used so two Soul Mark users cannot share or consume each other's stacks.
+   */
+  stackPerSource?: boolean;
   /** HUD / VFX tint. */
   color: string;
   /** Short label for icon placeholder. */
@@ -176,6 +192,53 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#86efac",
     tag: "HST",
   },
+  /**
+   * Slipstream lane — +30% move while physically inside the wind corridor.
+   * Refreshed every tick; stripped immediately on exit.
+   */
+  slipstreamHaste: {
+    id: "slipstreamHaste",
+    name: "Slipstream",
+    polarity: "buff",
+    mechanic: "haste",
+    durationMs: 3000,
+    moveMul: 1.5,
+    anticipationMul: 0.75,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#e8eef5",
+    tag: "SPD",
+  },
+  /**
+   * Soul Relay — linked target indicator. Duration/VFX only; relay logic is server-side.
+   */
+  soulRelayLinked: {
+    id: "soulRelayLinked",
+    name: "Soul Relay",
+    polarity: "buff",
+    mechanic: "haste",
+    durationMs: 3500,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#86efac",
+    tag: "+",
+  },
+  /**
+   * Astral Chain burden — caster slow while maintaining the tether.
+   * Duration is driven by CombatSystem (refreshed / cleared with tether state).
+   */
+  astralChainBurden: {
+    id: "astralChainBurden",
+    name: "Astral Burden",
+    polarity: "debuff",
+    mechanic: "slow",
+    durationMs: 3000,
+    moveMul: 0.75,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#6954D8",
+    tag: "ACB",
+  },
   /** Electrical augment — +60% move for 3s (Surge). */
   surged: {
     id: "surged",
@@ -261,6 +324,38 @@ export const STATUSES: Record<string, StatusDef> = {
     tag: "PSN",
   },
   /**
+   * Soul Mark stacks — visual / rupture tracker only (no tick damage).
+   * Per-caster rows (`stackPerSource`); at max stacks the next Soul Mark hit ruptures.
+   */
+  soulMarked: {
+    id: "soulMarked",
+    name: "Soul Mark",
+    polarity: "debuff",
+    mechanic: "resist",
+    durationMs: 4000,
+    maxStacks: 3,
+    stackRule: "stack",
+    stackPerSource: true,
+    color: "#a78bfa",
+    tag: "SMK",
+  },
+  /**
+   * Soul Sever — positional debt indicator. Snap damage is resolved by CombatSystem.
+   * Per-caster rows so independent severs can coexist on one target.
+   */
+  soulSevered: {
+    id: "soulSevered",
+    name: "Soul Severed",
+    polarity: "debuff",
+    mechanic: "resist",
+    durationMs: 2200,
+    maxStacks: 1,
+    stackRule: "refresh",
+    stackPerSource: true,
+    color: "#EF4444",
+    tag: "SVR",
+  },
+  /**
    * Ally shroom burst — HoT. combatMag(2) heal/tick × stacks (max 3); longer, slower ticks.
    */
   rejuvenated: {
@@ -302,6 +397,7 @@ export const STATUSES: Record<string, StatusDef> = {
     durationMs: 2200,
     /** Placeholder; real mul comes from stack via frostChillMoveMul. */
     moveMul: 0.9,
+    slowPercentPerStack: 10,
     maxStacks: 10,
     stackRule: "stack",
     color: "#bae6fd",
@@ -528,10 +624,18 @@ export const STATUSES: Record<string, StatusDef> = {
 /** Max frost chill stacks (10% each → 100%). */
 export const FROST_CHILL_MAX_STACKS = 10;
 
+/** Slow percent from a stack-scaled slow status (`slowPercentPerStack`). */
+export function statusStackSlowPercent(def: StatusDef, stacks: number): number {
+  const per = def.slowPercentPerStack;
+  if (per == null || per <= 0) return 0;
+  const max = def.maxStacks ?? 1;
+  const s = Math.max(0, Math.min(max, Math.floor(stacks)));
+  return s * per;
+}
+
 /** Slow percent from frostChill alone (stack 1 = 10%, … 10 = 100%). */
 export function frostChillSlowPercent(stacks: number): number {
-  const s = Math.max(0, Math.min(FROST_CHILL_MAX_STACKS, Math.floor(stacks)));
-  return s * 10;
+  return statusStackSlowPercent(STATUSES.frostChill!, stacks);
 }
 
 export function frostChillMoveMul(stacks: number): number {
@@ -559,6 +663,13 @@ export function nextFrostChillStacks(
 
 export function getStatus(id: string): StatusDef | undefined {
   return STATUSES[id];
+}
+
+/** Map key for a status row — per-source statuses use `id@sourceId`. */
+export function statusMapKey(statusId: string, sourceId?: string | null): string {
+  const def = STATUSES[statusId];
+  if (def?.stackPerSource && sourceId) return `${statusId}@${sourceId}`;
+  return statusId;
 }
 
 /** DoTs / slows amplified by Intensified Elements (and gated as "elemental"). */
@@ -606,8 +717,8 @@ export function combineStatusSlowPercent(
     if (def.blocksMove || def.mechanic === "stun" || def.mechanic === "root") {
       return 100;
     }
-    if (def.id === "frostChill") {
-      pct += frostChillSlowPercent(stacks);
+    if (def.slowPercentPerStack != null) {
+      pct += statusStackSlowPercent(def, stacks);
       continue;
     }
     if (typeof def.moveMul === "number" && def.moveMul < 1) {
@@ -627,8 +738,8 @@ export function combineStatusMoveMul(
     if (def.blocksMove || def.mechanic === "stun" || def.mechanic === "root") {
       return 0;
     }
-    if (def.id === "frostChill") {
-      slowPct += frostChillSlowPercent(stacks);
+    if (def.slowPercentPerStack != null) {
+      slowPct += statusStackSlowPercent(def, stacks);
       continue;
     }
     if (typeof def.moveMul === "number") {
@@ -668,6 +779,19 @@ export function combineStatusDamageDealtMul(
     }
   }
   return Math.max(0, mul);
+}
+
+/** Cast anticipation duration factor (multiplicative; 1 = normal windup). */
+export function combineStatusAnticipationMul(
+  entries: { def: StatusDef; stacks: number }[],
+): number {
+  let mul = 1;
+  for (const { def } of entries) {
+    if (typeof def.anticipationMul === "number" && def.anticipationMul > 0) {
+      mul *= def.anticipationMul;
+    }
+  }
+  return Math.max(0.05, mul);
 }
 
 /** True when any active status grants full invulnerability. */

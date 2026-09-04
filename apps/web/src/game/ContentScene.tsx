@@ -13,6 +13,9 @@ import {
   Decoys,
   Volcanoes,
   ProtectionBubbles,
+  OrbitingWisps,
+  AstralChains,
+  SoulSevers,
   RiftPortals,
   Shrooms,
   SpiritHusks,
@@ -172,6 +175,9 @@ export function ContentScene({
       <Decoys room={room} />
       <Volcanoes room={room} />
       <ProtectionBubbles room={room} />
+      <OrbitingWisps room={room} />
+      <AstralChains room={room} />
+      <SoulSevers room={room} />
       <RiftPortals room={room} />
       <Shrooms
         room={room}

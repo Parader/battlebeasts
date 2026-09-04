@@ -4,6 +4,7 @@ import {
   MOVE_SPEED,
   applyMovement,
   baseCityStaticColliders,
+  constrainAstralTetherDesired,
   length2,
   moveAndCollide,
   resolveCastMoveMul,
@@ -25,6 +26,13 @@ export type PredictedState = {
   x: number;
   z: number;
   yaw: number;
+};
+
+/** Optional Astral Chain leash — keep prediction inside the disk. */
+export type PredictedTether = {
+  anchorX: number;
+  anchorZ: number;
+  maxDistance: number;
 };
 
 type LocalTravel = {
@@ -54,9 +62,19 @@ function stepPredicted(
   moveMul: number,
   staticColliders: StaticCollider[],
   dynamicColliders: CircleCollider[],
+  tether: PredictedTether | null,
 ): PredictedState {
   const next = { ...state, yaw: input.yaw };
-  const desired = applyMovement(next, input, MOVE_SPEED * moveMul);
+  let desired = applyMovement(next, input, MOVE_SPEED * moveMul);
+  if (tether) {
+    desired = constrainAstralTetherDesired(
+      tether.anchorX,
+      tether.anchorZ,
+      desired.x,
+      desired.z,
+      tether.maxDistance,
+    );
+  }
   // Match server walk: slide with moveAndCollide (sweep is for dashes / long travel).
   const clamped = moveAndCollide(
     next,
@@ -85,6 +103,7 @@ export class LocalPredictor {
   private comboGapAbilityId: string | null = null;
   private comboGapUntil = 0;
   private travel: LocalTravel | null = null;
+  private tether: PredictedTether | null = null;
   private staticColliders: StaticCollider[] = baseCityStaticColliders();
   private dynamicColliders: CircleCollider[] = [];
 
@@ -107,6 +126,32 @@ export class LocalPredictor {
   ) {
     this.staticColliders = staticColliders;
     this.dynamicColliders = dynamicColliders;
+  }
+
+  /** Mirror server Astral Chain leash for local prediction (null = none). */
+  setAstralTether(tether: PredictedTether | null) {
+    this.tether = tether;
+  }
+
+  /**
+   * When the caster walks the leash taut, soft-tug local prediction onto the rim
+   * so we don't wait for reconcile to drag the target.
+   */
+  applyAstralTetherPull(pullStrength = 0.55) {
+    const tether = this.tether;
+    if (!tether) return;
+    const dx = this.state.x - tether.anchorX;
+    const dz = this.state.z - tether.anchorZ;
+    const dist = Math.hypot(dx, dz);
+    if (dist <= tether.maxDistance + 0.04 || dist < 1e-6) return;
+    const excess = dist - tether.maxDistance;
+    const tug = excess * Math.max(0, Math.min(1, pullStrength));
+    const s = tug / dist;
+    this.state = {
+      ...this.state,
+      x: this.state.x - dx * s,
+      z: this.state.z - dz * s,
+    };
   }
 
   /** Sync status-derived move mul from server (combineStatusMoveMul). */
@@ -296,6 +341,7 @@ export class LocalPredictor {
       this.effectiveMoveMul(),
       this.staticColliders,
       this.dynamicColliders,
+      this.tether,
     );
     return this.state;
   }
@@ -310,6 +356,7 @@ export class LocalPredictor {
         this.effectiveMoveMul(),
         this.staticColliders,
         this.dynamicColliders,
+        this.tether,
       );
     }
   }

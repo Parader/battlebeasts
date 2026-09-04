@@ -104,6 +104,8 @@ export function ArcThreadEffect({
 
   const isDischarge = shot.variant === 1;
   const isBreak = shot.variant === 2;
+  /** No linked target — filament terminates at aim endpoint (x2/z2 or max range). */
+  const isAir = !shot.followTargetId && !isDischarge && !isBreak;
   const seed = useMemo(() => (shot.key % 97) / 97, [shot.key]);
 
   const linePositions = useMemo(() => new Float32Array((SEGMENTS + 1) * 3), []);
@@ -165,9 +167,9 @@ export function ArcThreadEffect({
         dirX: Math.sin(yaw) * cy,
         dirY: Math.sin(pitch) * 0.55 + 0.08,
         dirZ: Math.cos(yaw) * cy,
-        speed: (hot ? 2.1 : 1.25) + (i % 5) * 0.18 + seed * 0.3,
-        size: hot ? 0.14 : 0.065 + (i % 4) * 0.018,
-        sizeEnd: hot ? 0.028 : 0.014,
+        speed: (hot ? 1.35 : 0.75) + (i % 5) * 0.1 + seed * 0.18,
+        size: hot ? 0.18 : 0.09 + (i % 4) * 0.022,
+        sizeEnd: hot ? 0.04 : 0.022,
         delay: (i % 10) * 0.008,
         life: 0.14 + (i % 5) * 0.035,
         flicker: 10 + (i % 5) * 3.5,
@@ -264,11 +266,22 @@ export function ArcThreadEffect({
       z: shot.z,
       yaw: shot.yaw,
     });
-    const target = readPose(follow, shot.followTargetId, {
-      x: shot.originX ?? shot.x,
-      z: shot.originZ ?? shot.z,
-      yaw: owner.yaw,
-    });
+    const airRange = shot.radius ?? ARC_THREAD_CAST.range;
+    const airFallback =
+      typeof shot.originX === "number" && typeof shot.originZ === "number"
+        ? { x: shot.originX, z: shot.originZ, yaw: owner.yaw }
+        : {
+            x: owner.x + Math.sin(owner.yaw) * airRange,
+            z: owner.z + Math.cos(owner.yaw) * airRange,
+            yaw: owner.yaw,
+          };
+    const target = isAir
+      ? airFallback
+      : readPose(follow, shot.followTargetId, {
+          x: shot.originX ?? shot.x,
+          z: shot.originZ ?? shot.z,
+          yaw: owner.yaw,
+        });
 
     const fx = Math.sin(owner.yaw);
     const fz = Math.cos(owner.yaw);
@@ -308,12 +321,13 @@ export function ArcThreadEffect({
       lineOpacity = 0;
       tipOpacity = softPulse(Math.min(1, t / 0.18)) * (1 - smooth01(Math.max(0, (t - 0.12) / 0.4)));
       tipScale = 0.055 + tipOpacity * 0.09;
-    } else if (isBreak) {
-      draw = Math.max(0, 1 - t * 1.4);
-      amp = 0.1 * (1 - t);
-      lineOpacity = 0.55 * (1 - t);
-      tipOpacity = 0.25 * (1 - t);
-      tipScale = 0.03 + 0.025 * (1 - t);
+    } else if (isBreak || (isAir && t > 0.72)) {
+      const frayT = isBreak ? t : (t - 0.72) / 0.28;
+      draw = Math.max(0, 1 - frayT * 1.4);
+      amp = 0.1 * (1 - frayT);
+      lineOpacity = 0.55 * (1 - frayT);
+      tipOpacity = 0.25 * (1 - frayT);
+      tipScale = 0.03 + 0.025 * (1 - frayT);
     } else {
       const linkT = Math.min(1, age / 90);
       draw = smooth01(linkT);
@@ -322,7 +336,7 @@ export function ArcThreadEffect({
       lineOpacity = 0.55 + charge * 0.35;
       tipOpacity = linkT < 1 ? softPulse(linkT) * 0.7 : 0.1 + charge * 0.22;
       tipScale = linkT < 1 ? 0.04 + (1 - linkT) * 0.035 : 0.028 + charge * 0.02;
-      if (t > 0.8) {
+      if (!isAir && t > 0.8) {
         const surge = smooth01((t - 0.8) / 0.2);
         lineOpacity = Math.min(1, lineOpacity + surge * 0.35);
         amp *= 1 + surge * 0.8;
@@ -358,7 +372,7 @@ export function ArcThreadEffect({
       if (isDischarge) {
         linkPts.current.visible = false;
       } else {
-        const density = isBreak ? 1 - t : 0.35 + t * 0.65;
+        const density = isBreak || (isAir && t > 0.72) ? 1 - t : 0.35 + t * 0.65;
         let living = 0;
         for (let i = 0; i < LINK_SPARKS; i++) {
           const u = ((i + 0.5) / LINK_SPARKS) * draw;
@@ -377,7 +391,8 @@ export function ArcThreadEffect({
           const hot = i % 5 === 0;
           linkSize[i] =
             (hot ? 0.055 : 0.028 + (i % 3) * 0.008) * (0.75 + density * 0.25) * POINT_PX;
-          linkAlpha[i] = density * flicker * (isBreak ? 1 - t : 1) * (hot ? 1 : 0.7);
+          linkAlpha[i] =
+            density * flicker * (isBreak || (isAir && t > 0.72) ? 1 - t : 1) * (hot ? 1 : 0.7);
           living++;
         }
         linkGeo.attributes.position!.needsUpdate = true;
@@ -405,14 +420,14 @@ export function ArcThreadEffect({
           const appear = smooth01(Math.min(1, pt / 0.06));
           const fade = 1 - pt;
           // Snap travel — short hop, then die (pole crackle).
-          const dist = p.speed * Math.min(1, pt * 1.8) * burstScale;
-          const drop = pt * pt * 0.12 * burstScale;
+          const dist = p.speed * Math.min(1, pt * 1.35) * burstScale;
+          const drop = pt * pt * 0.08 * burstScale;
           burstPos[i * 3] = tx + p.dirX * dist;
           burstPos[i * 3 + 1] = ty + p.dirY * dist - drop;
           burstPos[i * 3 + 2] = tz + p.dirZ * dist;
           const sz = THREE.MathUtils.lerp(p.size, p.sizeEnd, pt);
           const flick = 0.45 + 0.55 * Math.max(0, Math.sin(ageSec * p.flicker * 18 + i));
-          burstSize[i] = sz * appear * (POINT_PX + 5) * (isBreak ? 0.65 : 1);
+          burstSize[i] = sz * appear * (POINT_PX + 8) * (isBreak ? 0.65 : 1);
           burstAlpha[i] = appear * fade * flick * (isBreak ? 0.5 : 1);
           living++;
         }

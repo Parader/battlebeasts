@@ -14,16 +14,28 @@ import {
   StatusHpBadgeStack,
   readBleedingBadge,
   readBurningBadge,
+  readChillBadge,
   readPoisonBadge,
   readRejuvenationBadge,
   readSilenceBadge,
   readHolyBadge,
+  readSoulMarkBadge,
+  readSoulSeverBadge,
+  readSlowBadge,
+  readHasteBadge,
+  readRelayBadge,
   syncBleedingBadge,
   syncBurningBadge,
+  syncChillBadge,
   syncPoisonBadge,
   syncRejuvenationBadge,
   syncSilenceBadge,
   syncHolyBadge,
+  syncSoulMarkBadge,
+  syncSoulSeverBadge,
+  syncSlowBadge,
+  syncHasteBadge,
+  syncRelayBadge,
   type StatusRowLite,
 } from "./StatusHpBadgeStack";
 import { isRevengeVanished } from "./revengeVanishRuntime";
@@ -79,12 +91,28 @@ export function PlayerHpBillboard({
   const silenceRing = useRef<SVGCircleElement>(null);
   const holyBadge = useRef<HTMLDivElement>(null);
   const holyRing = useRef<SVGCircleElement>(null);
+  const soulMarkBadge = useRef<HTMLDivElement>(null);
+  const soulMarkStacksEl = useRef<HTMLSpanElement>(null);
+  const soulMarkRing = useRef<SVGCircleElement>(null);
+  const soulSeverBadge = useRef<HTMLDivElement>(null);
+  const soulSeverRing = useRef<SVGCircleElement>(null);
+  const chillBadge = useRef<HTMLDivElement>(null);
+  const chillStacksEl = useRef<HTMLSpanElement>(null);
+  const chillRing = useRef<SVGCircleElement>(null);
+  const slowBadge = useRef<HTMLDivElement>(null);
+  const slowRing = useRef<SVGCircleElement>(null);
+  const hasteBadge = useRef<HTMLDivElement>(null);
+  const hasteRing = useRef<SVGCircleElement>(null);
+  const relayBadge = useRef<HTMLDivElement>(null);
+  const relayRing = useRef<SVGCircleElement>(null);
   const lingerUntil = useRef(0);
   const prevHp = useRef<number | null>(null);
   const lastFillColor = useRef(fillColor);
   const lastPoisonStacks = useRef(0);
   const lastBleedingStacks = useRef(0);
   const lastRejuvenationStacks = useRef(0);
+  const lastSoulMarkStacks = useRef(0);
+  const lastChillStacks = useRef(0);
 
   useFrame(() => {
     const g = root.current;
@@ -96,6 +124,10 @@ export function PlayerHpBillboard({
     const rejBadge = rejuvenationBadge.current;
     const silBadge = silenceBadge.current;
     const hlyBadge = holyBadge.current;
+    const smkBadge = soulMarkBadge.current;
+    const svrBadge = soulSeverBadge.current;
+    const chlBadge = chillBadge.current;
+    const slwBadge = slowBadge.current;
     if (!g || !m || !sessionId || !room) {
       if (g) g.visible = false;
       if (badge) badge.style.display = "none";
@@ -104,6 +136,11 @@ export function PlayerHpBillboard({
       if (rejBadge) rejBadge.style.display = "none";
       if (silBadge) silBadge.style.display = "none";
       if (hlyBadge) hlyBadge.style.display = "none";
+      if (smkBadge) smkBadge.style.display = "none";
+      if (svrBadge) svrBadge.style.display = "none";
+      if (chlBadge) chlBadge.style.display = "none";
+      if (slwBadge) slwBadge.style.display = "none";
+      if (hasteBadge.current) hasteBadge.current.style.display = "none";
       return;
     }
     const p = room.state?.players?.get(sessionId) as
@@ -126,10 +163,17 @@ export function PlayerHpBillboard({
       if (rejBadge) rejBadge.style.display = "none";
       if (silBadge) silBadge.style.display = "none";
       if (hlyBadge) hlyBadge.style.display = "none";
+      if (smkBadge) smkBadge.style.display = "none";
+      if (soulSeverBadge.current) soulSeverBadge.current.style.display = "none";
+      if (chlBadge) chlBadge.style.display = "none";
+      if (slwBadge) slwBadge.style.display = "none";
+      if (hasteBadge.current) hasteBadge.current.style.display = "none";
       prevHp.current = p?.hp ?? null;
       lastPoisonStacks.current = 0;
       lastBleedingStacks.current = 0;
       lastRejuvenationStacks.current = 0;
+      lastSoulMarkStacks.current = 0;
+      lastChillStacks.current = 0;
       return;
     }
 
@@ -147,6 +191,11 @@ export function PlayerHpBillboard({
       if (rejBadge) rejBadge.style.display = "none";
       if (silBadge) silBadge.style.display = "none";
       if (hlyBadge) hlyBadge.style.display = "none";
+      if (smkBadge) smkBadge.style.display = "none";
+      if (soulSeverBadge.current) soulSeverBadge.current.style.display = "none";
+      if (chlBadge) chlBadge.style.display = "none";
+      if (slwBadge) slwBadge.style.display = "none";
+      if (hasteBadge.current) hasteBadge.current.style.display = "none";
       return;
     }
 
@@ -167,12 +216,22 @@ export function PlayerHpBillboard({
     const rejuvenation = readRejuvenationBadge(rows);
     const silence = readSilenceBadge(rows);
     const holy = readHolyBadge(rows);
+    const soulMark = readSoulMarkBadge(rows);
+    const soulSever = readSoulSeverBadge(rows);
+    const chill = readChillBadge(rows);
+    const slow = readSlowBadge(rows);
+    const haste = readHasteBadge(rows);
+    const relay = readRelayBadge(rows);
     const poisoned = poison.stacks > 0;
     const isBurning = burning.stacks > 0;
     const isBleeding = bleeding.stacks > 0;
     const rejuvenating = rejuvenation.stacks > 0;
     const isSilenced = silence.stacks > 0;
     const isHoly = holy.stacks > 0;
+    const isSoulMarked = soulMark.stacks > 0;
+    const isSoulSevered = soulSever.stacks > 0;
+    const isChilled = chill.stacks > 0;
+    const isSlowed = slow.stacks > 0;
 
     if (prevHp.current != null && p.hp < prevHp.current - 0.05) {
       lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
@@ -188,7 +247,11 @@ export function PlayerHpBillboard({
       isBleeding ||
       rejuvenating ||
       isSilenced ||
-      isHoly
+      isHoly ||
+      isSoulMarked ||
+      isSoulSevered ||
+      isChilled ||
+      isSlowed
     ) {
       lingerUntil.current = now + COMBAT_ENGAGE_LINGER_MS;
     }
@@ -204,6 +267,10 @@ export function PlayerHpBillboard({
       rejuvenating ||
       isSilenced ||
       isHoly ||
+      isSoulMarked ||
+      isSoulSevered ||
+      isChilled ||
+      isSlowed ||
       now < lingerUntil.current;
 
     g.visible = show;
@@ -214,9 +281,16 @@ export function PlayerHpBillboard({
       if (rejBadge) rejBadge.style.display = "none";
       if (silBadge) silBadge.style.display = "none";
       if (hlyBadge) hlyBadge.style.display = "none";
+      if (smkBadge) smkBadge.style.display = "none";
+      if (soulSeverBadge.current) soulSeverBadge.current.style.display = "none";
+      if (chlBadge) chlBadge.style.display = "none";
+      if (slwBadge) slwBadge.style.display = "none";
+      if (hasteBadge.current) hasteBadge.current.style.display = "none";
       lastPoisonStacks.current = 0;
       lastBleedingStacks.current = 0;
       lastRejuvenationStacks.current = 0;
+      lastSoulMarkStacks.current = 0;
+      lastChillStacks.current = 0;
       return;
     }
 
@@ -252,6 +326,24 @@ export function PlayerHpBillboard({
     );
     syncSilenceBadge(silBadge, silenceRing.current, silence);
     syncHolyBadge(hlyBadge, holyRing.current, holy);
+    syncSoulMarkBadge(
+      smkBadge,
+      soulMarkStacksEl.current,
+      soulMarkRing.current,
+      soulMark,
+      lastSoulMarkStacks,
+    );
+    syncSoulSeverBadge(soulSeverBadge.current, soulSeverRing.current, soulSever);
+    syncChillBadge(
+      chlBadge,
+      chillStacksEl.current,
+      chillRing.current,
+      chill,
+      lastChillStacks,
+    );
+    syncSlowBadge(slwBadge, slowRing.current, slow);
+    syncHasteBadge(hasteBadge.current, hasteRing.current, haste);
+    syncRelayBadge(relayBadge.current, relayRing.current, relay);
 
     // Whole pips only up here. A partial sliver is unreadable at nameplate
     // size, and the question this bar answers is "what can they afford".
@@ -355,6 +447,20 @@ export function PlayerHpBillboard({
           silenceRingRef={silenceRing}
           holyBadgeRef={holyBadge}
           holyRingRef={holyRing}
+          soulMarkBadgeRef={soulMarkBadge}
+          soulMarkStacksRef={soulMarkStacksEl}
+          soulMarkRingRef={soulMarkRing}
+          soulSeverBadgeRef={soulSeverBadge}
+          soulSeverRingRef={soulSeverRing}
+          chillBadgeRef={chillBadge}
+          chillStacksRef={chillStacksEl}
+          chillRingRef={chillRing}
+          slowBadgeRef={slowBadge}
+          slowRingRef={slowRing}
+          hasteBadgeRef={hasteBadge}
+          hasteRingRef={hasteRing}
+          relayBadgeRef={relayBadge}
+          relayRingRef={relayRing}
         />
       </group>
     </Billboard>

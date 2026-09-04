@@ -31,6 +31,7 @@ import { PartyLobbyPanel } from "@/game/ui/PartyLobbyPanel";
 import { InvitePromptStack } from "@/game/ui/InvitePromptStack";
 import { HudIconButton } from "@/game/ui/HudIconButton";
 import { AbilityBar } from "@/game/ui/AbilityBar";
+import { CastBarHud } from "@/game/ui/CastBarHud";
 import { EmotePieHud } from "@/game/ui/EmotePieHud";
 import { StatusBar } from "@/game/ui/StatusBar";
 import { ConfirmDialog } from "@/game/ui/ConfirmDialog";
@@ -693,6 +694,8 @@ export const PlayScreen = () => {
             {playReady && !introPlaying && !isSpectator && (
                 <StatusBar room={room} sessionId={room?.sessionId ?? null} />
             )}
+
+            {playReady && !introPlaying && !isSpectator && <CastBarHud />}
 
             {playReady && !introPlaying && !isSpectator && (
                 <AbilityBar

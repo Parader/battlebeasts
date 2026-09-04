@@ -96,8 +96,10 @@ export type ProjectileSim = {
   /**
    * Sticky / ground fuse (Ice Lance). `flight` until contact, miss, or wall;
    * then `stuck` (follow target) or `grounded` until explodeIn elapses.
+   * Returning projectiles use `outbound` | `turning` | `returning`.
+   * Runic Shard shatter children use `fragment`.
    */
-  mode: "flight" | "stuck" | "grounded";
+  mode: "flight" | "stuck" | "grounded" | "outbound" | "turning" | "returning" | "fragment";
   /** Target id while mode === "stuck". */
   stuckTargetId: string | null;
   /** Seconds until detonation blast (active in stuck/grounded). */
@@ -116,6 +118,55 @@ export type ProjectileSim = {
    * Movement still applies.
    */
   armingIn: number;
+  /** returningProjectile — outbound / turning / returning leg. */
+  returnPhase?: "outbound" | "turning" | "returning";
+  /** Inbound leg damage (outbound uses `damage`). */
+  returnDamage?: number;
+  /** Targets already hit on the return leg. */
+  returnHitIds?: Set<string>;
+  /** Travel speed (world units / sec) for outbound + return. */
+  projectileSpeed?: number;
+  /** Outbound distance cap (world units). */
+  maxOutboundRange?: number;
+  /** Distance traveled this outbound leg. */
+  outboundTraveled?: number;
+  /** Countdown while paused at max range before return (seconds). */
+  turnDelayRemaining?: number;
+  /** Failsafe age limit (seconds). */
+  maxLifetimeSec?: number;
+  /** Catch radius toward live caster on return (world units). */
+  returnCatchRadius?: number;
+  /** Accumulated sim age (seconds). */
+  ageSec?: number;
+  /** Turn pause duration when entering turning phase (seconds). */
+  turnDelaySec?: number;
+  /** Runic Shard fragment — smaller crystal from a shatter. */
+  isRunicFragment?: boolean;
+  /**
+   * Shared hit counts for one shatter burst (targetId → hits).
+   * Caps focused damage via maxFragmentsPerTarget.
+   */
+  fragmentHitBudget?: Map<string, number>;
+  maxFragmentsPerTarget?: number;
+  /** Remaining manual shatter charges on a Runic Shard main projectile. */
+  shatterChargesRemaining?: number;
+  /** Server epoch ms — next shatter allowed at/after this time. */
+  shatterReadyAt?: number;
+  /** World spawn position (distance-scaled damage / pierce travel). */
+  spawnX?: number;
+  spawnZ?: number;
+  /** Continue after body hits (once per target). Walls still stop the shot. */
+  pierce?: boolean;
+  /**
+   * Ally-heal pierce: contact uses `canHeal` instead of `canHurt`.
+   * `damage` carries the heal amount for hit events.
+   */
+  healAllies?: boolean;
+  /** Soft floor before distance damage ramps. */
+  damageRampStartDistance?: number;
+  maxDamageDistance?: number;
+  minDamage?: number;
+  maxDamage?: number;
 };
 
 export type CombatFxEvent = {
@@ -358,6 +409,11 @@ export function createProjectile(
   const aura = def.aura === true;
   const hitRadius = def.radius ?? COMBAT.projectileHitRadius;
   const det = def.detonate;
+  const usesDistanceScale =
+    def.minDamage != null &&
+    def.maxDamage != null &&
+    def.maxDamage > def.minDamage;
+  const healAllies = def.healAllies === true;
   return {
     id,
     ownerId: owner.id,
@@ -366,7 +422,7 @@ export function createProjectile(
     z: spawn.z,
     vx: f.x * speed,
     vz: f.z * speed,
-    damage: def.damage,
+    damage: healAllies ? (def.heal ?? 0) : def.damage,
     hitRadius,
     life: maxRange / speed,
     hitIds: new Set(),
@@ -383,7 +439,246 @@ export function createProjectile(
     explodeRadius: det?.radius ?? 0,
     passBubbleIds: new Set(),
     armingIn: 0,
+    spawnX: spawn.x,
+    spawnZ: spawn.z,
+    pierce: def.pierce === true || healAllies,
+    healAllies,
+    ...(usesDistanceScale
+      ? {
+          minDamage: def.minDamage,
+          maxDamage: def.maxDamage,
+          maxDamageDistance: def.maxDamageDistance ?? maxRange,
+          damageRampStartDistance: def.damageRampStartDistance ?? 3,
+        }
+      : {}),
   };
+}
+
+export function isReturningProjectileSim(p: ProjectileSim): boolean {
+  return p.returnPhase != null;
+}
+
+/** Spawn a returning disc / boomerang projectile. */
+export function createReturningProjectile(
+  id: string,
+  owner: CombatBody,
+  def: AbilityDef,
+): ProjectileSim | null {
+  if (def.shape !== "projectile" || !def.returningProjectile) return null;
+  const cfg = def.returningProjectile;
+  const speed = def.speed ?? 15;
+  const f = facingVector(owner.yaw);
+  const spawnDist = def.spawnOffset ?? 0.32;
+  const spawn = pointInFront(owner, owner.yaw, spawnDist);
+  const maxRange = def.range > 0 ? def.range : 9;
+  const hitRadius = def.radius ?? COMBAT.projectileHitRadius;
+  const turnDelayMs = cfg.turnDelayMs ?? 70;
+  const maxLifetimeMs = cfg.maxLifetimeMs ?? 2200;
+  return {
+    id,
+    ownerId: owner.id,
+    abilityId: def.id,
+    x: spawn.x,
+    z: spawn.z,
+    vx: f.x * speed,
+    vz: f.z * speed,
+    damage: def.damage,
+    hitRadius,
+    life: maxRange / speed,
+    hitIds: new Set(),
+    returnHitIds: new Set(),
+    aura: false,
+    slowRadius: 0,
+    // Keep solid occlusion tight — hitRadius is for body contact only.
+    wallRadius: COMBAT.projectileHitRadius,
+    tickSec: 0.25,
+    tickAcc: 0,
+    mode: "outbound",
+    stuckTargetId: null,
+    explodeIn: 0,
+    explodeDamage: 0,
+    explodeRadius: 0,
+    passBubbleIds: new Set(),
+    // Brief grace so spawn next to the caster / props doesn't instantly turn.
+    armingIn: 0.08,
+    returnPhase: "outbound",
+    returnDamage: cfg.returnDamage,
+    projectileSpeed: speed,
+    maxOutboundRange: maxRange,
+    outboundTraveled: 0,
+    turnDelayRemaining: 0,
+    turnDelaySec: turnDelayMs / 1000,
+    maxLifetimeSec: maxLifetimeMs / 1000,
+    returnCatchRadius: cfg.returnCatchRadius ?? 0.6,
+    ageSec: 0,
+  };
+}
+
+/** Spawn a Runic Shard fragment along a yaw offset from the main shard's heading. */
+export function createRunicFragment(
+  id: string,
+  ownerId: string,
+  abilityId: string,
+  origin: Vec2,
+  yaw: number,
+  def: AbilityDef,
+  hitBudget: Map<string, number>,
+): ProjectileSim | null {
+  const cfg = def.runicShard;
+  if (!cfg) return null;
+  const speed = cfg.fragmentSpeed;
+  const f = facingVector(yaw);
+  const range = cfg.fragmentRange;
+  const hitRadius = cfg.fragmentRadius;
+  return {
+    id,
+    ownerId,
+    abilityId,
+    x: origin.x,
+    z: origin.z,
+    vx: f.x * speed,
+    vz: f.z * speed,
+    damage: cfg.fragmentDamage,
+    hitRadius,
+    life: range / Math.max(0.1, speed),
+    hitIds: new Set(),
+    aura: false,
+    slowRadius: 0,
+    wallRadius: COMBAT.projectileHitRadius,
+    tickSec: 0.25,
+    tickAcc: 0,
+    mode: "fragment",
+    stuckTargetId: null,
+    explodeIn: 0,
+    explodeDamage: 0,
+    explodeRadius: 0,
+    passBubbleIds: new Set(),
+    armingIn: 0.02,
+    isRunicFragment: true,
+    fragmentHitBudget: hitBudget,
+    maxFragmentsPerTarget: cfg.maxFragmentsPerTarget,
+  };
+}
+
+/** Evenly spaced yaw offsets for a shatter cone or full radial burst. */
+export function runicShardFragmentYaws(
+  baseYaw: number,
+  count: number,
+  coneDegrees: number,
+): number[] {
+  const n = Math.max(1, Math.floor(count));
+  if (n === 1) return [baseYaw];
+  const cone = Math.max(0, coneDegrees);
+  // Full circle: equal spacing with no duplicated endpoint.
+  if (cone >= 359.5) {
+    const step = (Math.PI * 2) / n;
+    return Array.from({ length: n }, (_, i) => baseYaw + i * step);
+  }
+  const half = ((cone * Math.PI) / 180) * 0.5;
+  const yaws: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    yaws.push(baseYaw - half + t * half * 2);
+  }
+  return yaws;
+}
+
+/** Even orbit slot offsets for `count` wisps (0, 2π/n, …). */
+export function orbitingWispSlotPhases(count: number): number[] {
+  const n = Math.max(1, Math.floor(count));
+  const step = (Math.PI * 2) / n;
+  return Array.from({ length: n }, (_, i) => i * step);
+}
+
+/**
+ * Evenly space `newCount` wisps while preserving the ring's current rotation.
+ * Rotates ideal slots so the last existing wisp moves least — avoids canceling
+ * the time-based spin when count changes.
+ */
+export function orbitingWispRetargetPhases(
+  currentPhases: readonly number[],
+  newCount: number,
+): number[] {
+  const ideal = orbitingWispSlotPhases(newCount);
+  if (currentPhases.length === 0) return ideal;
+  const lastIdx = Math.min(currentPhases.length, newCount) - 1;
+  const ringOffset = currentPhases[lastIdx]! - ideal[lastIdx]!;
+  return ideal.map((slot) => slot + ringOffset);
+}
+
+/**
+ * World position for an orbiting wisp.
+ * `orbitPhase` is the slot offset; rotation advances from absolute time.
+ */
+export function orbitingWispWorldPos(
+  ownerX: number,
+  ownerZ: number,
+  orbitPhase: number,
+  nowMs: number,
+  cfg: { radius: number; height: number; angularSpeed: number },
+): { x: number; y: number; z: number } {
+  const angle = (nowMs / 1000) * cfg.angularSpeed + orbitPhase;
+  return {
+    x: ownerX + Math.cos(angle) * cfg.radius,
+    y: cfg.height,
+    z: ownerZ + Math.sin(angle) * cfg.radius,
+  };
+}
+
+/** Shortest signed delta from `from` → `to` on a circle (radians). */
+export function shortestAngleDelta(from: number, to: number): number {
+  let d = (to - from) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+/**
+ * Exponential approach of `current` toward `target` on a circle.
+ * `halfLifeMs` is time to close half the gap.
+ */
+export function lerpOrbitPhase(
+  current: number,
+  target: number,
+  dtMs: number,
+  halfLifeMs: number,
+): number {
+  const hl = Math.max(1, halfLifeMs);
+  const alpha = 1 - Math.pow(0.5, Math.max(0, dtMs) / hl);
+  return current + shortestAngleDelta(current, target) * alpha;
+}
+
+/**
+ * Project a desired world position onto an astral tether disk.
+ * Preserves inward/tangential wish movement; stops only outward past `maxDistance`.
+ */
+export function constrainAstralTetherDesired(
+  casterX: number,
+  casterZ: number,
+  desiredX: number,
+  desiredZ: number,
+  maxDistance: number,
+): { x: number; z: number } {
+  const max = Math.max(0.01, maxDistance);
+  const dx = desiredX - casterX;
+  const dz = desiredZ - casterZ;
+  const dist = Math.hypot(dx, dz);
+  if (dist <= max || dist < 1e-6) return { x: desiredX, z: desiredZ };
+  const s = max / dist;
+  return { x: casterX + dx * s, z: casterZ + dz * s };
+}
+
+/**
+ * Clamp a target that is already outside the tether disk back onto the rim.
+ */
+export function clampAstralTetherPos(
+  casterX: number,
+  casterZ: number,
+  targetX: number,
+  targetZ: number,
+  maxDistance: number,
+): { x: number; z: number } {
+  return constrainAstralTetherDesired(casterX, casterZ, targetX, targetZ, maxDistance);
 }
 
 export function dashOffset(yaw: number, distance: number): Vec2 {
@@ -493,6 +788,63 @@ export function firewallWallPoints(
     });
   }
   return { mid, yaw: owner.yaw, halfLength, points };
+}
+
+/** Slipstream lane pose from caster feet along facing. */
+export type SlipstreamLane = {
+  origin: Vec2;
+  mid: Vec2;
+  end: Vec2;
+  yaw: number;
+  length: number;
+  halfWidth: number;
+};
+
+/**
+ * World-space wind lane: origin at caster, extending `length` along yaw.
+ * Width = 2 * halfWidth (default 1.8m).
+ */
+export function slipstreamLaneFromCast(
+  origin: Vec2,
+  yaw: number,
+  length: number,
+  halfWidth: number,
+): SlipstreamLane {
+  const len = Math.max(1, length);
+  const hw = Math.max(0.2, halfWidth);
+  const fx = Math.sin(yaw);
+  const fz = Math.cos(yaw);
+  const end = { x: origin.x + fx * len, z: origin.z + fz * len };
+  const mid = { x: origin.x + fx * (len * 0.5), z: origin.z + fz * (len * 0.5) };
+  return { origin: { x: origin.x, z: origin.z }, mid, end, yaw, length: len, halfWidth: hw };
+}
+
+/**
+ * Point-in-lane test (XZ oriented rectangle). Softens edges by `targetRadius`.
+ */
+export function pointInSlipstreamLane(
+  lane: {
+    originX: number;
+    originZ: number;
+    yaw: number;
+    length: number;
+    halfWidth: number;
+  },
+  target: Vec2,
+  targetRadius = COMBAT.auraFootRadius,
+): boolean {
+  const dx = target.x - lane.originX;
+  const dz = target.z - lane.originZ;
+  const fx = Math.sin(lane.yaw);
+  const fz = Math.cos(lane.yaw);
+  const along = dx * fx + dz * fz;
+  const across = dx * fz - dz * fx;
+  const soft = Math.max(0, targetRadius);
+  return (
+    along >= -soft &&
+    along <= lane.length + soft &&
+    Math.abs(across) <= lane.halfWidth + soft
+  );
 }
 
 /**
@@ -896,6 +1248,8 @@ export function tickProjectiles(
    */
   circles: readonly CircleCollider[] = [],
   boxes: readonly BoxCollider[] = [],
+  /** Ally-heal pierce projectiles (Blooming Path). Defaults to never. */
+  canHeal: (ownerId: string, targetId: string) => boolean = () => false,
 ): ProjectileTickResult {
   const removedIds: string[] = [];
   const hits: ProjectileHitEvent[] = [];
@@ -1064,32 +1418,274 @@ export function tickProjectiles(
       if (body.id === p.ownerId) continue;
       if (p.hitIds.has(body.id)) continue;
       if (body.vulnerable === false || body.hp <= 0) continue;
-      if (!canHurt(p.ownerId, body.id)) continue;
+      if (p.healAllies) {
+        if (!canHeal(p.ownerId, body.id)) continue;
+      } else if (!canHurt(p.ownerId, body.id)) {
+        continue;
+      }
       if (!circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, hitRadiusOf(body))) {
         continue;
       }
+      // Runic shatter: cap how many fragments from one burst can hit the same target.
+      if (p.isRunicFragment && p.fragmentHitBudget) {
+        const used = p.fragmentHitBudget.get(body.id) ?? 0;
+        if (used >= (p.maxFragmentsPerTarget ?? 3)) continue;
+        p.fragmentHitBudget.set(body.id, used + 1);
+      }
       p.hitIds.add(body.id);
-      const hpAfter = Math.max(0, body.hp - p.damage);
+      let hitDamage = p.damage;
+      if (
+        p.minDamage != null &&
+        p.maxDamage != null &&
+        p.maxDamage > p.minDamage
+      ) {
+        const travel = Math.hypot(
+          p.x - (p.spawnX ?? p.x),
+          p.z - (p.spawnZ ?? p.z),
+        );
+        const rampStart = p.damageRampStartDistance ?? 3;
+        const rampEnd = p.maxDamageDistance ?? 14;
+        const t = Math.max(
+          0,
+          Math.min(1, (travel - rampStart) / Math.max(1e-4, rampEnd - rampStart)),
+        );
+        hitDamage = Math.round(p.minDamage + (p.maxDamage - p.minDamage) * t);
+      }
+      const hpAfter = Math.max(0, body.hp - hitDamage);
       hits.push({
         projectileId: p.id,
         ownerId: p.ownerId,
         abilityId: p.abilityId,
         targetId: body.id,
-        damage: p.damage,
+        damage: hitDamage,
         hpAfter,
         x: body.x,
         z: body.z,
       });
       if (canDetonate) {
         armDetonate(p, fuseSec, "stuck", body.id);
-      } else {
-        removedIds.push(p.id);
+        break;
       }
+      if (p.pierce) {
+        // Keep flying; allow further targets this tick / later frames.
+        continue;
+      }
+      removedIds.push(p.id);
       break;
     }
   }
 
   return { removedIds: [...new Set(removedIds)], hits, slows, explodes, wallHits };
+}
+
+/** Advance returning projectiles (outbound pierce → turn → homing return). */
+export function tickReturningProjectiles(
+  projectiles: ProjectileSim[],
+  dt: number,
+  bodies: CombatBody[],
+  canHurt: (ownerId: string, targetId: string) => boolean,
+  walls: readonly WallCollider[] = [],
+  protectionBubbles: readonly ProtectionBubbleCollider[] = [],
+  circles: readonly CircleCollider[] = [],
+  boxes: readonly BoxCollider[] = [],
+): ProjectileTickResult {
+  const removedIds: string[] = [];
+  const hits: ProjectileHitEvent[] = [];
+  const wallHits: ProjectileWallHitEvent[] = [];
+  const bodyById = new Map<string, CombatBody>();
+  for (const b of bodies) bodyById.set(b.id, b);
+
+  const beginTurn = (p: ProjectileSim) => {
+    p.returnPhase = "turning";
+    p.mode = "turning";
+    p.vx = 0;
+    p.vz = 0;
+    p.turnDelayRemaining = p.turnDelaySec ?? 0.07;
+  };
+
+  for (const p of projectiles) {
+    if (!p.returnPhase) continue;
+
+    p.ageSec = (p.ageSec ?? 0) + dt;
+    if ((p.maxLifetimeSec ?? 2.2) > 0 && p.ageSec >= (p.maxLifetimeSec ?? 2.2)) {
+      removedIds.push(p.id);
+      continue;
+    }
+
+    const owner = bodyById.get(p.ownerId);
+    if (!owner || owner.hp <= 0) {
+      removedIds.push(p.id);
+      continue;
+    }
+
+    const speed = p.projectileSpeed ?? 15;
+
+    if (p.returnPhase === "turning") {
+      p.turnDelayRemaining = Math.max(0, (p.turnDelayRemaining ?? 0) - dt);
+      if (p.turnDelayRemaining <= 0) {
+        p.returnPhase = "returning";
+        p.mode = "returning";
+        const dir = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
+        p.vx = dir.x * speed;
+        p.vz = dir.z * speed;
+      }
+      continue;
+    }
+
+    const fromX = p.x;
+    const fromZ = p.z;
+
+    if (p.returnPhase === "outbound") {
+      p.x += p.vx * dt;
+      p.z += p.vz * dt;
+      p.life -= dt;
+      const stepDist = Math.hypot(p.x - fromX, p.z - fromZ);
+      p.outboundTraveled = (p.outboundTraveled ?? 0) + stepDist;
+
+      if (p.armingIn > 0) {
+        p.armingIn = Math.max(0, p.armingIn - dt);
+        continue;
+      }
+
+      const hitWall =
+        (walls.length > 0 || circles.length > 0 || boxes.length > 0) &&
+        projectileHitsSolids(fromX, fromZ, p.x, p.z, p.wallRadius, walls, circles, boxes);
+      const hitBubble =
+        !hitWall &&
+        protectionBubbles.length > 0
+          ? projectileHitsProtectionBubbles(
+              fromX,
+              fromZ,
+              p.x,
+              p.z,
+              p.wallRadius,
+              protectionBubbles,
+              p.passBubbleIds,
+            )
+          : null;
+
+      if (hitWall || hitBubble) {
+        p.x = fromX;
+        p.z = fromZ;
+        if (hitBubble?.id) {
+          wallHits.push({
+            projectileId: p.id,
+            ownerId: p.ownerId,
+            abilityId: p.abilityId,
+            x: fromX,
+            z: fromZ,
+            blockBubbleId: hitBubble.id,
+          });
+        }
+        beginTurn(p);
+        continue;
+      }
+
+      if (p.life <= 0 || (p.outboundTraveled ?? 0) >= (p.maxOutboundRange ?? 9)) {
+        beginTurn(p);
+      }
+
+      for (const body of bodies) {
+        if (body.id === p.ownerId) continue;
+        if (p.hitIds.has(body.id)) continue;
+        if (body.vulnerable === false || body.hp <= 0) continue;
+        if (!canHurt(p.ownerId, body.id)) continue;
+        if (!circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, hitRadiusOf(body))) {
+          continue;
+        }
+        p.hitIds.add(body.id);
+        const hpAfter = Math.max(0, body.hp - p.damage);
+        hits.push({
+          projectileId: p.id,
+          ownerId: p.ownerId,
+          abilityId: p.abilityId,
+          targetId: body.id,
+          damage: p.damage,
+          hpAfter,
+          x: body.x,
+          z: body.z,
+        });
+      }
+      continue;
+    }
+
+    // --- Returning leg ---
+    const dir = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
+    p.vx = dir.x * speed;
+    p.vz = dir.z * speed;
+    p.x += p.vx * dt;
+    p.z += p.vz * dt;
+
+    // Catch vs caster center only — do not add player hit radius (spawn sits
+    // inside that inflated disc and would despawn on a near-spawn turnaround).
+    const catchR = p.returnCatchRadius ?? 0.6;
+    const toOwner = Math.hypot(p.x - owner.x, p.z - owner.z);
+    if (toOwner <= catchR) {
+      removedIds.push(p.id);
+      continue;
+    }
+
+    const hitWall =
+      (walls.length > 0 || circles.length > 0 || boxes.length > 0) &&
+      projectileHitsSolids(fromX, fromZ, p.x, p.z, p.wallRadius, walls, circles, boxes);
+    const hitBubble =
+      !hitWall &&
+      protectionBubbles.length > 0
+        ? projectileHitsProtectionBubbles(
+            fromX,
+            fromZ,
+            p.x,
+            p.z,
+            p.wallRadius,
+            protectionBubbles,
+            p.passBubbleIds,
+          )
+        : null;
+    if (hitWall || hitBubble) {
+      removedIds.push(p.id);
+      wallHits.push({
+        projectileId: p.id,
+        ownerId: p.ownerId,
+        abilityId: p.abilityId,
+        x: fromX,
+        z: fromZ,
+        blockBubbleId: hitBubble?.id,
+      });
+      continue;
+    }
+
+    const returnDmg = p.returnDamage ?? p.damage;
+    const returnHits = p.returnHitIds ?? p.hitIds;
+    for (const body of bodies) {
+      if (body.id === p.ownerId) continue;
+      if (returnHits.has(body.id)) continue;
+      if (body.vulnerable === false || body.hp <= 0) continue;
+      if (!canHurt(p.ownerId, body.id)) continue;
+      if (!circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, hitRadiusOf(body))) {
+        continue;
+      }
+      returnHits.add(body.id);
+      const hpAfter = Math.max(0, body.hp - returnDmg);
+      hits.push({
+        projectileId: p.id,
+        ownerId: p.ownerId,
+        abilityId: p.abilityId,
+        targetId: body.id,
+        damage: returnDmg,
+        hpAfter,
+        x: body.x,
+        z: body.z,
+      });
+    }
+  }
+
+  return {
+    removedIds: [...new Set(removedIds)],
+    hits,
+    slows: [],
+    explodes: [],
+    wallHits,
+  };
 }
 
 export function abilityOrThrow(id: string): AbilityDef {

@@ -14,6 +14,17 @@ export type PatchNote = {
  */
 export const PATCH_NOTES: readonly PatchNote[] = [
   {
+    id: "2026-09-04-new-spells-blooming",
+    title: "Blooming Path & new spell wave",
+    date: "2026-09-04",
+    highlights: [
+      "Blooming Path (E): slow ground vine — stand in the corridor to heal yourself and allies (20 every 0.5s) while it grows and lingers",
+      "New kit spells: Soul Mark, Void Disc, Runic Shard, Orbiting Wisp, Astral Chain, Underground Pulse, Slipstream, Soul Relay, Crushing Sigil",
+      "E-slot additions: Gravity Well, Prism Lance, Soul Sever, Arc Blade",
+      "Cast bar HUD, status ornaments, and spell VFX/icon polish across the new set",
+    ],
+  },
+  {
     id: "2026-08-03-wave-assault",
     title: "Wave Assault (PvE)",
     date: "2026-08-03",

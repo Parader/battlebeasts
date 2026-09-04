@@ -210,12 +210,16 @@ export function dispatchCombatFxVfx(
   if (msg.kind === "hit" && onHit === "catalogImpact") {
     const hitY = getAbilityVfxProfile(msg.abilityId).combatFx?.hitY ?? 0.7;
     const yaw = resolveOwnerYaw(msg, ctx, 0);
-    spawnImpactEffect(msg.abilityId, {
-      x: msg.x,
-      z: msg.z,
-      y: hitY,
-      yaw,
-    });
+    spawnImpactEffect(
+      msg.abilityId,
+      {
+        x: msg.x,
+        z: msg.z,
+        y: hitY,
+        yaw,
+      },
+      { variant: msg.variant, lifeMs: msg.abilityId === "arcBlade" ? 220 : undefined },
+    );
   }
 
   return { handledPortal: false };

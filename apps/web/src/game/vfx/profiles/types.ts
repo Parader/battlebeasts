@@ -25,6 +25,17 @@ export type CombatFxAoeMode =
   | "lifeLeech"
   | "volcano"
   | "arcThread"
+  | "soulMark"
+  | "runicShard"
+  | "astralChain"
+  | "undergroundPulse"
+  | "slipstream"
+  | "soulRelay"
+  | "crushingSigil"
+  | "gravityWell"
+  | "soulSever"
+  | "arcBlade"
+  | "bloomingPath"
   | "none";
 
 export type CombatFxDashMode = "bloodRushTrail" | "spiritForm" | "none";

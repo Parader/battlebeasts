@@ -1,5 +1,5 @@
 import { combatMag } from "./combatMagnitude";
-import { frostChillSlowPercent, getStatus, type StatusApplication } from "./statuses";
+import { getStatus, statusStackSlowPercent, type StatusApplication } from "./statuses";
 
 export type AbilityShape = "projectile" | "aoe" | "dash" | "melee" | "buff";
 
@@ -162,7 +162,18 @@ export type AbilityEffectKind =
   | "spiritForm"
   | "riftFissure"
   | "fireball"
-  | "arcThread";
+  | "arcThread"
+  | "soulMark"
+  | "returningProjectile"
+  | "runicShard"
+  | "orbitingWisp"
+  | "astralChain"
+  | "slipstream"
+  | "soulRelay"
+  | "prismLance"
+  | "soulSever"
+  | "arcBlade"
+  | "bloomingPath";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
 export type SpellTag =
@@ -226,6 +237,60 @@ export type SpellTag =
   | "Resource"
   | "SpellSlot";
 
+/** Config for `effectKind: "returningProjectile"`. */
+export type ReturningProjectileConfig = {
+  /** Inbound leg damage (outbound uses `damage`). */
+  returnDamage: number;
+  /** Max live projectiles from this ability per caster (default 1). */
+  maxActivePerCaster?: number;
+  /** Failsafe despawn (ms). */
+  maxLifetimeMs?: number;
+  /** Pause at max range before homing return (ms). */
+  turnDelayMs?: number;
+  /** Despawn when within this distance of the live caster (world units). */
+  returnCatchRadius?: number;
+};
+
+/** Config for `effectKind: "runicShard"`. */
+export type RunicShardConfig = {
+  fragmentCount: number;
+  fragmentDamage: number;
+  fragmentRange: number;
+  fragmentSpeed: number;
+  fragmentRadius: number;
+  /**
+   * Fragment spread in degrees. Use 360 for a full radial burst;
+   * smaller values are a forward cone centered on travel yaw.
+   */
+  fragmentConeDegrees: number;
+  /** Cap hits from one shatter on a single target. */
+  maxFragmentsPerTarget: number;
+  /** Max live main shards per caster (default 1). */
+  maxActivePerCaster?: number;
+  /** Manual shatter charges per main shard (default 1). */
+  shatterCharges?: number;
+  /** Min ms between successive shatters on the same shard. */
+  shatterArmingMs?: number;
+};
+
+/**
+ * Config for `effectKind: "orbitingWisp"` — reusable orbiting entity params.
+ * Keep generic so blades / motes / shields can share the same sim later.
+ */
+export type OrbitingWispConfig = {
+  maxCount: number;
+  durationMs: number;
+  radius: number;
+  height: number;
+  /** Radians per second. */
+  angularSpeed: number;
+  collisionRadius: number;
+  /** Ms after spawn before collision is armed (hand → orbit spiral). */
+  armingMs?: number;
+  /** Smooth redistribute half-life toward even spacing (ms). */
+  redistributeMs?: number;
+};
+
 export interface AbilityDef {
   id: string;
   name: string;
@@ -239,6 +304,50 @@ export interface AbilityDef {
   /** Tags for talent hooks (design + runtime matching). */
   tags?: readonly SpellTag[];
   damage: number;
+  /**
+   * Soft floor for distance-scaled projectiles (Prism Lance).
+   * Ramp starts after `damageRampStartDistance`; full power at `maxDamageDistance`.
+   */
+  minDamage?: number;
+  /** Cap damage for distance-scaled projectiles. */
+  maxDamage?: number;
+  /** Travel distance (m from spawn) where damage reaches `maxDamage`. */
+  maxDamageDistance?: number;
+  /** Soft floor before damage ramps (default 3 for Prism Lance). */
+  damageRampStartDistance?: number;
+  /**
+   * Soul Sever: delay before the snap resolves (ms).
+   * Secondary damage uses displacement from the hit origin.
+   */
+  severDurationMs?: number;
+  severMinDamage?: number;
+  severMaxDamage?: number;
+  /** Displacement (m) at which sever snap deals `severMaxDamage`. */
+  severMaxDistance?: number;
+  /**
+   * Arc Blade: planar distance used for outer-edge VFX emphasis (aim + spin ribbon).
+   * Damage is per-hit via `damageByHit`, not distance bands.
+   */
+  outerEdgeStartRadius?: number;
+  /**
+   * Per-hit damage for multi-pulse spells (Arc Blade). Indexed 0-based.
+   * When set, overrides flat `damage` for that pulse.
+   */
+  damageByHit?: number[];
+  /** Arc Blade: consecutive spin snapshots (default 1). */
+  hitCount?: number;
+  /** Arc Blade: delay between consecutive spin hits (ms). */
+  hitIntervalMs?: number;
+  /**
+   * Ally-heal pierce projectile (Blooming Path): contact uses heal filter,
+   * not damage; `heal` is applied in pulses (`healTicks` × `tickMs`).
+   */
+  healAllies?: boolean;
+  /**
+   * Contact projectile continues after hitting a body (once per target via hitIds).
+   * Still stops on walls / protection discs.
+   */
+  pierce?: boolean;
   /** Instant heal amount per tick (self-centered AoE support spells). */
   heal?: number;
   /** Number of heal pulses over the channel (Groove). */
@@ -263,6 +372,33 @@ export interface AbilityDef {
   threadDurationMs?: number;
   /** Arc Thread: max aim angle off-target (degrees) before the tether snaps. */
   threadAimToleranceDegrees?: number;
+  /** Soul Mark: max stacks before the next hit triggers Soul Rupture. */
+  soulMarkMaxStacks?: number;
+  /** Soul Mark: stack duration (ms); refreshed on each stack. */
+  soulMarkDurationMs?: number;
+  /** Soul Mark: bonus damage when rupturing a fully marked target. */
+  ruptureDamage?: number;
+  /**
+   * Returning projectile (Void Disc, boomerangs, …) — outbound pierce + homing return.
+   * Requires `effectKind: "returningProjectile"`.
+   */
+  returningProjectile?: ReturningProjectileConfig;
+  /**
+   * Runic Shard — main projectile + manual shatter into forward fragments.
+   * Requires `effectKind: "runicShard"`.
+   */
+  runicShard?: RunicShardConfig;
+  /**
+   * Orbiting Wisp — persistent orbiting entities that collide for damage.
+   * Requires `effectKind: "orbitingWisp"`.
+   */
+  orbitingWisp?: OrbitingWispConfig;
+  /** Astral Chain: tether lifetime after projectile impact (ms). */
+  tetherDurationMs?: number;
+  /** Astral Chain: caster move mul while the tether is active. */
+  casterMoveMulWhileTethered?: number;
+  /** Astral Chain: soft overshoot before hard clamp (m). */
+  tetherBreakGraceDistance?: number;
   /**
    * If set, a hit on a target at or below this HP fraction (0–1)
    * deals their remaining HP instead (execute). Blood Rush uses 0.25.
@@ -291,6 +427,13 @@ export interface AbilityDef {
     damage: number;
     radius: number;
   };
+  /**
+   * Ground AoE (`shape: "aoe"`): place a telegraph at impact, then deal `damage`
+   * once after this delay. No damage on place. Effect stays if the caster is
+   * interrupted afterward. Optional `pull` / `knockback` apply on the delayed
+   * pulse (pull toward AoE center). Mines / delayed runes / markers reuse this.
+   */
+  delayedImpactMs?: number;
   /** Optional hit-chain before cooldown (LMB flurries). */
   combo?: AbilityCombo;
   /**
@@ -651,6 +794,272 @@ export const ARC_THREAD_CAST = {
 } as const;
 
 /**
+ * Astral Chain (RMB) — projectile hook that tethers caster↔target.
+ * Max separation = distance at impact (min 1.5m). Caster slowed while tethered.
+ */
+export const ASTRAL_CHAIN_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 11500,
+  range: 9.5,
+  speed: 20,
+  radius: 0.32,
+  spawnOffset: 0.55,
+  tetherDurationMs: 3000,
+  /** Floor for captured tether length (avoids near-zero leashes). */
+  minTetherDistance: 1.5,
+  casterMoveMulWhileTethered: 0.75,
+  tetherBreakGraceDistance: 0.35,
+  /**
+   * When caster walks outward past max range, fraction of excess separation
+   * applied as a tug on the target each tick (1 = hard leash).
+   */
+  casterPullStrength: 0.16,
+  /** Soft stretch past max before hard clamp (m). */
+  softStretchMeters: 1.35,
+  handY: 1.15,
+} as const;
+
+/**
+ * Underground Pulse (RMB) — compact ground vine burst + short slow.
+ * One-shot AoE; not a persistent zone.
+ */
+export const UNDERGROUND_PULSE_CAST = {
+  unlockCostEssence: 90,
+  cooldownMs: 4500,
+  range: 9,
+  radius: 2.2,
+  /** Visual seed telegraph before vines (client timing cue). */
+  seedMs: 100,
+  handY: 0.05,
+} as const;
+
+/**
+ * Slipstream (RMB) — world-space wind lane. Move through it for haste;
+ * exit (after a brief dwell) grants Tailwind for a faster next cast.
+ */
+export const SLIPSTREAM_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 8000,
+  /** Lane length / cast range (m). */
+  range: 9,
+  length: 9,
+  /** Half-width of the lane (total width 2.8m). */
+  halfWidth: 1.4,
+  zoneDurationMs: 3000,
+  /** Cumulative time inside before exit can grant Tailwind. */
+  qualifyMs: 250,
+  /** Movement while standing in the lane. */
+  hasteMoveMul: 1.3,
+  /** Tailwind anticipation scale (0.75 = 25% shorter windup). */
+  tailwindAnticipationMul: 0.75,
+} as const;
+
+/**
+ * Soul Relay — Harmony-oriented RMB.
+ * Small bind heal, then your next direct damaging hit heals the linked target for the damage dealt.
+ */
+export const SOUL_RELAY_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 7000,
+  range: 8.5,
+  speed: 20,
+  radius: 0.35,
+  spawnOffset: 0.5,
+  /** Small heal on bind. */
+  initialHeal: combatMag(4),
+  relayDurationMs: 3500,
+  /** Follow-up heal = damage dealt, at least this much. */
+  relayHealMin: combatMag(8),
+  /** Follow-up heal as a fraction of the triggering hit. */
+  relayHealMul: 1,
+} as const;
+
+/**
+ * Crushing Sigil — delayed ground rune burst (RMB).
+ * Place → wait → collapse → single heavy AoE. No slow / DoT / lingering zone.
+ * Uses Standing 1H Cast Spell 01 (same clip as Barrier); release ≈ stamp.
+ */
+export const CRUSHING_SIGIL_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 7000,
+  range: 10,
+  radius: 1.45,
+  /** Fuse after placement before the single damage pulse. */
+  delayedImpactMs: 800,
+  /** Client VFX: charge + detonation residue after fuse. */
+  vfxLifeMs: 800 + 380,
+  fps: 30,
+  /** Frame when the hand stamps / sigil should appear. */
+  releaseFrame: 24,
+  clipDurationSec: 2.3,
+  /** Faster than Barrier, still enough of the clip to read. */
+  playbackRate: 1.4,
+  recoveryMs: 140,
+} as const;
+
+function crushingSigilReleaseWallMs(): number {
+  return (
+    (CRUSHING_SIGIL_CAST.releaseFrame /
+      CRUSHING_SIGIL_CAST.fps /
+      CRUSHING_SIGIL_CAST.playbackRate) *
+    1000
+  );
+}
+
+function crushingSigilRecoveryWallMs(): number {
+  return CRUSHING_SIGIL_CAST.recoveryMs;
+}
+
+/**
+ * Gravity Well (E) — delayed ground singularity snap-pull.
+ * Place seed → short fuse → one damage + radial pull toward center. No linger.
+ */
+export const GRAVITY_WELL_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 9500,
+  range: 10,
+  radius: 3.5,
+  /** Fuse after placement before the single damage + pull pulse. */
+  delayedImpactMs: 300,
+  pull: 2.85,
+  pullMs: 280,
+  pullStopDistance: 0.65,
+  /** Client VFX: seed charge + collapse residue after fuse. */
+  vfxLifeMs: 300 + 400,
+} as const;
+
+/**
+ * Prism Lance (E) — thin fast piercing skillshot; damage scales with travel from spawn.
+ * Anim: Standing 2H Magic Attack 04 (same clip as Heal Beam); lance fires at releaseFrame.
+ */
+export const PRISM_LANCE_CAST = {
+  unlockCostEssence: 110,
+  cooldownMs: 8500,
+  range: 20,
+  speed: 22,
+  radius: 0.2,
+  spawnOffset: 0.7,
+  minDamage: combatMag(8),
+  maxDamage: combatMag(24),
+  /** Soft floor before ramp (m from spawn). */
+  damageRampStartDistance: 3,
+  maxDamageDistance: 20,
+  fps: 30,
+  /** Forward thrust / beam start frame on Standing 2H Magic Attack 04. */
+  releaseFrame: 32,
+  /**
+   * Faster than Heal Beam so the cast still reads, but slow enough that the
+   * windup + thrust play before the lance leaves the hands (~760ms wall).
+   */
+  playbackRate: 1.4,
+  recoveryMs: 140,
+} as const;
+
+function prismLanceReleaseWallMs(): number {
+  return (
+    (PRISM_LANCE_CAST.releaseFrame /
+      PRISM_LANCE_CAST.fps /
+      PRISM_LANCE_CAST.playbackRate) *
+    1000
+  );
+}
+
+function prismLanceRecoveryWallMs(): number {
+  return PRISM_LANCE_CAST.recoveryMs;
+}
+
+/**
+ * Soul Sever (E) — hit stores a soul imprint; snap damage scales with displacement.
+ * Anim: Right Hook (castPoisonDart).
+ */
+export const SOUL_SEVER_CAST = {
+  unlockCostEssence: 110,
+  cooldownMs: 9000,
+  range: 11,
+  speed: 20,
+  radius: 0.3,
+  spawnOffset: 0.55,
+  /** Initial contact damage. */
+  hitDamage: combatMag(1),
+  /** Longer window so displacement reads as positional debt, not a blink. */
+  severDurationMs: 2200,
+  severMinDamage: combatMag(1),
+  severMaxDamage: combatMag(30),
+  severMaxDistance: 7,
+} as const;
+
+/** Snap damage from displacement away from the sever origin (not path length). */
+export function soulSeverSnapDamage(displacement: number): number {
+  const maxDist = SOUL_SEVER_CAST.severMaxDistance;
+  const t = Math.max(0, Math.min(1, displacement / Math.max(1e-4, maxDist)));
+  const min = SOUL_SEVER_CAST.severMinDamage;
+  const max = SOUL_SEVER_CAST.severMaxDamage;
+  return Math.round(min + (max - min) * t);
+}
+
+/**
+ * Arc Blade (E) — fast self-centered 360° magical spin; three consecutive hits.
+ * Anim: Dual Weapon Combo (attack_combo).
+ */
+export const ARC_BLADE_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 6500,
+  range: 0,
+  /** Fallback / first-hit damage when `damageByHit` is absent. */
+  damage: combatMag(6),
+  radius: 2.55,
+  /** Visual outer-band start (VFX / aim telegraph). */
+  outerEdgeStartRadius: 1.5,
+  /** Consecutive self-centered snapshots while spinning. */
+  hitCount: 3,
+  /** Delay between consecutive spin hits (ms). */
+  hitIntervalMs: 110,
+  /** Per-hit damage (hit 1 / 2 / 3). */
+  damageByHit: [combatMag(6), combatMag(6), combatMag(8)] as const,
+} as const;
+
+/** Arc Blade damage for the Nth spin hit (0-based). */
+export function arcBladeHitDamage(hitIndex0Based: number): number {
+  const arr = ARC_BLADE_CAST.damageByHit;
+  const i = Math.min(Math.max(0, hitIndex0Based), arr.length - 1);
+  return arr[i] ?? ARC_BLADE_CAST.damage;
+}
+
+/**
+ * Blooming Path (E) — slow ground vine skillshot; heals you and allies standing in the corridor.
+ * Anim: Standing 1H Cast Spell 01 (castBarrier).
+ */
+export const BLOOMING_PATH_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 8000,
+  range: 10.5,
+  /** Heal amount per tick while standing in the vine. */
+  heal: combatMag(2),
+  /** Delay between corridor heal ticks (ms). */
+  healTickMs: 500,
+  /** Tip travel speed — very slow so the vine reads as a growing path. */
+  speed: 4.5,
+  /** Half-width ~0.55 → ~1.1m total corridor. */
+  radius: 0.55,
+  spawnOffset: 0.35,
+  /** How long the laid path stays after the tip despawns (ms). */
+  trailLingerMs: 3200,
+} as const;
+
+/** Damage from distance traveled since projectile spawn (not caster position). */
+export function prismLanceDamage(travelDistance: number): number {
+  const rampStart = PRISM_LANCE_CAST.damageRampStartDistance;
+  const rampEnd = PRISM_LANCE_CAST.maxDamageDistance;
+  const t = Math.max(
+    0,
+    Math.min(1, (travelDistance - rampStart) / Math.max(1e-4, rampEnd - rampStart)),
+  );
+  const min = PRISM_LANCE_CAST.minDamage;
+  const max = PRISM_LANCE_CAST.maxDamage;
+  return Math.round(min + (max - min) * t);
+}
+
+/**
  * Standing 1H Magic Attack 02 (hero.glb) @ 30fps.
  * Frame 19 = frost ball release.
  */
@@ -665,6 +1074,41 @@ export const FROST_BALL_CAST = {
   /** World Y for hand charge / projectile orb. */
   handY: 1.18,
 } as const;
+
+/**
+ * Soul Mark (LMB) — medium projectile that stacks marks; 4th hit ruptures.
+ * Anim: Standing 1H Magic Attack 02 (castFrost) — same clip as Frost Ball, sped up.
+ */
+export const SOUL_MARK_CAST = {
+  unlockCostEssence: 90,
+  cooldownMs: 600,
+  range: 11,
+  speed: 19,
+  spawnOffset: 0.55,
+  radius: 0.32,
+  soulMarkMaxStacks: 3,
+  soulMarkDurationMs: 4000,
+  handY: BOLT_CAST.handY,
+  fps: FROST_BALL_CAST.fps,
+  releaseFrame: FROST_BALL_CAST.releaseFrame,
+  clipDurationSec: FROST_BALL_CAST.clipDurationSec,
+  /** Faster than Frost Ball — release frame unchanged; recovery is CD-paced on server. */
+  playbackRate: 1.65,
+} as const;
+
+function soulMarkReleaseWallMs(): number {
+  return (
+    (SOUL_MARK_CAST.releaseFrame /
+      SOUL_MARK_CAST.fps /
+      SOUL_MARK_CAST.playbackRate) *
+    1000
+  );
+}
+
+/** Brief follow-through after release — cast lock must not outlast cooldown. */
+function soulMarkRecoveryWallMs(): number {
+  return 100;
+}
 
 function frostBallReleaseWallMs(): number {
   return (
@@ -704,6 +1148,29 @@ function poisonDartReleaseWallMs(): number {
 function poisonDartRecoveryWallMs(): number {
   return 90;
 }
+
+/**
+ * Void Disc (LMB) — side-arm throw; disc returns to the caster's live position.
+ * Anim: Right Hook (same clip as Poison Dart / Silence Sweep).
+ */
+export const VOID_DISC_CAST = {
+  unlockCostEssence: 100,
+  /** Covers outbound + turn + return (~1.3s standing) with a little cast padding. */
+  cooldownMs: 1550,
+  range: 9,
+  speed: 15,
+  spawnOffset: 0.65,
+  radius: 0.55,
+  maxActivePerCaster: 1,
+  maxLifetimeMs: 2800,
+  turnDelayMs: 70,
+  returnCatchRadius: 0.6,
+  fps: POISON_DART_CAST.fps,
+  releaseFrame: POISON_DART_CAST.releaseFrame,
+  clipDurationSec: POISON_DART_CAST.clipDurationSec,
+  playbackRate: POISON_DART_CAST.playbackRate,
+  handY: POISON_DART_CAST.handY,
+} as const;
 
 /**
  * Silence Sweep (E) — Right Hook slash of cursed shadow.
@@ -773,6 +1240,61 @@ function iceLanceReleaseWallMs(): number {
 function iceLanceRecoveryWallMs(): number {
   return 180;
 }
+
+/**
+ * Runic Shard (LMB) — narrow crystal; recast while traveling shatters into a forward cone.
+ * Anim: Baseball Pitching (same clip as Ice Lance), sped for a snappy throw.
+ */
+export const RUNIC_SHARD_CAST = {
+  unlockCostEssence: 100,
+  /** Slightly longer — new throw blocked until prior volley clears anyway. */
+  cooldownMs: 1200,
+  range: 12.5,
+  /** Slow travel so double-shatter timing is readable. */
+  speed: 5,
+  spawnOffset: 0.6,
+  radius: 0.28,
+  fragmentCount: 12,
+  fragmentRange: 4.5,
+  fragmentSpeed: 21,
+  fragmentRadius: 0.22,
+  /** Full radial burst on shatter. */
+  fragmentConeDegrees: 360,
+  maxFragmentsPerTarget: 3,
+  maxActivePerCaster: 1,
+  /** Recast twice while the main shard is alive. */
+  shatterCharges: 2,
+  /** Min gap between shatters so hold-LMB can't double-consume. */
+  shatterArmingMs: 320,
+  fps: ICE_LANCE_CAST.fps,
+  releaseFrame: ICE_LANCE_CAST.releaseFrame,
+  clipDurationSec: ICE_LANCE_CAST.clipDurationSec,
+  /** Compress Baseball Pitching toward a fast LMB throw. */
+  playbackRate: 3.6,
+  handY: ICE_LANCE_CAST.handY,
+} as const;
+
+/**
+ * Orbiting Wisp (LMB) — summon a violet spirit that orbits the caster.
+ * Up to 4; extra casts replace the oldest. Consumed on first enemy hit.
+ */
+export const ORBITING_WISP_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 800,
+  maxCount: 4,
+  durationMs: 9000,
+  radius: 1.9,
+  height: 1.15,
+  angularSpeed: 2.4,
+  collisionRadius: 0.45,
+  /** Hand → orbit spiral before collision arms. */
+  armingMs: 180,
+  /** Even-spacing redistribute smoothing. */
+  redistributeMs: 220,
+  /** Fast magic_1h flick — not a throw. */
+  playbackRate: 4.2,
+  handY: 1.15,
+} as const;
 
 /**
  * Standing 1H Magic Attack 03 (hero.glb) @ 30fps — clip ~2.33s (70 frames).
@@ -1548,6 +2070,175 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
   },
   /**
+   * Soul Mark (LMB) — medium arcane projectile. Stacks Soul Mark (max 3);
+   * the next hit on a fully marked target deals rupture bonus damage and clears stacks.
+   */
+  soulMark: {
+    id: "soulMark",
+    unlockCostEssence: SOUL_MARK_CAST.unlockCostEssence,
+    name: "Soul Mark",
+    description:
+      "Fire a soul projectile that marks the target. At 3 stacks, the next hit consumes the marks for a Soul Rupture burst.",
+    cooldownMs: SOUL_MARK_CAST.cooldownMs,
+    range: SOUL_MARK_CAST.range,
+    shape: "projectile",
+    effectKind: "soulMark",
+    tags: ["Projectile", "Damage", "SingleTarget", "Debuff", "Cast"],
+    damage: combatMag(5.5),
+    speed: SOUL_MARK_CAST.speed,
+    spawnOffset: SOUL_MARK_CAST.spawnOffset,
+    radius: SOUL_MARK_CAST.radius,
+    soulMarkMaxStacks: SOUL_MARK_CAST.soulMarkMaxStacks,
+    soulMarkDurationMs: SOUL_MARK_CAST.soulMarkDurationMs,
+    ruptureDamage: combatMag(17.5),
+    interruptible: true,
+    allowedSlots: ["m1"],
+    timing: {
+      anticipationMs: authoredForWallMs(85),
+      castMs: authoredForWallMs(Math.max(16, soulMarkReleaseWallMs() - 85)),
+      impactMs: authoredForWallMs(60),
+      recoveryMs: authoredForWallMs(soulMarkRecoveryWallMs()),
+      anticipationMoveMul: 0.65,
+      castMoveMul: 0.55,
+      impactMoveMul: 0.6,
+      recoveryMoveMul: 0.85,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Void Disc (LMB) — outbound pierce, brief turnaround, homing return hit.
+   * Anim: Right Hook (Poison Dart clip).
+   */
+  voidDisc: {
+    id: "voidDisc",
+    name: "Void Disc",
+    description:
+      "Throw a disc of void energy that damages enemies on the way out, then returns to your current position and can hit them again.",
+    allowedSlots: ["m1"],
+    defaultSlot: "m1",
+    unlockCostEssence: VOID_DISC_CAST.unlockCostEssence,
+    cooldownMs: VOID_DISC_CAST.cooldownMs,
+    range: VOID_DISC_CAST.range,
+    shape: "projectile",
+    effectKind: "returningProjectile",
+    tags: ["Projectile", "Damage", "MultiHit", "Movement", "Cast", "Pierce"],
+    damage: combatMag(9),
+    speed: VOID_DISC_CAST.speed,
+    spawnOffset: VOID_DISC_CAST.spawnOffset,
+    radius: VOID_DISC_CAST.radius,
+    returningProjectile: {
+      returnDamage: combatMag(11),
+      maxActivePerCaster: VOID_DISC_CAST.maxActivePerCaster,
+      maxLifetimeMs: VOID_DISC_CAST.maxLifetimeMs,
+      turnDelayMs: VOID_DISC_CAST.turnDelayMs,
+      returnCatchRadius: VOID_DISC_CAST.returnCatchRadius,
+    },
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(60),
+      castMs: authoredForWallMs(100),
+      impactMs: authoredForWallMs(70),
+      recoveryMs: authoredForWallMs(90),
+      anticipationMoveMul: 0.95,
+      castMoveMul: 0.9,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Runic Shard (LMB) — narrow crystal projectile. Recast while traveling to
+   * shatter into a forward cone of fragments (shard travel direction, not cursor).
+   * Anim: Baseball Pitching (Ice Lance clip).
+   */
+  runicShard: {
+    id: "runicShard",
+    name: "Runic Shard",
+    description:
+      "Launch a slow runic crystal. Recast while it travels to burst fragments in a full circle — up to twice per shard. Shatter fragments stack Chilled.",
+    allowedSlots: ["m1"],
+    defaultSlot: "m1",
+    unlockCostEssence: RUNIC_SHARD_CAST.unlockCostEssence,
+    cooldownMs: RUNIC_SHARD_CAST.cooldownMs,
+    range: RUNIC_SHARD_CAST.range,
+    shape: "projectile",
+    effectKind: "runicShard",
+    tags: ["Projectile", "Damage", "Cone", "MultiHit", "Cast", "Debuff", "Slow"],
+    damage: combatMag(11),
+    speed: RUNIC_SHARD_CAST.speed,
+    spawnOffset: RUNIC_SHARD_CAST.spawnOffset,
+    radius: RUNIC_SHARD_CAST.radius,
+    runicShard: {
+      fragmentCount: RUNIC_SHARD_CAST.fragmentCount,
+      fragmentDamage: combatMag(3.5),
+      fragmentRange: RUNIC_SHARD_CAST.fragmentRange,
+      fragmentSpeed: RUNIC_SHARD_CAST.fragmentSpeed,
+      fragmentRadius: RUNIC_SHARD_CAST.fragmentRadius,
+      fragmentConeDegrees: RUNIC_SHARD_CAST.fragmentConeDegrees,
+      maxFragmentsPerTarget: RUNIC_SHARD_CAST.maxFragmentsPerTarget,
+      maxActivePerCaster: RUNIC_SHARD_CAST.maxActivePerCaster,
+      shatterCharges: RUNIC_SHARD_CAST.shatterCharges,
+      shatterArmingMs: RUNIC_SHARD_CAST.shatterArmingMs,
+    },
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(65),
+      castMs: authoredForWallMs(100),
+      impactMs: authoredForWallMs(65),
+      recoveryMs: authoredForWallMs(85),
+      anticipationMoveMul: 0.95,
+      castMoveMul: 0.9,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Orbiting Wisp (LMB) — summon an orbiting spirit; up to 3, replace oldest.
+   * Consumed on first enemy hit. Anim: magic_1h (fast flick).
+   */
+  orbitingWisp: {
+    id: "orbitingWisp",
+    name: "Orbiting Wisp",
+    description:
+      "Summon a magical wisp that orbits around you and damages the first enemy it touches. Up to 4 wisps can be active at once.",
+    allowedSlots: ["m1"],
+    defaultSlot: "m1",
+    unlockCostEssence: ORBITING_WISP_CAST.unlockCostEssence,
+    cooldownMs: ORBITING_WISP_CAST.cooldownMs,
+    range: 0,
+    shape: "buff",
+    effectKind: "orbitingWisp",
+    tags: ["Damage", "Persistent", "Summon", "Melee", "Self", "MultiHit", "Cast"],
+    damage: combatMag(12),
+    orbitingWisp: {
+      maxCount: ORBITING_WISP_CAST.maxCount,
+      durationMs: ORBITING_WISP_CAST.durationMs,
+      radius: ORBITING_WISP_CAST.radius,
+      height: ORBITING_WISP_CAST.height,
+      angularSpeed: ORBITING_WISP_CAST.angularSpeed,
+      collisionRadius: ORBITING_WISP_CAST.collisionRadius,
+      armingMs: ORBITING_WISP_CAST.armingMs,
+      redistributeMs: ORBITING_WISP_CAST.redistributeMs,
+    },
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(45),
+      castMs: authoredForWallMs(65),
+      impactMs: authoredForWallMs(55),
+      recoveryMs: authoredForWallMs(65),
+      anticipationMoveMul: 1,
+      castMoveMul: 0.95,
+      impactMoveMul: 1,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
    * Spore Shrooms (LMB) — plant a growing mushroom at ground aim.
    * Ally step → rejuvenation AoE. Enemy step → poison AoE.
    * Anim: Standing 1H Cast Spell 01 — emerges @ 18, armed @ 36.
@@ -1771,6 +2462,218 @@ export const ABILITIES: Record<string, AbilityDef> = {
       cancelUntilPhase: "cast",
     },
     applyAuraSlow: [{ statusId: "slowed", durationMs: 1200, chance: 1 }],
+  },
+  /**
+   * Astral Chain (RMB) — astral hook projectile. On hit, tether at impact distance;
+   * target cannot leave that radius; caster is slowed. Dash/Blink escapes break it.
+   */
+  astralChain: {
+    id: "astralChain",
+    name: "Astral Chain",
+    description:
+      "Launch an astral chain that tethers you to an enemy. They cannot move farther away than the connection distance, and walking away at max range lightly pulls them toward you. Your movement is slowed while the tether lasts.",
+    allowedSlots: ["m2"],
+    defaultSlot: "m2",
+    unlockCostEssence: ASTRAL_CHAIN_CAST.unlockCostEssence,
+    cooldownMs: ASTRAL_CHAIN_CAST.cooldownMs,
+    range: ASTRAL_CHAIN_CAST.range,
+    shape: "projectile",
+    effectKind: "astralChain",
+    tags: [
+      "Projectile",
+      "SingleTarget",
+      "Control",
+      "CrowdControl",
+      "Debuff",
+      "Cast",
+    ],
+    damage: combatMag(3.5),
+    speed: ASTRAL_CHAIN_CAST.speed,
+    radius: ASTRAL_CHAIN_CAST.radius,
+    spawnOffset: ASTRAL_CHAIN_CAST.spawnOffset,
+    tetherDurationMs: ASTRAL_CHAIN_CAST.tetherDurationMs,
+    casterMoveMulWhileTethered: ASTRAL_CHAIN_CAST.casterMoveMulWhileTethered,
+    tetherBreakGraceDistance: ASTRAL_CHAIN_CAST.tetherBreakGraceDistance,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(80),
+      castMs: authoredForWallMs(120),
+      impactMs: authoredForWallMs(70),
+      recoveryMs: authoredForWallMs(110),
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Underground Pulse (RMB) — short ground vine burst. Damages and slows in a
+   * compact radius; vines are visual-only (one AoE resolve).
+   */
+  undergroundPulse: {
+    id: "undergroundPulse",
+    name: "Underground Pulse",
+    description:
+      "Erupt magical vines at the targeted location, damaging and slowing enemies caught in the burst.",
+    allowedSlots: ["m2"],
+    defaultSlot: "m2",
+    unlockCostEssence: UNDERGROUND_PULSE_CAST.unlockCostEssence,
+    cooldownMs: UNDERGROUND_PULSE_CAST.cooldownMs,
+    range: UNDERGROUND_PULSE_CAST.range,
+    shape: "aoe",
+    effectKind: "standard",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "Damage",
+      "Slow",
+      "Control",
+      "Cast",
+    ],
+    damage: combatMag(7),
+    radius: UNDERGROUND_PULSE_CAST.radius,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(75),
+      castMs: authoredForWallMs(110),
+      impactMs: authoredForWallMs(120),
+      recoveryMs: authoredForWallMs(100),
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+    applyOnHit: [{ statusId: "slowed", durationMs: 1300, chance: 1 }],
+  },
+  /**
+   * Slipstream (RMB) — directional wind lane. Haste while inside; exit after a
+   * short dwell grants Tailwind (faster anticipation on next damaging cast).
+   */
+  slipstream: {
+    id: "slipstream",
+    name: "Slipstream",
+    description:
+      "Create a short stream of magical wind. Moving through it accelerates you and empowers your next damaging spell.",
+    allowedSlots: ["m2"],
+    defaultSlot: "m2",
+    unlockCostEssence: SLIPSTREAM_CAST.unlockCostEssence,
+    cooldownMs: SLIPSTREAM_CAST.cooldownMs,
+    range: SLIPSTREAM_CAST.range,
+    shape: "aoe",
+    effectKind: "slipstream",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "Line",
+      "Movement",
+      "Haste",
+      "Utility",
+      "Cast",
+    ],
+    damage: 0,
+    /** Half-width of the stream corridor. */
+    radius: SLIPSTREAM_CAST.halfWidth,
+    zoneDurationMs: SLIPSTREAM_CAST.zoneDurationMs,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(70),
+      castMs: authoredForWallMs(100),
+      impactMs: authoredForWallMs(80),
+      recoveryMs: authoredForWallMs(90),
+      anticipationMoveMul: 0.95,
+      castMoveMul: 0.9,
+      impactMoveMul: 1,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Soul Relay (RMB) — Harmony support: heal target + relay for secondary heal on next hit.
+   */
+  soulRelay: {
+    id: "soulRelay",
+    name: "Soul Relay",
+    description:
+      "Bind your soul to yourself or an ally with a small heal. Your next successful damaging spell heals the linked target for the damage you dealt.",
+    allowedSlots: ["m2"],
+    defaultSlot: "m2",
+    unlockCostEssence: SOUL_RELAY_CAST.unlockCostEssence,
+    cooldownMs: SOUL_RELAY_CAST.cooldownMs,
+    range: SOUL_RELAY_CAST.range,
+    shape: "projectile",
+    effectKind: "soulRelay",
+    tags: [
+      "Healing",
+      "Ally",
+      "Self",
+      "SingleTarget",
+      "Buff",
+      "Cast",
+    ] as SpellTag[],
+    damage: 0,
+    heal: SOUL_RELAY_CAST.initialHeal,
+    speed: SOUL_RELAY_CAST.speed,
+    radius: SOUL_RELAY_CAST.radius,
+    spawnOffset: SOUL_RELAY_CAST.spawnOffset,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(70),
+      castMs: authoredForWallMs(110),
+      impactMs: authoredForWallMs(70),
+      recoveryMs: authoredForWallMs(100),
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Crushing Sigil (RMB) — place a delayed rune; heavy burst after a short fuse.
+   */
+  crushingSigil: {
+    id: "crushingSigil",
+    name: "Crushing Sigil",
+    description:
+      "Place a volatile sigil at the target location. After a short delay, it collapses and erupts for heavy damage.",
+    allowedSlots: ["m2"],
+    defaultSlot: "m2",
+    unlockCostEssence: CRUSHING_SIGIL_CAST.unlockCostEssence,
+    cooldownMs: CRUSHING_SIGIL_CAST.cooldownMs,
+    range: CRUSHING_SIGIL_CAST.range,
+    shape: "aoe",
+    effectKind: "standard",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "Damage",
+      "Explosion",
+      "Cast",
+    ] as SpellTag[],
+    damage: combatMag(21),
+    radius: CRUSHING_SIGIL_CAST.radius,
+    delayedImpactMs: CRUSHING_SIGIL_CAST.delayedImpactMs,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(80),
+      castMs: authoredForWallMs(
+        Math.max(16, crushingSigilReleaseWallMs() - 80),
+      ),
+      impactMs: authoredForWallMs(70),
+      recoveryMs: authoredForWallMs(crushingSigilRecoveryWallMs()),
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
   },
   /**
    * Poison Dart (RMB) — fast Right Hook throw.
@@ -2461,6 +3364,231 @@ export const ABILITIES: Record<string, AbilityDef> = {
     ],
   },
   /**
+   * Gravity Well (E) — compact delayed singularity: seed → snap pull → gone.
+   * Anim: Standing 2H Magic Area Attack 01 (castFirewall), short timing slice.
+   */
+  gravityWell: {
+    id: "gravityWell",
+    name: "Gravity Well",
+    description:
+      "Create a compact gravity singularity that pulls nearby enemies toward its center and deals light damage.",
+    allowedSlots: ["e"],
+    defaultSlot: "e",
+    unlockCostEssence: GRAVITY_WELL_CAST.unlockCostEssence,
+    cooldownMs: GRAVITY_WELL_CAST.cooldownMs,
+    range: GRAVITY_WELL_CAST.range,
+    shape: "aoe",
+    effectKind: "standard",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "Control",
+      "Pull",
+      "Damage",
+      "Cast",
+    ] as SpellTag[],
+    damage: combatMag(8),
+    radius: GRAVITY_WELL_CAST.radius,
+    delayedImpactMs: GRAVITY_WELL_CAST.delayedImpactMs,
+    pull: GRAVITY_WELL_CAST.pull,
+    pullMs: GRAVITY_WELL_CAST.pullMs,
+    pullStopDistance: GRAVITY_WELL_CAST.pullStopDistance,
+    interruptible: true,
+    timing: {
+      anticipationMs: 85,
+      castMs: 125,
+      impactMs: 90,
+      recoveryMs: 110,
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Prism Lance (E) — razor-thin pierce skillshot; damage scales with travel distance.
+   * Anim: Standing 2H Magic Attack 04 (castHealBeam).
+   */
+  prismLance: {
+    id: "prismLance",
+    name: "Prism Lance",
+    description:
+      "Fire a razor-thin lance of condensed magic. It deals more damage the farther it travels before striking an enemy.",
+    allowedSlots: ["e"],
+    defaultSlot: "e",
+    unlockCostEssence: PRISM_LANCE_CAST.unlockCostEssence,
+    cooldownMs: PRISM_LANCE_CAST.cooldownMs,
+    range: PRISM_LANCE_CAST.range,
+    shape: "projectile",
+    effectKind: "prismLance",
+    tags: [
+      "Projectile",
+      "Damage",
+      "SingleTarget",
+      "Pierce",
+      "Cast",
+    ] as SpellTag[],
+    damage: PRISM_LANCE_CAST.minDamage,
+    minDamage: PRISM_LANCE_CAST.minDamage,
+    maxDamage: PRISM_LANCE_CAST.maxDamage,
+    maxDamageDistance: PRISM_LANCE_CAST.maxDamageDistance,
+    damageRampStartDistance: PRISM_LANCE_CAST.damageRampStartDistance,
+    speed: PRISM_LANCE_CAST.speed,
+    radius: PRISM_LANCE_CAST.radius,
+    spawnOffset: PRISM_LANCE_CAST.spawnOffset,
+    pierce: true,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(110),
+      castMs: authoredForWallMs(
+        Math.max(16, prismLanceReleaseWallMs() - 110),
+      ),
+      impactMs: authoredForWallMs(70),
+      recoveryMs: authoredForWallMs(prismLanceRecoveryWallMs()),
+      anticipationMoveMul: 0.85,
+      castMoveMul: 0.8,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Soul Sever (E) — spectral blade; delayed snap scales with displacement from imprint.
+   * Anim: Right Hook (castPoisonDart).
+   */
+  soulSever: {
+    id: "soulSever",
+    name: "Soul Sever",
+    description:
+      "Sever an enemy's soul from their position. After a short delay, the severed soul snaps back, dealing more damage the farther the target moved.",
+    allowedSlots: ["e"],
+    defaultSlot: "e",
+    unlockCostEssence: SOUL_SEVER_CAST.unlockCostEssence,
+    cooldownMs: SOUL_SEVER_CAST.cooldownMs,
+    range: SOUL_SEVER_CAST.range,
+    shape: "projectile",
+    effectKind: "soulSever",
+    tags: [
+      "Projectile",
+      "Damage",
+      "SingleTarget",
+      "Debuff",
+      "Control",
+      "Cast",
+    ] as SpellTag[],
+    damage: SOUL_SEVER_CAST.hitDamage,
+    speed: SOUL_SEVER_CAST.speed,
+    radius: SOUL_SEVER_CAST.radius,
+    spawnOffset: SOUL_SEVER_CAST.spawnOffset,
+    severDurationMs: SOUL_SEVER_CAST.severDurationMs,
+    severMinDamage: SOUL_SEVER_CAST.severMinDamage,
+    severMaxDamage: SOUL_SEVER_CAST.severMaxDamage,
+    severMaxDistance: SOUL_SEVER_CAST.severMaxDistance,
+    interruptible: true,
+    timing: {
+      anticipationMs: 80,
+      castMs: 120,
+      impactMs: 70,
+      recoveryMs: 105,
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Arc Blade (E) — fast 360° magical spin; three consecutive hits (60 / 60 / 80).
+   * Anim: Dual Weapon Combo (attack_combo).
+   */
+  arcBlade: {
+    id: "arcBlade",
+    name: "Arc Blade",
+    description:
+      "Spin a blade of condensed magic around yourself three times, striking nearby enemies on each pass.",
+    allowedSlots: ["e"],
+    defaultSlot: "e",
+    unlockCostEssence: ARC_BLADE_CAST.unlockCostEssence,
+    cooldownMs: ARC_BLADE_CAST.cooldownMs,
+    range: ARC_BLADE_CAST.range,
+    shape: "aoe",
+    effectKind: "arcBlade",
+    tags: ["Area", "Nova", "Melee", "Damage", "MultiHit", "Cast"] as SpellTag[],
+    damage: ARC_BLADE_CAST.damage,
+    damageByHit: [...ARC_BLADE_CAST.damageByHit],
+    radius: ARC_BLADE_CAST.radius,
+    outerEdgeStartRadius: ARC_BLADE_CAST.outerEdgeStartRadius,
+    hitCount: ARC_BLADE_CAST.hitCount,
+    hitIntervalMs: ARC_BLADE_CAST.hitIntervalMs,
+    interruptible: true,
+    timing: {
+      anticipationMs: 55,
+      castMs: 90,
+      // Cover all three spin hits (0 / 110 / 220ms from fire).
+      impactMs: 250,
+      recoveryMs: 90,
+      anticipationMoveMul: 0.95,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.75,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Blooming Path (E) — slow ground vine; caster and allies heal while standing in the corridor.
+   * Anim: Standing 1H Cast Spell 01 (castBarrier). No heal on cast — only while in the path.
+   */
+  bloomingPath: {
+    id: "bloomingPath",
+    name: "Blooming Path",
+    description:
+      "Send a living vine slowly forward along the ground. You and allies standing in the path receive small healing ticks while it lasts.",
+    allowedSlots: ["e"],
+    defaultSlot: "e",
+    unlockCostEssence: BLOOMING_PATH_CAST.unlockCostEssence,
+    cooldownMs: BLOOMING_PATH_CAST.cooldownMs,
+    range: BLOOMING_PATH_CAST.range,
+    shape: "projectile",
+    effectKind: "bloomingPath",
+    tags: [
+      "Healing",
+      "HealOverTime",
+      "Ally",
+      "Area",
+      "Line",
+      "Projectile",
+      "Pierce",
+      "Cast",
+      "GroundEffect",
+    ] as SpellTag[],
+    damage: 0,
+    heal: BLOOMING_PATH_CAST.heal,
+    tickMs: BLOOMING_PATH_CAST.healTickMs,
+    zoneDurationMs: BLOOMING_PATH_CAST.trailLingerMs,
+    speed: BLOOMING_PATH_CAST.speed,
+    radius: BLOOMING_PATH_CAST.radius,
+    spawnOffset: BLOOMING_PATH_CAST.spawnOffset,
+    pierce: true,
+    interruptible: true,
+    timing: {
+      anticipationMs: 75,
+      castMs: 110,
+      impactMs: 80,
+      recoveryMs: 100,
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
    * Silence (E) — Right Hook cursed-shadow arc.
    * Thin blade sweeps right→left across a mid-range cone; silence only (no damage).
    */
@@ -3008,6 +4136,11 @@ export function abilityHasTags(
   return need.every((t) => set.has(t));
 }
 
+/** Dash or Blink mobility that should snap Astral Chain (escape). */
+export function abilityBreaksAstralChain(def: AbilityDef | undefined): boolean {
+  return abilityHasTags(def, "Dash") || abilityHasTags(def, "Blink");
+}
+
 /** True when the ability chains multiple swings before cooldown. */
 export function isComboAbility(def: AbilityDef | undefined): boolean {
   return (def?.combo?.hits ?? 0) > 1;
@@ -3039,9 +4172,9 @@ function formatStatusApp(app: StatusApplication): string | null {
   if (!st) return app.statusId;
   const dur = app.durationMs ?? st.durationMs;
   const bits: string[] = [st.name];
-  if (st.id === "frostChill") {
+  if (st.slowPercentPerStack != null) {
     const stacks = Math.max(1, app.stacks ?? 1);
-    bits.push(`${frostChillSlowPercent(stacks)}% chill`);
+    bits.push(`${statusStackSlowPercent(st, stacks)}% chill`);
   } else if (typeof st.moveMul === "number" && st.moveMul !== 1) {
     if (st.moveMul < 1) {
       bits.push(`${Math.round((1 - st.moveMul) * 100)}% slow`);
@@ -3079,6 +4212,8 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
     parts.push(`${def.combo.damageByHit.join("/")} dmg`);
   } else if (def.combo && def.damage > 0) {
     parts.push(`${def.damage}×${def.combo.hits} dmg`);
+  } else if (def.damageByHit && def.damageByHit.length > 1) {
+    parts.push(`${def.damageByHit.join("/")} dmg`);
   } else if (def.heal != null && def.heal > 0) {
     const ticks = def.healTicks ?? 1;
     parts.push(ticks > 1 ? `${def.heal}×${ticks} heal` : `${def.heal} heal`);
@@ -3122,6 +4257,16 @@ export function formatAbilityArmoryStats(def: AbilityDef): string {
   }
   if (def.pull) {
     parts.push(def.leapToTarget ? `leap ${def.pull}` : `pull ${def.pull}`);
+  }
+  if (
+    def.minDamage != null &&
+    def.maxDamage != null &&
+    def.maxDamage > def.minDamage
+  ) {
+    parts.push(`dmg ${def.minDamage}–${def.maxDamage}`);
+  }
+  if (def.pierce) {
+    parts.push("pierce");
   }
   if (def.travel?.mode === "translate" || def.shape === "dash") {
     const dist = def.travel?.distance ?? def.range;
@@ -3261,6 +4406,31 @@ export function totalCastDurationMs(def: AbilityDef): number {
     phaseDurationMs(def, "impact") +
     phaseDurationMs(def, "recovery")
   );
+}
+
+/**
+ * Windup before the spell commits (anticipation + cast).
+ * Used for WoW-style cast bars — skip bars shorter than CAST_BAR_MIN_MS.
+ */
+export function castWindupMs(def: AbilityDef): number {
+  return phaseDurationMs(def, "anticipation") + phaseDurationMs(def, "cast");
+}
+
+/** Minimum windup / channel length before the HUD cast bar appears. */
+export const CAST_BAR_MIN_MS = 300;
+
+/** True when this ability should show a cast bar during its pre-impact windup. */
+export function castBarShowsWindup(def: AbilityDef): boolean {
+  if (def.id === "fireball") return false; // charge bar starts at impact
+  return castWindupMs(def) >= CAST_BAR_MIN_MS;
+}
+
+/** True when impact phase should show a channel / charge cast bar. */
+export function castBarShowsChannel(def: AbilityDef): boolean {
+  if (def.id === "fireball") return true;
+  if (!isChannelAbility(def)) return false;
+  if (def.holdChannel === true) return true;
+  return phaseDurationMs(def, "impact") >= CAST_BAR_MIN_MS;
 }
 
 /**

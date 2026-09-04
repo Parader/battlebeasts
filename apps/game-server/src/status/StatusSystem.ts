@@ -1,5 +1,6 @@
 import {
   STATUSES,
+  combineStatusAnticipationMul,
   combineStatusDamageDealtMul,
   combineStatusDamageTakenMul,
   combineStatusMoveMul,
@@ -8,6 +9,7 @@ import {
   isElementalSecondaryStatus,
   isHardCrowdControlStatus,
   rollStatusChance,
+  statusMapKey,
   statusesBlockCast,
   statusesBlockMove,
   statusesGrantInvulnerable,
@@ -45,15 +47,28 @@ export class StatusSystem {
     host.statuses.clear();
   }
 
-  remove(targetId: string, statusId: string) {
+  remove(targetId: string, statusId: string, sourceId?: string) {
     const host = this.getHost(targetId);
     if (!host) return;
+    const def = getStatus(statusId);
+    if (def?.stackPerSource) {
+      if (sourceId) {
+        host.statuses.delete(statusMapKey(statusId, sourceId));
+        return;
+      }
+      // No source — clear every row of this status id.
+      const toRemove: string[] = [];
+      host.statuses.forEach((row, key) => {
+        if (row.statusId === statusId) toRemove.push(key);
+      });
+      for (const key of toRemove) host.statuses.delete(key);
+      return;
+    }
     host.statuses.delete(statusId);
   }
 
-  has(targetId: string, statusId: string): boolean {
-    const host = this.getHost(targetId);
-    return Boolean(host?.statuses.get(statusId));
+  has(targetId: string, statusId: string, sourceId?: string): boolean {
+    return this.getStacks(targetId, statusId, sourceId) > 0;
   }
 
   /**
@@ -73,9 +88,25 @@ export class StatusSystem {
     return found;
   }
 
-  getStacks(targetId: string, statusId: string): number {
+  /**
+   * Stack count for `statusId`. When `sourceId` is set (or the status is
+   * per-source), reads that caster's row only.
+   */
+  getStacks(targetId: string, statusId: string, sourceId?: string): number {
     const host = this.getHost(targetId);
-    return host?.statuses.get(statusId)?.stacks ?? 0;
+    if (!host) return 0;
+    const def = getStatus(statusId);
+    if (def?.stackPerSource) {
+      if (!sourceId) {
+        let max = 0;
+        host.statuses.forEach((row) => {
+          if (row.statusId === statusId) max = Math.max(max, row.stacks);
+        });
+        return max;
+      }
+      return host.statuses.get(statusMapKey(statusId, sourceId))?.stacks ?? 0;
+    }
+    return host.statuses.get(statusId)?.stacks ?? 0;
   }
 
   /** Additive slow % from all statuses, optionally excluding one id (e.g. frostChill). */
@@ -110,8 +141,9 @@ export class StatusSystem {
       if (def && effectMul !== 1 && isElementalSecondaryStatus(def)) {
         const baseDur = durationMs ?? def.durationMs;
         durationMs = Math.max(1, Math.round(baseDur * effectMul));
-        // Harder slows: bump stackable chill / slow stacks.
+        // Stack-scaled chills (frostChill) set stacks in ability code — only buff duration here.
         if (
+          def.slowPercentPerStack == null &&
           (def.mechanic === "slow" || (typeof def.moveMul === "number" && def.moveMul < 1)) &&
           (def.maxStacks ?? 1) > 1
         ) {
@@ -150,12 +182,13 @@ export class StatusSystem {
     const requested = opts?.stacks ?? 1;
     const maxStacks = def.maxStacks ?? 1;
     const rule = def.stackRule ?? "refresh";
-    const existing = host.statuses.get(statusId);
+    const mapKey = statusMapKey(statusId, sourceId);
+    const existing = host.statuses.get(mapKey);
 
     if (opts?.setStacks) {
       const stacks = Math.min(maxStacks, Math.max(0, requested));
       if (stacks <= 0 && !permanent) {
-        if (existing) host.statuses.delete(statusId);
+        if (existing) host.statuses.delete(mapKey);
         return false;
       }
       if (existing) {
@@ -165,13 +198,13 @@ export class StatusSystem {
         if (def.tickMs) existing.nextTickAt = Math.min(existing.nextTickAt || now + def.tickMs, now + def.tickMs);
       } else {
         const row = new StatusInstanceState();
-        row.id = statusId;
+        row.id = mapKey;
         row.statusId = statusId;
         row.expiresAt = expiresAt;
         row.stacks = stacks;
         row.sourceId = sourceId;
         row.nextTickAt = def.tickMs ? now + def.tickMs : 0;
-        host.statuses.set(statusId, row);
+        host.statuses.set(mapKey, row);
       }
       if (def.mechanic === "stun" || def.mechanic === "silence" || def.blocksCast) {
         this.hooks.onInterruptCast?.(targetId);
@@ -196,13 +229,13 @@ export class StatusSystem {
       }
     } else {
       const row = new StatusInstanceState();
-      row.id = statusId;
+      row.id = mapKey;
       row.statusId = statusId;
       row.expiresAt = expiresAt;
       row.stacks = Math.min(maxStacks, addStacks);
       row.sourceId = sourceId;
       row.nextTickAt = def.tickMs ? now + def.tickMs : 0;
-      host.statuses.set(statusId, row);
+      host.statuses.set(mapKey, row);
     }
 
     if (def.mechanic === "stun" || def.mechanic === "silence" || def.blocksCast) {
@@ -232,6 +265,11 @@ export class StatusSystem {
   /** Outgoing damage factor (1 = full; 1.2 = +20% dealt). */
   getDamageDealtMul(attackerId: string): number {
     return combineStatusDamageDealtMul(this.entries(attackerId));
+  }
+
+  /** Cast anticipation duration factor (1 = normal; 0.75 = 25% shorter). */
+  getAnticipationMul(targetId: string): number {
+    return combineStatusAnticipationMul(this.entries(targetId));
   }
 
   /** Full invulnerability from statuses (e.g. Counter riposte). */
