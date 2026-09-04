@@ -173,7 +173,12 @@ export type AbilityEffectKind =
   | "prismLance"
   | "soulSever"
   | "arcBlade"
-  | "bloomingPath";
+  | "bloomingPath"
+  | "verdantLeap"
+  | "bulwarkCharge"
+  | "predatorStep"
+  | "rebound"
+  | "teleportSlam";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
 export type SpellTag =
@@ -350,6 +355,10 @@ export interface AbilityDef {
   pierce?: boolean;
   /** Instant heal amount per tick (self-centered AoE support spells). */
   heal?: number;
+  /** Temporary absorb shield HP (Bulwark Charge completion). */
+  shield?: number;
+  /** Shield buff duration (ms). */
+  shieldDurationMs?: number;
   /** Number of heal pulses over the channel (Groove). */
   healTicks?: number;
   radius?: number;
@@ -1045,6 +1054,114 @@ export const BLOOMING_PATH_CAST = {
   /** How long the laid path stays after the tip despawns (ms). */
   trailLingerMs: 3200,
 } as const;
+
+/**
+ * Verdant Leap (Space) — leap to ally; heal both + shared haste on arrival.
+ */
+export const VERDANT_LEAP_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 10000,
+  range: 8.5,
+  heal: combatMag(15),
+  moveSpeedMul: 1.2,
+  moveSpeedDurationMs: 1800,
+  travelDurationMs: 240,
+  arrivalDistanceFromTarget: 0.9,
+} as const;
+
+/**
+ * Bulwark Charge (Space) — short defensive sprint; resist displace/CC/damage; shield on end.
+ */
+export const BULWARK_CHARGE_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 14000,
+  distance: 6.0,
+  travelDurationMs: 400,
+  shield: combatMag(12),
+  shieldDurationMs: 2200,
+  /** Hard CC duration multiplier while charging (0.25 = 75% resistance). */
+  hardCcDurationMul: 0.25,
+  /**
+   * Frontal damage block half-angle (radians). π/2 = full forward hemisphere.
+   * Applied in CombatSystem against the attacker’s position.
+   */
+  blockHalfAngle: Math.PI / 2,
+  /** Path shove — shoulder enemies / dummies aside while charging. */
+  shoveRadius: 0.95,
+  shoveDistance: 1.15,
+  shoveMs: 170,
+} as const;
+
+/**
+ * Predator Step (Space) — short cloak + haste (no dash).
+ */
+export const PREDATOR_STEP_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 10000,
+  /** Brief Decoy-style cloak — matches haste window. */
+  invisibilityDurationMs: 700,
+  moveSpeedMul: 1.6,
+  moveSpeedDurationMs: 700,
+} as const;
+
+/**
+ * Rebound (Space) — frontal peel blast + self recoil.
+ */
+export const REBOUND_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 8000,
+  damage: combatMag(3),
+  coneRange: 3.8,
+  coneAngleDeg: 85,
+  enemyPushDistance: 2.1,
+  selfRecoilDistance: 3.2,
+  displacementDurationMs: 220,
+} as const;
+
+/**
+ * Teleport Slam (Space) — slam/stun at feet, then short directional blink.
+ * Anim: Standing 2H Magic Area Attack 01 — impact ~frame 42, teleport ~frame 44.
+ * `startFrame` skips early windup so preload stays snappy without racing the clip.
+ */
+export const TELEPORT_SLAM_CAST = {
+  unlockCostEssence: 110,
+  cooldownMs: 11000,
+  damage: combatMag(9),
+  slamRadius: 2.85,
+  /** Shorter control window — slam still reads, less lock. */
+  stunMs: 750,
+  teleportDistance: 4.5,
+  fps: 30,
+  /** Skip early Mixamo windup frames. */
+  startFrame: 18,
+  impactFrame: 42,
+  teleportFrame: 44,
+  clipDurationSec: 3,
+  playbackRate: 1.85,
+  /** Soft settle after the blink (clip continues in the background). */
+  recoveryMs: 300,
+  /**
+   * Wall-clock delay from impact to blink. At least long enough for the
+   * client fade-out (~100ms) so rematerialize starts from invisible.
+   */
+  teleportDelayAfterImpactMs: Math.max(
+    ((44 - 42) / 30 / 1.85) * 1000,
+    110,
+  ),
+} as const;
+
+function teleportSlamImpactWallMs(): number {
+  return (
+    ((TELEPORT_SLAM_CAST.impactFrame - TELEPORT_SLAM_CAST.startFrame) /
+      TELEPORT_SLAM_CAST.fps /
+      TELEPORT_SLAM_CAST.playbackRate) *
+    1000
+  );
+}
+
+function teleportSlamRecoveryWallMs(): number {
+  return TELEPORT_SLAM_CAST.recoveryMs;
+}
 
 /** Damage from distance traveled since projectile spawn (not caster position). */
 export function prismLanceDamage(travelDistance: number): number {
@@ -3094,6 +3211,175 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
     interruptible: false,
     interruptsOtherCasts: true,
+  },
+  /**
+   * Verdant Leap (Space) — leap to an ally or practice dummy; heal both + shared haste.
+   */
+  verdantLeap: {
+    id: "verdantLeap",
+    name: "Verdant Leap",
+    description:
+      "Leap to an ally or practice dummy — heal both and share a brief speed boost. Alone, heal yourself and still gain the speed boost.",
+    allowedSlots: ["space"],
+    defaultSlot: "space",
+    unlockCostEssence: VERDANT_LEAP_CAST.unlockCostEssence,
+    cooldownMs: VERDANT_LEAP_CAST.cooldownMs,
+    range: VERDANT_LEAP_CAST.range,
+    shape: "buff",
+    effectKind: "verdantLeap",
+    tags: ["Movement", "Healing", "Ally", "Buff", "Cast"] as SpellTag[],
+    damage: 0,
+    heal: VERDANT_LEAP_CAST.heal,
+    interruptible: true,
+    timing: {
+      anticipationMs: 65,
+      castMs: 90,
+      // Impact spans the leap so travel + sprint aren't cut by recovery.
+      impactMs: authoredForWallMs(VERDANT_LEAP_CAST.travelDurationMs),
+      recoveryMs: 80,
+      // Solo heal must stay walkable; ally leap still locks via travel.
+      anticipationMoveMul: 1,
+      castMoveMul: 1,
+      impactMoveMul: 1,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Bulwark Charge (Space) — charge forward resisting control; shield on completion.
+   */
+  bulwarkCharge: {
+    id: "bulwarkCharge",
+    name: "Bulwark Charge",
+    description:
+      "Sprint forward while resisting control and displacement. Block all damage from your front half during the charge, shoulder enemies aside, then gain a temporary shield when it ends.",
+    allowedSlots: ["space"],
+    defaultSlot: "space",
+    unlockCostEssence: BULWARK_CHARGE_CAST.unlockCostEssence,
+    cooldownMs: BULWARK_CHARGE_CAST.cooldownMs,
+    range: BULWARK_CHARGE_CAST.distance,
+    shape: "buff",
+    effectKind: "bulwarkCharge",
+    tags: ["Movement", "Defense", "Shield", "Buff", "Cast"] as SpellTag[],
+    damage: 0,
+    shield: BULWARK_CHARGE_CAST.shield,
+    shieldDurationMs: BULWARK_CHARGE_CAST.shieldDurationMs,
+    interruptible: true,
+    timing: {
+      anticipationMs: 75,
+      castMs: 90,
+      // Impact spans the charge so travel + sprint anim aren't cut by recovery.
+      impactMs: authoredForWallMs(BULWARK_CHARGE_CAST.travelDurationMs),
+      recoveryMs: 100,
+      anticipationMoveMul: 0.8,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Predator Step (Space) — brief Decoy-style cloak + move haste (no dash).
+   */
+  predatorStep: {
+    id: "predatorStep",
+    name: "Predator Step",
+    description:
+      "Briefly vanish like Decoy and gain movement speed. Offensive actions end the cloak.",
+    allowedSlots: ["space"],
+    defaultSlot: "space",
+    unlockCostEssence: PREDATOR_STEP_CAST.unlockCostEssence,
+    cooldownMs: PREDATOR_STEP_CAST.cooldownMs,
+    range: 0,
+    shape: "buff",
+    effectKind: "predatorStep",
+    tags: ["Movement", "Stealth", "Buff", "Self", "Cast"] as SpellTag[],
+    damage: 0,
+    interruptible: true,
+    timing: {
+      anticipationMs: 40,
+      castMs: 70,
+      impactMs: 50,
+      recoveryMs: 60,
+      anticipationMoveMul: 1,
+      castMoveMul: 1,
+      impactMoveMul: 1,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Rebound (Space) — frontal force blast peels enemies while recoiling the caster.
+   */
+  rebound: {
+    id: "rebound",
+    name: "Rebound",
+    description:
+      "Release a force blast in front of you, pushing enemies away while launching yourself backward.",
+    allowedSlots: ["space"],
+    defaultSlot: "space",
+    unlockCostEssence: REBOUND_CAST.unlockCostEssence,
+    cooldownMs: REBOUND_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "rebound",
+    tags: ["Movement", "Control", "Knockback", "Area", "Cast"] as SpellTag[],
+    damage: REBOUND_CAST.damage,
+    radius: REBOUND_CAST.coneRange,
+    coneHalfAngle: (REBOUND_CAST.coneAngleDeg * Math.PI) / 180 / 2,
+    knockback: REBOUND_CAST.enemyPushDistance,
+    knockbackMs: REBOUND_CAST.displacementDurationMs,
+    interruptible: true,
+    timing: {
+      anticipationMs: 45,
+      castMs: 75,
+      impactMs: 60,
+      recoveryMs: 80,
+      anticipationMoveMul: 0.95,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Teleport Slam (Space) — slam/stun at feet, then short directional teleport.
+   */
+  teleportSlam: {
+    id: "teleportSlam",
+    name: "Teleport Slam",
+    description:
+      "Slam the ground around you, damaging and stunning nearby enemies, then shift a short distance toward your aim.",
+    allowedSlots: ["space"],
+    defaultSlot: "space",
+    unlockCostEssence: TELEPORT_SLAM_CAST.unlockCostEssence,
+    cooldownMs: TELEPORT_SLAM_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "teleportSlam",
+    tags: ["Movement", "Area", "Damage", "Stun", "Control", "Cast"] as SpellTag[],
+    damage: TELEPORT_SLAM_CAST.damage,
+    radius: TELEPORT_SLAM_CAST.slamRadius,
+    applyOnHit: [{ statusId: "stunned", durationMs: TELEPORT_SLAM_CAST.stunMs, chance: 1 }],
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(100),
+      castMs: authoredForWallMs(Math.max(16, teleportSlamImpactWallMs() - 100)),
+      impactMs: authoredForWallMs(
+        Math.max(80, TELEPORT_SLAM_CAST.teleportDelayAfterImpactMs + 120),
+      ),
+      recoveryMs: authoredForWallMs(teleportSlamRecoveryWallMs()),
+      anticipationMoveMul: 0.65,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
   },
   /**
    * Decoy (Q) — clone appears instantly (hides the cast), then caster crouches into cloak.

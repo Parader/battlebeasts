@@ -34,6 +34,7 @@ import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
 import { RiftArmRing } from "./vfx/effects/riftArmRing";
 import { registerCharacterRoot } from "./characterRoots";
 import { isRevengeVanished } from "./revengeVanishRuntime";
+import { getTeleportSlamOpacity, hasTeleportSlamFade } from "./teleportSlamFadeRuntime";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -185,13 +186,14 @@ function RemotePlayerAvatar({
     const revengePhased = hasStatusId(p.statuses, "revengePhased");
     const revengeVanished = revengePhased || isRevengeVanished(sessionId);
     const spiritFormed = hasStatusId(p.statuses, "spiritFormed");
+    const slamOpacity = getTeleportSlamOpacity(sessionId);
     if (cloaked || revengeVanished) {
       g.visible = false;
     } else {
-      g.visible = true;
-      if (ghostOpacityRef.current !== 1) {
-        ghostOpacityRef.current = 1;
-        setCharacterOpacity(scene, 1);
+      g.visible = slamOpacity > 0.02;
+      if (hasTeleportSlamFade(sessionId) || ghostOpacityRef.current !== slamOpacity) {
+        ghostOpacityRef.current = slamOpacity;
+        setCharacterOpacity(scene, slamOpacity);
       }
     }
 

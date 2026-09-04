@@ -6,6 +6,10 @@ import {
   heroAnimationConfig,
   type CharacterAnimationController,
 } from "./animation";
+import {
+  clearTeleportSlamAnimSuppress,
+  isTeleportSlamAnimSuppressed,
+} from "./teleportSlamFadeRuntime";
 
 export type CastAnimState = {
   castPhase?: string;
@@ -36,6 +40,7 @@ export function syncAbilityCast(
   player: CastAnimState | undefined,
   lastCastId: MutableRefObject<string>,
   comboAnimHoldUntil?: MutableRefObject<number>,
+  sessionId?: string | null,
 ): void {
   const now = performance.now();
   const holdingComboAnim =
@@ -43,6 +48,7 @@ export function syncAbilityCast(
     lastCastId.current.startsWith("comboOnce:");
 
   if (!player?.castAbilityId || !player.castPhase) {
+    if (sessionId) clearTeleportSlamAnimSuppress(sessionId);
     if (lastCastId.current.startsWith("comboOnce:")) {
       const abilityId = lastCastId.current.split(":")[1] ?? "";
       const continueMs = ABILITIES[abilityId]?.combo?.continueWindowMs ?? 200;
@@ -59,6 +65,19 @@ export function syncAbilityCast(
       controller.cancelAbilityAnimation();
       lastCastId.current = "";
       if (comboAnimHoldUntil) comboAnimHoldUntil.current = 0;
+    }
+    return;
+  }
+
+  // Teleport Slam: after blink, no cast clip — rematerialize in loco only.
+  if (
+    player.castAbilityId === "teleportSlam" &&
+    sessionId &&
+    isTeleportSlamAnimSuppressed(sessionId)
+  ) {
+    if (lastCastId.current !== "teleportSlam:blink") {
+      controller.cancelAbilityAnimation();
+      lastCastId.current = "teleportSlam:blink";
     }
     return;
   }
@@ -214,12 +233,23 @@ export function syncAbilityCast(
   ) {
     // Blood Rush: crouch hold → swap to Crouched To Sprinting on impact.
     // Hand Shield: Start → Idle loop on impact → End on recovery.
+    // Verdant Leap: sprint only when leaping (castComboHit stamped at commit).
     if (
       player.castPhase === "impact" &&
       binding.impactFullBody &&
       !lastCastId.current.endsWith(":impact")
     ) {
+      if (
+        player.castAbilityId === "verdantLeap" &&
+        (player.castComboHit ?? 0) < 1
+      ) {
+        lastCastId.current = `${castKey}:impact`;
+        return;
+      }
       lastCastId.current = `${castKey}:impact`;
+      if (player.castAbilityId === "verdantLeap") {
+        controller.cancelUpperBodyAction();
+      }
       const logical = String(binding.impactFullBody);
       const mapped =
         logical in heroAnimationConfig
@@ -350,6 +380,43 @@ export function syncAbilityCast(
 
   lastCastId.current = castKey;
 
+  // Verdant Leap: crouch→sprint only when leaping to an ally (server stamps
+  // castComboHit=1 at commit). Solo heal+haste keeps the soft upper cast.
+  if (
+    player.castAbilityId === "verdantLeap" &&
+    player.castPhase === "impact" &&
+    binding.impactFullBody &&
+    !String(lastCastId.current).endsWith(":impact")
+  ) {
+    // Re-read after assigning castKey above — mark impact regardless of leap.
+    const impactKey = `${castKey}:impact`;
+    if ((player.castComboHit ?? 0) < 1) {
+      lastCastId.current = impactKey;
+      return;
+    }
+    lastCastId.current = impactKey;
+    controller.cancelUpperBodyAction();
+    const logical = String(binding.impactFullBody);
+    const mapped =
+      logical in heroAnimationConfig
+        ? heroAnimationConfig[logical as keyof typeof heroAnimationConfig]
+        : undefined;
+    const clipName = mapped != null ? String(mapped) : logical;
+    const opts = {
+      desiredDuration: binding.impactFullBodyLoop
+        ? undefined
+        : binding.impactFullBodyAnimDurationSec,
+      timeScale: binding.impactFullBodyTimeScale,
+      loop: binding.impactFullBodyLoop,
+      restoreLayers: true,
+    };
+    const ok =
+      controller.playFullBodyAction(logical, opts) ||
+      controller.playFullBodyAction(clipName, opts);
+    if (!ok) lastCastId.current = castKey;
+    return;
+  }
+
   const durationSec = def ? totalCastDurationMs(def) / 1000 : undefined;
   /** Anim covers windup→land; recovery only holds the clamped end pose. */
   const activePoseSec = def
@@ -451,6 +518,7 @@ export function syncAbilityCast(
           ? undefined
           : animSec,
       timeScale: releaseScale ?? (looping ? 1 : binding.upperTimeScale),
+      startAtSec: releasingNow ? undefined : binding.startAtSec,
       holdAtSec: releasingNow ? undefined : binding.upperHoldAtSec,
       loop: looping,
       onComplete:
@@ -489,5 +557,5 @@ export function syncPlayerCast(
 ): void {
   if (!room || !sessionId) return;
   const player = room.state?.players?.get(sessionId) as CastAnimState | undefined;
-  syncAbilityCast(controller, player, lastCastId, comboAnimHoldUntil);
+  syncAbilityCast(controller, player, lastCastId, comboAnimHoldUntil, sessionId);
 }

@@ -431,6 +431,57 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
     );
   },
 
+  verdantLeap: (msg) => {
+    const variant = msg.variant ?? 0;
+    if (variant === 3) {
+      spawnImpactEffect(
+        msg.abilityId,
+        { x: msg.x, z: msg.z, y: 0.03 },
+        { lifeMs: 700, variant: 3, radius: msg.radius ?? 8.5 },
+      );
+      return;
+    }
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: msg.y ?? 0.2 },
+      { lifeMs: 420, variant, radius: msg.radius },
+    );
+  },
+
+  bulwarkCharge: (msg) => {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: msg.y ?? 1.0 },
+      { lifeMs: 380, variant: msg.variant ?? 0, radius: msg.radius },
+    );
+  },
+
+  predatorStep: () => {
+    // Cloak + haste statuses own the read — no sphere pop.
+  },
+
+  rebound: (msg, ctx) => {
+    const yaw = ownerYaw(msg, ctx);
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: msg.y ?? 0.15, yaw },
+      { lifeMs: 560, radius: msg.radius, variant: msg.variant ?? 0 },
+    );
+  },
+
+  teleportSlam: (msg) => {
+    const variant = msg.variant ?? 0;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: msg.y ?? (variant === 0 ? 0.08 : 1.0) },
+      {
+        lifeMs: variant === 0 ? Math.max(900, 1200) : 420,
+        radius: msg.radius,
+        variant,
+      },
+    );
+  },
+
   catalogImpact: (msg, ctx) => {
     const yaw = ownerYaw(msg, ctx);
     spawnImpactEffect(msg.abilityId, { x: msg.x, z: msg.z, y: 0.04, yaw });

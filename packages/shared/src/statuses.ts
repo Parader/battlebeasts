@@ -265,7 +265,64 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#a5b4fc",
     tag: "SPF",
   },
-  /** Decoy cloak — invisible to enemies, ghost to self; still takes hits. */
+  /** Verdant Leap arrival haste — +20% move. */
+  verdantHaste: {
+    id: "verdantHaste",
+    name: "Verdant Rush",
+    polarity: "buff",
+    mechanic: "haste",
+    durationMs: 1800,
+    moveMul: 1.2,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#A9D978",
+    tag: "VRD",
+  },
+  /** Predator Step haste — short +60% move burst. */
+  predatorHaste: {
+    id: "predatorHaste",
+    name: "Predator Rush",
+    polarity: "buff",
+    mechanic: "haste",
+    durationMs: 700,
+    moveMul: 1.6,
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#EF4444",
+    tag: "PRD",
+  },
+  /**
+   * Bulwark Charge — active while charging. Blocks displacement; hard CC durations cut;
+   * blocks incoming damage from the forward 180°.
+   */
+  bulwarkCharging: {
+    id: "bulwarkCharging",
+    name: "Bulwark Charge",
+    polarity: "buff",
+    mechanic: "resist",
+    durationMs: 400,
+    /**
+     * Frontal damage block is applied in CombatSystem (forward 180° only) —
+     * not via a flat damageTakenMul.
+     */
+    maxStacks: 1,
+    stackRule: "refresh",
+    color: "#94a3b8",
+    tag: "BWC",
+  },
+  /** Bulwark Charge completion absorb. `stacks` = remaining shield HP. */
+  bulwarkShield: {
+    id: "bulwarkShield",
+    name: "Bulwark",
+    polarity: "buff",
+    mechanic: "shield",
+    durationMs: 2200,
+    maxStacks: combatMag(12),
+    stackRule: "refresh",
+    color: "#60a5fa",
+    tag: "BWS",
+  },
+  /** Decoy / Predator cloak — invisible to enemies, ghost to self; still takes hits. */
   cloaked: {
     id: "cloaked",
     name: "Cloaked",

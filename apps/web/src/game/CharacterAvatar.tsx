@@ -39,6 +39,7 @@ import { RiftArmRing } from "./vfx/effects/riftArmRing";
 import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
 import { AbilityHoverTelegraph } from "./vfx/AbilityHoverTelegraph";
 import { isRevengeVanished } from "./revengeVanishRuntime";
+import { getTeleportSlamOpacity, hasTeleportSlamFade } from "./teleportSlamFadeRuntime";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -403,8 +404,13 @@ export function CharacterAvatar({
     if (bodyRef.current) bodyRef.current.visible = !revengeVanished;
     if (aimRef.current) aimRef.current.visible = !revengeVanished;
 
-    const ghostOpacity = revengeVanished ? 0 : cloaked ? 0.32 : 1;
-    if (ghostOpacity !== ghostOpacityRef.current) {
+    const ghostOpacity = revengeVanished
+      ? 0
+      : cloaked
+        ? 0.32
+        : getTeleportSlamOpacity(localSessionId);
+    const slamFading = !cloaked && !revengeVanished && hasTeleportSlamFade(localSessionId);
+    if (slamFading || ghostOpacity !== ghostOpacityRef.current) {
       ghostOpacityRef.current = ghostOpacity;
       setCharacterOpacity(scene, ghostOpacity);
       setCloakOpacity(ghostOpacity);

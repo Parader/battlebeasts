@@ -24,6 +24,11 @@ import {
   ARC_BLADE_CAST,
   arcBladeHitDamage,
   BLOOMING_PATH_CAST,
+  VERDANT_LEAP_CAST,
+  BULWARK_CHARGE_CAST,
+  PREDATOR_STEP_CAST,
+  REBOUND_CAST,
+  TELEPORT_SLAM_CAST,
   RIFT_FISSURE_CAST,
   VOLCANO_CAST,
   MAGMA_ORBS_CAST,
@@ -206,10 +211,12 @@ type ActiveCast = {
   /** Fireball: 0..1 charge at confirm; launch after release anim. */
   fireballCharge01?: number;
   fireballLaunchAt?: number;
-  /** Last Magma Orbs meet range broadcast via cast_phase (aim sync). */
+  /** Magma Orbs meet range broadcast via cast_phase (aim sync). */
   magmaMeetRange?: number;
   /** Facing used for the last magma meet broadcast (detect late turns). */
   magmaMeetYaw?: number;
+  /** Verdant Leap solo: short impact so heal+haste doesn't root for leap duration. */
+  verdantSoloImpactMs?: number;
 };
 
 type PendingFireballBurn = {
@@ -254,6 +261,12 @@ type ActiveTravel = {
   pathHitIds?: Set<string>;
   /** Spirit Form return — fly through walls to husk. */
   ignoreCollision?: boolean;
+  /** Space arrival callbacks. */
+  spaceArrive?: "verdantLeap" | "bulwarkCharge" | "predatorStep";
+  /** Soft-target id (ally for Verdant, enemy for Predator). */
+  followTargetId?: string;
+  /** Stop short of follow target (m). */
+  stopDistance?: number;
 };
 
 type ActiveKnockback = {
@@ -314,6 +327,15 @@ type PendingBloomingPath = {
   tickMs: number;
   /** Set when tip despawns; while growing, treated as still active. */
   expiresAt: number | null;
+};
+
+/** Teleport Slam — blink shortly after the slam impact. */
+type PendingTeleportSlamBlink = {
+  fireAt: number;
+  ownerId: string;
+  abilityId: string;
+  yaw: number;
+  distance: number;
 };
 
 /** Ground AoE with `delayedImpactMs` — place first, damage later. */
@@ -593,6 +615,7 @@ export class CombatSystem {
   private pendingSpikes: PendingSpike[] = [];
   private pendingArcBladeHits: PendingArcBladeHit[] = [];
   private pendingBloomingPaths: PendingBloomingPath[] = [];
+  private pendingTeleportSlamBlinks: PendingTeleportSlamBlink[] = [];
   private pendingDelayedAoes: PendingDelayedAoe[] = [];
   private pendingSilenceSweeps: PendingSilenceSweep[] = [];
   private pendingFirewalls: PendingFirewall[] = [];
@@ -1096,6 +1119,9 @@ export class CombatSystem {
       const abilityId = cast.abilityId;
       const now = Date.now();
       this.travels.delete(targetId);
+      if (abilityId === "bulwarkCharge") {
+        this.statuses.remove(targetId, "bulwarkCharging");
+      }
       let cooldownMs = this.endComboEarly(targetId, abilityId, cast.effectFired, now);
       const def = ABILITIES[abilityId];
       if (def?.holdChannel && cast.effectFired) {
@@ -2298,6 +2324,10 @@ export class CombatSystem {
     if (abilityEffectKind(def) === "decoy") {
       this.commitDecoyCast(sessionId, player, def, now);
     }
+    // Predator Step: cloak + haste at cast begin (no dash).
+    if (abilityEffectKind(def) === "predatorStep") {
+      this.commitPredatorCloak(sessionId, now);
+    }
     if (def.id === "barrier") {
       this.commitBarrierCast(sessionId, def, now);
     }
@@ -2654,6 +2684,7 @@ export class CombatSystem {
     this.advancePendingSpikes(now);
     this.advancePendingArcBladeHits(now);
     this.advancePendingBloomingPaths(now);
+    this.advancePendingTeleportSlamBlinks(now);
     this.advancePendingDelayedAoes(now);
     this.advancePendingSilenceSweeps(now);
     this.advancePendingFirewalls(now);
@@ -2953,6 +2984,33 @@ export class CombatSystem {
         this.travels.delete(sessionId);
         continue;
       }
+
+      // Soft-target Space leaps: retarget destination toward live unit.
+      if (travel.followTargetId && travel.stopDistance != null) {
+        const dest = this.pointNearBody(
+          travel.followTargetId,
+          { x: travel.fromX, z: travel.fromZ },
+          travel.stopDistance,
+        );
+        if (dest) {
+          const dx = dest.x - travel.fromX;
+          const dz = dest.z - travel.fromZ;
+          const len = Math.hypot(dx, dz);
+          if (len > 1e-4) {
+            travel.yaw = Math.atan2(dx, dz);
+            const clamped = this.sweepPlayerPos(
+              sessionId,
+              { x: travel.fromX, z: travel.fromZ },
+              dest,
+            );
+            travel.distance = Math.hypot(
+              clamped.x - travel.fromX,
+              clamped.z - travel.fromZ,
+            );
+          }
+        }
+      }
+
       const dur = Math.max(1, travel.endAt - travel.startAt);
       const linear = Math.min(1, Math.max(0, (now - travel.startAt) / dur));
       const def = ABILITIES[travel.abilityId];
@@ -2976,13 +3034,25 @@ export class CombatSystem {
       if (def?.travel?.hitAlongPath) {
         this.applyTravelPathHits(sessionId, travel, def, prevX, prevZ, next.x, next.z, now);
       }
+      if (travel.spaceArrive === "bulwarkCharge") {
+        this.applyBulwarkPathShoves(sessionId, travel, prevX, prevZ, next.x, next.z, now);
+      }
 
       if (now >= travel.endAt) {
         const pending = travel.pendingLandingEffect;
         const abilityId = travel.abilityId;
+        const spaceArrive = travel.spaceArrive;
+        const followTargetId = travel.followTargetId;
         this.travels.delete(sessionId);
         if (abilityId === "spiritForm") {
           this.finishSpiritReturn(sessionId);
+        }
+        if (spaceArrive === "verdantLeap") {
+          this.finishVerdantLeap(sessionId, followTargetId, now);
+        } else if (spaceArrive === "bulwarkCharge") {
+          this.finishBulwarkCharge(sessionId, now);
+        } else if (spaceArrive === "predatorStep") {
+          this.finishPredatorStep(sessionId, now);
         }
         if (pending) {
           const landDef = ABILITIES[abilityId];
@@ -3047,6 +3117,68 @@ export class CombatSystem {
           targetId: hit.targetId,
           damage: dmg,
         });
+      }
+    }
+  }
+
+  /**
+   * Bulwark Charge — shoulder enemies / dummies aside (no damage) once per target.
+   * Lateral shove relative to charge facing; centered targets pick a default side.
+   */
+  private applyBulwarkPathShoves(
+    sessionId: string,
+    travel: ActiveTravel,
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    now: number,
+  ) {
+    if (!travel.pathHitIds) travel.pathHitIds = new Set();
+    const hitR = BULWARK_CHARGE_CAST.shoveRadius;
+    const bodies = this.collectBodies();
+    const dx = toX - fromX;
+    const dz = toZ - fromZ;
+    const len = Math.hypot(dx, dz);
+    const steps = Math.max(1, Math.ceil(len / Math.max(0.25, hitR * 0.85)));
+    const fx = Math.sin(travel.yaw);
+    const fz = Math.cos(travel.yaw);
+    // Perpendicular right relative to charge yaw.
+    const rx = fz;
+    const rz = -fx;
+
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const cx = fromX + dx * t;
+      const cz = fromZ + dz * t;
+      const hits = resolveInstantHits(
+        { x: cx, z: cz },
+        hitR,
+        0,
+        sessionId,
+        bodies,
+        (o, tid) => this.canHurt(o, tid),
+      );
+      for (const hit of hits) {
+        if (travel.pathHitIds.has(hit.targetId)) continue;
+        travel.pathHitIds.add(hit.targetId);
+        const body = this.bodyPos(hit.targetId);
+        if (!body) continue;
+        const ox = body.x - cx;
+        const oz = body.z - cz;
+        let side = Math.sign(ox * rx + oz * rz);
+        if (side === 0) {
+          // Dead-center: prefer the side that clears the charge lane farther.
+          side = 1;
+        }
+        this.applyLateralKnockback(
+          hit.targetId,
+          rx * side,
+          rz * side,
+          BULWARK_CHARGE_CAST.shoveDistance,
+          BULWARK_CHARGE_CAST.shoveMs,
+          now,
+        );
       }
     }
   }
@@ -3190,9 +3322,11 @@ export class CombatSystem {
           const cooldownMs = committed
             ? this.onEffectResolved(sessionId, def, now)
             : undefined;
+          const liveCast = this.casts.get(sessionId);
           this.enterPhase(sessionId, player, def, next, now, cast.castStartedAt, {
             cooldownMs,
             comboHit: this.comboHitFor(sessionId, def.id),
+            durationMs: liveCast?.verdantSoloImpactMs,
           });
           const live = this.casts.get(sessionId);
           if (live) live.effectFired = true;
@@ -3355,7 +3489,12 @@ export class CombatSystem {
       this.statuses.remove(sessionId, "handShielding");
     }
     this.casts.delete(sessionId);
-    this.travels.delete(sessionId);
+    // Space charge leaps (Bulwark / Verdant / Predator / Rebound recoil) outlive the
+    // cast phases — do not cancel their travel when recovery ends.
+    const liveTravel = this.travels.get(sessionId);
+    if (!liveTravel?.spaceArrive && liveTravel?.abilityId !== "rebound") {
+      this.travels.delete(sessionId);
+    }
     player.castAbilityId = "";
     player.castPhase = "";
     player.castPhaseEndsAt = 0;
@@ -3431,6 +3570,11 @@ export class CombatSystem {
         this.scheduleGrooveHeal(a.sessionId, a.def, a.now);
       },
       arcBlade: (a) => this.scheduleArcBlade(a.sessionId, a.player, a.def, a.now),
+      verdantLeap: (a) => this.commitVerdantLeap(a.sessionId, a.player, a.def, a.now),
+      bulwarkCharge: (a) => this.commitBulwarkCharge(a.sessionId, a.player, a.def, a.now),
+      predatorStep: (a) => this.commitPredatorStep(a.sessionId, a.player, a.def, a.now),
+      rebound: (a) => this.commitRebound(a.sessionId, a.player, a.def, a.now),
+      teleportSlam: (a) => this.commitTeleportSlam(a.sessionId, a.player, a.def, a.now),
     };
     return this._effectKindFireHandlers;
   }
@@ -6884,6 +7028,544 @@ export class CombatSystem {
     this.pendingBloomingPaths = remain;
   }
 
+  /** Soft-target living ally or practice dummy (no self) closest to aim within range + forward cone. */
+  private findAllyAimTarget(
+    casterId: string,
+    caster: PlayerState,
+    range: number,
+    aim: { x: number; z: number } | null,
+  ): string | null {
+    const pick = this.findVerdantLeapAimTarget(casterId, caster, range, aim);
+    if (!pick?.inRange || pick.id === casterId) return null;
+    return pick.id;
+  }
+
+  /**
+   * Soft-target Verdant Leap — healable closest to aim, including the caster
+   * (Soul Relay style). Self competing means aim-at-feet is solo cast, not a
+   * false OOR lock on a far dummy. Ally/dummy OOR locks still refuse.
+   */
+  private findVerdantLeapAimTarget(
+    casterId: string,
+    caster: PlayerState,
+    range: number,
+    aim: { x: number; z: number } | null,
+  ): { id: string; inRange: boolean } | null {
+    const fx = Math.sin(caster.yaw);
+    const fz = Math.cos(caster.yaw);
+    const aimX = aim?.x ?? caster.x;
+    const aimZ = aim?.z ?? caster.z;
+    let bestId: string | null = null;
+    let bestAimDist = Infinity;
+    let bestCasterDist = 0;
+
+    const consider = (id: string, x: number, z: number, requireCone: boolean) => {
+      const dx = x - caster.x;
+      const dz = z - caster.z;
+      const casterDist = Math.hypot(dx, dz);
+      if (requireCone) {
+        if (casterDist < 0.05) return;
+        const dot = (dx * fx + dz * fz) / casterDist;
+        // ~60° forward cone (matches Soul Relay)
+        if (dot < 0.5) return;
+      }
+      const aimDist = Math.hypot(x - aimX, z - aimZ);
+      if (
+        aimDist < bestAimDist - 1e-4 ||
+        (Math.abs(aimDist - bestAimDist) <= 1e-4 && casterDist < bestCasterDist)
+      ) {
+        bestAimDist = aimDist;
+        bestId = id;
+        bestCasterDist = casterDist;
+      }
+    };
+
+    // Caster always competes — aiming near your feet is solo cast, not OOR.
+    consider(casterId, caster.x, caster.z, false);
+
+    for (const [id, p] of this.room.state.players) {
+      if (id === casterId) continue;
+      if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      if (!this.canHealTarget(casterId, id)) continue;
+      consider(id, p.x, p.z, true);
+    }
+    for (const [id, t] of this.room.state.targets) {
+      if (t.hp <= 0) continue;
+      if (!this.canHealTarget(casterId, id)) continue;
+      consider(id, t.x, t.z, true);
+    }
+
+    if (!bestId) return null;
+    return { id: bestId, inRange: bestCasterDist <= range + 0.05 };
+  }
+
+  /** Soft-target hurt-able enemy closest to aim within range + forward cone. */
+  private findEnemyAimTarget(
+    casterId: string,
+    caster: PlayerState,
+    range: number,
+    aim: { x: number; z: number } | null,
+  ): string | null {
+    const fx = Math.sin(caster.yaw);
+    const fz = Math.cos(caster.yaw);
+    const aimX = aim?.x ?? caster.x + fx * range;
+    const aimZ = aim?.z ?? caster.z + fz * range;
+    let bestId: string | null = null;
+    let bestAimDist = Infinity;
+    let bestCasterDist = Infinity;
+
+    const consider = (id: string, x: number, z: number) => {
+      if (!this.canHurt(casterId, id)) return;
+      const dx = x - caster.x;
+      const dz = z - caster.z;
+      const casterDist = Math.hypot(dx, dz);
+      if (casterDist > range + 0.05 || casterDist < 0.05) return;
+      const dot = (dx * fx + dz * fz) / casterDist;
+      if (dot < 0.5) return;
+      const aimDist = Math.hypot(x - aimX, z - aimZ);
+      if (
+        aimDist < bestAimDist - 1e-4 ||
+        (Math.abs(aimDist - bestAimDist) <= 1e-4 && casterDist < bestCasterDist)
+      ) {
+        bestAimDist = aimDist;
+        bestId = id;
+        bestCasterDist = casterDist;
+      }
+    };
+
+    for (const [id, p] of this.room.state.players) {
+      if (id === casterId) continue;
+      if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      consider(id, p.x, p.z);
+    }
+    for (const [id, t] of this.room.state.targets) {
+      if (t.hp <= 0) continue;
+      consider(id, t.x, t.z);
+    }
+    return bestId;
+  }
+
+  private bodyPos(id: string): { x: number; z: number } | null {
+    const p = this.room.state.players.get(id);
+    if (p && !p.disconnected && p.hp > 0) return { x: p.x, z: p.z };
+    const t = this.room.state.targets.get(id);
+    if (t && t.hp > 0) return { x: t.x, z: t.z };
+    return null;
+  }
+
+  /**
+   * Bulwark Charge frontal ward — block when the damage source sits in the
+   * forward half-plane of the charger’s facing (±90°).
+   */
+  private bulwarkBlocksIncoming(targetId: string, attackerSessionId: string): boolean {
+    if (!this.statuses.has(targetId, "bulwarkCharging")) return false;
+    const defender = this.room.state.players.get(targetId);
+    if (!defender || defender.hp <= 0) return false;
+    const src = this.bodyPos(attackerSessionId);
+    if (!src) return false;
+    const half = BULWARK_CHARGE_CAST.blockHalfAngle;
+    return Math.abs(angleFromFacing({ x: defender.x, z: defender.z }, defender.yaw, src)) <= half;
+  }
+
+  /** Point along from→target stopping `stopDistance` short of the target, wall-clamped. */
+  private pointNearBody(
+    targetId: string,
+    from: { x: number; z: number },
+    stopDistance: number,
+  ): { x: number; z: number } | null {
+    const body = this.bodyPos(targetId);
+    if (!body) return null;
+    const dx = body.x - from.x;
+    const dz = body.z - from.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return { x: from.x, z: from.z };
+    const travel = Math.max(0, len - Math.max(0.4, stopDistance));
+    const ideal = {
+      x: from.x + (dx / len) * travel,
+      z: from.z + (dz / len) * travel,
+    };
+    return this.sweepPlayerPos("", from, ideal);
+  }
+
+  private scheduleDirectionalTravel(
+    sessionId: string,
+    abilityId: string,
+    yaw: number,
+    distance: number,
+    durationMs: number,
+    now: number,
+    opts?: { spaceArrive?: ActiveTravel["spaceArrive"]; followTargetId?: string; stopDistance?: number },
+  ) {
+    const player = this.room.state.players.get(sessionId);
+    if (!player) return;
+    const from = { x: player.x, z: player.z };
+    const ideal = sampleTravel(from, yaw, Math.max(0, distance), 1);
+    const clamped = this.sweepPlayerPos(sessionId, from, ideal);
+    const actual = Math.hypot(clamped.x - from.x, clamped.z - from.z);
+    const scale = distance > 1e-6 ? Math.min(1, actual / distance) : 0;
+    const travelDist = distance * scale;
+    const travelDur = Math.max(16, durationMs * Math.max(0.05, scale || 1));
+    this.travels.delete(sessionId);
+    this.travels.set(sessionId, {
+      abilityId,
+      fromX: from.x,
+      fromZ: from.z,
+      yaw,
+      distance: travelDist,
+      startAt: now,
+      endAt: now + travelDur,
+      lastX: from.x,
+      lastZ: from.z,
+      spaceArrive: opts?.spaceArrive,
+      followTargetId: opts?.followTargetId,
+      stopDistance: opts?.stopDistance,
+      pathHitIds: opts?.spaceArrive === "bulwarkCharge" ? new Set() : undefined,
+    });
+    this.fx({
+      kind: "dash",
+      abilityId,
+      x: from.x,
+      z: from.z,
+      x2: clamped.x,
+      z2: clamped.z,
+      yaw,
+      ownerId: sessionId,
+      phaseEndsAt: now + travelDur,
+    });
+  }
+
+  private schedulePointTravel(
+    sessionId: string,
+    abilityId: string,
+    to: { x: number; z: number },
+    durationMs: number,
+    now: number,
+    opts?: { spaceArrive?: ActiveTravel["spaceArrive"]; followTargetId?: string; stopDistance?: number },
+  ) {
+    const player = this.room.state.players.get(sessionId);
+    if (!player) return;
+    const from = { x: player.x, z: player.z };
+    const clamped = this.sweepPlayerPos(sessionId, from, to);
+    const dx = clamped.x - from.x;
+    const dz = clamped.z - from.z;
+    const dist = Math.hypot(dx, dz);
+    const yaw = dist > 1e-4 ? Math.atan2(dx, dz) : player.yaw;
+    this.travels.delete(sessionId);
+    this.travels.set(sessionId, {
+      abilityId,
+      fromX: from.x,
+      fromZ: from.z,
+      yaw,
+      distance: dist,
+      startAt: now,
+      endAt: now + Math.max(16, durationMs),
+      lastX: from.x,
+      lastZ: from.z,
+      spaceArrive: opts?.spaceArrive,
+      followTargetId: opts?.followTargetId,
+      stopDistance: opts?.stopDistance,
+    });
+    this.fx({
+      kind: "dash",
+      abilityId,
+      x: from.x,
+      z: from.z,
+      x2: clamped.x,
+      z2: clamped.z,
+      yaw,
+      ownerId: sessionId,
+      phaseEndsAt: now + Math.max(16, durationMs),
+    });
+  }
+
+  private commitVerdantLeap(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const aim =
+      cast?.aimX != null &&
+      cast?.aimZ != null &&
+      Number.isFinite(cast.aimX) &&
+      Number.isFinite(cast.aimZ)
+        ? { x: cast.aimX, z: cast.aimZ }
+        : null;
+    const range = def.range || VERDANT_LEAP_CAST.range;
+    const pick = this.findVerdantLeapAimTarget(sessionId, player, range, aim);
+
+    // Soft-locked ally/dummy out of range — refuse so the red ring is readable.
+    if (pick && pick.id !== sessionId && !pick.inRange) {
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: player.x,
+        z: player.z,
+        ownerId: sessionId,
+        radius: range,
+        variant: 3,
+      });
+      this.lastFireCommitted = false;
+      return;
+    }
+
+    const allyId =
+      pick && pick.id !== sessionId && pick.inRange ? pick.id : null;
+
+    if (allyId) {
+      const dest = this.pointNearBody(
+        allyId,
+        { x: player.x, z: player.z },
+        VERDANT_LEAP_CAST.arrivalDistanceFromTarget,
+      );
+      if (!dest) {
+        this.lastFireCommitted = false;
+        return;
+      }
+      // Stamp so clients play crouch→sprint only for ally leaps (not solo heal).
+      player.castComboHit = 1;
+      this.schedulePointTravel(
+        sessionId,
+        def.id,
+        dest,
+        VERDANT_LEAP_CAST.travelDurationMs,
+        now,
+        {
+          spaceArrive: "verdantLeap",
+          followTargetId: allyId,
+          stopDistance: VERDANT_LEAP_CAST.arrivalDistanceFromTarget,
+        },
+      );
+      return;
+    }
+
+    // Solo fallback: no leap — self-heal + haste in place (keep walking).
+    if (cast) cast.verdantSoloImpactMs = 90;
+    this.finishVerdantLeap(sessionId, undefined, now);
+  }
+
+  private finishVerdantLeap(sessionId: string, allyId: string | undefined, now: number) {
+    const duo = Boolean(allyId && this.canHealTarget(sessionId, allyId));
+    const heal = ABILITIES.verdantLeap?.heal ?? VERDANT_LEAP_CAST.heal;
+    this.applyHealAmount(sessionId, heal, sessionId, "verdantLeap");
+    if (duo && allyId) {
+      this.applyHealAmount(allyId, heal, sessionId, "verdantLeap");
+    }
+    const dur = VERDANT_LEAP_CAST.moveSpeedDurationMs;
+    this.statuses.apply(sessionId, "verdantHaste", sessionId, now, { durationMs: dur });
+    if (duo && allyId) {
+      this.statuses.apply(allyId, "verdantHaste", sessionId, now, { durationMs: dur });
+    }
+    const player = this.room.state.players.get(sessionId);
+    if (player) {
+      this.fx({
+        kind: "aoe",
+        abilityId: "verdantLeap",
+        x: player.x,
+        z: player.z,
+        ownerId: sessionId,
+        variant: 1,
+        radius: 1.2,
+      });
+    }
+    if (duo && allyId) {
+      const ally = this.bodyPos(allyId);
+      if (ally) {
+        this.fx({
+          kind: "hit",
+          abilityId: "verdantLeap",
+          x: ally.x,
+          z: ally.z,
+          ownerId: sessionId,
+          targetId: allyId,
+          damage: heal,
+          variant: 1,
+        });
+      }
+    }
+  }
+
+  private commitBulwarkCharge(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const yaw = cast?.yaw ?? player.yaw;
+    const dist = BULWARK_CHARGE_CAST.distance;
+    const dur = BULWARK_CHARGE_CAST.travelDurationMs;
+    this.statuses.apply(sessionId, "bulwarkCharging", sessionId, now, {
+      durationMs: dur + 80,
+    });
+    this.scheduleDirectionalTravel(sessionId, def.id, yaw, dist, dur, now, {
+      spaceArrive: "bulwarkCharge",
+    });
+  }
+
+  private finishBulwarkCharge(sessionId: string, now: number) {
+    this.statuses.remove(sessionId, "bulwarkCharging");
+    const shield = ABILITIES.bulwarkCharge?.shield ?? BULWARK_CHARGE_CAST.shield;
+    const shieldDur =
+      ABILITIES.bulwarkCharge?.shieldDurationMs ?? BULWARK_CHARGE_CAST.shieldDurationMs;
+    this.statuses.apply(sessionId, "bulwarkShield", sessionId, now, {
+      durationMs: shieldDur,
+      stacks: shield,
+      setStacks: true,
+    });
+  }
+
+  private commitPredatorCloak(sessionId: string, now: number) {
+    this.statuses.apply(sessionId, "cloaked", sessionId, now, {
+      durationMs: PREDATOR_STEP_CAST.invisibilityDurationMs,
+    });
+    this.statuses.apply(sessionId, "predatorHaste", sessionId, now, {
+      durationMs: PREDATOR_STEP_CAST.moveSpeedDurationMs,
+    });
+  }
+
+  private commitPredatorStep(sessionId: string, _player: PlayerState, _def: AbilityDef, now: number) {
+    // Refresh cloak/haste on impact (applied at cast begin; no travel).
+    this.commitPredatorCloak(sessionId, now);
+  }
+
+  private finishPredatorStep(sessionId: string, now: number) {
+    this.commitPredatorCloak(sessionId, now);
+  }
+
+  private commitRebound(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const yaw = cast?.yaw ?? player.yaw;
+    const origin = { x: player.x, z: player.z };
+    const range = def.radius ?? REBOUND_CAST.coneRange;
+    const half = def.coneHalfAngle ?? (REBOUND_CAST.coneAngleDeg * Math.PI) / 180 / 2;
+    const damage = def.damage ?? REBOUND_CAST.damage;
+    const push = def.knockback ?? REBOUND_CAST.enemyPushDistance;
+    const pushMs = def.knockbackMs ?? REBOUND_CAST.displacementDurationMs;
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: origin.x,
+      z: origin.z,
+      yaw,
+      radius: range,
+      ownerId: sessionId,
+    });
+
+    for (const body of this.collectBodies()) {
+      if (body.id === sessionId) continue;
+      if (body.hp <= 0 || body.vulnerable === false) continue;
+      if (!this.canHurt(sessionId, body.id)) continue;
+      if (!inFacingCone(origin, yaw, range, half, body)) continue;
+      this.applyDamage(body.id, damage, sessionId, def.id, now);
+      this.applyKnockback(origin, body.id, push, pushMs, now);
+    }
+
+    const recoilYaw = yaw + Math.PI;
+    this.scheduleDirectionalTravel(
+      sessionId,
+      def.id,
+      recoilYaw,
+      REBOUND_CAST.selfRecoilDistance,
+      REBOUND_CAST.displacementDurationMs,
+      now,
+    );
+  }
+
+  private commitTeleportSlam(
+    sessionId: string,
+    player: PlayerState,
+    def: AbilityDef,
+    now: number,
+  ) {
+    const cast = this.casts.get(sessionId);
+    const yaw = cast?.yaw ?? player.yaw;
+    const center = { x: player.x, z: player.z };
+    const radius = def.radius ?? TELEPORT_SLAM_CAST.slamRadius;
+    const damage = def.damage ?? TELEPORT_SLAM_CAST.damage;
+
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: center.x,
+      z: center.z,
+      radius,
+      ownerId: sessionId,
+      variant: 0,
+    });
+
+    const hits = resolveInstantHits(
+      center,
+      radius,
+      damage,
+      sessionId,
+      this.collectBodies(),
+      (o, t) => this.canHurt(o, t),
+    );
+    for (const hit of hits) {
+      this.applyDamage(hit.targetId, hit.damage, sessionId, def.id, now);
+      this.statuses.applyApplications(
+        hit.targetId,
+        def.applyOnHit ?? [
+          { statusId: "stunned", durationMs: TELEPORT_SLAM_CAST.stunMs, chance: 1 },
+        ],
+        sessionId,
+        now,
+      );
+    }
+
+    this.pendingTeleportSlamBlinks.push({
+      fireAt: now + TELEPORT_SLAM_CAST.teleportDelayAfterImpactMs,
+      ownerId: sessionId,
+      abilityId: def.id,
+      yaw,
+      distance: TELEPORT_SLAM_CAST.teleportDistance,
+    });
+  }
+
+  private advancePendingTeleportSlamBlinks(now: number) {
+    if (this.pendingTeleportSlamBlinks.length === 0) return;
+    const remain: PendingTeleportSlamBlink[] = [];
+    for (const blink of this.pendingTeleportSlamBlinks) {
+      if (now < blink.fireAt) {
+        remain.push(blink);
+        continue;
+      }
+      const player = this.room.state.players.get(blink.ownerId);
+      if (!player || player.disconnected || player.hp <= 0) continue;
+      const def = ABILITIES[blink.abilityId] ?? ABILITIES.teleportSlam;
+      if (!def) continue;
+      // Snap along stored aim yaw (not live facing) — slam already resolved.
+      const from = { x: player.x, z: player.z };
+      const off = dashOffset(blink.yaw, blink.distance);
+      const clamped = this.sweepPlayerPos(blink.ownerId, from, {
+        x: player.x + off.x,
+        z: player.z + off.z,
+      });
+      player.x = clamped.x;
+      player.z = clamped.z;
+      this.fx({
+        kind: "portal",
+        abilityId: blink.abilityId,
+        x: from.x,
+        z: from.z,
+        x2: clamped.x,
+        z2: clamped.z,
+        yaw: blink.yaw,
+        ownerId: blink.ownerId,
+      });
+      // Soft shift rematerialize — no purple pop sphere.
+    }
+    this.pendingTeleportSlamBlinks = remain;
+  }
+
   private advancePendingSilenceSweeps(now: number) {
     if (this.pendingSilenceSweeps.length === 0) return;
     const remain: PendingSilenceSweep[] = [];
@@ -7211,6 +7893,64 @@ export class CombatSystem {
     return this.room.state.targets.get(targetId)?.kind === PROP_TARGET_KIND;
   }
 
+  /** Schedule a lateral shove along a unit direction (wall-clamped). */
+  private applyLateralKnockback(
+    targetId: string,
+    dirX: number,
+    dirZ: number,
+    distance: number,
+    durationMs: number,
+    now: number,
+  ) {
+    if (this.isImmovableTarget(targetId)) return;
+    if (this.statuses.has(targetId, "bulwarkCharging")) return;
+    const dur = Math.max(80, durationMs);
+    let len = Math.hypot(dirX, dirZ);
+    if (len < 1e-4) {
+      dirX = 1;
+      dirZ = 0;
+      len = 1;
+    }
+    const nx = dirX / len;
+    const nz = dirZ / len;
+
+    const player = this.room.state.players.get(targetId);
+    if (player) {
+      if (player.invulnerable) return;
+      this.travels.delete(targetId);
+      const from = { x: player.x, z: player.z };
+      const ideal = { x: player.x + nx * distance, z: player.z + nz * distance };
+      const clamped = this.sweepPlayerPos(targetId, from, ideal);
+      this.knockbacks.set(targetId, {
+        targetId,
+        kind: "player",
+        fromX: from.x,
+        fromZ: from.z,
+        toX: clamped.x,
+        toZ: clamped.z,
+        startAt: now,
+        endAt: now + dur,
+      });
+      return;
+    }
+
+    const target = this.room.state.targets.get(targetId);
+    if (!target) return;
+    const from = { x: target.x, z: target.z };
+    const ideal = { x: target.x + nx * distance, z: target.z + nz * distance };
+    const clamped = this.sweepPlayerPos(targetId, from, ideal);
+    this.knockbacks.set(targetId, {
+      targetId,
+      kind: "target",
+      fromX: from.x,
+      fromZ: from.z,
+      toX: clamped.x,
+      toZ: clamped.z,
+      startAt: now,
+      endAt: now + dur,
+    });
+  }
+
   /** Schedule a radial shove (translated over knockbackMs, not teleported). */
   private applyKnockback(
     center: { x: number; z: number },
@@ -7220,6 +7960,7 @@ export class CombatSystem {
     now: number,
   ) {
     if (this.isImmovableTarget(targetId)) return;
+    if (this.statuses.has(targetId, "bulwarkCharging")) return;
     const dur = Math.max(80, durationMs);
 
     const player = this.room.state.players.get(targetId);
@@ -7294,6 +8035,7 @@ export class CombatSystem {
   ) {
     if (distance <= 0) return;
     if (this.isImmovableTarget(targetId)) return;
+    if (this.statuses.has(targetId, "bulwarkCharging")) return;
 
     const minDist = Math.max(0.6, stopDistance);
     const dur = Math.max(80, durationMs);
@@ -7768,7 +8510,11 @@ export class CombatSystem {
       rollCrit(atkKit?.critChance ?? COMBAT.critChance);
     const critMult =
       COMBAT.critMultiplier * (1 + (atkKit?.critDamageBonus ?? 0));
-    const resistMul = this.statuses.getDamageTakenMul(targetId);
+    let resistMul = this.statuses.getDamageTakenMul(targetId);
+    // Bulwark Charge: full block only from the forward hemisphere.
+    if (this.bulwarkBlocksIncoming(targetId, attackerSessionId)) {
+      resistMul = 0;
+    }
     let dealt = Math.max(0, Math.round(scaleForCrit(scaledIn, crit, critMult) * resistMul));
     const damageForLeech = dealt;
     dealt = this.statuses.absorbWithShields(targetId, dealt);

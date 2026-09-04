@@ -247,7 +247,7 @@ export function CastAimTelegraph({
     const pos = getPos();
     const yaw = getYaw();
     const healables: { id: string; x: number; z: number }[] = [];
-    if (id === "soulRelay") {
+    if (id === "soulRelay" || id === "verdantLeap") {
       const players = room.state?.players;
       players?.forEach((p, pid) => {
         if (pid === sessionId) return;

@@ -47,6 +47,8 @@ export type UpperBodyActionOptions = {
   desiredDuration?: number;
   /** Explicit mixer timeScale (wins over desiredDuration when set). */
   timeScale?: number;
+  /** Start the clip at this time (seconds) instead of 0 (skip windup). */
+  startAtSec?: number;
   /** Pause and hold the clip at this time (seconds) once reached. */
   holdAtSec?: number;
   /** Loop until cancel (e.g. Fireball charge). */
@@ -728,6 +730,9 @@ export class CharacterAnimationController {
     action.paused = false;
     action.setLoop(looping ? THREE.LoopRepeat : THREE.LoopOnce, looping ? Infinity : 1);
     action.clampWhenFinished = !looping;
+    if (typeof options.startAtSec === "number" && options.startAtSec > 0) {
+      action.time = Math.min(clip.duration, options.startAtSec);
+    }
     action.setEffectiveWeight(0);
     action.play();
 

@@ -21,6 +21,10 @@ import { getGroundAim } from "./groundAimRuntime";
 import { castAimRuntime } from "./castAimRuntime";
 import { hasStatusId } from "./StatusOrnaments";
 import { beginRevengeVanish } from "./revengeVanishRuntime";
+import {
+  beginTeleportSlamFadeIn,
+  beginTeleportSlamFadeOut,
+} from "./teleportSlamFadeRuntime";
 
 const FX_COLORS: Record<"aoe" | "melee" | "dash" | "hit", string> = {
     aoe: "#c084fc",
@@ -926,6 +930,50 @@ export function useBaseCityRoom(options: Options) {
                     const isLocal = msg.ownerId === sessionIdRef.current;
 
                     if (msg.kind === "portal") {
+                        if (msg.abilityId === "teleportSlam") {
+                            // Character fades; soft earth dust at depart + arrive (no white sphere).
+                            if (msg.ownerId) beginTeleportSlamFadeIn(msg.ownerId);
+                            spawnImpactEffect(
+                                "teleportSlam",
+                                { x: msg.x, z: msg.z, y: 0.04, yaw: msg.yaw },
+                                { lifeMs: 380, variant: 2 },
+                            );
+                            spawnImpactEffect(
+                                "teleportSlam",
+                                {
+                                    x: msg.x2 ?? msg.x,
+                                    z: msg.z2 ?? msg.z,
+                                    y: 0.04,
+                                    yaw: msg.yaw,
+                                },
+                                { lifeMs: 580, variant: 1 },
+                            );
+                            if (isLocal) {
+                                const toX = msg.x2 ?? msg.x;
+                                const toZ = msg.z2 ?? msg.z;
+                                predictorRef.current.seed(
+                                    toX,
+                                    toZ,
+                                    typeof msg.yaw === "number"
+                                        ? msg.yaw
+                                        : predictedRef.current.yaw,
+                                );
+                                predictedRef.current = { ...predictorRef.current.state };
+                            }
+                            if (
+                                isLocal &&
+                                typeof msg.cooldownMs === "number" &&
+                                !adminNoCooldownRef.current
+                            ) {
+                                const until = Date.now() + msg.cooldownMs;
+                                cooldownUntilRef.current = {
+                                    ...cooldownUntilRef.current,
+                                    [msg.abilityId]: until,
+                                };
+                                abilityHudRuntime.setCooldownUntil(cooldownUntilRef.current);
+                            }
+                            return;
+                        }
                         // Depart: collapse the channel bubble (size from live channel scale)
                         const departScale = msg.ownerId
                             ? takePortalChannelBubbleScale(msg.ownerId)
@@ -963,14 +1011,25 @@ export function useBaseCityRoom(options: Options) {
                         return;
                     }
 
-                    if (msg.kind === "dash" && msg.abilityId === "spiritForm" && isLocal) {
+                    if (
+                        msg.kind === "dash" &&
+                        isLocal &&
+                        (msg.abilityId === "spiritForm" ||
+                            msg.abilityId === "verdantLeap" ||
+                            msg.abilityId === "bulwarkCharge" ||
+                            msg.abilityId === "predatorStep" ||
+                            msg.abilityId === "rebound")
+                    ) {
                         const landX = msg.x2 ?? msg.x;
                         const landZ = msg.z2 ?? msg.z;
                         const dur =
                             typeof msg.phaseEndsAt === "number"
                                 ? Math.max(16, msg.phaseEndsAt - Date.now())
                                 : 280;
-                        predictorRef.current.beginPointTravel(landX, landZ, dur);
+                        predictorRef.current.beginPointTravel(landX, landZ, dur, {
+                            ignoreCollision: msg.abilityId === "spiritForm",
+                            abilityId: msg.abilityId,
+                        });
                         predictedRef.current = { ...predictorRef.current.state };
                         awaitingCastAckRef.current = false;
                         pendingCastRef.current = undefined;
@@ -989,7 +1048,7 @@ export function useBaseCityRoom(options: Options) {
                         beginRevengeVanish(msg.ownerId);
                     }
 
-                    if (msg.kind === "cast_phase") {
+                        if (msg.kind === "cast_phase") {
                         if (
                             (msg.phase === "cancel" || msg.phase === "interrupt") &&
                             msg.ownerId
@@ -1010,6 +1069,13 @@ export function useBaseCityRoom(options: Options) {
                                 cancelActiveCastHandle(msg.ownerId, "fireball");
                                 cancelFollowOwnerVfx("fireball", msg.ownerId);
                             }
+                        }
+                        if (
+                            msg.abilityId === "teleportSlam" &&
+                            msg.phase === "impact" &&
+                            msg.ownerId
+                        ) {
+                            beginTeleportSlamFadeOut(msg.ownerId);
                         }
                         if (isLocal) {
                             awaitingCastAckRef.current = false;

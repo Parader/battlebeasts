@@ -2,7 +2,7 @@
  * Maps logical animation roles → clip names inside the loaded GLB.
  * Update these when swapping characters / Mixamo packs.
  */
-import { SMASH_JUMP_ATTACK, SPIKES_CAST, POISON_CLOUD_CAST, SMOKE_BOMB_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BOLT_CAST, BARRIER_CAST, HEAL_BEAM_CAST, LIFE_LEECH_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, HOLY_GROUND_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, FIREBALL_CAST, RIFT_FISSURE_CAST, SOUL_MARK_CAST, VOID_DISC_CAST, RUNIC_SHARD_CAST, ORBITING_WISP_CAST, CRUSHING_SIGIL_CAST, PRISM_LANCE_CAST, fireballThrowSeekSec, fireballReleaseSec, fireballFollowThroughEndSec, EMOTES } from "@battlebeasts/shared";
+import { SMASH_JUMP_ATTACK, SPIKES_CAST, POISON_CLOUD_CAST, SMOKE_BOMB_CAST, FROST_MIST_CAST, FROST_BALL_CAST, BOLT_CAST, BARRIER_CAST, HEAL_BEAM_CAST, LIFE_LEECH_CAST, POISON_DART_CAST, ICE_LANCE_CAST, FIREWALL_CAST, HOLY_GROUND_CAST, VOLCANO_CAST, BLOOD_RUSH_CAST, MAGMA_ORBS_CAST, PROTECTION_BUBBLE_CAST, SHROOM_CAST, HAND_SHIELD_CAST, FIREBALL_CAST, RIFT_FISSURE_CAST, SOUL_MARK_CAST, VOID_DISC_CAST, RUNIC_SHARD_CAST, ORBITING_WISP_CAST, CRUSHING_SIGIL_CAST, PRISM_LANCE_CAST, BULWARK_CHARGE_CAST, VERDANT_LEAP_CAST, TELEPORT_SLAM_CAST, fireballThrowSeekSec, fireballReleaseSec, fireballFollowThroughEndSec, EMOTES } from "@battlebeasts/shared";
 
 export type CharacterAnimationConfig = {
   idle: string;
@@ -417,6 +417,37 @@ export const abilityAnimationBindings: Record<
     /** Standing 1H Cast Spell 01 — quick hand sweep, vine erupts forward. */
     upper: "castBarrier",
     upperTimeScale: 1.25,
+  },
+  verdantLeap: {
+    /** Soft cast windup — sprint only on ally leap impact (solo skips it). */
+    upper: "castBarrier",
+    upperTimeScale: 1.3,
+    impactFullBody: "crouchToSprint",
+    impactFullBodyTimeScale: 0.53 / (VERDANT_LEAP_CAST.travelDurationMs / 1000),
+    impactFullBodyAnimDurationSec: VERDANT_LEAP_CAST.travelDurationMs / 1000,
+  },
+  bulwarkCharge: {
+    fullBody: "crouchToSprint",
+    fullBodyAnimDurationSec: 0.2,
+    impactFullBody: "crouchToSprint",
+    /** Compress ~0.53s sprint clip into the charge travel window. */
+    impactFullBodyTimeScale: 0.53 / (BULWARK_CHARGE_CAST.travelDurationMs / 1000),
+    impactFullBodyAnimDurationSec: BULWARK_CHARGE_CAST.travelDurationMs / 1000,
+  },
+  predatorStep: {
+    /** Brief crouch into cloak — no sprint/dash. */
+    fullBody: "idleToCrouch",
+    fullBodyAnimDurationSec: 0.28,
+  },
+  rebound: {
+    upper: "castAoE",
+    upperTimeScale: 1.35,
+  },
+  teleportSlam: {
+    upper: "castFirewall",
+    upperTimeScale: TELEPORT_SLAM_CAST.playbackRate,
+    /** Skip early Mixamo windup so preload is snappy without racing the clip. */
+    startAtSec: TELEPORT_SLAM_CAST.startFrame / TELEPORT_SLAM_CAST.fps,
   },
   silenceSweep: {
     upper: "castPoisonDart",

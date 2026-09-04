@@ -36,9 +36,14 @@ export type CombatFxAoeMode =
   | "soulSever"
   | "arcBlade"
   | "bloomingPath"
+  | "verdantLeap"
+  | "bulwarkCharge"
+  | "predatorStep"
+  | "rebound"
+  | "teleportSlam"
   | "none";
 
-export type CombatFxDashMode = "bloodRushTrail" | "spiritForm" | "none";
+export type CombatFxDashMode = "bloodRushTrail" | "spiritForm" | "spaceStreak" | "none";
 
 /** Extra GPU assets for this ability — merged into hub/arena preload. */
 export type AbilityVfxAssets = {

@@ -65,6 +65,9 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
   if (row.statusId === "soulRelayLinked") {
     parts.push("Next direct hit heals for damage dealt");
   }
+  if (row.statusId === "cloaked") {
+    parts.push("Invisible to enemies");
+  }
   if (row.statusId === "fifthSpellCadence") parts.push(`${row.stacks}/5 stacks`);
   if (parts.length === 0) {
     parts.push(def.polarity === "buff" ? "Buff" : "Debuff");

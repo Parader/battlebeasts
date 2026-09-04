@@ -63,6 +63,15 @@ import { SoulSeverHitEffect, SoulSeverSnapEffect } from "./effects/soulSeverSnap
 import { ArcBladeEffect, ArcBladeHitEffect, ArcBladeOuterPulseEffect } from "./effects/arcBlade";
 import { BloomingPathBlossomEffect } from "./effects/bloomingPathBlossom";
 import { BloomingPathTrailLingerEffect } from "./effects/bloomingPathTrailLinger";
+import {
+  VerdantLeapEffect,
+  VerdantLeapOutOfRangeEffect,
+  VerdantLeapTrailEffect,
+  BulwarkChargeEffect,
+  PredatorStepEffect,
+  ReboundEffect,
+  TeleportSlamEffect,
+} from "./effects/spaceSpells";
 import { WallFizzleEffect } from "./effects/wallFizzle";
 import {
   getAbilityVfxProfile,
@@ -308,6 +317,19 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
     ) : (
       <BloomingPathBlossomEffect key={shot.key} shot={shot} />
     ),
+  verdantLeap: (shot, ctx) => {
+    if ((shot.variant ?? 0) === 3) {
+      return <VerdantLeapOutOfRangeEffect key={shot.key} shot={shot} />;
+    }
+    if (shot.followOwnerId) {
+      return <VerdantLeapTrailEffect key={shot.key} shot={shot} follow={ctx} />;
+    }
+    return <VerdantLeapEffect key={shot.key} shot={shot} />;
+  },
+  bulwarkCharge: (shot, ctx) => <BulwarkChargeEffect key={shot.key} shot={shot} follow={ctx} />,
+  predatorStep: (shot) => <PredatorStepEffect key={shot.key} shot={shot} />,
+  rebound: (shot) => <ReboundEffect key={shot.key} shot={shot} />,
+  teleportSlam: (shot) => <TeleportSlamEffect key={shot.key} shot={shot} />,
   poisonCloud: (shot) => <PoisonCloudGroundEffect key={shot.key} shot={shot} />,
   smokeBomb: (shot) => <SmokeBombGroundEffect key={shot.key} shot={shot} />,
   holyGround: (shot) => <HolyGroundEffect key={shot.key} shot={shot} />,

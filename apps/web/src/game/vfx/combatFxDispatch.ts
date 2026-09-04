@@ -159,6 +159,23 @@ export function dispatchCombatFxVfx(
     );
   }
 
+  if (msg.kind === "dash" && onDash === "spaceStreak") {
+    const dur =
+      typeof msg.phaseEndsAt === "number"
+        ? Math.max(160, msg.phaseEndsAt - Date.now() + 120)
+        : 400;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.55, yaw: resolveOwnerYaw(msg, ctx) },
+      {
+        lifeMs: dur,
+        followOwnerId: msg.ownerId,
+        originX: msg.x2,
+        originZ: msg.z2,
+      },
+    );
+  }
+
   if (usesMeleeSwoopFx(msg.abilityId) && msg.ownerId) {
     const owner = ctx.getOwner(msg.ownerId);
     const localOwner = msg.ownerId === ctx.localSessionId;

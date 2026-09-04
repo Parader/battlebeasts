@@ -290,6 +290,31 @@ Slow ground vine that leaves a heal corridor you and allies can stand in.
 
 **Subject:** A living luminous vine tip racing along stone with a short dissolving trail of leaves and tiny blossoms, warm harmony greens, white core glow, no thorns or soil burst. Palette `#315B3D` `#6EE7B7` `#A9D978` `#E8F5B2` `#F5FFE8`. Benevolent nature line — not Underground Pulse’s roots/thorns.
 
+#### `verdantleap.png` — Verdant Leap
+Ally leap with shared heal bloom.
+
+**Subject:** A mage mid-leap toward a teammate silhouette, green-gold leaf trail and dual heal blooms at feet, Harmony palette `#315B3D` `#A9D978` `#6EE7B7` `#E8F5B2`. Support mobility — not a damage dash.
+
+#### `bulwarkcharge.png` — Bulwark Charge
+Heavy defensive charge into a personal ward.
+
+**Subject:** Armored caster charging forward inside a compact blue-stone shield shell, dust kick, wedge of ward energy ahead. Palette `#64748b` `#94a3b8` `#60a5fa` `#e2e8f0`. Committed tank charge — not a green Dash streak.
+
+#### `predatorstep.png` — Predator Step
+Shadow rush into brief invisibility.
+
+**Subject:** Low red-violet afterimage streak dissolving into a cloaked silhouette near an enemy outline. Palette `#1A101C` `#5C1B28` `#EF4444` `#8B5CF6`. Predatory setup — not Smoke Bomb cloud.
+
+#### `rebound.png` — Rebound
+Frontal force peel with self recoil.
+
+**Subject:** Tight silver-white cone shockwave blasting forward while a caster silhouette is thrown backward with a short air trail. Palette `#F8FAFC` `#CBD5E1` `#94A3B8` `#BAE6FD`. Two-way spacing — not Gust’s full nova.
+
+#### `teleportslam.png` — Teleport Slam
+Ground slam then short blink.
+
+**Subject:** Compact circular ground fracture under a crouched caster, violet rematerialize streak beside it (no airborne leap). Palette `#8B5A2B` `#312E81` `#7C3AED` `#F5F3FF`. Slam-then-vanish — not Jump Slam’s aerial arc.
+
 ---
 
 ### R — Defensive / zones

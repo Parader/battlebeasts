@@ -14,6 +14,18 @@ export type PatchNote = {
  */
 export const PATCH_NOTES: readonly PatchNote[] = [
   {
+    id: "2026-09-04-space-spells",
+    title: "Five new Space spells",
+    date: "2026-09-04",
+    highlights: [
+      "Verdant Leap: leap to an ally or dummy — heal both (80), share +20% move, green trail; out-of-range ring like Soul Relay",
+      "Bulwark Charge: 6m sprint that resists knockbacks/CC, blocks frontal damage, and shoulders enemies aside, then a 120 shield",
+      "Predator Step: brief Cloaked + Predator Rush haste (no dash)",
+      "Rebound: wider frontal wind blast + self recoil (Gust-style smoke)",
+      "Teleport Slam: larger slam radius, shorter stun; windup starts later in the clip for a snappier preload",
+    ],
+  },
+  {
     id: "2026-09-04-new-spells-blooming",
     title: "Blooming Path & new spell wave",
     date: "2026-09-04",

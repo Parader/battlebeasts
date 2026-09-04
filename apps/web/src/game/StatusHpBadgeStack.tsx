@@ -33,8 +33,13 @@ export const CHILL_BADGE_IDS = new Set(["frostChill"]);
 /** Status ids that show the Slowed badge above HP bars (Underground Pulse, etc.). */
 export const SLOW_BADGE_IDS = new Set(["slowed"]);
 
-/** Status ids that show the Slipstream Haste badge above HP bars. */
-export const HASTE_BADGE_IDS = new Set(["slipstreamHaste"]);
+/** Status ids that show the Haste badge above HP bars. */
+export const HASTE_BADGE_IDS = new Set([
+  "slipstreamHaste",
+  "verdantHaste",
+  "predatorHaste",
+  "surged",
+]);
 
 /** Status ids that show the Soul Relay badge above HP bars. */
 export const RELAY_BADGE_IDS = new Set(["soulRelayLinked"]);
@@ -48,17 +53,25 @@ export type StatusRowLite = {
 export type BadgeRead = {
   stacks: number;
   expiresAt: number;
+  /** Winning status id when multiple ids share a badge slot. */
+  statusId?: string;
 };
 
 function readBadge(rows: StatusRowLite[], ids: Set<string>): BadgeRead {
   let stacks = 0;
   let expiresAt = 0;
+  let statusId: string | undefined;
   for (const row of rows) {
     if (!row.statusId || !ids.has(row.statusId)) continue;
-    stacks = Math.max(stacks, row.stacks ?? 1);
-    expiresAt = Math.max(expiresAt, row.expiresAt ?? 0);
+    const s = row.stacks ?? 1;
+    const exp = row.expiresAt ?? 0;
+    if (exp > expiresAt || (exp === expiresAt && s >= stacks)) {
+      stacks = Math.max(stacks, s);
+      expiresAt = Math.max(expiresAt, exp);
+      statusId = row.statusId;
+    }
   }
-  return { stacks, expiresAt };
+  return { stacks, expiresAt, statusId };
 }
 
 export function readPoisonStacks(rows: StatusRowLite[]): number {
@@ -459,7 +472,7 @@ export function StatusHpBadgeStack({
             background: "rgba(14, 116, 144, 0.94)",
             border: "1px solid rgba(165, 243, 252, 0.45)",
           }}
-          title="Slipstream (+50% speed, 25% faster cast)"
+          title="Haste (move speed)"
         >
           <DurationRing ringRef={hasteRingRef} accent="#67e8f9" />
           <svg
@@ -839,9 +852,7 @@ export function syncHasteBadge(
     return;
   }
   badge.style.display = "flex";
-  // Detect if this is the short lane-refresh (≤600ms remaining) or the full 3s tailwind grant
-  const remaining = Math.max(0, read.expiresAt - Date.now());
-  const span = remaining > 700 ? 3000 : 600;
+  const span = durationMsFor(read.statusId ?? "slipstreamHaste");
   setRingRemain(ring, badgeRemainFrac(read.expiresAt, span));
 }
 

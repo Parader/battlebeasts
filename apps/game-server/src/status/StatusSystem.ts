@@ -176,7 +176,15 @@ export class StatusSystem {
       return false;
     }
 
-    const duration = opts?.durationMs ?? def.durationMs;
+    let duration = opts?.durationMs ?? def.durationMs;
+    // Bulwark Charge: hard CC durations reduced by 75% while charging.
+    if (
+      def.polarity === "debuff" &&
+      (def.mechanic === "stun" || def.mechanic === "root" || def.mechanic === "silence") &&
+      this.has(targetId, "bulwarkCharging")
+    ) {
+      duration = Math.max(50, Math.round(duration * 0.25));
+    }
     const permanent = def.permanent === true || duration <= 0;
     const expiresAt = permanent ? Number.MAX_SAFE_INTEGER : now + duration;
     const requested = opts?.stacks ?? 1;

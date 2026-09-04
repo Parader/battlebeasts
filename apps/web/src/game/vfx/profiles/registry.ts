@@ -489,6 +489,52 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
     projectile: "none",
     combatFx: { onDash: "spiritForm", skipLegacyBurst: true },
   },
+  verdantLeap: {
+    castEngine: "none",
+    projectile: "none",
+    combatFx: {
+      onDash: "spaceStreak",
+      onAoe: "verdantLeap",
+      onHit: "catalogImpact",
+      skipLegacyBurst: true,
+    },
+  },
+  bulwarkCharge: {
+    castEngine: "none",
+    projectile: "none",
+    combatFx: {
+      onDash: "spaceStreak",
+      onAoe: "none",
+      skipLegacyBurst: true,
+    },
+  },
+  predatorStep: {
+    castEngine: "none",
+    projectile: "none",
+    combatFx: {
+      onDash: "none",
+      onAoe: "none",
+      skipLegacyBurst: true,
+    },
+  },
+  rebound: {
+    castEngine: "none",
+    projectile: "none",
+    combatFx: {
+      onDash: "none",
+      onAoe: "rebound",
+      skipLegacyBurst: true,
+    },
+  },
+  teleportSlam: {
+    castEngine: "none",
+    projectile: "none",
+    combatFx: {
+      onAoe: "teleportSlam",
+      onHit: "sfxOnly",
+      skipLegacyBurst: true,
+    },
+  },
 };
 
 const DEFAULT_PROFILE: AbilityVfxProfile = {

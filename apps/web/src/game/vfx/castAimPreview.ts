@@ -164,6 +164,11 @@ export function castPreviewKindFor(def: AbilityDef): CastPreviewKind {
   if (kind === "coneChannel" || kind === "silenceSweep") return "cone";
   if (kind === "arcThread") return "none";
   if (kind === "soulRelay") return "allyBind";
+  if (kind === "verdantLeap") return "allyBind";
+  if (kind === "predatorStep") return "none";
+  if (kind === "rebound") return "cone";
+  if (kind === "bulwarkCharge") return "blink";
+  if (kind === "teleportSlam") return "selfCircle";
   if (kind === "lifeLeech" || kind === "healBeam") return "line";
   if (kind === "riftFissure") return "placeCircle";
   if (
@@ -352,7 +357,9 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
           ? def.range
           : def.range > 0
             ? def.range
-            : 8,
+            : (def.radius ?? 0) > 0
+              ? (def.radius as number)
+              : 8,
       );
       return {
         ...base,

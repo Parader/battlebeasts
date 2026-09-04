@@ -261,8 +261,13 @@ export class LocalPredictor {
     this.travel = null;
   }
 
-  /** Dash toward a world point (Spirit Form return) — no wall collision. */
-  beginPointTravel(toX: number, toZ: number, durationMs: number) {
+  /** Dash toward a world point. Spirit Form return ignores walls. */
+  beginPointTravel(
+    toX: number,
+    toZ: number,
+    durationMs: number,
+    opts?: { ignoreCollision?: boolean; abilityId?: string },
+  ) {
     const from = { x: this.state.x, z: this.state.z };
     const dx = toX - from.x;
     const dz = toZ - from.z;
@@ -272,15 +277,22 @@ export class LocalPredictor {
       this.travel = null;
       return;
     }
+    const ideal = { x: toX, z: toZ };
+    const clamped = opts?.ignoreCollision
+      ? ideal
+      : sweepTravel(from, ideal, COLLISION.playerRadius, this.staticColliders);
+    const cdx = clamped.x - from.x;
+    const cdz = clamped.z - from.z;
+    const cdist = Math.hypot(cdx, cdz);
     this.travel = {
-      abilityId: "spiritForm",
+      abilityId: opts?.abilityId ?? "spiritForm",
       fromX: from.x,
       fromZ: from.z,
-      yaw: Math.atan2(dx, dz),
-      distance: dist,
+      yaw: cdist > 1e-4 ? Math.atan2(cdx, cdz) : this.state.yaw,
+      distance: cdist,
       startMs: performance.now(),
       durationMs: Math.max(16, durationMs),
-      ignoreCollision: true,
+      ignoreCollision: opts?.ignoreCollision === true,
     };
   }
 
