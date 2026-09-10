@@ -1,5 +1,5 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { createCirclePointMaterial } from "./materials/circlePoint";
@@ -72,6 +72,17 @@ function ChainMesh({ room, id }: { room: Room; id: string }) {
     return g;
   }, [motePos, moteSize, moteAlpha]);
   const pointMat = useMemo(() => createCirclePointMaterial(ASTRAL_CHAIN_COLORS.bright), []);
+
+  useEffect(() => {
+    return () => {
+      geo.dispose();
+      lineMat.dispose();
+      runeMat.dispose();
+      targetRuneMat.dispose();
+      moteGeo.dispose();
+      pointMat.dispose();
+    };
+  }, [geo, lineMat, runeMat, targetRuneMat, moteGeo, pointMat]);
 
   useFrame(() => {
     const chain = room.state?.astralChains?.get(id) as ChainNet | undefined;

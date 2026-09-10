@@ -228,10 +228,10 @@ export const SHOP_CATEGORY_ICONS: Record<
   consumables: "health-potion",
 };
 
-export const COSMETIC_GROUP_ICONS: Record<"tints" | "inks" | "patterns" | "gear", GameIconId> = {
+export const COSMETIC_GROUP_ICONS: Record<"tints" | "inks" | "auras" | "gear", GameIconId> = {
   tints: "animal-hide",
   inks: "ink-swirl",
-  patterns: "fish-scales",
+  auras: "star-struck",
   gear: "chest-armor",
 };
 

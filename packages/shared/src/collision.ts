@@ -1,4 +1,4 @@
-import { RIFT_FISSURE_CAST } from "./abilities";
+import { RIFT_FISSURE_CAST, ROCK_WALL_CAST } from "./abilities";
 import { length2 } from "./sim";
 import type { Vec2 } from "./protocol";
 
@@ -169,10 +169,13 @@ export function worldToLocalXZ(
 
 /** Push `pos` (circle of `radius`) out of an overlapping obstacle. */
 export function separateFromCircle(pos: Vec2, radius: number, obstacle: CircleCollider): Vec2 {
+  const obsR = obstacle.radius;
+  // Guard: boxes (or other shapes) accidentally passed as dynamics have no radius → NaN.
+  if (!Number.isFinite(obsR) || obsR < 0) return pos;
   const dx = pos.x - obstacle.x;
   const dz = pos.z - obstacle.z;
   const dist = length2(dx, dz);
-  const minDist = radius + obstacle.radius + COLLISION.skin;
+  const minDist = radius + obsR + COLLISION.skin;
   if (dist >= minDist) return pos;
   if (dist < 1e-8) {
     return { x: obstacle.x + minDist, z: obstacle.z };
@@ -872,6 +875,39 @@ export function volcanoColliders(
       x: v.x,
       z: v.z,
       radius: Math.max(0.4, v.radius ?? 1.35),
+    });
+  }
+  return out;
+}
+
+/** Active Rock Walls — oriented boxes that block walk + projectiles. */
+export function rockWallColliders(
+  walls: Iterable<
+    [
+      string,
+      {
+        x: number;
+        z: number;
+        yaw?: number;
+        halfWidth?: number;
+        halfThickness?: number;
+        durability?: number;
+      },
+    ]
+  >,
+): BoxCollider[] {
+  const out: BoxCollider[] = [];
+  for (const [id, w] of walls) {
+    if ((w.durability ?? 0) <= 0) continue;
+    out.push({
+      id: `rockWall_${id}`,
+      shape: "box",
+      x: w.x,
+      z: w.z,
+      halfX: Math.max(0.15, w.halfThickness ?? ROCK_WALL_CAST.wallThickness * 0.5),
+      halfZ: Math.max(0.4, w.halfWidth ?? ROCK_WALL_CAST.wallWidth * 0.5),
+      yaw: w.yaw ?? 0,
+      blocksProjectiles: true,
     });
   }
   return out;

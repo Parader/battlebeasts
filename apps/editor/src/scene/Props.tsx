@@ -1,9 +1,9 @@
-import { propUrlForKey, type MapPropPlacement } from "@battlebeasts/shared";
+import { propUrlForKey, type MapColliderSpec, type MapPropPlacement } from "@battlebeasts/shared";
 import { TransformControls, useGLTF } from "@react-three/drei";
 import { Suspense, memo, useMemo, useState } from "react";
 import * as THREE from "three";
 import type { GizmoMode } from "../state/docStore";
-import { docStore, selectEntity, useEditor } from "../state/docStore";
+import { docStore, selectEntity, useEditorSlice } from "../state/docStore";
 import { wasDragged } from "./clickGuard";
 
 /**
@@ -29,7 +29,8 @@ function clonePropScene(propKey: string, gltf: { scene: THREE.Object3D }): THREE
     template.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) {
         o.castShadow = true;
-        o.receiveShadow = true;
+        // Receiving on every unique GLB is what fills the shadow map twice.
+        o.receiveShadow = false;
       }
     });
     propSceneTemplates.set(propKey, template);
@@ -156,14 +157,41 @@ const PropModel = memo(function PropModel({
     </>
   );
 }, (prev, next) => {
-  if (prev.p !== next.p || prev.selected !== next.selected || prev.solo !== next.solo) return false;
-  if (!next.solo) return true;
-  return (
-    prev.gizmo === next.gizmo &&
-    prev.gridSnap === next.gridSnap &&
-    prev.angleSnap === next.angleSnap
-  );
+  if (prev.selected !== next.selected || prev.solo !== next.solo) return false;
+  if (next.solo && (prev.gizmo !== next.gizmo || prev.gridSnap !== next.gridSnap || prev.angleSnap !== next.angleSnap)) {
+    return false;
+  }
+  return samePlacement(prev.p, next.p);
 });
+
+function samePlacement(a: MapPropPlacement, b: MapPropPlacement): boolean {
+  return (
+    a.id === b.id &&
+    a.prop === b.prop &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.z === b.z &&
+    a.yaw === b.yaw &&
+    a.pitch === b.pitch &&
+    a.roll === b.roll &&
+    a.scale === b.scale &&
+    a.pivotX === b.pivotX &&
+    a.pivotZ === b.pivotZ &&
+    sameCollider(a.collider, b.collider)
+  );
+}
+
+function sameCollider(a: MapColliderSpec, b: MapColliderSpec): boolean {
+  if (a === b) return true;
+  if (a.mode !== b.mode) return false;
+  if (a.mode === "none" || b.mode === "none") return a.mode === b.mode;
+  if (a.offsetX !== b.offsetX || a.offsetZ !== b.offsetZ) return false;
+  if (a.mode === "circle" && b.mode === "circle") return a.radius === b.radius;
+  if (a.mode === "box" && b.mode === "box") {
+    return a.halfX === b.halfX && a.halfZ === b.halfZ && a.yaw === b.yaw;
+  }
+  return false;
+}
 
 /** Drawn in prop-local space, so it inherits the placement rotation and scale. */
 function SelectionRing({ prop }: { prop: MapPropPlacement }) {
@@ -186,12 +214,16 @@ function SelectionRing({ prop }: { prop: MapPropPlacement }) {
   );
 }
 
-export function Props() {
-  const { doc, selectedIds, gizmo, gridSnap, angleSnap } = useEditor();
+export const Props = memo(function Props() {
+  const list = useEditorSlice((s) => s.doc.props);
+  const selectedIds = useEditorSlice((s) => s.selectedIds);
+  const gizmo = useEditorSlice((s) => s.gizmo);
+  const gridSnap = useEditorSlice((s) => s.gridSnap);
+  const angleSnap = useEditorSlice((s) => s.angleSnap);
   const solo = selectedIds.length === 1 ? selectedIds[0] : null;
   return (
     <>
-      {doc.props.map((p) => (
+      {list.map((p) => (
         // Keyed by prop as well as id so swapping the model remounts the loader.
         <Suspense key={`${p.id}:${p.prop}`} fallback={null}>
           <PropModel
@@ -206,4 +238,4 @@ export function Props() {
       ))}
     </>
   );
-}
+});

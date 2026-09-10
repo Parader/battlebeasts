@@ -2,7 +2,7 @@ import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { Room } from "colyseus.js";
-import { hasStatusId } from "./StatusOrnaments";
+import { hasStatusId } from "./statusBadgeUtils";
 
 type Props = {
   room: Room | null;

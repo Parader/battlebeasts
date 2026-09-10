@@ -182,6 +182,7 @@ export function updateGroundHeights(
   extent: GroundExtent,
   heights: HeightGrid | null,
   heightScale: number,
+  opts?: { normals?: boolean },
 ): void {
   const attr = geo.getAttribute("position") as THREE.BufferAttribute | undefined;
   if (!attr) return;
@@ -207,7 +208,9 @@ export function updateGroundHeights(
   }
 
   attr.needsUpdate = true;
-  geo.computeVertexNormals();
+  // Normals are the expensive half of a sculpt frame on a large lattice.
+  // The editor skips them mid-stroke and computes once when the drag ends.
+  if (opts?.normals !== false) geo.computeVertexNormals();
   geo.computeBoundingSphere();
 }
 
@@ -369,6 +372,11 @@ type Props = {
   name?: string;
   /** Lower segment count for runtime (default: full document resolution). */
   maxMeshSegs?: number;
+  /**
+   * Skip vertex normals this frame. Editor sculpt brushes set this while a
+   * stroke is in flight so a 160² lattice is not renormalised on every dab.
+   */
+  skipNormals?: boolean;
 };
 
 /** Loads the four PBR maps for one layer id. */
@@ -393,7 +401,7 @@ function useLayerTextures(layerIds: string[]): GroundLayerTextures[] {
 }
 
 export const PaintedGround = forwardRef<THREE.Mesh, Props>(function PaintedGround(
-  { ground, splat, heights = null, name, maxMeshSegs },
+  { ground, splat, heights = null, name, maxMeshSegs, skipNormals = false },
   ref,
 ) {
   const layers = useLayerTextures([...ground.layers]);
@@ -422,8 +430,8 @@ export const PaintedGround = forwardRef<THREE.Mesh, Props>(function PaintedGroun
   // Layout effect so the displaced surface is in place before the first paint;
   // a flat frame would otherwise flash through on load and on every resize.
   useLayoutEffect(() => {
-    updateGroundHeights(geometry, meshExtent, heights, heightScale);
-  }, [geometry, meshExtent, heights, heightScale]);
+    updateGroundHeights(geometry, meshExtent, heights, heightScale, { normals: !skipNormals });
+  }, [geometry, meshExtent, heights, heightScale, skipNormals]);
 
   useLayoutEffect(() => {
     return () => {

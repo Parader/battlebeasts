@@ -13,6 +13,14 @@ export const VFX_BLOOMING_VINE_STREAK_URL = assetUrl("textures/blooming-vine-str
 export const VFX_CRUSHING_SIGIL_FLARE_URL = assetUrl(
   "assets/vfx/crushing-sigil-flare.png",
 );
+export const VFX_AURA_EYES_URL = assetUrl("assets/vfx/aura-eyes.png");
+export const VFX_AURA_EYES_URLS = {
+  ember: VFX_AURA_EYES_URL,
+  frost: assetUrl("assets/vfx/aura-eyes-frost.png"),
+  venom: assetUrl("assets/vfx/aura-eyes-venom.png"),
+  void: assetUrl("assets/vfx/aura-eyes-void.png"),
+  gold: assetUrl("assets/vfx/aura-eyes-gold.png"),
+} as const;
 
 /** Chest reveal mesh (match end / hub rewards). */
 export const CHEST_GLB_URL = assetUrl("assets/vfx/chest.glb");

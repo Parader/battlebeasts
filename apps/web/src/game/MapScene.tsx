@@ -56,7 +56,13 @@ function spawnCentroid(): { x: number; z: number } {
   };
 }
 
-function BakedMap({ source }: { source: Extract<MapSource, { kind: "baked" }> }) {
+function BakedMap({
+  source,
+  mapId,
+}: {
+  source: Extract<MapSource, { kind: "baked" }>;
+  mapId: string;
+}) {
   const url = assetUrl(source.sceneUrl.replace(/^\//, ""));
   const gltf = useGLTF(url);
 
@@ -77,6 +83,11 @@ function BakedMap({ source }: { source: Extract<MapSource, { kind: "baked" }> })
     });
     return root;
   }, [gltf.scene, source.sceneScale, source.plant]);
+
+  useEffect(() => {
+    reportMapPropMounted(mapId, "__baked__");
+    return () => reportMapPropUnmounted(mapId, "__baked__");
+  }, [mapId, scene]);
 
   return <primitive object={scene} />;
 }
@@ -387,5 +398,9 @@ export function MapScene({ mapId }: { mapId: string }) {
     console.warn(`[MapScene] unknown map "${mapId}" -- rendering nothing`);
     return null;
   }
-  return source.kind === "baked" ? <BakedMap source={source} /> : <DocMap doc={source.doc} />;
+  return source.kind === "baked" ? (
+    <BakedMap source={source} mapId={mapId} />
+  ) : (
+    <DocMap doc={source.doc} />
+  );
 }

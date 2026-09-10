@@ -2,8 +2,13 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import {
   COOP_PVE_MAX_PLAYERS,
   PVE_CONTENTS,
-  PVP_MODES,
-  isPvpFfaTriosMode,
+  PVP_FAMILIES,
+  pvpFamilyFighterCap,
+  pvpFamilyFromModes,
+  pvpFamilyMaxSpectators,
+  pvpFamilyTeamSizes,
+  resolvePremadeBattlegroundSize,
+  resolvePremadeSkirmishMode,
   type PartyMemberSnapshot,
   type PartySnapshot,
   type PvpSeat,
@@ -34,6 +39,7 @@ type Props = {
   onCancel: () => void;
   onLeave: () => void;
   onClose: () => void;
+  loadoutReady?: boolean;
 };
 
 type ContextMenu = {
@@ -43,20 +49,17 @@ type ContextMenu = {
   y: number;
 };
 
-function modeMeta(modes: string[]) {
-  let teamSize = 1;
-  let maxSpectators = 2;
-  let ffaTrios = false;
-  let noQueue = false;
-  for (const id of modes) {
-    const m = PVP_MODES.find((x) => x.id === id);
-    if (!m) continue;
-    teamSize = Math.max(teamSize, m.teamSize);
-    maxSpectators = Math.max(maxSpectators, m.maxSpectators);
-    if (isPvpFfaTriosMode(m.id) || m.teamCount >= 3) ffaTrios = true;
-    if (m.noQueue) noQueue = true;
-  }
-  return { teamSize, maxSpectators, ffaTrios, noQueue };
+function familyMeta(party: PartySnapshot) {
+  const family = party.family ?? pvpFamilyFromModes(party.modes);
+  const sizes = pvpFamilyTeamSizes(family);
+  const maxSide = sizes[0] ?? 3;
+  return {
+    family,
+    label: PVP_FAMILIES.find((f) => f.id === family)?.label ?? "Skirmish",
+    maxSide,
+    maxFighters: pvpFamilyFighterCap(family),
+    maxSpectators: pvpFamilyMaxSpectators(family),
+  };
 }
 
 function padSlots(
@@ -143,6 +146,7 @@ export function PartyLobbyPanel({
   onCancel,
   onLeave,
   onClose,
+  loadoutReady = true,
 }: Props) {
   const isCoopPve = party.kind === "coop_pve";
   const isLeader = party.leaderSessionId === localSessionId;
@@ -161,17 +165,19 @@ export function PartyLobbyPanel({
   const inviteableFriends = friends.filter((f) => !memberUserIds.has(f.id));
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
-
-  const { teamSize, maxSpectators, ffaTrios, noQueue } = useMemo(
-    () => modeMeta(party.modes),
-    [party.modes],
-  );
-  const teamAFilled = party.members.filter((m) => m.seat === "teamA").length >= teamSize;
-  const teamBFilled = party.members.filter((m) => m.seat === "teamB").length >= teamSize;
-  const teamCFilled = party.members.filter((m) => m.seat === "teamC").length >= teamSize;
-  const fullPremade = ffaTrios
-    ? teamAFilled && teamBFilled && teamCFilled
-    : teamAFilled && teamBFilled;
+  const meta = useMemo(() => familyMeta(party), [party]);
+  const teamACount = party.members.filter((m) => m.seat === "teamA").length;
+  const teamBCount = party.members.filter((m) => m.seat === "teamB").length;
+  const teamCCount = party.members.filter((m) => m.seat === "teamC").length;
+  const isSkirmish = meta.family === "skirmish";
+  const [splitSides, setSplitSides] = useState(() => teamBCount > 0 || teamCCount > 0);
+  const [showTeamC, setShowTeamC] = useState(() => teamCCount > 0);
+  const teamSize = meta.maxSide;
+  const maxSpectators = meta.maxSpectators;
+  const fullPremade =
+    isSkirmish
+      ? resolvePremadeSkirmishMode(teamACount, teamBCount, teamCCount) != null
+      : resolvePremadeBattlegroundSize(teamACount, teamBCount) != null;
   const teamA = useMemo(
     () => padSlots(
       party.members.filter((m) => m.seat === "teamA"),
@@ -193,6 +199,14 @@ export function PartyLobbyPanel({
     ),
     [party.members, teamSize],
   );
+  const groupSlots = useMemo(
+    () =>
+      padSlots(
+        party.members.filter((m) => m.seat === "teamA" || m.seat === "teamB" || m.seat === "teamC"),
+        meta.maxFighters,
+      ),
+    [party.members, meta.maxFighters],
+  );
   const spectators = useMemo(
     () => padSlots(
       party.members.filter((m) => m.seat === "spectator"),
@@ -207,7 +221,11 @@ export function PartyLobbyPanel({
 
   const localMember = party.members.find((m) => m.sessionId === localSessionId);
   const canSelfMove = Boolean(localSessionId) && !party.queued && !isCoopPve;
-  const canStart = isLeader && !party.queued && (isCoopPve ? party.members.length >= 1 : true);
+  const canStart =
+    isLeader &&
+    !party.queued &&
+    loadoutReady &&
+    (isCoopPve ? party.members.length >= 1 : true);
 
   const coopSubtitle = useMemo(() => {
     const contentId = party.modes.find((m) => m === "dungeon" || m === "boss") ?? "dungeon";
@@ -408,6 +426,8 @@ export function PartyLobbyPanel({
                 </button>
               ) : party.queued ? (
                 <span className="bb-lobby-queued">Starting…</span>
+              ) : isLeader && !loadoutReady ? (
+                <span className="bb-lobby-queued">Slot every key first</span>
               ) : null}
             </div>
           </footer>
@@ -430,17 +450,19 @@ export function PartyLobbyPanel({
       <div
         role="dialog"
         aria-modal
-        aria-label="Arena lobby"
+        aria-label={`${meta.label} lobby`}
         className="bb-lobby-panel"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="bb-lobby-panel__header">
           <div>
-            <h2 className="bb-lobby-panel__title">Arena Lobby</h2>
+            <h2 className="bb-lobby-panel__title">{meta.label} lobby</h2>
             <p className="bb-lobby-panel__sub">
-              {party.modes
-                .map((id) => PVP_MODES.find((m) => m.id === id)?.label ?? id)
-                .join(" · ") || "PvP"}
+              {splitSides
+                ? isSkirmish
+                  ? "Custom sides — add a third team for 1v1v1"
+                  : "Custom sides — fill both teams to start, or Find Match"
+                : "Your group queues together. Matchmaking picks the match."}
               {party.queued ? " · Searching…" : ""}
             </p>
           </div>
@@ -454,11 +476,102 @@ export function PartyLobbyPanel({
           </button>
         </header>
 
-        <div className={`bb-lobby-teams${ffaTrios ? " bb-lobby-teams--ffa" : ""}`}>
-          {renderTeam(ffaTrios ? "Fighter 1" : "Team 1", "teamA", teamA)}
-          {renderTeam(ffaTrios ? "Fighter 2" : "Team 2", "teamB", teamB)}
-          {ffaTrios ? renderTeam("Fighter 3", "teamC", teamC) : null}
+        <div
+          className={[
+            "bb-lobby-teams",
+            splitSides && isSkirmish ? "bb-lobby-teams--three" : "",
+          ].join(" ")}
+        >
+          {splitSides ? (
+            <>
+              {renderTeam("Team 1", "teamA", teamA)}
+              {renderTeam("Team 2", "teamB", teamB)}
+              {isSkirmish && showTeamC ? (
+                <section className="bb-lobby-team">
+                  <header className="bb-lobby-team__head bb-lobby-team__head--extra">
+                    <span>Team 3</span>
+                    {isLeader && !party.queued ? (
+                      <button
+                        type="button"
+                        className="bb-lobby-team__remove"
+                        aria-label="Remove team"
+                        onClick={() => {
+                          for (const m of party.members) {
+                            if (m.seat === "teamC") onSetSeat(m.sessionId, "teamA");
+                          }
+                          setShowTeamC(false);
+                        }}
+                      >
+                        −
+                      </button>
+                    ) : null}
+                  </header>
+                  <div className="bb-lobby-team__slots">
+                    {teamC.map((member, i) => {
+                      const canTake =
+                        canSelfMove &&
+                        !member &&
+                        Boolean(localSessionId) &&
+                        localMember?.seat !== "teamC";
+                      const canKick =
+                        Boolean(member) &&
+                        isLeader &&
+                        !party.queued &&
+                        member!.sessionId !== localSessionId &&
+                        member!.sessionId !== party.leaderSessionId;
+                      return (
+                        <PlayerSlot
+                          key={member?.sessionId ?? `teamC-empty-${i}`}
+                          member={member}
+                          isLeader={Boolean(member && member.sessionId === party.leaderSessionId)}
+                          isYou={Boolean(member && member.sessionId === localSessionId)}
+                          canTake={canTake}
+                          canKick={canKick}
+                          onTake={() => {
+                            if (localSessionId) onSetSeat(localSessionId, "teamC");
+                          }}
+                          onOpenKickMenu={openKickMenu}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : isSkirmish && isLeader && !party.queued ? (
+                <button
+                  type="button"
+                  className="bb-lobby-team bb-lobby-team--add"
+                  onClick={() => setShowTeamC(true)}
+                >
+                  <span className="bb-lobby-team--add__plus">+</span>
+                  <span>Add team</span>
+                </button>
+              ) : null}
+            </>
+          ) : (
+            renderTeam("Your group", "teamA", groupSlots)
+          )}
         </div>
+        {isLeader && !party.queued ? (
+          <div className="bb-lobby-observers" style={{ paddingTop: 0 }}>
+            <button
+              type="button"
+              className="bb-lobby-btn bb-lobby-btn--slot"
+              onClick={() => {
+                if (splitSides) {
+                  for (const m of party.members) {
+                    if (m.seat !== "spectator" && m.seat !== "teamA") {
+                      onSetSeat(m.sessionId, "teamA");
+                    }
+                  }
+                  setShowTeamC(false);
+                }
+                setSplitSides((v) => !v);
+              }}
+            >
+              {splitSides ? "Queue as one group" : "Split sides (custom match)"}
+            </button>
+          </div>
+        ) : null}
 
         <section className="bb-lobby-observers">
           <header className="bb-lobby-team__head">Observers</header>
@@ -513,8 +626,31 @@ export function PartyLobbyPanel({
               </button>
             ) : null}
             {canStart ? (
-              fullPremade ? (
-                <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2">
+                {fullPremade ? (
+                  <>
+                    <button
+                      type="button"
+                      className="bb-lobby-btn bb-lobby-btn--start"
+                      onClick={() => {
+                        onLock("ranked");
+                        onClose();
+                      }}
+                    >
+                      Start Ranked
+                    </button>
+                    <button
+                      type="button"
+                      className="bb-lobby-btn bb-lobby-btn--start"
+                      onClick={() => {
+                        onLock("unranked");
+                        onClose();
+                      }}
+                    >
+                      Start Unranked
+                    </button>
+                  </>
+                ) : (
                   <button
                     type="button"
                     className="bb-lobby-btn bb-lobby-btn--start"
@@ -523,35 +659,14 @@ export function PartyLobbyPanel({
                       onClose();
                     }}
                   >
-                    Start Ranked
+                    Find Match
                   </button>
-                  <button
-                    type="button"
-                    className="bb-lobby-btn bb-lobby-btn--start"
-                    onClick={() => {
-                      onLock("unranked");
-                      onClose();
-                    }}
-                  >
-                    Start Unranked
-                  </button>
-                </div>
-              ) : noQueue ? (
-                <span className="bb-lobby-queued">Fill all seats to start</span>
-              ) : (
-                <button
-                  type="button"
-                  className="bb-lobby-btn bb-lobby-btn--start"
-                  onClick={() => {
-                    onLock("ranked");
-                    onClose();
-                  }}
-                >
-                  Queue Ranked
-                </button>
-              )
+                )}
+              </div>
             ) : party.queued ? (
               <span className="bb-lobby-queued">Queued</span>
+            ) : isLeader && !loadoutReady ? (
+              <span className="bb-lobby-queued">Slot every key first</span>
             ) : null}
           </div>
         </footer>

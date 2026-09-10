@@ -15,7 +15,9 @@ import {
   ARENA_SCENE_URL,
   arenaFfaSpawnForTeam,
   arenaSpawnForSlot,
+  arenaSpawnsForTeam,
   arenaStaticColliders,
+  desertObjectives,
 } from "../arenaDesert";
 import {
   CEMETERY_SCENE_SCALE,
@@ -26,9 +28,14 @@ import {
 import {
   mapAttackableProps,
   mapNpcs,
+  mapObjectives,
+  mapPickups,
+  mapPlayerSpawns,
   mapSpawnForSlot,
   mapStaticColliders,
   type MapDoc,
+  type MapObjectivePlacement,
+  type MapPickupPlacement,
   type MapPropPlacement,
   type MapTeam,
 } from "./mapDoc";
@@ -76,12 +83,7 @@ const BAKED: MapSource[] = [
     plant: "mid",
     colliders: arenaStaticColliders,
     spawn: ({ team, slot, ffa }) =>
-      ffa
-        ? arenaFfaSpawnForTeam(team)
-        : // Only the FFA layout has a third corner; A/B arenas have no team C pad.
-          team === "c"
-          ? undefined
-          : arenaSpawnForSlot(team, slot),
+      ffa ? arenaFfaSpawnForTeam(team) : arenaSpawnForSlot(team, slot),
   },
   {
     kind: "baked",
@@ -143,6 +145,33 @@ export function mapNpcsFor(id: MapId): NpcPlacement[] {
   return mapNpcs(source.doc);
 }
 
+/**
+ * Pickups a map contributes (floating health orbs, energy motes, power buffs).
+ * Empty for baked maps that have no element layer.
+ */
+export function mapPickupsFor(id: MapId): MapPickupPlacement[] {
+  const source = registry.get(id);
+  if (!source || source.kind !== "doc") return [];
+  return mapPickups(source.doc);
+}
+
+/** Capture / flag pads. Doc maps use authored objectives; desert uses baked fallbacks. */
+export function mapObjectivesFor(id: MapId): MapObjectivePlacement[] {
+  const source = registry.get(id);
+  if (source?.kind === "doc") return mapObjectives(source.doc);
+  if (id === "desert") {
+    return desertObjectives().map((o) => ({
+      id: o.id,
+      tag: o.tag,
+      team: o.team,
+      x: o.x,
+      z: o.z,
+      radius: o.radius,
+    }));
+  }
+  return [];
+}
+
 /** A single NPC by element id, for validating an interact request. */
 export function mapNpcFor(id: MapId, elementId: string): NpcPlacement | null {
   return mapNpcsFor(id).find((n) => n.id === elementId) ?? null;
@@ -161,4 +190,20 @@ export function mapSpawn(id: MapId, q: SpawnQuery): SpawnPose | undefined {
   if (source.kind === "baked") return source.spawn(q);
   const el = mapSpawnForSlot(source.doc, q.team, q.slot);
   return el ? { x: el.x, z: el.z, yaw: el.yaw } : undefined;
+}
+
+/** Every authored pad for a team. Empty when the map has no pool for that side. */
+export function mapSpawnsFor(id: MapId, team: MapTeam): SpawnPose[] {
+  const source = registry.get(id);
+  if (!source) return [];
+  if (source.kind === "baked") {
+    if (id === "desert") {
+      const pads = arenaSpawnsForTeam(team).map((p) => ({ x: p.x, z: p.z, yaw: p.yaw }));
+      if (pads.length > 0) return pads;
+      const fallback = arenaFfaSpawnForTeam(team);
+      return fallback ? [{ x: fallback.x, z: fallback.z, yaw: fallback.yaw }] : [];
+    }
+    return [];
+  }
+  return mapPlayerSpawns(source.doc, team).map((el) => ({ x: el.x, z: el.z, yaw: el.yaw }));
 }

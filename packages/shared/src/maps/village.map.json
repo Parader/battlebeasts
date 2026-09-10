@@ -1863,9 +1863,9 @@
       "y": -0.0019999999999964473,
       "z": -5.5,
       "yaw": 0.5235987755982988,
+      "scale": 1,
       "pivotX": -0.314,
       "pivotZ": 0.215,
-      "scale": 1,
       "collider": {
         "mode": "box",
         "halfX": 0.361,
@@ -1882,9 +1882,9 @@
       "y": -0.002,
       "z": -4.25,
       "yaw": 5.497787143782138,
+      "scale": 1,
       "pivotX": -0.476,
       "pivotZ": 0.222,
-      "scale": 1,
       "collider": {
         "mode": "box",
         "halfX": 0.355,
@@ -1901,9 +1901,9 @@
       "y": -0.0019999999999964473,
       "z": -2.75,
       "yaw": 6.021385919380436,
+      "scale": 1,
       "pivotX": -0.037,
       "pivotZ": -0.012,
-      "scale": 1,
       "collider": {
         "mode": "box",
         "halfX": 0.361,
@@ -1920,9 +1920,9 @@
       "y": -0.0020000000000071055,
       "z": -7.25,
       "yaw": 4.45058959258554,
+      "scale": 1,
       "pivotX": -0.12,
       "pivotZ": 0.03,
-      "scale": 1,
       "collider": {
         "mode": "box",
         "halfX": 0.278,
@@ -1939,9 +1939,9 @@
       "y": 0.212,
       "z": 7.25,
       "yaw": 0,
+      "scale": 1,
       "pivotX": 0.661,
       "pivotZ": 1.202,
-      "scale": 1,
       "collider": {
         "mode": "box",
         "halfX": 1.034,
@@ -1958,9 +1958,9 @@
       "y": -3,
       "z": -0.75,
       "yaw": 2.879793265790643,
+      "scale": 2,
       "pivotX": 0.168,
       "pivotZ": 0.32,
-      "scale": 2,
       "collider": {
         "mode": "circle",
         "radius": 1.039,
@@ -1975,9 +1975,9 @@
       "y": -0.002,
       "z": -2.25,
       "yaw": 5.497787143782138,
+      "scale": 1,
       "pivotX": 0.552,
       "pivotZ": -0.227,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.177,
@@ -1992,8 +1992,8 @@
       "y": 0.143,
       "z": 24.5,
       "yaw": 2.356194490192345,
-      "pivotX": 0.106,
       "scale": 1,
+      "pivotX": 0.106,
       "collider": {
         "mode": "circle",
         "radius": 0.918,
@@ -2008,8 +2008,8 @@
       "y": 0.143,
       "z": 11.25,
       "yaw": 2.617993877991494,
-      "pivotX": 0.106,
       "scale": 1,
+      "pivotX": 0.106,
       "collider": {
         "mode": "circle",
         "radius": 0.918,
@@ -2024,9 +2024,9 @@
       "y": -0.002,
       "z": 27,
       "yaw": 1.5707963267948966,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.727,
@@ -2040,9 +2040,9 @@
       "y": 0.0900000000000071,
       "z": 19.25,
       "yaw": 4.45058959258554,
+      "scale": 1,
       "pivotX": 0.11,
       "pivotZ": 0.025,
-      "scale": 1,
       "collider": {
         "mode": "box",
         "halfX": 1.564,
@@ -2054,33 +2054,15 @@
       }
     },
     {
-      "id": "p129",
-      "prop": "forest/PP_Apple_Tree_Picked_02",
-      "x": -25.75,
-      "y": -0.002,
-      "z": 23.25,
-      "yaw": 2.356194490192345,
-      "pivotX": -0.076,
-      "pivotZ": -0.294,
-      "scale": 1,
-      "collider": {
-        "mode": "circle",
-        "radius": 0.542,
-        "offsetX": 0.035,
-        "offsetZ": 0.336,
-        "blocksProjectiles": false
-      }
-    },
-    {
       "id": "p130",
       "prop": "kingdom/PP_Tree_Large_01",
       "x": -35.25,
       "y": 0.8,
       "z": 19.75,
       "yaw": 1.832595714594046,
+      "scale": 1,
       "pivotX": -0.922,
       "pivotZ": 0.774,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 1.7085,
@@ -2095,9 +2077,9 @@
       "y": 0.744,
       "z": 9.25,
       "yaw": 5.759586531581287,
+      "scale": 1,
       "pivotX": 2.015,
       "pivotZ": 0.298,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.9265,
@@ -2112,9 +2094,9 @@
       "y": 0.8,
       "z": -4.5,
       "yaw": 0,
+      "scale": 1,
       "pivotX": -0.922,
       "pivotZ": 0.774,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 1.7085,
@@ -2129,9 +2111,9 @@
       "y": 0.744,
       "z": -17.25,
       "yaw": 0.5235987755982988,
+      "scale": 1,
       "pivotX": 2.015,
       "pivotZ": 0.298,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.9265,
@@ -2236,9 +2218,9 @@
       "y": -0.002,
       "z": 18,
       "yaw": 4.1887902047863905,
+      "scale": 1,
       "pivotX": 0.018,
       "pivotZ": 0.202,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 1.172,
@@ -2253,9 +2235,9 @@
       "y": -0.002,
       "z": 24.5,
       "yaw": 6.283185307179586,
+      "scale": 1,
       "pivotX": 0.018,
       "pivotZ": 0.202,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 1.172,
@@ -2270,9 +2252,9 @@
       "y": -0.002,
       "z": 2,
       "yaw": 3.4033920413889422,
+      "scale": 1,
       "pivotX": 0.018,
       "pivotZ": 0.202,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 1.172,
@@ -2287,9 +2269,9 @@
       "y": -0.0019999999999964473,
       "z": -10.5,
       "yaw": 5.497787143782138,
+      "scale": 1,
       "pivotX": 0.018,
       "pivotZ": 0.202,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 1.172,
@@ -2332,9 +2314,9 @@
       "y": -0.0019999999999964473,
       "z": 19.25,
       "yaw": 0.7853981633974483,
+      "scale": 1,
       "pivotX": -0.039,
       "pivotZ": -0.039,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.341,
@@ -2366,9 +2348,9 @@
       "y": 1.7649999999999963,
       "z": 1.5,
       "yaw": 2.8797932657906435,
+      "scale": 1,
       "pivotX": 0.525,
       "pivotZ": 0.216,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 4.991,
@@ -2400,9 +2382,9 @@
       "y": 1.939,
       "z": -22,
       "yaw": 1.832595714594046,
+      "scale": 1,
       "pivotX": 2.962,
       "pivotZ": -0.616,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 3.284,
@@ -2418,8 +2400,8 @@
       "y": 0.14199999999999643,
       "z": 25,
       "yaw": 4.974188368183839,
-      "pivotZ": -0.015,
       "scale": 1,
+      "pivotZ": -0.015,
       "collider": {
         "mode": "circle",
         "radius": 0.209,
@@ -2435,8 +2417,8 @@
       "y": 0.142,
       "z": 27,
       "yaw": 1.832595714594046,
-      "pivotZ": -0.015,
       "scale": 1,
+      "pivotZ": -0.015,
       "collider": {
         "mode": "circle",
         "radius": 0.209,
@@ -2467,14 +2449,14 @@
       "y": 0.983,
       "z": 25.25,
       "yaw": -2.8797932657906435,
+      "roll": 3.141592653589793,
       "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.802,
         "offsetX": -0.165,
         "offsetZ": -0.138
-      },
-      "roll": 3.141592653589793
+      }
     },
     {
       "id": "p156",
@@ -2483,6 +2465,7 @@
       "y": 0.25,
       "z": 23,
       "yaw": 1.3089969389957479,
+      "roll": -3.141592653589793,
       "scale": 1,
       "collider": {
         "mode": "box",
@@ -2491,8 +2474,7 @@
         "yaw": 0,
         "offsetX": 0.162,
         "offsetZ": -0.535
-      },
-      "roll": -3.141592653589793
+      }
     },
     {
       "id": "p152",
@@ -2518,8 +2500,8 @@
       "y": 0.698,
       "z": -2,
       "yaw": 1.5707963267948966,
-      "pivotZ": 0.019,
       "scale": 1,
+      "pivotZ": 0.019,
       "collider": {
         "mode": "circle",
         "radius": 0.581,
@@ -2535,8 +2517,8 @@
       "y": 0.698,
       "z": 23.25,
       "yaw": 3.141592653589793,
-      "pivotZ": 0.019,
       "scale": 1,
+      "pivotZ": 0.019,
       "collider": {
         "mode": "circle",
         "radius": 0.581,
@@ -2567,8 +2549,8 @@
       "y": 0.14199999999999643,
       "z": -4.75,
       "yaw": 4.974188368183839,
-      "pivotZ": -0.015,
       "scale": 1,
+      "pivotZ": -0.015,
       "collider": {
         "mode": "circle",
         "radius": 0.209,
@@ -2584,8 +2566,8 @@
       "y": 0.14199999999999643,
       "z": -9.25,
       "yaw": 4.974188368183839,
-      "pivotZ": -0.015,
       "scale": 1,
+      "pivotZ": -0.015,
       "collider": {
         "mode": "circle",
         "radius": 0.209,
@@ -2614,8 +2596,8 @@
       "y": -0.002,
       "z": -10.5,
       "yaw": 5.759586531581287,
-      "pivotZ": -0.01,
       "scale": 1,
+      "pivotZ": -0.01,
       "collider": {
         "mode": "circle",
         "radius": 0.341,
@@ -2629,8 +2611,8 @@
       "y": 0.497,
       "z": -10.25,
       "yaw": 0.5235987755982988,
-      "pivotZ": 0.012,
       "scale": 1,
+      "pivotZ": 0.012,
       "collider": {
         "mode": "circle",
         "radius": 0.5075000000000001,
@@ -2681,6 +2663,23 @@
         "radius": 0.47,
         "offsetX": -0.042,
         "offsetZ": 0.053
+      }
+    },
+    {
+      "id": "p062",
+      "prop": "kingdom/PP_Tree_Thin_02",
+      "x": -25.25,
+      "y": 0.23100000000000356,
+      "z": 21.75,
+      "yaw": 0.7853981633974483,
+      "pivotX": -0.178,
+      "pivotZ": 0.024,
+      "scale": 1.4086063368386093,
+      "collider": {
+        "mode": "circle",
+        "radius": 0.351,
+        "offsetX": 0.006000000000000005,
+        "offsetZ": -0.024
       }
     }
   ],
@@ -3062,9 +3061,9 @@
       "id": "e013",
       "type": "practice_dummy",
       "x": 21.5,
-      "y": -0.002,
       "z": 18.25,
       "yaw": -2.5464131397748044,
+      "y": -0.002,
       "shape": {
         "kind": "circle",
         "radius": 0.5
@@ -3075,9 +3074,9 @@
       "id": "e014",
       "type": "practice_dummy",
       "x": 27.25,
-      "y": -0.002,
       "z": 14,
       "yaw": -2.5464131397748044,
+      "y": -0.002,
       "shape": {
         "kind": "circle",
         "radius": 0.5
@@ -3088,9 +3087,9 @@
       "id": "e015",
       "type": "pickup",
       "x": 11.75,
-      "y": -0.002,
       "z": -11.75,
       "yaw": 0,
+      "y": -0.002,
       "shape": {
         "kind": "circle",
         "radius": 1.2

@@ -280,6 +280,10 @@ class TerrainStore {
   get canRedo() {
     return this.redoStack.length > 0;
   }
+  /** True between beginStroke and endStroke. */
+  get stroking() {
+    return this.strokeBase !== null;
+  }
 
   private restore(s: Snapshot) {
     this.splat.set(s.splat);

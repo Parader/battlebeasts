@@ -27,7 +27,7 @@ export function subscribePropShaderReady(fn: Listener): () => void {
   };
 }
 
-/** Content maps skip hub prop warmup — treat as ready immediately. */
+/** Fail-open or maps with nothing to compile. */
 export function skipPropShaderReady(): void {
   markPropShaderReady();
 }

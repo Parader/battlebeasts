@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ASTRAL_CHAIN_CAST, COMBAT_ENGAGE_LINGER_MS, EMPTY_FLEX_LOADOUT, flexCost, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, baseCityStaticColliders, mapCollidersFor, mapIdForMode, mapNpcsFor, HUB_NPCS, npcElementIdFrom, npcInteractId, NPC_INTERACT_RADIUS, type NpcPlacement, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, castBarShowsChannel, castBarShowsWindup, castWindupMs, phaseDurationMs, combineStatusMoveMul, getStatus, normalizeFlexLoadout, normalizeLoadout, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, formatRankLabel, normalizeRankSnapshot, type FlexLoadout, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
+import { ABILITIES, ASTRAL_CHAIN_CAST, COMBAT_ENGAGE_LINGER_MS, EMPTY_FLEX_LOADOUT, flexCost, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, baseCityStaticColliders, mapCollidersFor, mapIdForMode, mapNpcsFor, HUB_NPCS, npcElementIdFrom, npcInteractId, NPC_INTERACT_RADIUS, type NpcPlacement, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, castBarShowsChannel, castBarShowsWindup, castWindupMs, phaseDurationMs, combineStatusMoveMul, getStatus, normalizeFlexLoadout, normalizeLoadout, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, rockWallColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, formatRankLabel, normalizeRankSnapshot, type FlexLoadout, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
 import { recordWaveBestRun } from "./waveBestRun";
 import { LocalPredictor } from "./LocalPredictor";
@@ -19,7 +19,7 @@ import { castBarRuntime, chargeHudRuntime } from "./castBarRuntime";
 import { setActiveEmote, clearActiveEmote, isEmoteActive } from "./emoteRuntime";
 import { getGroundAim } from "./groundAimRuntime";
 import { castAimRuntime } from "./castAimRuntime";
-import { hasStatusId } from "./StatusOrnaments";
+import { hasStatusId } from "./statusBadgeUtils";
 import { beginRevengeVanish } from "./revengeVanishRuntime";
 import {
   beginTeleportSlamFadeIn,
@@ -148,6 +148,18 @@ export type HubRosterPlayer = {
     isOwner: boolean;
 };
 
+export type ArenaObjectiveHud = {
+    id: string;
+    tag: string;
+    team: string;
+    owner: string;
+    contest: string;
+    progress: number;
+    flagState: string;
+    carrierId: string;
+    carrierName: string;
+};
+
 export type ArenaHudState = {
     matchPhase: string;
     matchRound: number;
@@ -158,6 +170,9 @@ export type ArenaHudState = {
     matchMode: string;
     localTeam: string;
     rematchReady: boolean;
+    objectiveKind: string;
+    matchEndsAt: number;
+    objectives: ArenaObjectiveHud[];
 };
 
 /** Mirrors ContentRoom.canCombat — casts only (emotes use a separate gate). */
@@ -166,10 +181,12 @@ function clientCanCombat(opts: {
     roundDead?: boolean;
     role?: string;
     matchPhase?: string;
+    isFeared?: boolean;
 }): boolean {
     if (opts.role === "spectator") return false;
     if (typeof opts.hp === "number" && opts.hp <= 0) return false;
     if (opts.roundDead) return false;
+    if (opts.isFeared) return false;
     const phase = opts.matchPhase ?? "";
     if (phase === "countdown" || phase === "round_end" || phase === "match_end") return false;
     return true;
@@ -200,6 +217,7 @@ export type MatchRecapState = {
     scoreB: number;
     scoreC?: number;
     matchKind?: "ranked" | "custom";
+    matchMode?: string;
     rows: MatchRecapRow[];
 };
 
@@ -565,11 +583,17 @@ export function useBaseCityRoom(options: Options) {
                 setTalkingNpc(msg.npcId);
             });
 
-            joined.onMessage("queue_status", (msg: { queued: boolean; modes?: string[] }) => {
+            joined.onMessage("queue_status", (msg: { queued: boolean; modes?: string[]; family?: string; lookingFor?: string }) => {
                 if (msg.queued) {
                     setPhase("queued");
                     phaseRef.current = "queued";
-                    setQueueModes(msg.modes ?? []);
+                    setQueueModes(
+                      msg.lookingFor
+                        ? [msg.lookingFor]
+                        : msg.family
+                          ? [msg.family === "battleground" ? "Battleground" : "Skirmish"]
+                          : (msg.modes ?? []),
+                    );
                     // Close portal UI only — keep shop / loadout / etc. usable while searching.
                     setActiveUi((ui) =>
                         ui === "portal_pvp" || ui === "portal_pve" ? null : ui,
@@ -613,7 +637,7 @@ export function useBaseCityRoom(options: Options) {
                         rubies: msg.resources?.rubies ?? 0,
                         talentPoints: msg.resources?.talent_points ?? 0,
                         talentBuild: msg.talentBuild ?? {},
-                        loadout: msg.loadout ?? [],
+                        loadout: normalizeLoadout(msg.loadout),
                         flexLoadout: normalizeFlexLoadout(msg.flexLoadout),
                         talents: msg.talents ?? [],
                         unlocks: msg.unlocks ?? null,
@@ -857,6 +881,7 @@ export function useBaseCityRoom(options: Options) {
                     scoreB: number;
                     scoreC?: number;
                     matchKind?: "ranked" | "custom";
+                    matchMode?: string;
                     rows: MatchRecapRow[];
                 }) => {
                     setMatchRecap({
@@ -865,6 +890,7 @@ export function useBaseCityRoom(options: Options) {
                         scoreB: msg.scoreB,
                         scoreC: msg.scoreC,
                         matchKind: msg.matchKind,
+                        matchMode: msg.matchMode,
                         rows: msg.rows ?? [],
                     });
                 },
@@ -989,11 +1015,17 @@ export function useBaseCityRoom(options: Options) {
                             { x: msg.x2 ?? msg.x, z: msg.z2 ?? msg.z, y: 0.05, yaw: msg.yaw },
                             { lifeMs: 300, variant: 1 },
                         );
-                        if (isLocal && msg.abilityId === "riftFissure") {
+                        if (isLocal && (msg.abilityId === "riftFissure" || msg.abilityId === "tripleBlink")) {
                             // x2/z2 is the opposite-side exit (post-shove). Snap — don't lerp from entry.
                             const toX = msg.x2 ?? msg.x;
                             const toZ = msg.z2 ?? msg.z;
-                            predictorRef.current.seed(toX, toZ, predictedRef.current.yaw);
+                            predictorRef.current.seed(
+                                toX,
+                                toZ,
+                                typeof msg.yaw === "number"
+                                    ? msg.yaw
+                                    : predictedRef.current.yaw,
+                            );
                             predictedRef.current = { ...predictorRef.current.state };
                         }
                         if (
@@ -1144,7 +1176,7 @@ export function useBaseCityRoom(options: Options) {
                                         pendingConfirmRef.current = true;
                                         portalConfirmArmedRef.current = false;
                                     }
-                                } else if (def) {
+                                } else if (def && msg.abilityId !== "tripleBlink") {
                                     predictorRef.current.beginTravelFromCast(
                                         msg.abilityId,
                                         yawRef.current,
@@ -1248,6 +1280,9 @@ export function useBaseCityRoom(options: Options) {
                         const isHeal =
                             usesGrooveFx(msg.abilityId) ||
                             usesHealBeamFx(msg.abilityId) ||
+                            msg.abilityId === "worldTree" ||
+                            msg.abilityId === "pickup_heal" ||
+                            msg.abilityId === "pickup_generic" ||
                             getStatus(msg.abilityId)?.mechanic === "hot" ||
                             (ABILITIES[msg.abilityId]?.heal ?? 0) > 0 ||
                             // Life Leech: self-restore hits are heals; enemy hits stay damage.
@@ -1403,19 +1438,13 @@ export function useBaseCityRoom(options: Options) {
             try {
                 clearHubRejoin();
                 clearContentRejoin();
-                await roomRef.current?.leave(true);
-                roomRef.current = null;
-                setRoom(null);
 
-                const hubOwnerId =
-                    (msg.options?.hubOwnerId as string | undefined) ?? opts.hubOwnerId ?? opts.userId;
-
-                const localPlayer = roomRef.current?.state?.players?.get(
-                    roomRef.current.sessionId,
-                ) as
+                const prevRoom = roomRef.current;
+                const localPlayer = prevRoom?.state?.players?.get(prevRoom.sessionId) as
                     | {
                         pattern?: string;
                         patternColor?: string;
+                        vessel?: string;
                         cosmeticHat?: string;
                         cosmeticShoulders?: string;
                         cosmeticChest?: string;
@@ -1426,12 +1455,20 @@ export function useBaseCityRoom(options: Options) {
                     }
                     | undefined;
 
+                await prevRoom?.leave(true);
+                roomRef.current = null;
+                setRoom(null);
+
+                const hubOwnerId =
+                    (msg.options?.hubOwnerId as string | undefined) ?? opts.hubOwnerId ?? opts.userId;
+
                 const joinOpts: Record<string, unknown> = {
                     userId: opts.userId,
                     displayName: opts.displayName,
                     color: opts.color,
                     pattern: localPlayer?.pattern,
                     patternColor: localPlayer?.patternColor,
+                    vessel: localPlayer?.vessel,
                     cosmeticHat: localPlayer?.cosmeticHat,
                     cosmeticShoulders: localPlayer?.cosmeticShoulders,
                     cosmeticChest: localPlayer?.cosmeticChest,
@@ -1580,6 +1617,8 @@ export function useBaseCityRoom(options: Options) {
         if (me?.role === "spectator") return;
         const spiritRecast =
             abilityId === "spiritForm" && hasStatusId(me?.statuses, "spiritFormed");
+        const tripleBlinkRecast =
+            abilityId === "tripleBlink" && hasStatusId(me?.statuses, "tripleBlinkReady");
         const runicVolleyActive =
             abilityId === "runicShard" &&
             (() => {
@@ -1641,6 +1680,7 @@ export function useBaseCityRoom(options: Options) {
         // Spirit Form / Rift second plant / Runic shatter while CD is already ticking — don't block.
         if (
             !spiritRecast &&
+            !tripleBlinkRecast &&
             !riftArmingRecast &&
             !runicShatter &&
             !adminNoCooldownRef.current &&
@@ -1650,7 +1690,7 @@ export function useBaseCityRoom(options: Options) {
         }
         if (pendingCastRef.current) return;
 
-        if (spiritRecast || runicShatter) {
+        if (spiritRecast || runicShatter || tripleBlinkRecast) {
             pendingCastRef.current = abilityId;
             awaitingCastAckRef.current = true;
             awaitingCastAckSinceRef.current = performance.now();
@@ -2375,6 +2415,19 @@ export function useBaseCityRoom(options: Options) {
                 const volcanoesMap = r.state?.volcanoes as
                     | Map<string, { x: number; z: number; radius?: number; phase?: string }>
                     | undefined;
+                const rockWallsMap = r.state?.rockWalls as
+                    | Map<
+                          string,
+                          {
+                              x: number;
+                              z: number;
+                              yaw?: number;
+                              halfWidth?: number;
+                              halfThickness?: number;
+                              durability?: number;
+                          }
+                      >
+                    | undefined;
                 const riftPortalsMap = r.state?.riftPortals as
                     | Map<
                           string,
@@ -2400,8 +2453,14 @@ export function useBaseCityRoom(options: Options) {
                               z: pred.z,
                           })
                         : [];
+                    // Rock walls are oriented boxes — must be statics (dynamics = circles only).
+                    const rockBoxes = rockWallsMap
+                        ? rockWallColliders(rockWallsMap.entries())
+                        : [];
                     const statics =
-                        riftBoxes.length > 0 ? [...baseStatics, ...riftBoxes] : baseStatics;
+                        riftBoxes.length > 0 || rockBoxes.length > 0
+                            ? [...baseStatics, ...riftBoxes, ...rockBoxes]
+                            : baseStatics;
                     predictor.setWorldColliders(statics, dynamics);
                     setWorldStaticColliders(statics);
                 }
@@ -2569,11 +2628,14 @@ export function useBaseCityRoom(options: Options) {
                 }
 
                 const st = r.state as { matchPhase?: string; paused?: boolean } | undefined;
+                const isFeared = hasStatusId(serverMe?.statuses, "feared");
+                const isDisoriented = hasStatusId(serverMe?.statuses, "disoriented");
                 const gateOpts = {
                     hp: serverMe?.hp,
                     roundDead: serverMe?.roundDead,
                     role: serverMe?.role,
                     matchPhase: st?.matchPhase,
+                    isFeared,
                 };
                 const simPaused = Boolean(st?.paused) || pvePausedRef.current;
                 const canMove = clientCanMove(gateOpts) && !simPaused;
@@ -2697,7 +2759,38 @@ export function useBaseCityRoom(options: Options) {
                 const keys = keysRef.current;
                 let moveX = 0;
                 let moveZ = 0;
-                if (canMove) {
+                if (isFeared && serverMe) {
+                    // Feared: involuntarily flee away from fear source
+                    let fearSourceId: string | null = null;
+                    serverMe.statuses?.forEach?.((row: { statusId?: string; sourceId?: string }) => {
+                        if (row.statusId === "feared" && row.sourceId) {
+                            fearSourceId = row.sourceId;
+                        }
+                    });
+                    let fleeX = 0;
+                    let fleeZ = 0;
+                    if (fearSourceId) {
+                        const sourceP = r.state?.players?.get(fearSourceId) as { x?: number; z?: number } | undefined;
+                        if (sourceP && typeof sourceP.x === "number" && typeof sourceP.z === "number") {
+                            const curX = predictedRef.current?.x ?? serverMe.x;
+                            const curZ = predictedRef.current?.z ?? serverMe.z;
+                            const dx = curX - sourceP.x;
+                            const dz = curZ - sourceP.z;
+                            const d = Math.hypot(dx, dz);
+                            if (d > 1e-4) {
+                                fleeX = dx / d;
+                                fleeZ = dz / d;
+                            }
+                        }
+                    }
+                    if (fleeX === 0 && fleeZ === 0) {
+                        fleeX = Math.sin(yawRef.current);
+                        fleeZ = Math.cos(yawRef.current);
+                    }
+                    moveX = fleeX;
+                    moveZ = fleeZ;
+                    yawRef.current = Math.atan2(fleeX, fleeZ);
+                } else if (canMove) {
                     if (keys.right) moveX += 1;
                     if (keys.left) moveX -= 1;
                     if (keys.down) moveZ += 1;
@@ -2765,7 +2858,11 @@ export function useBaseCityRoom(options: Options) {
                     pendingInteractRef.current = undefined;
 
                     if (canMove) {
-                        const predicted = predictor.predict(input);
+                        const predictInput =
+                            isDisoriented && !isFeared
+                                ? { ...input, moveX: -moveX, moveZ: -moveZ }
+                                : input;
+                        const predicted = predictor.predict(predictInput);
                         predictedRef.current = predicted;
                     }
                     r.send("input", { input });
@@ -2867,9 +2964,44 @@ export function useBaseCityRoom(options: Options) {
                               scoreC?: number;
                               phaseEndsAt?: number;
                               matchMode?: string;
+                              objectiveKind?: string;
+                              matchEndsAt?: number;
+                              objectives?: {
+                                  forEach: (
+                                      fn: (value: {
+                                          id?: string;
+                                          tag?: string;
+                                          team?: string;
+                                          owner?: string;
+                                          contest?: string;
+                                          progress?: number;
+                                          flagState?: string;
+                                          carrierId?: string;
+                                      }, key: string) => void,
+                                  ) => void;
+                              };
+                              players?: {
+                                  get: (id: string) => { displayName?: string } | undefined;
+                              };
                           }
                         | undefined;
                     if (st?.matchPhase) {
+                        const objectives: ArenaObjectiveHud[] = [];
+                        st.objectives?.forEach((row, key) => {
+                            const carrierId = row.carrierId ?? "";
+                            objectives.push({
+                                id: row.id || key,
+                                tag: row.tag ?? "",
+                                team: row.team ?? "",
+                                owner: row.owner ?? "",
+                                contest: row.contest ?? "none",
+                                progress: row.progress ?? 0,
+                                flagState: row.flagState ?? "",
+                                carrierId,
+                                carrierName:
+                                    (carrierId && st.players?.get(carrierId)?.displayName) || "",
+                            });
+                        });
                         setArenaHud({
                             matchPhase: st.matchPhase,
                             matchRound: st.matchRound ?? 0,
@@ -2883,6 +3015,9 @@ export function useBaseCityRoom(options: Options) {
                             matchMode: st.matchMode ?? "",
                             localTeam: me?.team ?? "",
                             rematchReady: Boolean(me?.rematchReady),
+                            objectiveKind: st.objectiveKind ?? "",
+                            matchEndsAt: st.matchEndsAt ?? 0,
+                            objectives,
                         });
                         if (st.matchPhase === "countdown" || st.matchPhase === "fighting") {
                             setMatchRecap(null);
@@ -2912,7 +3047,7 @@ export function useBaseCityRoom(options: Options) {
     }, []);
 
     const confirmPortal = useCallback(
-        (portal: "pvp" | "pve", params: { modes?: string[]; content?: string; modifiers?: string[] }) => {
+        (portal: "pvp" | "pve", params: { family?: string; modes?: string[]; content?: string; modifiers?: string[] }) => {
             roomRef.current?.send("portal_confirm", { portal, params });
             setActiveUi(null);
         },

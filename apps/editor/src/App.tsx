@@ -23,7 +23,7 @@ import {
   duplicateSelected,
   groupSelected,
   ungroupSelected,
-  useEditor,
+  useEditorSlice,
 } from "./state/docStore";
 import { loadSidecar, terrain } from "./state/terrain";
 
@@ -62,7 +62,8 @@ function useMapList() {
 }
 
 function ToolButtons() {
-  const { tool, brushProp } = useEditor();
+  const tool = useEditorSlice((s) => s.tool);
+  const brushProp = useEditorSlice((s) => s.brushProp);
   const tools = [
     { id: "select", label: "Select", hint: "Click anything to select it" },
     { id: "place", label: "Place", hint: "Click the ground to plant the armed prop" },
@@ -91,7 +92,8 @@ function ToolButtons() {
 }
 
 function ViewButtons() {
-  const { showColliders, showScaleRef } = useEditor();
+  const showColliders = useEditorSlice((s) => s.showColliders);
+  const showScaleRef = useEditorSlice((s) => s.showScaleRef);
   return (
     <div className="toolbar">
       <button
@@ -119,7 +121,8 @@ function ViewButtons() {
 }
 
 function GizmoModeButtons() {
-  const { gizmo, selectedId } = useEditor();
+  const gizmo = useEditorSlice((s) => s.gizmo);
+  const selectedId = useEditorSlice((s) => s.selectedId);
   const modes = [
     { id: "translate", label: "Move", key: "W" },
     { id: "rotate", label: "Rotate", key: "E" },
@@ -143,7 +146,8 @@ function GizmoModeButtons() {
 }
 
 function TopBar({ onStatus }: { onStatus: (s: string) => void }) {
-  const { doc, dirty } = useEditor();
+  const doc = useEditorSlice((s) => s.doc);
+  const dirty = useEditorSlice((s) => s.dirty);
   const { maps, refresh } = useMapList();
   const [busy, setBusy] = useState(false);
 
@@ -210,14 +214,16 @@ function TopBar({ onStatus }: { onStatus: (s: string) => void }) {
    * user-editable, so a map can never point at another map's terrain -- which
    * also means a rename repoints them for free.
    */
-  const persist = async () => {
+    const persist = async (opts?: { forceSidecars?: boolean }) => {
     const current = docStore.getSnapshot().doc;
     let toSave = current;
     let sidecars: ReturnType<typeof terrain.sidecars> = null;
     if (current.ground.kind === "painted") {
       // Skip encoding half-megabyte base64 payloads when buffers still match
       // the sidecars on disk — the expensive part of creating a new map.
-      if (terrain.dirty) sidecars = terrain.sidecars();
+      // A clone must always write them: URLs are derived from the id, and
+      // leaving them out would point the copy at files that do not exist.
+      if (terrain.dirty || opts?.forceSidecars) sidecars = terrain.sidecars();
       toSave = {
         ...current,
         ground: {
@@ -278,6 +284,47 @@ function TopBar({ onStatus }: { onStatus: (s: string) => void }) {
    * Writing the new file first means an interrupted rename leaves a duplicate
    * rather than nothing at all.
    */
+  /*
+   * Clone is save-as without deleting the original.
+   *
+   * The open document (including unsaved edits) becomes the copy; the
+   * source file on disk is left as it was last saved. Terrain sidecars
+   * are always rewritten because their filenames include the map id.
+   */
+  const onClone = async () => {
+    const source = docStore.getSnapshot().doc;
+    const picked = askName(`Clone "${source.name}"`, `${source.name} copy`);
+    if (!picked) return;
+
+    setBusy(true);
+    try {
+      if (source.ground.kind === "painted" && !terrain.dirty) {
+        await loadTerrainSidecars(source);
+      }
+      const cloned: MapDoc = {
+        ...source,
+        id: picked.id,
+        name: picked.name,
+        ground:
+          source.ground.kind === "painted"
+            ? {
+                ...source.ground,
+                splatUrl: splatUrlFor(picked.id),
+                heightUrl: source.ground.heightScale > 0 ? heightUrlFor(picked.id) : undefined,
+              }
+            : source.ground,
+      };
+      // Fresh history — undo must not walk back into the source map's id.
+      docStore.replace(cloned);
+      await persist({ forceSidecars: true });
+      onStatus(`Cloned "${source.name}" → "${picked.name}" (${picked.id})`);
+    } catch (err) {
+      onStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onRename = async () => {
     const from = doc.id;
     const onDisk = maps.some((m) => m.id === from);
@@ -346,6 +393,13 @@ function TopBar({ onStatus }: { onStatus: (s: string) => void }) {
       <button onClick={() => void onNew()} disabled={busy}>
         New
       </button>
+      <button
+        onClick={() => void onClone()}
+        disabled={busy}
+        title="Save a copy of this map under a new name"
+      >
+        Clone
+      </button>
       <button onClick={() => void onRename()} disabled={busy} title="Change the map's id and filename">
         Rename
       </button>
@@ -390,7 +444,12 @@ function statusHint(tool: string, hasDraft: boolean, armed: boolean): string {
 }
 
 export function App() {
-  const { doc, tool, brushProp, wallDraft } = useEditor();
+  const tool = useEditorSlice((s) => s.tool);
+  const brushProp = useEditorSlice((s) => s.brushProp);
+  const wallDraft = useEditorSlice((s) => s.wallDraft);
+  const propCount = useEditorSlice((s) => s.doc.props.length);
+  const wallCount = useEditorSlice((s) => s.doc.walls.length);
+  const elementCount = useEditorSlice((s) => s.doc.elements.length);
   const [status, setStatus] = useState("Ready");
 
   useEffect(() => {
@@ -558,7 +617,7 @@ export function App() {
         <span className="spacer" />
         <span>{statusHint(tool, !!wallDraft, !!brushProp)}</span>
         <span>
-          {doc.props.length} props · {doc.walls.length} boundaries · {doc.elements.length} elements
+          {propCount} props · {wallCount} boundaries · {elementCount} elements
         </span>
       </div>
     </div>

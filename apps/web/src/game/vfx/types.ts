@@ -14,6 +14,7 @@ export type VfxSpawnOpts = {
   followSpawnOffset?: number;
   /** When set, tether/beam FX tracks this unit (player or world target). */
   followTargetId?: string;
+  targetId?: string;
   /** Optional style index (e.g. crescent swing 0/1/2). */
   variant?: number;
   /** Override one-shot lifetime (ms). */
@@ -54,6 +55,7 @@ export type OneShotEffect = {
   followOwnerId?: string;
   followSpawnOffset?: number;
   followTargetId?: string;
+  targetId?: string;
   /** Frost Ball: ms used for charge grow (not full life). */
   chargeMs?: number;
   variant?: number;

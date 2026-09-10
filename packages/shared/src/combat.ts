@@ -136,6 +136,12 @@ export type ProjectileSim = {
   maxLifetimeSec?: number;
   /** Catch radius toward live caster on return (world units). */
   returnCatchRadius?: number;
+  /** Flat bonus damage from Spellbreaker orbs riding this shot (consumed on first hit). */
+  spellbreakerBonus?: number;
+  /** Authored flight speed (world units / sec) before zone modifiers. */
+  baseSpeed?: number;
+  /** Multiplier from zones like Time Freeze (1 = normal). Strongest slow wins. */
+  zoneSpeedMul?: number;
   /** Accumulated sim age (seconds). */
   ageSec?: number;
   /** Turn pause duration when entering turning phase (seconds). */
@@ -280,7 +286,7 @@ function magmaOrbsFlightControl(
 export function buildMagmaOrbsFlightPath(
   owner: Vec2,
   yaw: number,
-  meetRange = MAGMA_ORBS_CAST.meetRange,
+  meetRange: number = MAGMA_ORBS_CAST.meetRange,
   collideOverride?: Vec2,
 ): MagmaOrbsFlightPath {
   const lat = MAGMA_ORBS_CAST.lateral * 1.2;
@@ -395,6 +401,36 @@ export function circlesOverlap(
   return length2(ax - bx, az - bz) <= ar + br;
 }
 
+/** True when distance from center is in [innerR, outerR] (inclusive). */
+export function pointInAnnulus(
+  dx: number,
+  dz: number,
+  innerR: number,
+  outerR: number,
+): boolean {
+  const d2 = dx * dx + dz * dz;
+  const inner = Math.max(0, innerR);
+  const outer = Math.max(inner, outerR);
+  return d2 >= inner * inner && d2 <= outer * outer;
+}
+
+/** Apply zoneSpeedMul to flight velocity from stored baseSpeed. */
+export function applyProjectileZoneSpeed(p: ProjectileSim) {
+  const base = p.baseSpeed ?? 0;
+  if (!(base > 0)) return;
+  const mul = Math.max(0.05, p.zoneSpeedMul ?? 1);
+  const cur = Math.hypot(p.vx, p.vz);
+  if (cur < 1e-6) {
+    // Preserve last heading if somehow zeroed.
+    return;
+  }
+  const nx = p.vx / cur;
+  const nz = p.vz / cur;
+  const speed = base * mul;
+  p.vx = nx * speed;
+  p.vz = nz * speed;
+}
+
 export function createProjectile(
   id: string,
   owner: CombatBody,
@@ -422,6 +458,8 @@ export function createProjectile(
     z: spawn.z,
     vx: f.x * speed,
     vz: f.z * speed,
+    baseSpeed: speed,
+    zoneSpeedMul: 1,
     damage: healAllies ? (def.heal ?? 0) : def.damage,
     hitRadius,
     life: maxRange / speed,
@@ -482,6 +520,8 @@ export function createReturningProjectile(
     z: spawn.z,
     vx: f.x * speed,
     vz: f.z * speed,
+    baseSpeed: speed,
+    zoneSpeedMul: 1,
     damage: def.damage,
     hitRadius,
     life: maxRange / speed,
@@ -538,6 +578,8 @@ export function createRunicFragment(
     z: origin.z,
     vx: f.x * speed,
     vz: f.z * speed,
+    baseSpeed: speed,
+    zoneSpeedMul: 1,
     damage: cfg.fragmentDamage,
     hitRadius,
     life: range / Math.max(0.1, speed),
@@ -1294,11 +1336,13 @@ export function tickProjectiles(
     }
 
     // --- Flight ---
+    applyProjectileZoneSpeed(p);
     const fromX = p.x;
     const fromZ = p.z;
     p.x += p.vx * dt;
     p.z += p.vz * dt;
-    p.life -= dt;
+    const lifeDrain = Math.max(0.05, p.zoneSpeedMul ?? 1);
+    p.life -= dt * lifeDrain;
 
     if (p.armingIn > 0) {
       p.armingIn = Math.max(0, p.armingIn - dt);
@@ -1536,9 +1580,11 @@ export function tickReturningProjectiles(
     const fromZ = p.z;
 
     if (p.returnPhase === "outbound") {
+      applyProjectileZoneSpeed(p);
       p.x += p.vx * dt;
       p.z += p.vz * dt;
-      p.life -= dt;
+      const lifeDrain = Math.max(0.05, p.zoneSpeedMul ?? 1);
+      p.life -= dt * lifeDrain;
       const stepDist = Math.hypot(p.x - fromX, p.z - fromZ);
       p.outboundTraveled = (p.outboundTraveled ?? 0) + stepDist;
 

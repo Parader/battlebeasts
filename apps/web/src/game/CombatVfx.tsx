@@ -1,4 +1,4 @@
-import { useFrame, useThree } from "@react-three/fiber";
+import { useFrame } from "@react-three/fiber";
 import { Html, useGLTF, Billboard } from "@react-three/drei";
 import { CombatHpBarBillboard } from "./CombatHpBarBillboard";
 import { Room } from "colyseus.js";
@@ -29,20 +29,32 @@ import {
 import { PrismLanceProjectileEffect } from "./vfx/effects/prismLanceProjectile";
 import { SoulSeverProjectileEffect } from "./vfx/effects/soulSeverProjectile";
 import { BloomingPathProjectileEffect } from "./vfx/effects/bloomingPathProjectile";
-import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacterSurface } from "./characterVisual";
+import {
+  CHARACTER_URL,
+  prepareCharacterScene,
+  setCharacterOpacity,
+  tintCharacterSurface,
+  disposeCharacterMaterials,
+} from "./characterVisual";
+import { SpiritVesselFx } from "./SpiritVesselFx";
+import { VesselBody } from "./VesselBody";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { ZOMBIE_URL, zombieAnimationConfig } from "./zombieAsset";
-import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
+import { StatusOrnaments } from "./StatusOrnaments";
 import { SoulMarkOrnament } from "./SoulMarkOrnament";
+import { StatusHpBadgeStack } from "./StatusHpBadgeStack";
 import {
-  StatusHpBadgeStack,
+  collectStatusRows,
+  hasStatusId,
   readBleedingBadge,
   readBurningBadge,
   readChillBadge,
+  readShockBadge,
   readPoisonBadge,
   readRejuvenationBadge,
   readSilenceBadge,
   readHolyBadge,
+  readBloodPactBadge,
   readSoulMarkBadge,
   readSoulSeverBadge,
   readSlowBadge,
@@ -51,31 +63,37 @@ import {
   syncBleedingBadge,
   syncBurningBadge,
   syncChillBadge,
+  syncShockBadge,
   syncPoisonBadge,
   syncRejuvenationBadge,
   syncSilenceBadge,
   syncHolyBadge,
+  syncBloodPactBadge,
   syncSoulMarkBadge,
   syncSoulSeverBadge,
   syncSlowBadge,
   syncHasteBadge,
   syncRelayBadge,
+  readSpellbreakerBadge,
+  syncSpellbreakerBadge,
   type StatusRowLite,
-} from "./StatusHpBadgeStack";
+} from "./statusBadgeUtils";
 import { syncAbilityCast } from "./syncPlayerCast";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { playBoltCastSfx } from "./gameSfx";
 import {
   useDecoyIds,
-  useHubBallIds,
   useProjectileIds,
   useWorldTargetIds,
 } from "./useColyseusMapKeys";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
+import { SpellbreakerProjectileOrbs } from "./vfx/SpellbreakerProjectileOrbs";
 
 export { Volcanoes } from "./vfx/Volcanoes";
+export { RockWalls } from "./vfx/RockWalls";
+export { WorldTrees } from "./vfx/WorldTrees";
 export { ProtectionBubbles } from "./vfx/ProtectionBubbles";
 export { OrbitingWisps } from "./vfx/OrbitingWisps";
 export { AstralChains } from "./vfx/AstralChains";
@@ -83,6 +101,7 @@ export { SoulSevers } from "./vfx/SoulSevers";
 export { RiftPortals } from "./vfx/RiftPortals";
 export { Shrooms } from "./vfx/Shrooms";
 export { SpiritHusks } from "./vfx/SpiritHusks";
+export { PickupOrbs } from "./vfx/PickupOrbs";
 
 useGLTF.preload(CHARACTER_URL);
 useGLTF.preload(ZOMBIE_URL);
@@ -231,6 +250,7 @@ export function Projectiles({ room }: { room: Room | null }) {
                     }
                 />
             ))}
+            <SpellbreakerProjectileOrbs room={room} />
         </>
     );
 }
@@ -532,6 +552,7 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
     return () => {
       controller.dispose();
       controllerRef.current = null;
+      disposeCharacterMaterials(scene);
     };
   }, [scene, gltf.animations]);
 
@@ -644,6 +665,7 @@ type DecoyNet = {
     color: string;
     pattern?: string;
     patternColor?: string;
+    vessel?: string;
     ownerSessionId?: string;
     hp?: number;
     maxHp?: number;
@@ -692,11 +714,12 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
     const renderPos = useRef(new THREE.Vector3());
     const renderYaw = useRef(0);
     const vel = useRef(new THREE.Vector3());
-    const colorRef = useRef(STARTER_COLORS[0]!);
+    const colorRef = useRef<string>(STARTER_COLORS[0]!);
     const patternRef = useRef("plain");
     const patternColorRef = useRef("#1f2937");
     const cosmeticsKeyRef = useRef("");
     const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
+    const [vessel, setVessel] = useState("female");
     const seeded = useRef(false);
     const gltf = useGLTF(CHARACTER_URL);
     const scene = useMemo(() => {
@@ -717,6 +740,7 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
         return () => {
             controller.dispose();
             controllerRef.current = null;
+            disposeCharacterMaterials(scene);
         };
     }, [scene, gltf.animations]);
 
@@ -779,6 +803,9 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
             );
         }
 
+        const nextVessel = d.vessel ?? "female";
+        if (nextVessel !== vessel) setVessel(nextVessel);
+
         const nextCosmetics = cosmeticsKey(owner);
         if (nextCosmetics !== cosmeticsKeyRef.current) {
             cosmeticsKeyRef.current = nextCosmetics;
@@ -810,7 +837,14 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
         <group ref={group}>
             <group ref={bodyRef}>
                 <primitive object={scene} />
-                <EquippedCosmetics characterRoot={scene} equipped={equipped} />
+                <VesselBody characterRoot={scene} body={vessel} color={colorRef.current} />
+                <EquippedCosmetics characterRoot={scene} equipped={equipped} body={vessel} />
+                <SpiritVesselFx
+                    characterRoot={scene}
+                    getColor={() => colorRef.current}
+                    getAura={() => patternRef.current}
+                    getAuraColor={() => patternColorRef.current}
+                />
             </group>
             {/* Same HP bar as players — tracks decoy.hp until cloak ends / HP depleted. */}
             <DecoyHpBillboard room={room} decoyId={decoyId} />
@@ -832,62 +866,7 @@ export function Decoys({ room }: { room: Room | null }) {
     );
 }
 
-const _down = new THREE.Vector3(0, -1, 0);
-const _origin = new THREE.Vector3();
-const _box = new THREE.Box3();
 const _zeroVel = new THREE.Vector3();
-
-function collectHubTerrainMeshes(root: THREE.Object3D): THREE.Object3D[] {
-    const meshes: THREE.Object3D[] = [];
-    root.traverse((o) => {
-        if ((o as THREE.Mesh).isMesh && o.visible) meshes.push(o);
-    });
-    return meshes;
-}
-
-function findHubTerrainRoot(scene: THREE.Object3D): THREE.Object3D | null {
-    let found: THREE.Object3D | null = null;
-    scene.traverse((o) => {
-        if (found) return;
-        if (o.userData?.bbHubTerrain) found = o;
-    });
-    return found;
-}
-
-/** Topmost terrain hit under (x,z) — prefer meadow/path names when present. */
-function sampleTerrainY(
-    world: THREE.Object3D,
-    x: number,
-    z: number,
-    raycaster: THREE.Raycaster,
-): number | null {
-    const terrain = findHubTerrainRoot(world);
-    const meshes = terrain
-        ? collectHubTerrainMeshes(terrain)
-        : (() => {
-              const all: THREE.Object3D[] = [];
-              world.traverse((o) => {
-                  const m = o as THREE.Mesh;
-                  if (!m.isMesh || !m.visible) return;
-                  const n = m.name.toLowerCase();
-                  if (n.includes("beta_") || n.includes("mixamorig") || n.startsWith("sm_chr")) {
-                      return;
-                  }
-                  all.push(m);
-              });
-              return all;
-          })();
-    if (!meshes.length) return null;
-    _origin.set(x, 80, z);
-    raycaster.set(_origin, _down);
-    const hits = raycaster.intersectObjects(meshes, false);
-    if (!hits.length) return null;
-    const named = hits.find((h) =>
-        /meadow|path|floor|tile|flat|ground/i.test(h.object.name),
-    );
-    const hit = named ?? hits[0]!;
-    return Number.isFinite(hit.point.y) ? hit.point.y : null;
-}
 
 function PracticeDummyAvatar({
     room,
@@ -901,13 +880,6 @@ function PracticeDummyAvatar({
     const aimRef = useRef<THREE.Group>(null);
     const controllerRef = useRef<CharacterAnimationController | null>(null);
     const lastCastId = useRef("");
-    const groundY = useRef<number | null>(null);
-    const lastXZ = useRef({ x: 0, z: 0 });
-    const lastXZSeeded = useRef(false);
-    /** Cached sole lift so we don't Box3.setFromObject every frame. */
-    const footLift = useRef<number | null>(null);
-    const raycaster = useMemo(() => new THREE.Raycaster(), []);
-    const { scene: world } = useThree();
     const gltf = useGLTF(CHARACTER_URL);
     const scene = useMemo(() => {
         const idle =
@@ -927,7 +899,6 @@ function PracticeDummyAvatar({
     }, [gltf.scene, gltf.animations]);
 
     useEffect(() => {
-        footLift.current = null;
         const controller = new CharacterAnimationController(
             scene,
             gltf.animations,
@@ -938,8 +909,12 @@ function PracticeDummyAvatar({
         return () => {
             controller.dispose();
             controllerRef.current = null;
+            disposeCharacterMaterials(scene);
         };
     }, [scene, gltf.animations]);
+
+    const prevPos = useRef({ x: 0, z: 0, initialized: false });
+    const dummyVel = useRef(new THREE.Vector3());
 
     useFrame((_, dt) => {
         const safeDt = Math.min(0.05, Math.max(0, dt));
@@ -948,6 +923,7 @@ function PracticeDummyAvatar({
             | {
                   x: number;
                   z: number;
+                  y?: number;
                   yaw?: number;
                   hp: number;
                   maxHp: number;
@@ -957,10 +933,29 @@ function PracticeDummyAvatar({
                   statuses?: Parameters<typeof hasStatusId>[0];
               }
             | undefined;
-        if (controller) {
+        if (controller && t) {
             const yaw = t?.yaw ?? 0;
             controller.setStunned(hasStatusId(t?.statuses, "stunned"));
-            controller.setMovementFromYaw(_zeroVel, yaw, MOVE_SPEED);
+
+            let vx = 0;
+            let vz = 0;
+            if (prevPos.current.initialized && safeDt > 1e-4) {
+                vx = (t.x - prevPos.current.x) / safeDt;
+                vz = (t.z - prevPos.current.z) / safeDt;
+            } else {
+                prevPos.current.initialized = true;
+            }
+            prevPos.current.x = t.x;
+            prevPos.current.z = t.z;
+
+            const speed = Math.hypot(vx, vz);
+            if (speed > 0.2) {
+                dummyVel.current.set(vx, 0, vz);
+                controller.setMovementFromYaw(dummyVel.current, yaw, MOVE_SPEED);
+            } else {
+                controller.setMovementFromYaw(_zeroVel, yaw, MOVE_SPEED);
+            }
+
             syncAbilityCast(controller, t, lastCastId);
             controller.update(safeDt);
         }
@@ -978,32 +973,15 @@ function PracticeDummyAvatar({
         const aim = aimRef.current;
         if (aim) aim.rotation.y = yaw;
 
-        const movedFar =
-            lastXZSeeded.current &&
-            Math.hypot(t.x - lastXZ.current.x, t.z - lastXZ.current.z) > 1.5;
-        if (groundY.current == null || movedFar) {
-            const y = sampleTerrainY(world, t.x, t.z, raycaster);
-            if (y != null) groundY.current = y;
-        }
-        lastXZ.current.x = t.x;
-        lastXZ.current.z = t.z;
-        lastXZSeeded.current = true;
-
-        // Place soles on terrain; measure foot lift once (model local extent is fixed).
-        const targetY = groundY.current ?? 0;
-        if (footLift.current == null) {
-            g.position.set(t.x, targetY, t.z);
-            g.updateMatrixWorld(true);
-            _box.setFromObject(scene);
-            footLift.current = Number.isFinite(_box.min.y) ? targetY - _box.min.y : 0;
-        }
-        g.position.set(t.x, targetY + footLift.current, t.z);
+        const targetY = t.y ?? 0;
+        g.position.set(t.x, targetY, t.z);
     });
 
     return (
         <group ref={root} userData={{ bbSkipGround: true }}>
             <group ref={body}>
                 <primitive object={scene} />
+                <SpiritVesselFx characterRoot={scene} getColor={() => DUMMY_COLOR} />
                 <StatusOrnaments
                     characterRoot={scene}
                     headY={2.2}
@@ -1049,6 +1027,8 @@ function HpBillboard({
     const silenceRing = useRef<SVGCircleElement>(null);
     const holyBadge = useRef<HTMLDivElement>(null);
     const holyRing = useRef<SVGCircleElement>(null);
+    const bloodPactBadge = useRef<HTMLDivElement>(null);
+    const bloodPactRing = useRef<SVGCircleElement>(null);
     const soulMarkBadge = useRef<HTMLDivElement>(null);
     const soulMarkStacksEl = useRef<HTMLSpanElement>(null);
     const soulMarkRing = useRef<SVGCircleElement>(null);
@@ -1057,17 +1037,25 @@ function HpBillboard({
     const chillBadge = useRef<HTMLDivElement>(null);
     const chillStacksEl = useRef<HTMLSpanElement>(null);
     const chillRing = useRef<SVGCircleElement>(null);
+    const shockBadge = useRef<HTMLDivElement>(null);
+    const shockStacksEl = useRef<HTMLSpanElement>(null);
+    const shockRing = useRef<SVGCircleElement>(null);
     const slowBadge = useRef<HTMLDivElement>(null);
     const slowRing = useRef<SVGCircleElement>(null);
     const hasteBadge = useRef<HTMLDivElement>(null);
     const hasteRing = useRef<SVGCircleElement>(null);
     const relayBadge = useRef<HTMLDivElement>(null);
     const relayRing = useRef<SVGCircleElement>(null);
+    const spellbreakerBadge = useRef<HTMLDivElement>(null);
+    const spellbreakerStacksEl = useRef<HTMLSpanElement>(null);
+    const spellbreakerRing = useRef<SVGCircleElement>(null);
     const lastPoisonStacks = useRef(0);
     const lastBleedingStacks = useRef(0);
     const lastRejuvenationStacks = useRef(0);
     const lastSoulMarkStacks = useRef(0);
     const lastChillStacks = useRef(0);
+    const lastShockStacks = useRef(0);
+    const lastSpellbreakerStacks = useRef(0);
     useFrame(() => {
         const t = room?.state?.targets?.get(targetId) as
             | {
@@ -1112,6 +1100,10 @@ function HpBillboard({
                 stacks: 0,
                 expiresAt: 0,
             });
+            syncBloodPactBadge(bloodPactBadge.current, bloodPactRing.current, {
+                stacks: 0,
+                expiresAt: 0,
+            });
             syncSoulMarkBadge(
                 soulMarkBadge.current,
                 soulMarkStacksEl.current,
@@ -1130,6 +1122,13 @@ function HpBillboard({
                 { stacks: 0, expiresAt: 0 },
                 lastChillStacks,
             );
+            syncShockBadge(
+                shockBadge.current,
+                shockStacksEl.current,
+                shockRing.current,
+                { stacks: 0, expiresAt: 0 },
+                lastShockStacks,
+            );
             syncHasteBadge(hasteBadge.current, hasteRing.current, {
                 stacks: 0,
                 expiresAt: 0,
@@ -1138,6 +1137,13 @@ function HpBillboard({
                 stacks: 0,
                 expiresAt: 0,
             });
+            syncSpellbreakerBadge(
+                spellbreakerBadge.current,
+                spellbreakerStacksEl.current,
+                spellbreakerRing.current,
+                { stacks: 0, expiresAt: 0 },
+                lastSpellbreakerStacks,
+            );
             syncSlowBadge(slowBadge.current, slowRing.current, {
                 stacks: 0,
                 expiresAt: 0,
@@ -1188,6 +1194,7 @@ function HpBillboard({
         );
         syncSilenceBadge(silenceBadge.current, silenceRing.current, readSilenceBadge(rows));
         syncHolyBadge(holyBadge.current, holyRing.current, readHolyBadge(rows));
+        syncBloodPactBadge(bloodPactBadge.current, bloodPactRing.current, readBloodPactBadge(rows));
         syncSoulMarkBadge(
             soulMarkBadge.current,
             soulMarkStacksEl.current,
@@ -1207,9 +1214,23 @@ function HpBillboard({
             readChillBadge(rows),
             lastChillStacks,
         );
+        syncShockBadge(
+            shockBadge.current,
+            shockStacksEl.current,
+            shockRing.current,
+            readShockBadge(rows),
+            lastShockStacks,
+        );
         syncSlowBadge(slowBadge.current, slowRing.current, readSlowBadge(rows));
         syncHasteBadge(hasteBadge.current, hasteRing.current, readHasteBadge(rows));
         syncRelayBadge(relayBadge.current, relayRing.current, readRelayBadge(rows));
+        syncSpellbreakerBadge(
+            spellbreakerBadge.current,
+            spellbreakerStacksEl.current,
+            spellbreakerRing.current,
+            readSpellbreakerBadge(rows),
+            lastSpellbreakerStacks,
+        );
     });
     return (
         <group position={[0, y, 0]}>
@@ -1241,6 +1262,8 @@ function HpBillboard({
                 silenceRingRef={silenceRing}
                 holyBadgeRef={holyBadge}
                 holyRingRef={holyRing}
+                bloodPactBadgeRef={bloodPactBadge}
+                bloodPactRingRef={bloodPactRing}
                 soulMarkBadgeRef={soulMarkBadge}
                 soulMarkStacksRef={soulMarkStacksEl}
                 soulMarkRingRef={soulMarkRing}
@@ -1249,12 +1272,18 @@ function HpBillboard({
                 chillBadgeRef={chillBadge}
                 chillStacksRef={chillStacksEl}
                 chillRingRef={chillRing}
+                shockBadgeRef={shockBadge}
+                shockStacksRef={shockStacksEl}
+                shockRingRef={shockRing}
                 slowBadgeRef={slowBadge}
                 slowRingRef={slowRing}
                 hasteBadgeRef={hasteBadge}
                 hasteRingRef={hasteRing}
                 relayBadgeRef={relayBadge}
                 relayRingRef={relayRing}
+                spellbreakerBadgeRef={spellbreakerBadge}
+                spellbreakerStacksRef={spellbreakerStacksEl}
+                spellbreakerRingRef={spellbreakerRing}
             />
         </group>
     );

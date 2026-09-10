@@ -1,8 +1,9 @@
 import { MapSchema, Schema, type } from "@colyseus/schema";
 import {
+  DEFAULT_COSMETIC_BODY,
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
-  DEFAULT_LOADOUT,
+  EMPTY_LOADOUT,
   PLAYER_BASE_MAX_HP,
   PRACTICE_DUMMY_MAX_HP,
   STARTER_COLORS,
@@ -16,6 +17,8 @@ export class StatusInstanceState extends Schema {
   @type("number") stacks = 1;
   @type("number") nextTickAt = 0;
   @type("string") sourceId = "";
+  /** Directional angle (radians) for directional statuses like exposedAngle. */
+  @type("number") angle = 0;
 }
 
 export class PlayerState extends Schema {
@@ -26,11 +29,13 @@ export class PlayerState extends Schema {
   @type("number") yaw = 0;
   @type("number") hp = PLAYER_BASE_MAX_HP;
   @type("number") maxHp = PLAYER_BASE_MAX_HP;
-  @type("string") color = STARTER_COLORS[0];
-  /** Creature hide pattern id (`plain` | `scales` | …). */
-  @type("string") pattern = DEFAULT_COSMETIC_PATTERN;
-  /** Ink color for pattern markings. */
-  @type("string") patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
+  @type("string") color: string = STARTER_COLORS[0];
+  /** Vessel aura id (`plain` | `ember` | …), persisted as `pattern`. */
+  @type("string") pattern: string = DEFAULT_COSMETIC_PATTERN;
+  /** Aura ink color. */
+  @type("string") patternColor: string = DEFAULT_COSMETIC_PATTERN_COLOR;
+  /** Mixamo vessel: `female` (hero) or `male` (Y Bot). */
+  @type("string") vessel: string = DEFAULT_COSMETIC_BODY;
   /** Equipped wearable cosmetics (catalog id, or "" = none). */
   @type("string") cosmeticHat = "";
   @type("string") cosmeticShoulders = "";
@@ -60,7 +65,7 @@ export class PlayerState extends Schema {
   /** Premium placeholder (no match earn / no v1 gates). */
   @type("number") rubies = 0;
   /** Comma-separated ability ids (Battlerite slots). */
-  @type("string") loadout = DEFAULT_LOADOUT.join(",");
+  @type("string") loadout = EMPTY_LOADOUT.join(",");
   /**
    * Comma-separated flex picks (keys 1-3), empty string for an unused slot --
    * so `",frostBall,"` is a spell in slot 2 only. Positional, because which
@@ -113,6 +118,8 @@ export class ProjectileState extends Schema {
   @type("string") mode = "flight";
   /** Target id while stuck (empty otherwise). */
   @type("string") stuckTargetId = "";
+  /** Banked Spellbreaker orbs riding this projectile (0 = none). */
+  @type("number") spellbreakerOrbs = 0;
 }
 
 /** Practice dummy / neutral world target. */
@@ -152,9 +159,10 @@ export class DecoyState extends Schema {
   @type("number") yaw = 0;
   @type("number") vx = 0;
   @type("number") vz = 0;
-  @type("string") color = STARTER_COLORS[0];
-  @type("string") pattern = DEFAULT_COSMETIC_PATTERN;
-  @type("string") patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
+  @type("string") color: string = STARTER_COLORS[0];
+  @type("string") pattern: string = DEFAULT_COSMETIC_PATTERN;
+  @type("string") patternColor: string = DEFAULT_COSMETIC_PATTERN_COLOR;
+  @type("string") vessel: string = DEFAULT_COSMETIC_BODY;
   /** Mirrors owner HP at spawn; depleted by incoming damage. */
   @type("number") hp = 100;
   @type("number") maxHp = 100;
@@ -172,9 +180,10 @@ export class SpiritHuskState extends Schema {
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") yaw = 0;
-  @type("string") color = STARTER_COLORS[0];
-  @type("string") pattern = DEFAULT_COSMETIC_PATTERN;
-  @type("string") patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
+  @type("string") color: string = STARTER_COLORS[0];
+  @type("string") pattern: string = DEFAULT_COSMETIC_PATTERN;
+  @type("string") patternColor: string = DEFAULT_COSMETIC_PATTERN_COLOR;
+  @type("string") vessel: string = DEFAULT_COSMETIC_BODY;
   /** Server epoch ms when the form started (timer ring clock). */
   @type("number") startedAt = 0;
   /** Server epoch ms when the form expires / snap back. */
@@ -192,6 +201,42 @@ export class VolcanoState extends Schema {
   /** rising | active | sinking */
   @type("string") phase = "rising";
   /** Server epoch ms when the volcano should finish sinking / despawn. */
+  @type("number") expiresAt = 0;
+}
+
+/** Temporary Rock Wall — oriented box, durability chips, walk + projectile block. */
+export class RockWallState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  /** Facing of the wall (perpendicular to caster→aim). */
+  @type("number") yaw = 0;
+  /** Half-length along the wall (width/2). */
+  @type("number") halfWidth = 1.5;
+  /** Half-thickness (depth/2). */
+  @type("number") halfThickness = 0.225;
+  /** Remaining structure hits. */
+  @type("number") durability = 3;
+  /** Server epoch ms when the wall despawns. */
+  @type("number") expiresAt = 0;
+}
+
+/** Temporary World Tree — persistent smart healing entity. */
+export class WorldTreeState extends Schema {
+  @type("string") id = "";
+  @type("string") ownerSessionId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  /** Radius for seed healing and area effect. */
+  @type("number") healRadius = 7.0;
+  /** Remaining structure hits. */
+  @type("number") durability = 5;
+  /** Max durability baseline. */
+  @type("number") maxDurability = 5;
+  /** Next server epoch ms when the tree pulses healing seeds. */
+  @type("number") nextHealAt = 0;
+  /** Server epoch ms when the tree despawns. */
   @type("number") expiresAt = 0;
 }
 
@@ -309,6 +354,38 @@ export class HubBallState extends Schema {
   @type("number") vz = 0;
 }
 
+/** Battleground objective pad (flag stand or capture point). */
+export class ObjectivePointState extends Schema {
+  @type("string") id = "";
+  @type("string") tag = "";
+  @type("string") team = "none";
+  @type("string") owner = "";
+  @type("string") contest = "none";
+  @type("number") progress = 0;
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") radius = 3;
+  @type("string") flagState = "";
+  @type("string") carrierId = "";
+  @type("number") dropX = 0;
+  @type("number") dropZ = 0;
+}
+
+/** Map pickup — floating orb providing health, energy, or power-ups. */
+export class PickupState extends Schema {
+  @type("string") id = "";
+  @type("string") effect = "energy";
+  @type("number") magnitude = 0;
+  @type("number") durationMs = 0;
+  @type("number") x = 0;
+  @type("number") y = 0;
+  @type("number") z = 0;
+  @type("number") radius = 1.2;
+  @type("boolean") available = true;
+  @type("number") respawnsAt = 0;
+  @type("number") respawnMs = 30000;
+}
+
 export class BaseCityState extends Schema {
   @type("number") tick = 0;
   @type("boolean") paused = false;
@@ -325,12 +402,19 @@ export class BaseCityState extends Schema {
   @type("number") scoreC = 0;
   @type("number") phaseEndsAt = 0;
   @type("string") matchMode = "";
+  /** "" | ctf | koth | domination */
+  @type("string") objectiveKind = "";
+  /** Server epoch ms when the battleground clock ends (0 = none). */
+  @type("number") matchEndsAt = 0;
+  @type({ map: ObjectivePointState }) objectives = new MapSchema<ObjectivePointState>();
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
   @type({ map: ProjectileState }) projectiles = new MapSchema<ProjectileState>();
   @type({ map: WorldTargetState }) targets = new MapSchema<WorldTargetState>();
   @type({ map: DecoyState }) decoys = new MapSchema<DecoyState>();
   @type({ map: SpiritHuskState }) spiritHusks = new MapSchema<SpiritHuskState>();
   @type({ map: VolcanoState }) volcanoes = new MapSchema<VolcanoState>();
+  @type({ map: RockWallState }) rockWalls = new MapSchema<RockWallState>();
+  @type({ map: WorldTreeState }) worldTrees = new MapSchema<WorldTreeState>();
   @type({ map: ProtectionBubbleState }) protectionBubbles = new MapSchema<ProtectionBubbleState>();
   @type({ map: ShroomState }) shrooms = new MapSchema<ShroomState>();
   @type({ map: RiftPortalState }) riftPortals = new MapSchema<RiftPortalState>();
@@ -342,4 +426,5 @@ export class BaseCityState extends Schema {
   /** Hub owner's account id (for own-lobby shop gates). */
   @type("string") hubOwnerUserId = "";
   @type({ map: HubBallState }) hubBalls = new MapSchema<HubBallState>();
+  @type({ map: PickupState }) pickups = new MapSchema<PickupState>();
 }

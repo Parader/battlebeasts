@@ -1,7 +1,7 @@
 import { validateMapDoc, type MapDoc, type MapWarning } from "@battlebeasts/shared";
 import { useEffect, useState } from "react";
 import { describeSubjects } from "./describeEntity";
-import { dismissWarning, docStore, restoreWarning, revealEntity, useEditor } from "../state/docStore";
+import { dismissWarning, docStore, restoreWarning, revealEntity, useEditorSlice } from "../state/docStore";
 
 /**
  * Live playability report.
@@ -97,7 +97,8 @@ function Row({ w, doc, dismissed }: { w: MapWarning; doc: MapDoc; dismissed: boo
 }
 
 export function Validation() {
-  const { doc, showColliders } = useEditor();
+  const doc = useEditorSlice((s) => s.doc);
+  const showColliders = useEditorSlice((s) => s.showColliders);
   const { warnings, stale } = useValidation(doc);
   const [open, setOpen] = useState(true);
   const [showDismissed, setShowDismissed] = useState(false);

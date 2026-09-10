@@ -4,8 +4,12 @@ import {
   COSMETIC_COLORS,
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
-  DEFAULT_LOADOUT,
   EMPTY_FLEX_LOADOUT,
+  EMPTY_LOADOUT,
+  hasFirstUnlockVoucher,
+  isLoadoutReady,
+  TUTORIAL_CHEST_QUALITY,
+  TUTORIAL_CHEST_SOURCE,
   ESSENCE_PER_TALENT_POINT,
   ESSENCE_PER_TALENT_REFUND,
   HEALTH_TONIC_HEAL,
@@ -30,8 +34,10 @@ import {
   canEquipInSlot,
   clampBuildToOwned,
   clearTree,
+  cosmeticFitsBody,
   cosmeticsEquippedFromFields,
   cosmeticsEquippedToFields,
+  DEFAULT_COSMETIC_BODY,
   emptyPlayerUnlocks,
   formatCoins,
   formatShopCost,
@@ -39,6 +45,7 @@ import {
   isCosmeticSlot,
   isTalentBuildValid,
   normalizeCoins,
+  normalizeCosmeticBody,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   normalizeCosmeticsEquipped,
@@ -55,6 +62,7 @@ import {
   questPeriodKey,
   sanitizeTalentBuild,
   spendCoins,
+  stripCosmeticsForBody,
   talentPointsRemoved,
   talentRefundEssenceCost,
   totalPointsSpent,
@@ -67,6 +75,7 @@ import {
   type TalentTreeId,
   type Wallet,
 } from "@battlebeasts/shared";
+import { isAdminEmail } from "../admin.js";
 import type { VerifiedIdentity } from "../auth.js";
 import { CombatSystem } from "../combat/CombatSystem.js";
 import {
@@ -85,7 +94,7 @@ import {
   saveTalents,
   type LoadoutPresetRow,
 } from "../persistence.js";
-import { bumpQuest, listClosedChests, listQuestProgress, openChest } from "../quests.js";
+import { bumpQuest, insertClosedChest, listClosedChests, listQuestProgress, openChest } from "../quests.js";
 import { getActiveSeason } from "../ranked.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
@@ -126,6 +135,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
   protected unlocksBySession = new Map<string, PlayerUnlocks>();
   protected loadoutPresetsBySession = new Map<string, LoadoutPresetRow[]>();
   protected activeLoadoutSlotBySession = new Map<string, number>();
+  protected vesselConfirmedBySession = new Map<string, boolean>();
 
   // ---------------------------------------------------------------------
   // Registration
@@ -143,6 +153,10 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
     this.onMessage("set_pattern_color", (client, message: { patternColor: string }) => {
       void this.handleSetPatternColor(client, message?.patternColor ?? "");
+    });
+
+    this.onMessage("set_vessel", (client, message: { vessel?: string }) => {
+      void this.handleSetVessel(client, message?.vessel ?? "");
     });
 
     this.onMessage("set_cosmetic", (client, message: { slot?: string; itemId?: string | null }) => {
@@ -257,7 +271,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
         {
           slotIndex: 0,
           name: "Loadout 1",
-          abilityIds: [...DEFAULT_LOADOUT],
+          abilityIds: [...EMPTY_LOADOUT],
           talentBuild: {},
           flexAbilityIds: [...EMPTY_FLEX_LOADOUT],
         },
@@ -277,6 +291,8 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
           : STARTER_COLORS[0]!;
       player.pattern = DEFAULT_COSMETIC_PATTERN;
       player.patternColor = DEFAULT_COSMETIC_PATTERN_COLOR;
+      player.vessel = DEFAULT_COSMETIC_BODY;
+      this.vesselConfirmedBySession.set(sessionId, false);
       return;
     }
 
@@ -289,7 +305,12 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
     const abilityIds = normalizeLoadout(eco.abilityIds);
     player.loadout = abilityIds.join(",");
-    player.flexLoadout = this.resolveFlexForBar(eco.flexAbilityIds, abilityIds, eco.unlocks)
+    player.flexLoadout = this.resolveFlexForBar(
+      eco.flexAbilityIds,
+      abilityIds,
+      eco.unlocks,
+      eco.talentBuild,
+    )
       .map((id) => id ?? "")
       .join(",");
     player.talents = eco.talentIds.slice(0, MAX_TALENTS).join(",");
@@ -299,6 +320,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     this.unlocksBySession.set(sessionId, eco.unlocks);
     this.loadoutPresetsBySession.set(sessionId, eco.loadoutPresets);
     this.activeLoadoutSlotBySession.set(sessionId, eco.activeLoadoutSlot);
+    this.vesselConfirmedBySession.set(sessionId, eco.vesselConfirmed === true);
 
     // Ownership is re-checked on load, not trusted from the row: a cosmetic
     // can be removed from the catalog, and a saved look should degrade to the
@@ -313,7 +335,11 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     player.patternColor = ownsPatternColor(eco.unlocks.patternColors, eco.patternColor ?? "")
       ? normalizeCosmeticPatternColor(eco.patternColor)
       : DEFAULT_COSMETIC_PATTERN_COLOR;
-    this.applyCosmeticsEquipped(player, eco.cosmeticsEquipped ?? {});
+    player.vessel = normalizeCosmeticBody(eco.vessel);
+    this.applyCosmeticsEquipped(
+      player,
+      stripCosmeticsForBody(eco.cosmeticsEquipped ?? {}, normalizeCosmeticBody(eco.vessel)),
+    );
   }
 
   /** Drop a leaving player's caches. */
@@ -323,6 +349,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     this.unlocksBySession.delete(sessionId);
     this.loadoutPresetsBySession.delete(sessionId);
     this.activeLoadoutSlotBySession.delete(sessionId);
+    this.vesselConfirmedBySession.delete(sessionId);
   }
 
   // ---------------------------------------------------------------------
@@ -363,7 +390,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
         rubies: wallet.rubies,
         talent_points: this.talentPointsBySession.get(client.sessionId) ?? 0,
       },
-      loadout: player.loadout.split(",").filter(Boolean),
+      loadout: normalizeLoadout(player.loadout.split(",")),
       // Positional, so empties are kept rather than filtered: dropping them
       // would slide slot 3's spell onto key 1.
       flexLoadout: player.flexLoadout.split(",").map((id) => id || null),
@@ -464,6 +491,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
   /** Validate owned abilities + slot rules; returns cleaned ids or null. */
   protected validateLoadoutAbilityIds(client: Client, abilityIds: string[]): string[] | null {
     const unlocks = this.unlocksOf(client.sessionId);
+    const talentBuild = this.talentBuildBySession.get(client.sessionId) ?? {};
     const unknown = abilityIds.filter((id) => Boolean(id) && !(id in ABILITIES));
     if (unknown.length > 0) {
       client.send("toast", {
@@ -471,18 +499,16 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       });
       return null;
     }
-    const cleaned = abilityIds.filter((id) => id in ABILITIES);
-    if (cleaned.length !== LOADOUT_SIZE) {
-      client.send("toast", { message: `Assign all ${LOADOUT_SIZE} slots` });
-      return null;
-    }
-    if (new Set(cleaned).size !== cleaned.length) {
+    const padded = normalizeLoadout(abilityIds);
+    const filled = padded.filter(Boolean);
+    if (new Set(filled).size !== filled.length) {
       client.send("toast", { message: "Duplicate abilities not allowed" });
       return null;
     }
     for (let i = 0; i < LOADOUT_SIZE; i++) {
-      const id = cleaned[i]!;
-      if (!ownsAbility(unlocks.abilities, id)) {
+      const id = padded[i]!;
+      if (!id) continue;
+      if (!ownsAbility(unlocks.abilities, id, talentBuild)) {
         client.send("toast", { message: `Ability not unlocked: ${ABILITIES[id]?.name ?? id}` });
         return null;
       }
@@ -494,7 +520,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
         return null;
       }
     }
-    return normalizeLoadout(cleaned);
+    return padded;
   }
 
   protected upsertPresetInSession(
@@ -535,10 +561,11 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     picks: FlexLoadout,
     barAbilityIds: string[],
     unlocks: PlayerUnlocks,
+    talentBuild?: TalentBuild,
   ): FlexLoadout {
     const onBar = new Set(barAbilityIds.filter(Boolean));
     const legal = normalizeFlexLoadout(picks).map((id) =>
-      id && ownsAbility(unlocks.abilities, id) && !onBar.has(id) ? id : null,
+      id && ownsAbility(unlocks.abilities, id, talentBuild) && !onBar.has(id) ? id : null,
     );
     return clampFlexToUnlocked(legal, unlocks.flexSlotCount);
   }
@@ -562,6 +589,10 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       });
       await saveTalentBuild(identity.userId, talentBuild);
     }
+  }
+
+  protected vesselOf(player: PlayerState) {
+    return normalizeCosmeticBody(player.vessel);
   }
 
   protected applyCosmeticsEquipped(
@@ -745,13 +776,13 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     const unlocks = this.unlocksOf(client.sessionId);
     const next = normalizeCosmeticPattern(pattern);
     if (!ownsPattern(unlocks.patterns, next)) {
-      client.send("toast", { message: "Pattern not unlocked" });
+      client.send("toast", { message: "Aura not unlocked" });
       return;
     }
     if (patternColor != null) {
       const nextColor = normalizeCosmeticPatternColor(patternColor);
       if (!ownsPatternColor(unlocks.patternColors, nextColor)) {
-        client.send("toast", { message: "Pattern color not unlocked" });
+        client.send("toast", { message: "Aura ink not unlocked" });
         return;
       }
       player.patternColor = nextColor;
@@ -766,11 +797,11 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
           : {}),
       });
       client.send("toast", {
-        message: ok ? `Pattern saved to your account` : `Pattern applied (account save failed)`,
+        message: ok ? `Aura saved to your account` : `Aura applied (account save failed)`,
       });
       return;
     }
-    client.send("toast", { message: `Pattern: ${next} (sign in to save)` });
+    client.send("toast", { message: `Aura: ${next} (sign in to save)` });
   }
 
   protected async handleSetPatternColor(client: Client, patternColor: string) {
@@ -783,7 +814,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     const unlocks = this.unlocksOf(client.sessionId);
     const next = normalizeCosmeticPatternColor(patternColor);
     if (!ownsPatternColor(unlocks.patternColors, next)) {
-      client.send("toast", { message: "Pattern color not unlocked" });
+      client.send("toast", { message: "Aura ink not unlocked" });
       return;
     }
     player.patternColor = next;
@@ -792,12 +823,41 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       const ok = await saveProfilePatternColor(identity.userId, next);
       client.send("toast", {
         message: ok
-          ? "Pattern color saved to your account"
-          : "Pattern color applied (account save failed)",
+          ? "Aura ink saved to your account"
+          : "Aura ink applied (account save failed)",
       });
       return;
     }
-    client.send("toast", { message: "Pattern color updated (sign in to save)" });
+    client.send("toast", { message: "Aura ink updated (sign in to save)" });
+  }
+
+  protected async handleSetVessel(client: Client, raw: string) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const identity = this.identities.get(client.sessionId);
+    const admin = Boolean(identity && !identity.isGuest && isAdminEmail(identity.email));
+    if (this.vesselConfirmedBySession.get(client.sessionId) === true && !admin) {
+      client.send("toast", { message: "Body was chosen when you created your hunter" });
+      return;
+    }
+    const next = normalizeCosmeticBody(raw);
+    const stripped = stripCosmeticsForBody(this.cosmeticsEquippedOf(player), next);
+    player.vessel = next;
+    this.applyCosmeticsEquipped(player, stripped);
+    this.vesselConfirmedBySession.set(client.sessionId, true);
+    const label = next === "male" ? "Male (Y Bot)" : "Female";
+    if (identity && !identity.isGuest) {
+      const ok = await saveProfileAppearance(identity.userId, {
+        vessel: next,
+        vesselConfirmed: true,
+        cosmeticsEquipped: stripped,
+      });
+      client.send("toast", {
+        message: ok ? `${label} vessel saved to your account` : `${label} vessel applied (account save failed)`,
+      });
+      return;
+    }
+    client.send("toast", { message: `${label} vessel (sign in to save)` });
   }
 
   protected async handleSetCosmetic(
@@ -813,9 +873,14 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       slotRaw,
       itemId,
       unlocks.cosmetics,
+      this.vesselOf(player),
     );
     if (!next) {
-      client.send("toast", { message: "Cannot equip that item" });
+      const def = itemId ? getCosmeticItem(itemId) : undefined;
+      const wrongBody = Boolean(def && !cosmeticFitsBody(def, this.vesselOf(player)));
+      client.send("toast", {
+        message: wrongBody ? "That piece is cut for the other vessel" : "Cannot equip that item",
+      });
       return;
     }
     this.applyCosmeticsEquipped(player, next);
@@ -924,14 +989,14 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
           unlocks.patterns.push(grant.patternId);
         }
         unlocksChanged = true;
-        toastMessage = `Unlocked pattern ${grant.patternId}`;
+        toastMessage = `Unlocked ${item.name}`;
         break;
       case "pattern_color":
         if (!unlocks.patternColors.includes(grant.hex)) {
           unlocks.patternColors.push(grant.hex);
         }
         unlocksChanged = true;
-        toastMessage = `Unlocked pattern ink ${grant.hex}`;
+        toastMessage = `Unlocked ${item.name}`;
         break;
       case "cosmetic":
         if (!unlocks.cosmetics.includes(grant.itemId)) {
@@ -1083,6 +1148,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
         def.slot,
         def.id,
         unlocks.cosmetics,
+        this.vesselOf(player),
       );
       if (!next) return;
       this.applyCosmeticsEquipped(player, next);
@@ -1104,23 +1170,30 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     }
     const unlocks = { ...this.unlocksOf(client.sessionId) };
     unlocks.abilities = [...unlocks.abilities];
+    if (ABILITIES[abilityId]?.talentTreeUnlock) {
+      client.send("toast", { message: "Unlock this spell in the talent tree" });
+      return;
+    }
     if (ownsAbility(unlocks.abilities, abilityId)) {
       client.send("toast", { message: "Already unlocked" });
       return;
     }
-    const cost = abilityUnlockCostEssence(abilityId);
-    if (cost <= 0) {
+    const voucher = hasFirstUnlockVoucher(unlocks.abilities, abilityId);
+    const cost = voucher ? 0 : abilityUnlockCostEssence(abilityId);
+    if (!voucher && cost <= 0) {
       client.send("toast", { message: "Ability is free" });
       return;
     }
-    if (player.essence < cost) {
+    if (cost > 0 && player.essence < cost) {
       client.send("toast", { message: `Need ${cost} essence` });
       return;
     }
-    this.applyWallet(player, {
-      ...this.walletOf(player),
-      essence: player.essence - cost,
-    });
+    if (cost > 0) {
+      this.applyWallet(player, {
+        ...this.walletOf(player),
+        essence: player.essence - cost,
+      });
+    }
     const priorAbilities = [...unlocks.abilities];
     unlocks.abilities.push(abilityId);
     const saved = await this.persistUnlocks(client.sessionId, unlocks);
@@ -1129,10 +1202,12 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
         ...unlocks,
         abilities: priorAbilities,
       });
-      this.applyWallet(player, {
-        ...this.walletOf(player),
-        essence: player.essence + cost,
-      });
+      if (cost > 0) {
+        this.applyWallet(player, {
+          ...this.walletOf(player),
+          essence: player.essence + cost,
+        });
+      }
       client.send("toast", {
         message: "Unlock could not be saved — you were not charged",
       });
@@ -1140,11 +1215,28 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       this.sendInventory(client, player);
       return;
     }
+    const slotted = this.tryAutoSlotAbility(client.sessionId, player, abilityId);
+    if (slotted) {
+      const talentBuild = this.talentBuildBySession.get(client.sessionId) ?? {};
+      try {
+        await this.persistActiveLoadoutPreset(
+          client,
+          normalizeLoadout(player.loadout.split(",")),
+          talentBuild,
+        );
+      } catch (err) {
+        console.warn("[loadout] persist after unlock failed:", err);
+      }
+    }
     await this.persistInventory(client.sessionId, player);
     this.sendInventory(client, player);
+    const name = ABILITIES[abilityId]?.name ?? abilityId;
     client.send("toast", {
-      message: `Unlocked ${ABILITIES[abilityId]?.name ?? abilityId} (−${cost} essence)`,
+      message: voucher
+        ? `Unlocked ${name} — first pick`
+        : `Unlocked ${name} (−${cost} essence)`,
     });
+    await this.maybeGrantFirstBuildChest(client, player);
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
       void bumpQuest(identity.userId, {
@@ -1171,6 +1263,32 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       console.warn("[loadout] persist failed:", err);
     }
     this.sendInventory(client, player);
+    await this.maybeGrantFirstBuildChest(client, player);
+  }
+
+  /** Slot a newly bought spell if that family key is still empty. */
+  protected tryAutoSlotAbility(sessionId: string, player: PlayerState, abilityId: string): boolean {
+    const def = ABILITIES[abilityId];
+    const family = def?.allowedSlots[0];
+    if (!family) return false;
+    const slotIndex = SPELL_SLOTS.findIndex((s) => s.id === family);
+    if (slotIndex < 0) return false;
+    const current = normalizeLoadout(player.loadout.split(","));
+    if (current[slotIndex]) return false;
+    current[slotIndex] = abilityId;
+    player.loadout = current.join(",");
+    this.applyCombatKit(sessionId, player);
+    return true;
+  }
+
+  protected async maybeGrantFirstBuildChest(client: Client, player: PlayerState) {
+    if (!isLoadoutReady(normalizeLoadout(player.loadout.split(",")))) return;
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest) return;
+    const granted = await insertClosedChest(identity.userId, TUTORIAL_CHEST_QUALITY, TUTORIAL_CHEST_SOURCE);
+    if (!granted.ok) return;
+    client.send("toast", { message: "First kit ready — loot your tutorial chest in Quests" });
+    await this.handleHubQuests(client);
   }
 
   /**
@@ -1186,7 +1304,8 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
     const unlocks = this.unlocksOf(client.sessionId);
     const barAbilityIds = normalizeLoadout(player.loadout.split(","));
-    const cleaned = this.resolveFlexForBar(abilityIds, barAbilityIds, unlocks);
+    const talentBuild = this.talentBuildBySession.get(client.sessionId) ?? {};
+    const cleaned = this.resolveFlexForBar(abilityIds, barAbilityIds, unlocks, talentBuild);
 
     player.flexLoadout = cleaned.map((id) => id ?? "").join(",");
 
@@ -1271,17 +1390,17 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     }
     const presets = this.loadoutPresetsBySession.get(client.sessionId) ?? [];
     const preset = presets.find((p) => p.slotIndex === slotIndex);
-    const abilityIds = normalizeLoadout(preset?.abilityIds ?? DEFAULT_LOADOUT.slice());
+    const owned = this.talentPointsBySession.get(client.sessionId) ?? 0;
+    const talentBuild = sanitizeTalentBuild(preset?.talentBuild ?? {}, owned);
+    const abilityIds = normalizeLoadout(preset?.abilityIds ?? [...EMPTY_LOADOUT]);
     for (let i = 0; i < LOADOUT_SIZE; i++) {
       const id = abilityIds[i]!;
-      if (!ownsAbility(unlocks.abilities, id) || !canEquipInSlot(id, SPELL_SLOTS[i]!.id)) {
+      if (!id) continue;
+      if (!ownsAbility(unlocks.abilities, id, talentBuild) || !canEquipInSlot(id, SPELL_SLOTS[i]!.id)) {
         client.send("toast", { message: "Preset has locked abilities" });
         return;
       }
     }
-
-    const owned = this.talentPointsBySession.get(client.sessionId) ?? 0;
-    const talentBuild = sanitizeTalentBuild(preset?.talentBuild ?? {}, owned);
 
     this.activeLoadoutSlotBySession.set(client.sessionId, slotIndex);
     player.loadout = abilityIds.join(",");
@@ -1289,6 +1408,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       preset?.flexAbilityIds ?? EMPTY_FLEX_LOADOUT,
       abilityIds,
       unlocks,
+      talentBuild,
     );
     player.flexLoadout = flex.map((id) => id ?? "").join(",");
     this.talentBuildBySession.set(client.sessionId, talentBuild);
@@ -1304,6 +1424,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     client.send("toast", {
       message: `${preset?.name ?? `Loadout ${slotIndex + 1}`} selected (spells + talents)`,
     });
+    await this.maybeGrantFirstBuildChest(client, player);
   }
 
   protected async handleSetEmoteLoadout(client: Client, emoteSlots: (string | null)[]) {

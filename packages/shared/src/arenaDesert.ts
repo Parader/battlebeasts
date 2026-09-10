@@ -50,28 +50,38 @@ export type ArenaSpawnPose = {
   yaw: number;
 };
 
-/** Spawn 1–3 = team A, Spawn 4–6 = team B (classic A/B arenas). */
+function parseSpawnTeam(kind: string): { team: "a" | "b" | "c"; index: number } | null {
+  const k = kind.trim().toLowerCase().replace(/-/g, "_");
+  const named = /^(?:spawn_|team_|t)?([abc])$/.exec(k);
+  if (named) return { team: named[1] as "a" | "b" | "c", index: named[1].charCodeAt(0) };
+  const num = /^spawn_(\d+)$/.exec(k);
+  if (!num) return null;
+  const index = Number(num[1]);
+  if (index >= 1 && index <= 3) return { team: "a", index };
+  if (index >= 4 && index <= 6) return { team: "b", index };
+  return { team: "c", index };
+}
+
+/** Team pools from Blender empties — `TA` / `spawn_a` / legacy `spawn_1`–`spawn_6`. */
 export const ARENA_SPAWNS: ArenaSpawnPose[] = (() => {
   const out: ArenaSpawnPose[] = [];
   for (const m of markersDoc.markers ?? []) {
-    const match = /^spawn_([1-6])$/.exec(m.kind);
-    if (!match) continue;
-    const index = Number(match[1]);
+    const parsed = parseSpawnTeam(m.kind);
+    if (!parsed) continue;
     out.push({
-      index,
-      team: index <= 3 ? "a" : "b",
+      index: parsed.index,
+      team: parsed.team,
       x: sx(m.x),
       z: sx(m.z),
-      // Face toward midfield (team A looks +X, team B looks -X).
-      yaw: index <= 3 ? Math.PI / 2 : -Math.PI / 2,
+      yaw: parsed.team === "b" ? -Math.PI / 2 : Math.PI / 2,
     });
   }
-  out.sort((a, b) => a.index - b.index);
+  out.sort((a, b) => a.team.localeCompare(b.team) || a.index - b.index);
   return out;
 })();
 
 /**
- * 1v1v1 FFA — reuse existing pads (no new markers):
+ * Fallback 1v1v1 corners when the desert has no authored team-C pads yet:
  * a → spawn_3 (NW), b → spawn_4 (NE), c → spawn_6 (SE).
  */
 export const ARENA_FFA_SPAWN_INDICES = {
@@ -80,21 +90,30 @@ export const ARENA_FFA_SPAWN_INDICES = {
   c: 6,
 } as const;
 
-export function arenaSpawnsForTeam(team: "a" | "b"): ArenaSpawnPose[] {
+export function arenaSpawnsForTeam(team: "a" | "b" | "c"): ArenaSpawnPose[] {
   return ARENA_SPAWNS.filter((s) => s.team === team);
 }
 
-/** nth fighter slot on a team (0-based) → spawn pose. */
-export function arenaSpawnForSlot(team: "a" | "b", slot: number): ArenaSpawnPose | undefined {
+/** nth fighter pad on a team (0-based). Prefer `arenaSpawnsForTeam` + random pick. */
+export function arenaSpawnForSlot(
+  team: "a" | "b" | "c",
+  slot: number,
+): ArenaSpawnPose | undefined {
   const list = arenaSpawnsForTeam(team);
+  if (!list.length) return arenaFfaSpawnForTeam(team);
   return list[Math.max(0, Math.min(list.length - 1, slot))];
 }
 
 /** Solo FFA spawn for team a|b|c — faces arena origin. */
 export function arenaFfaSpawnForTeam(team: "a" | "b" | "c"): ArenaSpawnPose | undefined {
+  const authored = arenaSpawnsForTeam(team);
+  if (authored.length === 1) {
+    const pad = authored[0]!;
+    return { ...pad, yaw: Math.atan2(-pad.x, -pad.z) };
+  }
   const index = ARENA_FFA_SPAWN_INDICES[team];
   const pad = ARENA_SPAWNS.find((s) => s.index === index);
-  if (!pad) return undefined;
+  if (!pad) return authored[0];
   const yaw = Math.atan2(-pad.x, -pad.z);
   return { ...pad, team, yaw };
 }
@@ -210,3 +229,45 @@ export function arenaGroundSize(): number {
 }
 
 export const ARENA_GROUND_SIZE = arenaGroundSize();
+
+export type DesertObjective = {
+  id: string;
+  tag: "capture_point" | "flag_stand";
+  team: "none" | "a" | "b";
+  x: number;
+  z: number;
+  radius: number;
+};
+
+function offsetAway(p: { x: number; z: number }, dist: number): { x: number; z: number } {
+  const len = Math.hypot(p.x, p.z) || 1;
+  return { x: p.x + (p.x / len) * dist, z: p.z + (p.z / len) * dist };
+}
+
+function teamCentroid(team: "a" | "b"): { x: number; z: number } {
+  const pads = arenaSpawnsForTeam(team);
+  if (pads.length === 0) return { x: team === "a" ? -10 : 10, z: 0 };
+  let x = 0;
+  let z = 0;
+  for (const p of pads) {
+    x += p.x;
+    z += p.z;
+  }
+  return { x: x / pads.length, z: z / pads.length };
+}
+
+/** Baked desert objective pads — used until the map is authored in the editor. */
+export function desertObjectives(): DesertObjective[] {
+  const a = teamCentroid("a");
+  const b = teamCentroid("b");
+  const flagA = offsetAway(a, 2.6);
+  const flagB = offsetAway(b, 2.6);
+  return [
+    { id: "flag_a", tag: "flag_stand", team: "a", x: flagA.x, z: flagA.z, radius: 2.4 },
+    { id: "flag_b", tag: "flag_stand", team: "b", x: flagB.x, z: flagB.z, radius: 2.4 },
+    { id: "hill", tag: "capture_point", team: "none", x: 0, z: 0, radius: 4.2 },
+    { id: "dom_mid", tag: "capture_point", team: "none", x: 0, z: 0, radius: 3.4 },
+    { id: "dom_a", tag: "capture_point", team: "none", x: a.x * 0.45, z: a.z * 0.45, radius: 3.2 },
+    { id: "dom_b", tag: "capture_point", team: "none", x: b.x * 0.45, z: b.z * 0.45, radius: 3.2 },
+  ];
+}

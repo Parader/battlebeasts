@@ -19,9 +19,11 @@ import {
 } from "@/game/animation";
 import {
   CHARACTER_URL,
+  disposeCharacterMaterials,
   prepareCharacterScene,
   tintCharacterSurface,
 } from "@/game/characterVisual";
+import { SpiritVesselFx } from "@/game/SpiritVesselFx";
 import {
   FireParticleField,
   GroundMagicCircle,
@@ -251,6 +253,20 @@ function MapScene({ url, scale, opacity }: { url: string; scale: number; opacity
     targetOpacity.current = opacity;
   }, [opacity]);
 
+  useEffect(() => {
+    return () => {
+      scene.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.geometry?.dispose();
+        if (mesh.material) {
+          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          for (const m of mats) m.dispose();
+        }
+      });
+    };
+  }, [scene]);
+
   useFrame((_, dt) => {
     opacityRef.current = THREE.MathUtils.damp(opacityRef.current, targetOpacity.current, 5.5, dt);
     const o = opacityRef.current;
@@ -345,6 +361,7 @@ function CastingHero({
       mixerRef.current?.stopAllAction();
       if (mixerRef.current) mixerRef.current.uncacheRoot(scene);
       mixerRef.current = null;
+      disposeCharacterMaterials(scene);
     };
   }, [scene, preparedCastClips, idleClip]);
 
@@ -355,6 +372,7 @@ function CastingHero({
   return (
     <group position={position} rotation={[0, yaw, 0]}>
       <primitive object={scene} />
+      <SpiritVesselFx characterRoot={scene} getColor={() => color} />
       <GroundMagicCircle color={color} radius={0.95} spin={0.85} showRune y={0.02} />
     </group>
   );

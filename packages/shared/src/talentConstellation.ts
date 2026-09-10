@@ -4,11 +4,14 @@
  */
 import {
   TALENT_CATALOG,
+  isSpellTalent,
   type CatalogTalentDef,
+  type TalentNodeType,
   type TalentTreeId,
 } from "./talentCatalog";
 import {
   TALENT_TREE_IDS,
+  TALENT_TREE_COLUMNS,
   catalogTalentsInTree,
   layoutTalentTree,
   talentTreeLinks,
@@ -28,92 +31,12 @@ export type SpellUnlockPlaceholder = {
   lockedNote: string;
 };
 
-export const SPELL_UNLOCK_PLACEHOLDERS: readonly SpellUnlockPlaceholder[] = [
-  {
-    id: "SPELL_DES_A",
-    tree: "Destruction",
-    layoutOrder: 0,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Destruction spell for this node.",
-  },
-  {
-    id: "SPELL_DES_B",
-    tree: "Destruction",
-    layoutOrder: 1,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Destruction spell for this node.",
-  },
-  {
-    id: "SPELL_GUA_A",
-    tree: "Guardian",
-    layoutOrder: 0,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Guardian spell for this node.",
-  },
-  {
-    id: "SPELL_GUA_B",
-    tree: "Guardian",
-    layoutOrder: 1,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Guardian spell for this node.",
-  },
-  {
-    id: "SPELL_CON_A",
-    tree: "Control",
-    layoutOrder: 0,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Control spell for this node.",
-  },
-  {
-    id: "SPELL_CON_B",
-    tree: "Control",
-    layoutOrder: 1,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Control spell for this node.",
-  },
-  {
-    id: "SPELL_FLO_A",
-    tree: "Flow",
-    layoutOrder: 0,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Flow spell for this node.",
-  },
-  {
-    id: "SPELL_FLO_B",
-    tree: "Flow",
-    layoutOrder: 1,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Flow spell for this node.",
-  },
-  {
-    id: "SPELL_HAR_A",
-    tree: "Harmony",
-    layoutOrder: 0,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Harmony spell for this node.",
-  },
-  {
-    id: "SPELL_HAR_B",
-    tree: "Harmony",
-    layoutOrder: 1,
-    abilityId: null,
-    label: "Spell unlock",
-    lockedNote: "Coming soon — pick a Harmony spell for this node.",
-  },
-];
+export const SPELL_UNLOCK_PLACEHOLDERS: readonly SpellUnlockPlaceholder[] = [];
 
 export type ConstellationNode = {
   id: string;
   kind: ConstellationNodeKind;
+  nodeType?: TalentNodeType;
   tree: TalentTreeId | null;
   x: number;
   y: number;
@@ -143,7 +66,6 @@ export const CONSTELLATION_WORLD = 3200;
 const HUB_RADIUS = 220;
 const TIER_STEP = 140;
 const ROW_STEP = 72;
-const SPELL_RING_EXTRA = 110;
 /** Half-width of each tree sector in radians (~58° usable of 72°). */
 const SECTOR_HALF = (Math.PI * 2) / TALENT_TREE_IDS.length / 2 - 0.12;
 
@@ -223,14 +145,21 @@ export function layoutTalentConstellation(): ConstellationLayout {
       list.forEach((talent, i) => {
         const cell = byId.get(talent.id);
         const rowInTier = cell?.row ?? Math.max(0, tier - 1);
-        // Spread across sector; single node sits on mid angle.
-        const t = n <= 1 ? 0.5 : i / (n - 1);
+        // Spread across sector based on grid column position (0..4) so spokes align cleanly
+        const t =
+          cell != null
+            ? cell.col / (TALENT_TREE_COLUMNS - 1)
+            : n <= 1
+              ? 0.5
+              : i / (n - 1);
         const angle = mid - SECTOR_HALF + t * SECTOR_HALF * 2;
         const radius = HUB_RADIUS + TIER_STEP * 0.55 + rowInTier * TIER_STEP + ROW_STEP * 0.15;
         const p = polar(centerX, centerY, angle, radius);
+        const isSpell = isSpellTalent(talent);
         nodes.push({
           id: talent.id,
-          kind: "talent",
+          kind: isSpell ? "spellUnlock" : "talent",
+          nodeType: isSpell ? "spell" : "passive",
           tree,
           x: p.x,
           y: p.y,
@@ -249,44 +178,6 @@ export function layoutTalentConstellation(): ConstellationLayout {
       if (!posById.has(link.fromId) || !posById.has(link.toId)) continue;
       addLink(link.fromId, link.toId, tree);
     }
-
-    // Spell placeholders on outer ring of this sector.
-    const spells = SPELL_UNLOCK_PLACEHOLDERS.filter((s) => s.tree === tree).sort(
-      (a, b) => a.layoutOrder - b.layoutOrder,
-    );
-    const spellN = spells.length;
-    const maxTalentRadius =
-      HUB_RADIUS +
-      4 * TIER_STEP +
-      SPELL_RING_EXTRA;
-    spells.forEach((spell, i) => {
-      const t = spellN <= 1 ? 0.5 : i / (spellN - 1);
-      const angle = mid - SECTOR_HALF * 0.55 + t * SECTOR_HALF * 1.1;
-      const p = polar(centerX, centerY, angle, maxTalentRadius);
-      nodes.push({
-        id: spell.id,
-        kind: "spellUnlock",
-        tree,
-        x: p.x,
-        y: p.y,
-        spell,
-      });
-      posById.set(spell.id, p);
-      // Soft rail from nearest outer talent (or hub) for visual continuity.
-      const outerTalents = (byTier.get(4) ?? byTier.get(3) ?? byTier.get(2) ?? byTier.get(1) ?? []);
-      let nearest = hubId;
-      let best = Infinity;
-      for (const talent of outerTalents) {
-        const tp = posById.get(talent.id);
-        if (!tp) continue;
-        const d = (tp.x - p.x) ** 2 + (tp.y - p.y) ** 2;
-        if (d < best) {
-          best = d;
-          nearest = talent.id;
-        }
-      }
-      addLink(nearest, spell.id, tree);
-    });
   });
 
   return { width, height, centerX, centerY, nodes, links, hubByTree };

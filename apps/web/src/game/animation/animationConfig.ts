@@ -33,6 +33,8 @@ export type CharacterAnimationConfig = {
   castFirewall?: string;
   /** Protection Bubble / Standing 2H Magic Area Attack 02 (01 fallback). */
   castProtectionBubble?: string;
+  /** Position Swap / Standing 2H Magic Area Attack 02 (01 fallback). */
+  castPositionSwap?: string;
   /** Magma Orbs / Standing 2H Magic Attack 05. */
   castMagmaOrbs?: string;
   /** Poison Dart / Right Hook. */
@@ -100,6 +102,8 @@ export const heroAnimationConfig: CharacterAnimationConfig = {
   castFirewall: "Standing 2H Magic Area Attack 01",
   /** GLB ships Area Attack 01 only (02 not exported). */
   castProtectionBubble: "Standing 2H Magic Area Attack 01",
+  /** Prefer Area Attack 02 when present; falls back to 01 in the controller. */
+  castPositionSwap: "Standing 2H Magic Area Attack 02",
   castMagmaOrbs: "Standing 2H Magic Attack 05",
   castPoisonDart: "Right Hook",
   castArcBlade: "attack_combo",
@@ -157,6 +161,7 @@ export const HERO_CHEST_PROXY_BAKE_ACTIONS = [
   "Standing 2H Magic Attack 03",
   "Standing 2H Magic Attack 04",
   "Standing 2H Magic Area Attack 01",
+  "Standing 2H Magic Area Attack 02",
   "Standing 2H Magic Attack 05",
   "Right Hook",
   "Baseball Pitching",
@@ -180,7 +185,7 @@ export const abilityAnimationBindings: Record<
   string,
   {
     upper?: keyof CharacterAnimationConfig;
-    fullBody?: keyof CharacterAnimationConfig;
+    fullBody?: keyof CharacterAnimationConfig | string;
     /**
      * Ordered clip names for combo swings (1st, 2nd, 3rd…).
      * Index = castComboHit - 1. Prefer full-body for melee flourishes.
@@ -369,6 +374,8 @@ export const abilityAnimationBindings: Record<
   runicShard: {
     upper: "castIceLance",
     upperTimeScale: RUNIC_SHARD_CAST.playbackRate,
+    /** Skip dead time in Baseball Pitching so arm cocks back into preload throw stance immediately. */
+    startAtSec: 1.5,
   },
   orbitingWisp: {
     upper: "castPrimary",
@@ -449,6 +456,50 @@ export const abilityAnimationBindings: Record<
     /** Skip early Mixamo windup so preload is snappy without racing the clip. */
     startAtSec: TELEPORT_SLAM_CAST.startFrame / TELEPORT_SLAM_CAST.fps,
   },
+  purgePulse: {
+    upper: "castAoE",
+    upperTimeScale: 1.55,
+  },
+  spellbreaker: {
+    upper: "castAoE",
+    upperTimeScale: 1.55,
+  },
+  rockWall: {
+    upper: "castFirewall",
+    upperTimeScale: 1.4,
+  },
+  hexAnchor: {
+    upper: "castPoisonDart",
+    upperTimeScale: 1.45,
+  },
+  ironGuard: {
+    upper: "castBarrier",
+    upperTimeScale: 1.35,
+  },
+  gravityField: {
+    upper: "castAoE",
+    upperTimeScale: 1.35,
+  },
+  timeFreeze: {
+    upper: "castAoE",
+    upperTimeScale: 1.35,
+  },
+  bloodPact: {
+    upper: "castBarrier",
+    upperTimeScale: 1.4,
+  },
+  chainLightning: {
+    upper: "castPoisonDart",
+    upperTimeScale: 1.15,
+  },
+  elementalOverload: {
+    upper: "castPoisonDart",
+    upperTimeScale: 1.2,
+  },
+  positionSwap: {
+    upper: "castPositionSwap",
+    upperTimeScale: 1.05,
+  },
   silenceSweep: {
     upper: "castPoisonDart",
     upperTimeScale: POISON_DART_CAST.playbackRate,
@@ -528,5 +579,44 @@ export const abilityAnimationBindings: Record<
   },
   crescent: {
     comboUpperOnce: "attack_combo",
+  },
+  cycloneKick: {
+    fullBody: "Hurricane Kick",
+    fullBodyLoop: true,
+    windupTimeScale: 1.4,
+  },
+  worldTree: {
+    upper: "castFirewall",
+    upperTimeScale: 1.4,
+  },
+  phantomRush: {
+    fullBody: "crouchToSprint",
+    fullBodyAnimDurationSec: 0.16,
+    playNaturalSpeed: false,
+  },
+  ascendantForm: {
+    upper: "castBarrier", // Standing 1H Cast Spell 01
+    upperTimeScale: 1.35,
+    upperAnimDurationSec: 1.0,
+  },
+  dreadAura: {
+    upper: "castAoE",
+    upperTimeScale: 1.5,
+    upperAnimDurationSec: 0.8,
+  },
+  guardianAngel: {
+    upper: "castBarrier",
+    upperTimeScale: 1.35,
+    upperAnimDurationSec: 0.8,
+  },
+  lastingGrace: {
+    upper: "castBarrier",
+    upperTimeScale: 1.3,
+    upperAnimDurationSec: 0.8,
+  },
+  rebirth: {
+    upper: "castBarrier",
+    upperTimeScale: 1.2,
+    upperAnimDurationSec: 1.0,
   },
 };

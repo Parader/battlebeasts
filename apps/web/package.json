@@ -40,7 +40,8 @@
         "tailwindcss": "^4.2.2",
         "tailwindcss-animate": "^1.0.7",
         "tailwindcss-react-aria-components": "^2.0.1",
-        "three": "^0.175.0"
+        "three": "^0.175.0",
+        "three-stdlib": "^2.36.1"
     },
     "devDependencies": {
         "@trivago/prettier-plugin-sort-imports": "^6.0.2",

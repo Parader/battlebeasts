@@ -3328,6 +3328,73 @@
         "team": "b",
         "slot": 2
       }
+    },
+    {
+      "id": "e008",
+      "type": "pickup",
+      "x": 0,
+      "z": 0,
+      "yaw": 0,
+      "y": -0.0010195930004119873,
+      "shape": {
+        "kind": "circle",
+        "radius": 1.2
+      },
+      "params": {
+        "effect": "random",
+        "magnitude": 2,
+        "durationMs": 0,
+        "respawnMs": 30000,
+        "firstSpawnMs": 0
+      }
+    },
+    {
+      "id": "e009",
+      "type": "objective",
+      "x": 0,
+      "y": -0.0010195930004119873,
+      "z": 0,
+      "yaw": 0,
+      "shape": {
+        "kind": "circle",
+        "radius": 3
+      },
+      "params": {
+        "tag": "capture_point",
+        "team": "none"
+      }
+    },
+    {
+      "id": "e010",
+      "type": "objective",
+      "x": -21.5,
+      "y": -0.0010195930004119873,
+      "z": 0,
+      "yaw": 0,
+      "shape": {
+        "kind": "circle",
+        "radius": 3
+      },
+      "params": {
+        "tag": "flag_stand",
+        "team": "a"
+      }
+    },
+    {
+      "id": "e011",
+      "type": "objective",
+      "x": 22.75,
+      "y": -0.0010195930004119873,
+      "z": 0,
+      "yaw": 0,
+      "shape": {
+        "kind": "circle",
+        "radius": 3
+      },
+      "params": {
+        "tag": "flag_stand",
+        "team": "b"
+      }
     }
   ]
 }

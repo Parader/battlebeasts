@@ -8,7 +8,7 @@ import { findHandBone } from "../attach";
 import { getCharacterRoot } from "../../characterRoots";
 import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
-import { hasStatusId } from "../../StatusOrnaments";
+import { hasStatusId } from "../../statusBadgeUtils";
 import { GEO_LANCE_SHAFT, GEO_LANCE_TIP } from "../sharedGeo";
 import { useSpellLight } from "../spellLights";
 

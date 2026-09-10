@@ -12,7 +12,7 @@ import { GustWaveEffect } from "./effects/gustWave";
 import { FrostBallCastEffect } from "./effects/frostBallCast";
 import { FireballCastEffect } from "./effects/fireballCast";
 import { FireballBurnGroundEffect } from "./effects/fireballBurnGround";
-import { BarrierCastEffect } from "./effects/barrierCast";
+import { BarrierCastEffect, GuardiansBlessingEffect } from "./effects/barrierCast";
 import { GraspProjectileEffect } from "./effects/graspProjectile";
 import { ChainJumpProjectileEffect } from "./effects/chainJumpProjectile";
 import { SpikesPopEffect } from "./effects/spikesPop";
@@ -72,6 +72,30 @@ import {
   ReboundEffect,
   TeleportSlamEffect,
 } from "./effects/spaceSpells";
+import {
+  PurgePulseEffect,
+  RockWallEffect,
+  HexAnchorEffect,
+  SpellbreakerEffect,
+} from "./effects/qSpells";
+import { BindingSigilEffect, MassSilenceEffect } from "./effects/controlTalents";
+import { AfterimageEffect } from "./effects/flowTalents";
+import { HarmonyHealBurstEffect, RebirthEffect } from "./effects/harmonyTalents";
+import {
+  BloodPactEffect,
+  ChainLightningEffect,
+  GravityFieldEffect,
+  PositionSwapEffect,
+  TimeFreezeEffect,
+} from "./effects/rSpells";
+import {
+  CycloneKickEffect,
+  WorldTreeEffect,
+  PhantomRushEffect,
+  AscendantFormEffect,
+  DreadAuraEffect,
+  DivineBeamOverflowEffect,
+} from "./effects/fSpells";
 import { WallFizzleEffect } from "./effects/wallFizzle";
 import {
   getAbilityVfxProfile,
@@ -330,6 +354,43 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   predatorStep: (shot) => <PredatorStepEffect key={shot.key} shot={shot} />,
   rebound: (shot) => <ReboundEffect key={shot.key} shot={shot} />,
   teleportSlam: (shot) => <TeleportSlamEffect key={shot.key} shot={shot} />,
+  purgePulse: (shot) => <PurgePulseEffect key={shot.key} shot={shot} />,
+  rockWall: (shot) => <RockWallEffect key={shot.key} shot={shot} />,
+  hexAnchor: (shot) => {
+    const v = shot.variant ?? 0;
+    if (v === 3) return <SoulRelayOutOfRangeEffect key={shot.key} shot={shot} />;
+    return <HexAnchorEffect key={shot.key} shot={shot} />;
+  },
+  bindingSigil: (shot) => <BindingSigilEffect key={shot.key} shot={shot} />,
+  massSilence: (shot) => <MassSilenceEffect key={shot.key} shot={shot} />,
+  tripleBlink: (shot) => <PortalBlinkEffect key={shot.key} shot={shot} />,
+  flowAfterimage: (shot, ctx) => <AfterimageEffect key={shot.key} shot={shot} follow={ctx} />,
+  ironGuard: () => null,
+  guardiansBlessing: (shot, ctx) => (
+    <GuardiansBlessingEffect key={shot.key} shot={shot} follow={ctx} />
+  ),
+  guardianAngel: (shot, ctx) => (
+    <HarmonyHealBurstEffect key={shot.key} shot={shot} follow={ctx} />
+  ),
+  lastingGrace: (shot, ctx) => (
+    <HarmonyHealBurstEffect key={shot.key} shot={shot} follow={ctx} />
+  ),
+  rebirth: (shot, ctx) => <RebirthEffect key={shot.key} shot={shot} follow={ctx} />,
+  battleRhythm: (shot, ctx) => (
+    <HarmonyHealBurstEffect key={shot.key} shot={shot} follow={ctx} />
+  ),
+  spellbreaker: (shot, ctx) => <SpellbreakerEffect key={shot.key} shot={shot} follow={ctx} />,
+  gravityField: (shot) => <GravityFieldEffect key={shot.key} shot={shot} />,
+  timeFreeze: (shot) => <TimeFreezeEffect key={shot.key} shot={shot} />,
+  bloodPact: (shot) => <BloodPactEffect key={shot.key} shot={shot} />,
+  chainLightning: (shot) => <ChainLightningEffect key={shot.key} shot={shot} />,
+  elementalOverload: (shot) => <ChainLightningEffect key={shot.key} shot={shot} />,
+  positionSwap: (shot) => <PositionSwapEffect key={shot.key} shot={shot} />,
+  cycloneKick: (shot, ctx) => <CycloneKickEffect key={shot.key} shot={shot} follow={ctx} />,
+  worldTree: (shot, ctx) => <WorldTreeEffect key={shot.key} shot={shot} follow={ctx} />,
+  phantomRush: (shot) => <PhantomRushEffect key={shot.key} shot={shot} />,
+  ascendantForm: (shot, ctx) => <AscendantFormEffect key={shot.key} shot={shot} follow={ctx} />,
+  dreadAura: (shot, ctx) => <DreadAuraEffect key={shot.key} shot={shot} follow={ctx} />,
   poisonCloud: (shot) => <PoisonCloudGroundEffect key={shot.key} shot={shot} />,
   smokeBomb: (shot) => <SmokeBombGroundEffect key={shot.key} shot={shot} />,
   holyGround: (shot) => <HolyGroundEffect key={shot.key} shot={shot} />,
@@ -349,6 +410,9 @@ function renderByEffectKind(shot: OneShotEffect, ctx: VfxFollowContext): ReactNo
     return <SilenceSweepEffect key={shot.key} shot={shot} follow={ctx} />;
   }
   if (usesHealBeamFx(shot.abilityId)) {
+    if ((shot.variant ?? 0) === 1) {
+      return <DivineBeamOverflowEffect key={shot.key} shot={shot} />;
+    }
     return <HealBeamEffect key={shot.key} shot={shot} follow={ctx} />;
   }
   if (usesLifeLeechFx(shot.abilityId)) {

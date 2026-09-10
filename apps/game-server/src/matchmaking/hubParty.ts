@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import {
   COOP_PVE_MAX_PLAYERS,
-  PVP_MODES,
-  isPvpFfaTriosMode,
-  pvpModeFitsPlayerCount,
+  parsePvpFamilyToken,
+  pvpFamilyFromModes,
+  pvpFamilyToken,
+  pvpModesForFamily,
+  resolvePremadeBattlegroundSize,
+  resolvePremadeSkirmishMode,
   type PartyKind,
   type PartyMemberSnapshot,
   type PartySnapshot,
+  type PvpFamily,
+  type PvpModeId,
   type PvpSeat,
 } from "@battlebeasts/shared";
 
@@ -23,15 +28,15 @@ export type HubParty = {
   kind: PartyKind;
   modes: string[];
   members: Map<string, HubPartyMember>;
-  /** sessionIds with an outstanding invite. */
   pendingInvites: Set<string>;
-  /** Friend user ids invited from party lobby — join hub then auto-enter party. */
   pendingFriendInvites: Set<string>;
-  /** True once the party has been locked into the PvP queue / coop transfer. */
   queued: boolean;
 };
 
-/** Filters `modes` down to the ones that fit `hubPlayerCount` (see PortalPanel's client-side check). */
+export function partyFamily(party: HubParty): PvpFamily {
+  return pvpFamilyFromModes(party.modes);
+}
+
 export function filterModesForHubSize(modes: string[], hubPlayerCount: number): {
   validModes: string[];
   rejectedModes: string[];
@@ -39,45 +44,15 @@ export function filterModesForHubSize(modes: string[], hubPlayerCount: number): 
   const validModes: string[] = [];
   const rejectedModes: string[] = [];
   for (const mode of modes) {
-    if (pvpModeFitsPlayerCount(mode, hubPlayerCount)) validModes.push(mode);
+    const family = parsePvpFamilyToken(mode) ?? pvpFamilyFromModes([mode]);
+    const cap = pvpModesForFamily(family).reduce(
+      (max, m) => Math.max(max, m.teamSizeMax * m.teamCount + m.maxSpectators),
+      0,
+    );
+    if (cap >= hubPlayerCount) validModes.push(mode);
     else rejectedModes.push(mode);
   }
   return { validModes, rejectedModes };
-}
-
-/** Whether the party's current seat assignments could fill (or fit within) `modeId`. */
-export function partyFitsMode(party: HubParty, modeId: string): boolean {
-  if (party.kind === "coop_pve") return party.members.size <= COOP_PVE_MAX_PLAYERS;
-  const mode = PVP_MODES.find((m) => m.id === modeId);
-  if (!mode) return false;
-  const { teamA, teamB, teamC, spectator } = seatCounts(party);
-  if (spectator > mode.maxSpectators) return false;
-  if (isPvpFfaTriosMode(modeId) || mode.teamCount >= 3) {
-    return (
-      teamA <= mode.teamSize &&
-      teamB <= mode.teamSize &&
-      teamC <= mode.teamSize
-    );
-  }
-  return teamA <= mode.teamSize && teamB <= mode.teamSize && teamC === 0;
-}
-
-/** Full premade: all sides filled to mode capacity (can start without queue). */
-export function isFullPremadeLobby(party: HubParty, modeId: string): boolean {
-  if (party.kind === "coop_pve") return false;
-  const mode = PVP_MODES.find((m) => m.id === modeId);
-  if (!mode) return false;
-  const { teamA, teamB, teamC, spectator } = seatCounts(party);
-  if (spectator > mode.maxSpectators) return false;
-  if (!partyFitsMode(party, modeId)) return false;
-  if (isPvpFfaTriosMode(modeId) || mode.teamCount >= 3) {
-    return (
-      teamA === mode.teamSize &&
-      teamB === mode.teamSize &&
-      teamC === mode.teamSize
-    );
-  }
-  return teamA === mode.teamSize && teamB === mode.teamSize && teamC === 0;
 }
 
 export function seatCounts(party: HubParty): {
@@ -99,17 +74,49 @@ export function seatCounts(party: HubParty): {
   return { teamA, teamB, teamC, spectator };
 }
 
-/** Puts a newly-joining member on whichever team currently has fewer fighters (coop: always teamA). */
+/** Group queues together on team A; split-sides is opt-in for custom matches. */
 export function defaultSeatFor(party: HubParty): PvpSeat {
   if (party.kind === "coop_pve") return "teamA";
-  const { teamA, teamB, teamC } = seatCounts(party);
-  const ffa = party.modes.some((m) => isPvpFfaTriosMode(m));
-  if (ffa) {
-    if (teamA <= teamB && teamA <= teamC) return "teamA";
-    if (teamB <= teamC) return "teamB";
-    return "teamC";
+  return "teamA";
+}
+
+export function partyFitsFamily(party: HubParty, family: PvpFamily = partyFamily(party)): boolean {
+  if (party.kind === "coop_pve") return party.members.size <= COOP_PVE_MAX_PLAYERS;
+  const modes = pvpModesForFamily(family);
+  if (modes.length === 0) return false;
+  const maxSpec = Math.max(...modes.map((m) => m.maxSpectators));
+  const { teamA, teamB, teamC, spectator } = seatCounts(party);
+  if (spectator > maxSpec) return false;
+  const maxSide = Math.max(...modes.map((m) => m.teamSizeMax));
+  if (family === "skirmish" && teamC > 0) {
+    return teamA <= maxSide && teamB <= maxSide && teamC <= maxSide;
   }
-  return teamA <= teamB ? "teamA" : "teamB";
+  if (teamC > 0) return false;
+  return teamA <= maxSide && teamB <= maxSide;
+}
+
+/** Both sides filled equally inside the family's legal range. */
+export function isFullPremadeLobby(party: HubParty, family: PvpFamily = partyFamily(party)): boolean {
+  if (party.kind === "coop_pve") return false;
+  if (!partyFitsFamily(party, family)) return false;
+  const { teamA, teamB, teamC } = seatCounts(party);
+  if (family === "skirmish") return resolvePremadeSkirmishMode(teamA, teamB, teamC) != null;
+  if (teamC > 0 || teamA < 1 || teamA !== teamB) return false;
+  return resolvePremadeBattlegroundSize(teamA, teamB) != null;
+}
+
+export function resolvePremadeMode(party: HubParty): PvpModeId | null {
+  const family = partyFamily(party);
+  const { teamA, teamB, teamC } = seatCounts(party);
+  if (family === "skirmish") return resolvePremadeSkirmishMode(teamA, teamB, teamC);
+  if (resolvePremadeBattlegroundSize(teamA, teamB) == null) return null;
+  return "bg_ctf";
+}
+
+/** @deprecated size-specific helper — family parties use partyFitsFamily. */
+export function partyFitsMode(party: HubParty, modeId: string): boolean {
+  const family = parsePvpFamilyToken(modeId) ?? pvpFamilyFromModes([modeId]);
+  return partyFitsFamily(party, family);
 }
 
 export function toPartySnapshot(party: HubParty): PartySnapshot {
@@ -119,11 +126,13 @@ export function toPartySnapshot(party: HubParty): PartySnapshot {
     displayName: m.displayName,
     seat: m.seat,
   }));
+  const family = party.kind === "pvp" ? partyFamily(party) : undefined;
   return {
     partyId: party.partyId,
     leaderSessionId: party.leaderSessionId,
     kind: party.kind,
     modes: [...party.modes],
+    family,
     members,
     pendingInvites: [...party.pendingInvites],
     pendingFriendInvites: [...party.pendingFriendInvites],
@@ -131,10 +140,6 @@ export function toPartySnapshot(party: HubParty): PartySnapshot {
   };
 }
 
-/**
- * Per-hub-room registry of active parties. A session may belong to at most one party
- * at a time. Pure bookkeeping only — callers (BaseCityRoom) own all client messaging.
- */
 export class HubPartyRegistry {
   private parties = new Map<string, HubParty>();
   private partyBySession = new Map<string, string>();
@@ -157,11 +162,13 @@ export class HubPartyRegistry {
     modes: string[],
     kind: PartyKind = "pvp",
   ): HubParty {
+    const family = kind === "pvp" ? pvpFamilyFromModes(modes) : undefined;
+    const stored = kind === "pvp" && family ? [pvpFamilyToken(family)] : [...modes];
     const party: HubParty = {
       partyId: randomUUID(),
       leaderSessionId: leader.sessionId,
       kind,
-      modes: [...modes],
+      modes: stored,
       members: new Map(),
       pendingInvites: new Set(),
       pendingFriendInvites: new Set(),
@@ -186,7 +193,6 @@ export class HubPartyRegistry {
     return true;
   }
 
-  /** Party waiting for this friend user id to enter the hub. */
   findByPendingFriend(userId: string): HubParty | undefined {
     for (const party of this.parties.values()) {
       if (party.pendingFriendInvites.has(userId)) return party;
@@ -194,7 +200,6 @@ export class HubPartyRegistry {
     return undefined;
   }
 
-  /** Tears the party down entirely — clears all bookkeeping for every current member. */
   dissolve(party: HubParty): void {
     for (const sessionId of party.members.keys()) {
       this.partyBySession.delete(sessionId);

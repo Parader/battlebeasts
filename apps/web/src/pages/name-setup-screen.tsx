@@ -1,6 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router";
+import {
+  DEFAULT_COSMETIC_PATTERN,
+  DEFAULT_COSMETIC_PATTERN_COLOR,
+  STARTER_COLORS,
+  type CosmeticBodyId,
+} from "@battlebeasts/shared";
 import { APP_DISPLAY_NAME } from "@/brand";
+import { VesselPicker } from "@/game/ui/VesselPicker";
 import { useAuth } from "@/providers/auth-provider";
 import { AuthShell } from "./auth/AuthShell";
 
@@ -17,8 +24,10 @@ function validateName(value: string): string | null {
 }
 
 export const NameSetupScreen = () => {
-    const { ready, user, profile, needsNameSetup, claimDisplayName, signOut } = useAuth();
+    const { ready, user, profile, needsNameSetup, claimDisplayName, saveVesselChoice, signOut } =
+        useAuth();
     const [name, setName] = useState("");
+    const [body, setBody] = useState<CosmeticBodyId | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [seeded, setSeeded] = useState(false);
@@ -35,7 +44,7 @@ export const NameSetupScreen = () => {
         return <Navigate to="/login" replace />;
     }
 
-    if (profile && !needsNameSetup) {
+    if (profile && !needsNameSetup && profile.vessel_confirmed === true) {
         return <Navigate to="/play" replace />;
     }
 
@@ -50,11 +59,16 @@ export const NameSetupScreen = () => {
             setError(validationError);
             return;
         }
+        if (!body) {
+            setError("Pick Female or Male");
+            return;
+        }
 
         setSaving(true);
         setError(null);
         try {
             await claimDisplayName(cleaned);
+            await saveVesselChoice(body);
         } catch (err) {
             const message =
                 err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string"
@@ -70,9 +84,11 @@ export const NameSetupScreen = () => {
 
     return (
         <AuthShell layout="split" subtitle="Claim the name others will face in the trials.">
-            <h2 className="bb-auth-panel__title">Choose your mage name</h2>
+            <h2 className="bb-auth-panel__title">Create your hunter</h2>
             <p className="bb-auth-panel__lead">
-                Unique across {APP_DISPLAY_NAME}. We picked a random default — change it or keep it.
+                Unique name across {APP_DISPLAY_NAME}, then the body you will wear in the trials.
+                {" "}
+                Female or Male is chosen once and cannot be changed later.
             </p>
 
             <form onSubmit={onSubmit} className="bb-auth-form">
@@ -98,11 +114,22 @@ export const NameSetupScreen = () => {
                         3–20 characters · letters, numbers, underscore
                     </span>
                 </label>
+                <VesselPicker
+                    value={body}
+                    onChange={(id) => {
+                        setBody(id);
+                        if (error) setError(null);
+                    }}
+                    preview
+                    color={profile?.color ?? STARTER_COLORS[0]!}
+                    pattern={profile?.pattern ?? DEFAULT_COSMETIC_PATTERN}
+                    patternColor={profile?.pattern_color ?? DEFAULT_COSMETIC_PATTERN_COLOR}
+                />
                 {error && <p className="bb-auth-error">{error}</p>}
                 <button
                     type="submit"
                     className="bb-btn-brass"
-                    disabled={saving || normalizeName(name).length < 3}
+                    disabled={saving || normalizeName(name).length < 3 || !body}
                 >
                     {saving ? "Saving…" : "Continue"}
                 </button>

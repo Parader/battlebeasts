@@ -51,7 +51,10 @@ export type AoeRimMarkerProps = {
   renderOrder?: number;
 };
 
+import { registerSharedGeometry } from "../vfxDisposal";
+
 const sharedGeo = new THREE.PlaneGeometry(1, 1);
+registerSharedGeometry(sharedGeo);
 
 /**
  * Reusable AoE telegraph: energetic outer rim + faint interior wash.

@@ -1,4 +1,4 @@
-import { getMapSource, HUB_MAP_ID } from "@battlebeasts/shared";
+import { getMapSource } from "@battlebeasts/shared";
 import { useThree } from "@react-three/fiber";
 import { useEffect, useMemo } from "react";
 import { compileLiveScene } from "./compileLiveScene";
@@ -24,19 +24,21 @@ function frames(n: number): Promise<void> {
 }
 
 /**
- * Compile the *live* hub InstancedMeshes (not decoy Mesh boxes) while the
+ * Compile the *live* map (instanced doc props or a baked GLB) while the
  * loading gate is up.
  *
  * MapScene draws InstancedMesh — `USE_INSTANCING` is part of the program
  * cache key — so warming plain Meshes never prevented walk-around hitches.
- * We wait until every unique hub prop type has mounted, then compileAsync
- * under the Bloom colour-space probe and upload textures.
+ * Baked desert/cemetery were skipped entirely, which is why PvE paid every
+ * terrain program on the first look. We wait until the map is in the graph,
+ * then compile under the Bloom colour-space probe and upload textures.
  */
-export function HubPropShaderWarmup() {
+export function HubPropShaderWarmup({ mapId }: { mapId: string }) {
   const { gl, scene, camera } = useThree();
-  const source = getMapSource(HUB_MAP_ID);
+  const source = getMapSource(mapId);
   const expected = useMemo(() => {
-    if (!source || source.kind !== "doc") return 0;
+    if (!source) return 0;
+    if (source.kind === "baked") return 1;
     return new Set(source.doc.props.map((p) => p.prop)).size;
   }, [source]);
 
@@ -55,7 +57,7 @@ export function HubPropShaderWarmup() {
 
     const tryWarm = async () => {
       if (cancelled || finished || inflight) return;
-      if (expected > 0 && countMountedMapProps(HUB_MAP_ID) < expected) return;
+      if (expected > 0 && countMountedMapProps(mapId) < expected) return;
 
       inflight = true;
       try {
@@ -79,7 +81,7 @@ export function HubPropShaderWarmup() {
       window.clearTimeout(failOpen);
       unsub();
     };
-  }, [gl, scene, camera, expected]);
+  }, [gl, scene, camera, expected, mapId]);
 
   return null;
 }

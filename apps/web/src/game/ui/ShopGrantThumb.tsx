@@ -1,47 +1,17 @@
-import { useMemo } from "react";
 import {
   COSMETIC_SLOT_LABELS,
   DEFAULT_COSMETIC_PATTERN_COLOR,
+  cosmeticAuraColorName,
   cosmeticColorName,
-  cosmeticPatternColorName,
   getCosmeticItem,
   getEmote,
+  hideTintSwatchStyle,
   type ChestUnlockGrant,
   type ShopItemDef,
 } from "@battlebeasts/shared";
-import { getCreaturePatternTexture } from "../creaturePatterns";
+import { AuraSwatch } from "./AuraSwatch";
 import { GameIcon } from "./GameIcon";
 import { GEAR_SLOT_ICONS, type GameIconId } from "./gameIcons";
-
-export function PatternSwatch({
-  patternId,
-  patternColor,
-}: {
-  patternId: string;
-  patternColor: string;
-}) {
-  const url = useMemo(() => {
-    if (patternId === "plain") return null;
-    const tex = getCreaturePatternTexture(patternId, patternColor, "#d1d5db");
-    const img = tex?.image as HTMLCanvasElement | undefined;
-    return img?.toDataURL?.() ?? null;
-  }, [patternId, patternColor]);
-
-  if (!url) {
-    return (
-      <span
-        className="block size-full rounded-[2px]"
-        style={{ background: "linear-gradient(135deg,#e5e7eb,#9ca3af)" }}
-      />
-    );
-  }
-  return (
-    <span
-      className="block size-full rounded-[2px] bg-cover bg-center"
-      style={{ backgroundImage: `url(${url})` }}
-    />
-  );
-}
 
 type GrantThumbSource = ChestUnlockGrant | ShopItemDef["grant"];
 
@@ -55,12 +25,18 @@ export function ShopGrantThumb({
   forceIcon?: boolean;
 }) {
   if (grant.kind === "color" || grant.kind === "pattern_color") {
-    return <span className="bb-shop__thumb" style={{ backgroundColor: grant.hex }} aria-hidden />;
+    return (
+      <span
+        className="bb-shop__thumb"
+        style={grant.kind === "color" ? hideTintSwatchStyle(grant.hex) : { backgroundColor: grant.hex }}
+        aria-hidden
+      />
+    );
   }
   if (grant.kind === "pattern") {
     return (
       <span className="bb-shop__thumb bb-shop__thumb--pattern" aria-hidden>
-        <PatternSwatch patternId={grant.patternId} patternColor={DEFAULT_COSMETIC_PATTERN_COLOR} />
+        <AuraSwatch auraId={grant.patternId} auraColor={DEFAULT_COSMETIC_PATTERN_COLOR} />
       </span>
     );
   }
@@ -119,7 +95,7 @@ export function grantDisplayLabel(grant: ChestUnlockGrant, fallback: string): st
     case "color":
       return cosmeticColorName(grant.hex);
     case "pattern_color":
-      return `${cosmeticPatternColorName(grant.hex)} Ink`;
+      return `${cosmeticAuraColorName(grant.hex)} Ink`;
     case "pattern":
       return fallback;
     case "cosmetic": {

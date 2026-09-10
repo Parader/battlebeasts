@@ -370,6 +370,12 @@ export class CharacterAnimationController {
       const clipName = resolveClip(this.sourceClips, preferred) ? preferred : fallback;
       this.registerUpperCast("castProtectionBubble", clipName);
     }
+    if (config.castPositionSwap) {
+      const preferred = config.castPositionSwap;
+      const fallback = "Standing 2H Magic Area Attack 01";
+      const clipName = resolveClip(this.sourceClips, preferred) ? preferred : fallback;
+      this.registerUpperCast("castPositionSwap", clipName);
+    }
     if (config.castMagmaOrbs) this.registerUpperCast("castMagmaOrbs", config.castMagmaOrbs);
     if (config.castPoisonDart) this.registerUpperCast("castPoisonDart", config.castPoisonDart);
     if (config.castIceLance) this.registerUpperCast("castIceLance", config.castIceLance);

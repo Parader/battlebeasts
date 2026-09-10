@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
@@ -24,6 +23,7 @@ import {
   formatTalentEffectRanks,
   investTalent,
   isCatalogTalentImplemented,
+  isSpellTalent,
   isTalentTaken,
   layoutTalentConstellation,
   normalizeTalentBuild,
@@ -42,18 +42,34 @@ import {
   type TalentTreeId,
 } from "@battlebeasts/shared";
 
-import { TalentNatureIcon, primaryTalentNatureTag } from "./TalentNatureIcon";
+import { primaryTalentNatureTag } from "./TalentNatureIcon";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { GameIcon } from "./GameIcon";
-import { TALENT_TREE_ICONS } from "./gameIcons";
 import { loadStandMenuMemory, saveStandMenuMemory } from "../standMenuMemory";
 
-const NODE_SIZE = 56;
-const HUB_SIZE = 88;
-const CORE_SIZE = 96;
+const NODE_SIZE = 36;
+const NOTABLE_SIZE = 44;
+const HUB_SIZE = 72;
+const CORE_SIZE = 86;
 const SPELL_SIZE = 48;
 const ZOOM_MIN = 0.22;
 const ZOOM_MAX = 1.65;
+
+function jewelSize(talent: CatalogTalentDef): number {
+  if (isSpellTalent(talent)) return SPELL_SIZE;
+  if (talentMaxRank(talent) > 1) return NODE_SIZE;
+  return NOTABLE_SIZE;
+}
+
+function RankPips({ rank, max }: { rank: number; max: number }) {
+  if (max <= 1) return null;
+  return (
+    <span className="bb-constel-pips" aria-hidden>
+      {Array.from({ length: max }, (_, i) => (
+        <i key={i} className={i < rank ? "bb-constel-pips__dot bb-constel-pips__dot--on" : "bb-constel-pips__dot"} />
+      ))}
+    </span>
+  );
+}
 
 type TipState =
   | {
@@ -94,17 +110,19 @@ function TalentTooltipBody({
   const effectText = formatTalentEffectRanks(talent.exactEffect, maxRank, rank);
   const implemented = isCatalogTalentImplemented(talent);
   const nature = primaryTalentNatureTag(talent.affectedTags);
+  const isSpell = isSpellTalent(talent);
+
   return (
     <>
       <div className="bb-talent-tip__head">
-        <span className="bb-talent-tip__icon" aria-hidden>
-          <TalentNatureIcon tags={talent.affectedTags} size={22} />
-        </span>
         <div>
-          <div className="bb-talent-tip__name">{talent.name}</div>
+          <div className="bb-talent-tip__name">
+            {talent.name}
+            {isSpell ? <span className="bb-talent-tip__spell-badge">Spell</span> : null}
+          </div>
           <div className="bb-talent-tip__meta">
-            Tier {talent.tier}
-            {nature ? ` · ${nature}` : ""}
+            {talent.tree} · Tier {talent.tier}
+            {isSpell ? " · Active" : nature ? ` · ${nature}` : ""}
             {maxRank > 1 ? ` · Rank ${rank}/${maxRank}` : ""}
             {" · "}
             {cost} pt{cost === 1 ? "" : "s"}
@@ -121,7 +139,6 @@ function TalentTooltipBody({
         <div className="bb-talent-tip__tags">
           {talent.affectedTags.map((tag) => (
             <span key={tag} className="bb-talent-tip__tag">
-              <TalentNatureIcon tags={[tag]} size={13} />
               {tag}
             </span>
           ))}
@@ -131,9 +148,13 @@ function TalentTooltipBody({
         {state === "learned" && rank < maxRank
           ? `Left-click to raise rank · Right-click to refund (${ESSENCE_PER_TALENT_REFUND} essence/pt on save)`
           : state === "learned"
-            ? `Right-click to refund (${ESSENCE_PER_TALENT_REFUND} essence/pt on save)`
+            ? isSpell
+              ? `Active Spell Unlocked in Spell Armoury · Right-click to refund (${ESSENCE_PER_TALENT_REFUND} essence/pt on save)`
+              : `Right-click to refund (${ESSENCE_PER_TALENT_REFUND} essence/pt on save)`
             : state === "available"
-              ? "Left-click to invest"
+              ? isSpell
+                ? "Left-click to unlock Active Spell"
+                : "Left-click to invest"
               : "Locked — spend more points in this tree"}
       </p>
     </>
@@ -360,7 +381,6 @@ type Props = {
   activeLoadoutSlot: number;
   loadoutSlotCount: number;
   onSelectPreset: (slotIndex: number) => void;
-  onHeaderActions?: (node: ReactNode | null) => void;
 };
 
 export function TalentTreePanel({
@@ -372,7 +392,6 @@ export function TalentTreePanel({
   activeLoadoutSlot,
   loadoutSlotCount,
   onSelectPreset,
-  onHeaderActions,
 }: Props) {
   const [focusTree, setFocusTree] = useState<TalentTreeId>(
     () => loadStandMenuMemory().talentTree,
@@ -428,38 +447,6 @@ export function TalentTreePanel({
 
   const roomRef = useRef(room);
   roomRef.current = room;
-
-  useLayoutEffect(() => {
-    if (!onHeaderActions) return;
-    onHeaderActions(
-      <div className="bb-talent-header-pts">
-        <span className="bb-talent-header-pts__label">Points</span>
-        <span className="bb-talent-header-pts__value">{spendable}</span>
-        <span className="bb-talent-header-pts__budget tabular-nums">
-          {spent}/{TALENT_POINT_BUDGET}
-        </span>
-        {!atPointCap ? (
-          <button
-            type="button"
-            className="bb-btn-brass bb-talent-header-pts__buy disabled:opacity-40"
-            disabled={!canBuy}
-            title={
-              essence < ESSENCE_PER_TALENT_POINT
-                ? `Need ${ESSENCE_PER_TALENT_POINT} essence`
-                : `Buy talent points (−${ESSENCE_PER_TALENT_POINT} essence each, up to ${maxBuyPoints})`
-            }
-            onClick={openBuyPoints}
-          >
-            Buy
-          </button>
-        ) : null}
-      </div>,
-    );
-  }, [onHeaderActions, spendable, spent, atPointCap, canBuy, essence, maxBuyPoints]);
-
-  useEffect(() => {
-    return () => onHeaderActions?.(null);
-  }, [onHeaderActions]);
 
   const implementedCount = useMemo(
     () => Object.values(TALENT_CATALOG).filter((t) => isCatalogTalentImplemented(t)).length,
@@ -576,103 +563,7 @@ export function TalentTreePanel({
       />
       <TalentFloatingTip tip={hoverTip} />
 
-      <div className="bb-constel-chrome">
-        <div className="bb-loadout-presets" role="tablist" aria-label="Loadout presets">
-          {Array.from({ length: loadoutSlotCount }, (_, i) => i).map((i) => {
-            const preset = loadoutPresets.find((p) => p.slotIndex === i);
-            const active = activeLoadoutSlot === i;
-            return (
-              <button
-                key={i}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                className={["bb-slot-chip", active ? "bb-slot-chip--on" : ""].join(" ")}
-                onClick={() => onSelectPreset(i)}
-              >
-                {preset?.name ?? `Loadout ${i + 1}`}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="bb-constel-legend" role="tablist" aria-label="Talent trees">
-          {TALENT_TREE_IDS.map((id) => {
-            const pts = treePointsSpent(build, id);
-            const on = focusTree === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={on}
-                className={["bb-constel-legend__chip", on ? "bb-constel-legend__chip--on" : ""].join(
-                  " ",
-                )}
-                style={{ "--bb-talent-accent": TALENT_TREE_ACCENT[id] } as CSSProperties}
-                onClick={() => selectTree(id, true)}
-              >
-                <GameIcon
-                  id={TALENT_TREE_ICONS[id]}
-                  size={18}
-                  gray={on ? 0.95 : 0.7}
-                  className="bb-constel-legend__icon"
-                />
-                <span className="bb-constel-legend__name">{id}</span>
-                <span className="bb-constel-legend__pts">
-                  {pts}/{TALENT_TREE_CAP}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="bb-constel-chrome__actions">
-          <button
-            type="button"
-            className="bb-btn-ink"
-            title="Fit all trees in view"
-            onClick={() => camera.fitOverview()}
-          >
-            Overview
-          </button>
-          <button
-            type="button"
-            className="bb-btn-ink disabled:opacity-40"
-            disabled={!canResetTree}
-            title={
-              savedTreeSpent <= 0
-                ? `Nothing invested in ${focusTree}`
-                : `Costs ${resetTreeCost} essence (${savedTreeSpent} pt × ${ESSENCE_PER_TALENT_REFUND})`
-            }
-            onClick={() => setConfirmReset(true)}
-          >
-            Reset {focusTree}
-            {savedTreeSpent > 0 ? ` (−${resetTreeCost})` : ""}
-          </button>
-          <button
-            type="button"
-            className="bb-btn-brass disabled:opacity-40"
-            disabled={!canSave}
-            title={
-              !dirty
-                ? "No changes"
-                : respecCost > 0
-                  ? essence < respecCost
-                    ? `Need ${respecCost} essence to respec (${respecPoints} pt)`
-                    : `Costs ${respecCost} essence (${respecPoints} pt removed/changed)`
-                  : "Save talent build"
-            }
-            onClick={() => {
-              if (respecCost > 0) setConfirmSaveRespec(true);
-              else commitSave();
-            }}
-          >
-            Save build{respecCost > 0 ? ` (−${respecCost})` : ""}
-          </button>
-        </div>
-      </div>
-
+      <div className="bb-constel-stage">
       <div
         ref={viewportRef}
         className="bb-constel-viewport"
@@ -708,7 +599,6 @@ export function TalentTreePanel({
                 isTalentTaken(build, link.fromId);
               const toOn =
                 link.toId.startsWith("HUB_") ||
-                link.toId.startsWith("SPELL_") ||
                 isTalentTaken(build, link.toId);
               const accent = TALENT_TREE_ACCENT[link.tree];
               const active = fromOn && toOn;
@@ -795,7 +685,7 @@ export function TalentTreePanel({
                   onMouseLeave={() => setHoverTip(null)}
                   onClick={() => selectTree(tree, true)}
                 >
-                  <GameIcon id={TALENT_TREE_ICONS[tree]} size={36} gray={0.95} />
+                  <span className="bb-constel-hub__gem" aria-hidden />
                   <span className="bb-constel-hub__name">{tree}</span>
                   <span className="bb-constel-hub__pts">
                     {pts}/{TALENT_TREE_CAP}
@@ -804,43 +694,9 @@ export function TalentTreePanel({
               );
             }
 
-            if (node.kind === "spellUnlock" && node.spell) {
-              const spell = node.spell;
-              const accent = node.tree ? TALENT_TREE_ACCENT[node.tree] : undefined;
-              return (
-                <button
-                  key={node.id}
-                  type="button"
-                  className="bb-constel-spell"
-                  style={
-                    {
-                      left: node.x - SPELL_SIZE / 2,
-                      top: node.y - SPELL_SIZE / 2,
-                      width: SPELL_SIZE,
-                      height: SPELL_SIZE,
-                      "--bb-talent-accent": accent,
-                    } as CSSProperties
-                  }
-                  aria-label={spell.label}
-                  onMouseEnter={(e) =>
-                    setHoverTip({
-                      kind: "spell",
-                      spell,
-                      anchor: e.currentTarget.getBoundingClientRect(),
-                    })
-                  }
-                  onMouseLeave={() => setHoverTip(null)}
-                >
-                  <span className="bb-constel-spell__glyph" aria-hidden>
-                    ✦
-                  </span>
-                  <span className="bb-constel-spell__lock">?</span>
-                </button>
-              );
-            }
-
-            if (node.kind === "talent" && node.talent) {
+            if (node.talent) {
               const talent = node.talent;
+              const isSpell = isSpellTalent(talent) || node.kind === "spellUnlock" || node.nodeType === "spell";
               const rank = talentRank(build, talent.id);
               const maxRank = talentMaxRank(talent);
               const canUp = canInvestTalent(build, talent.id, owned);
@@ -849,6 +705,65 @@ export function TalentTreePanel({
               const state: "locked" | "available" | "learned" =
                 rank > 0 ? "learned" : canUp ? "available" : "locked";
               const accent = TALENT_TREE_ACCENT[talent.tree];
+              const size = jewelSize(talent);
+
+              if (isSpell) {
+                return (
+                  <button
+                    key={node.id}
+                    type="button"
+                    aria-label={`${talent.name} (Active Spell)`}
+                    className={[
+                      "bb-constel-spell",
+                      state === "learned" ? "bb-constel-spell--learned" : "",
+                      state === "available" ? "bb-constel-spell--available" : "",
+                      state === "locked" ? "bb-constel-spell--locked" : "",
+                      !implemented ? "bb-constel-spell--wip" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    style={
+                      {
+                        left: node.x - size / 2,
+                        top: node.y - size / 2,
+                        width: size,
+                        height: size,
+                        "--bb-talent-accent": accent,
+                      } as CSSProperties
+                    }
+                    onMouseEnter={(e) =>
+                      setHoverTip({
+                        kind: "talent",
+                        talent,
+                        rank,
+                        nodeState: state,
+                        anchor: e.currentTarget.getBoundingClientRect(),
+                      })
+                    }
+                    onMouseLeave={() => setHoverTip(null)}
+                    onFocus={(e) =>
+                      setHoverTip({
+                        kind: "talent",
+                        talent,
+                        rank,
+                        nodeState: state,
+                        anchor: e.currentTarget.getBoundingClientRect(),
+                      })
+                    }
+                    onBlur={() => setHoverTip(null)}
+                    onClick={() => {
+                      if (canUp) updateBuild(investTalent(build, talent.id, owned));
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (canDown) updateBuild(refundTalent(build, talent.id));
+                    }}
+                  >
+                    <span className="bb-constel-spell__gem" aria-hidden />
+                    {!implemented ? <span className="bb-constel-node__wip">WIP</span> : null}
+                  </button>
+                );
+              }
 
               return (
                 <button
@@ -857,6 +772,7 @@ export function TalentTreePanel({
                   aria-label={talent.name}
                   className={[
                     "bb-constel-node",
+                    maxRank > 1 ? "bb-constel-node--travel" : "bb-constel-node--notable",
                     state === "learned" ? "bb-constel-node--learned" : "",
                     state === "available" ? "bb-constel-node--available" : "",
                     state === "locked" ? "bb-constel-node--locked" : "",
@@ -866,10 +782,10 @@ export function TalentTreePanel({
                     .join(" ")}
                   style={
                     {
-                      left: node.x - NODE_SIZE / 2,
-                      top: node.y - NODE_SIZE / 2,
-                      width: NODE_SIZE,
-                      height: NODE_SIZE,
+                      left: node.x - size / 2,
+                      top: node.y - size / 2,
+                      width: size,
+                      height: size,
                       "--bb-talent-accent": accent,
                     } as CSSProperties
                   }
@@ -901,17 +817,41 @@ export function TalentTreePanel({
                     if (canDown) updateBuild(refundTalent(build, talent.id));
                   }}
                 >
-                  <span className="bb-constel-node__glyph" aria-hidden>
-                    <TalentNatureIcon tags={talent.affectedTags} size={28} />
-                  </span>
+                  <span className="bb-constel-node__gem" aria-hidden />
                   {!implemented ? <span className="bb-constel-node__wip">WIP</span> : null}
-                  {maxRank > 1 ? (
-                    <span className="bb-constel-node__rank">
-                      {rank}/{maxRank}
-                    </span>
-                  ) : (
-                    <span className="bb-constel-node__cost">{talentRankCost(talent)}</span>
-                  )}
+                  <RankPips rank={rank} max={maxRank} />
+                </button>
+              );
+            }
+
+            if (node.kind === "spellUnlock" && node.spell) {
+              const spell = node.spell;
+              const accent = node.tree ? TALENT_TREE_ACCENT[node.tree] : undefined;
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  className="bb-constel-spell"
+                  style={
+                    {
+                      left: node.x - SPELL_SIZE / 2,
+                      top: node.y - SPELL_SIZE / 2,
+                      width: SPELL_SIZE,
+                      height: SPELL_SIZE,
+                      "--bb-talent-accent": accent,
+                    } as CSSProperties
+                  }
+                  aria-label={spell.label}
+                  onMouseEnter={(e) =>
+                    setHoverTip({
+                      kind: "spell",
+                      spell,
+                      anchor: e.currentTarget.getBoundingClientRect(),
+                    })
+                  }
+                  onMouseLeave={() => setHoverTip(null)}
+                >
+                  <span className="bb-constel-spell__gem" aria-hidden />
                 </button>
               );
             }
@@ -921,12 +861,114 @@ export function TalentTreePanel({
         </div>
       </div>
 
-      <p className="bb-constel-hint bb-meta">
-        Drag to pan · scroll to zoom · left-click invest · right-click refund
-        {implementedCount < catalogCount
-          ? ` · ${implementedCount}/${catalogCount} live`
-          : ""}
-      </p>
+      <div className="bb-constel-hud">
+        <div className="bb-constel-hud__trees" role="navigation" aria-label="Jump to tree">
+          {TALENT_TREE_IDS.map((id) => {
+            const pts = treePointsSpent(build, id);
+            const on = focusTree === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                className={["bb-constel-orb", on ? "bb-constel-orb--on" : ""].join(" ")}
+                style={{ "--bb-talent-accent": TALENT_TREE_ACCENT[id] } as CSSProperties}
+                title={`${id} · ${pts}/${TALENT_TREE_CAP}`}
+                onClick={() => selectTree(id, true)}
+              >
+                <span className="bb-constel-orb__gem" />
+                <span className="bb-constel-orb__name">{id}</span>
+                <span className="bb-constel-orb__pts">{pts}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="bb-constel-hud__dock">
+          <div className="bb-loadout-presets" role="tablist" aria-label="Loadout presets">
+            {Array.from({ length: loadoutSlotCount }, (_, i) => i).map((i) => {
+              const preset = loadoutPresets.find((p) => p.slotIndex === i);
+              const active = activeLoadoutSlot === i;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  className={["bb-slot-chip", active ? "bb-slot-chip--on" : ""].join(" ")}
+                  onClick={() => onSelectPreset(i)}
+                >
+                  {preset?.name ?? `Loadout ${i + 1}`}
+                </button>
+              );
+            })}
+          </div>
+          <div className="bb-constel-hud__points">
+            <span className="bb-talent-header-pts__label">Unspent</span>
+            <span className="bb-talent-header-pts__value">{spendable}</span>
+            <span className="bb-talent-header-pts__budget tabular-nums">
+              {spent}/{TALENT_POINT_BUDGET} · {essence} es
+            </span>
+            {!atPointCap ? (
+              <button
+                type="button"
+                className="bb-btn-brass bb-talent-header-pts__buy disabled:opacity-40"
+                disabled={!canBuy}
+                title={
+                  essence < ESSENCE_PER_TALENT_POINT
+                    ? `Need ${ESSENCE_PER_TALENT_POINT} essence`
+                    : `Buy talent points (−${ESSENCE_PER_TALENT_POINT} essence each)`
+                }
+                onClick={openBuyPoints}
+              >
+                Buy
+              </button>
+            ) : null}
+          </div>
+          <div className="bb-constel-hud__actions">
+            <button type="button" className="bb-btn-ink" onClick={() => camera.fitOverview()}>
+              Overview
+            </button>
+            <button
+              type="button"
+              className="bb-btn-ink disabled:opacity-40"
+              disabled={!canResetTree}
+              title={
+                savedTreeSpent <= 0
+                  ? `Nothing invested in ${focusTree}`
+                  : `Refund ${focusTree} for ${resetTreeCost} essence`
+              }
+              onClick={() => setConfirmReset(true)}
+            >
+              Refund {focusTree}
+              {savedTreeSpent > 0 ? ` (−${resetTreeCost})` : ""}
+            </button>
+            <button
+              type="button"
+              className="bb-btn-brass disabled:opacity-40"
+              disabled={!canSave}
+              title={
+                !dirty
+                  ? "No changes"
+                  : respecCost > 0
+                    ? essence < respecCost
+                      ? `Need ${respecCost} essence to respec`
+                      : `Save costs ${respecCost} essence`
+                    : "Save talent build"
+              }
+              onClick={() => {
+                if (respecCost > 0) setConfirmSaveRespec(true);
+                else commitSave();
+              }}
+            >
+              Save{respecCost > 0 ? ` (−${respecCost})` : ""}
+            </button>
+          </div>
+          <p className="bb-constel-hud__hint">
+            Drag to pan · scroll to zoom · click to allocate · right-click to refund
+            {implementedCount < catalogCount ? ` · ${implementedCount}/${catalogCount} live` : ""}
+          </p>
+        </div>
+      </div>
+      </div>
     </div>
   );
 }

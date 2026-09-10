@@ -122,9 +122,66 @@ export const PICKUP_EFFECTS: Record<string, PickupEffectDef> = {
   speed: { label: "Move speed", kind: "buff", unit: "x", defaultMagnitude: 1.3 },
   power: { label: "Power", kind: "buff", unit: "x", defaultMagnitude: 1.5 },
   haste: { label: "Cooldown rate", kind: "buff", unit: "x", defaultMagnitude: 1.25 },
+  random: { label: "Random orb", kind: "instant", unit: "—", defaultMagnitude: 0 },
 };
 
 export const PICKUP_EFFECT_IDS = Object.keys(PICKUP_EFFECTS) as readonly string[];
+
+/** Concrete orb types a Random pickup can roll. */
+export const RANDOM_PICKUP_POOL = [
+  "heal",
+  "energy",
+  "absorb",
+  "speed",
+  "power",
+  "haste",
+] as const;
+
+export const PICKUP_PREVIEW_COLOR: Record<string, string> = {
+  heal: "#4ade80",
+  energy: "#facc15",
+  absorb: "#60a5fa",
+  speed: "#fb923c",
+  power: "#f87171",
+  haste: "#c084fc",
+  random: "#e7e5e4",
+};
+
+export type ResolvedPickupRoll = {
+  effect: string;
+  magnitude: number;
+  durationMs: number;
+};
+
+const RANDOM_BUFF_DURATION_MS = 6000;
+const RANDOM_ABSORB_DURATION_MS = 8000;
+
+/**
+ * Resolve an authored pickup into a concrete orb.
+ * Random placements pick a pool effect and use that effect's defaults;
+ * an authored buff duration still applies to rolled buffs / absorb.
+ */
+export function resolvePickupRoll(
+  spec: PickupSpec,
+  rng: () => number = Math.random,
+): ResolvedPickupRoll {
+  if (spec.effect !== "random") {
+    return {
+      effect: spec.effect,
+      magnitude: spec.magnitude,
+      durationMs: spec.durationMs,
+    };
+  }
+  const id = RANDOM_PICKUP_POOL[Math.floor(rng() * RANDOM_PICKUP_POOL.length)]!;
+  const def = PICKUP_EFFECTS[id]!;
+  let durationMs = 0;
+  if (id === "absorb") {
+    durationMs = spec.durationMs > 0 ? spec.durationMs : RANDOM_ABSORB_DURATION_MS;
+  } else if (def.kind === "buff") {
+    durationMs = spec.durationMs > 0 ? spec.durationMs : RANDOM_BUFF_DURATION_MS;
+  }
+  return { effect: id, magnitude: def.defaultMagnitude, durationMs };
+}
 
 export type ElementTypeDef = {
   id: string;
@@ -159,7 +216,6 @@ export const ELEMENT_TYPES: readonly ElementTypeDef[] = [
     teamColored: true,
     params: [
       { key: "team", label: "Team", kind: "enum", options: ["a", "b", "c"], default: "a" },
-      { key: "slot", label: "Slot", kind: "number", default: 0, step: 1, min: 0 },
     ],
   },
   {
@@ -488,7 +544,10 @@ export function pickupSpec(el: MapElement): PickupSpec {
     def,
     magnitude: paramNumber(el, "magnitude", def.defaultMagnitude),
     // An instant effect has no duration no matter what the document says.
-    durationMs: def.kind === "buff" ? Math.max(0, paramNumber(el, "durationMs", 0)) : 0,
+    durationMs:
+      def.kind === "buff" || effect === "random"
+        ? Math.max(0, paramNumber(el, "durationMs", 0))
+        : 0,
     // 0 means one-shot: taken once, gone for the rest of the round.
     respawnMs: Math.max(0, paramNumber(el, "respawnMs", 30000)),
     firstSpawnMs: Math.max(0, paramNumber(el, "firstSpawnMs", 0)),

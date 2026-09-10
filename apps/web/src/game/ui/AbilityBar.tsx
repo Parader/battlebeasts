@@ -137,7 +137,14 @@ function SlotIcon({
             </ul>
           ) : null}
         </div>
-      ) : null}
+      ) : (
+        <div className="bb-ability-tooltip" role="tooltip">
+          <p className="bb-ability-tooltip__name">Empty {slot.label}</p>
+          <p className="bb-ability-tooltip__desc">
+            Buy a spell at the House Spell Armoury. Every key must be filled before you can queue.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -234,7 +241,16 @@ function FlexSlotIcon({
       {locked ? (
         <div className="bb-ability-tooltip" role="tooltip">
           <p className="bb-ability-tooltip__name">Flex slot {index + 1}</p>
-          <p className="bb-ability-tooltip__desc">Unlock with essence at the Spell Armoury.</p>
+          <p className="bb-ability-tooltip__desc">
+            Optional extra. Unlock with essence at the Spell Armoury when you want a bigger kit.
+          </p>
+        </div>
+      ) : !ability ? (
+        <div className="bb-ability-tooltip" role="tooltip">
+          <p className="bb-ability-tooltip__name">Flex slot {index + 1}</p>
+          <p className="bb-ability-tooltip__desc">
+            Optional extra spell — fill your main keys first. Cast with {index + 1} once slotted.
+          </p>
         </div>
       ) : null}
       {ability ? (
@@ -263,7 +279,7 @@ function FlexSlotIcon({
 export function AbilityBar({
   loadout,
   flexLoadout,
-  flexSlotCount = 1,
+  flexSlotCount = 0,
   energy = 0,
   wallet,
   talentIds = [],

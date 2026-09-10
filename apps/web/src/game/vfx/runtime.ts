@@ -6,7 +6,7 @@ import type {
   VfxPose,
   VfxSpawnOpts,
 } from "./types";
-import { BLOOMING_PATH_CAST } from "@battlebeasts/shared";
+import { BLOOMING_PATH_CAST, BINDING_SIGIL_CAST, MASS_SILENCE_CAST, SPELLBREAKER_CAST } from "@battlebeasts/shared";
 import { abilityVfxColor } from "./colors";
 
 type Listener = () => void;
@@ -38,6 +38,22 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   predatorStep: 400,
   rebound: 560,
   teleportSlam: 450,
+  purgePulse: 780,
+  rockWall: 480,
+  hexAnchor: 480,
+  bindingSigil: BINDING_SIGIL_CAST.lifetimeMs,
+  massSilence: MASS_SILENCE_CAST.silenceDurationMs,
+  tripleBlink: 320,
+  flowAfterimage: 2000,
+  ironGuard: 0,
+  spellbreaker:
+    SPELLBREAKER_CAST.expandMs + SPELLBREAKER_CAST.holdMs + SPELLBREAKER_CAST.vacuumMs,
+  gravityField: 5200,
+  timeFreeze: 4700,
+  bloodPact: 900,
+  chainLightning: 280,
+  elementalOverload: 420,
+  positionSwap: 520,
   crescent: 320,
   smash: 900,
   gust: 1200,
@@ -46,7 +62,7 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   silenceSweep: 700,
   handShield: 700,
   groove: 4200,
-  healBeam: 2200,
+  healBeam: 3300,
   lifeLeech: 2000,
   poisonDart: 420,
   firewall: 7600,
@@ -59,6 +75,16 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   volcano: 900,
   bloodRush: 700,
   spiritForm: 650,
+  cycloneKick: 4100,
+  worldTree: 6800,
+  phantomRush: 300,
+  ascendantForm: 5800,
+  dreadAura: 2700,
+  guardiansBlessing: 6200,
+  guardianAngel: 1600,
+  lastingGrace: 1600,
+  rebirth: 3200,
+  battleRhythm: 700,
 };
 
 /**
@@ -168,6 +194,7 @@ class VfxRuntime {
       followOwnerId: opts?.followOwnerId,
       followSpawnOffset: opts?.followSpawnOffset,
       followTargetId: opts?.followTargetId,
+      targetId: opts?.targetId,
       chargeMs: opts?.chargeMs,
       variant: opts?.variant,
       radius: opts?.radius,

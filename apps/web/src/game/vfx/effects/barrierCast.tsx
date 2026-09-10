@@ -8,22 +8,30 @@ import { smooth01 } from "../easing";
 
 const BARRIER_BLUE = "#60a5fa";
 const BARRIER_BLUE_HOT = "#93c5fd";
+const BLESSING_GOLD = "#fbbf24";
+const BLESSING_GOLD_HOT = "#fde68a";
 /** Soft shell / rim peak opacity (kept light). */
 const SHELL_PEAK = 0.1;
 const RIM_PEAK = 0.16;
 
 /**
- * Barrier cast + shield shell:
- * - Blue motes rise from the ground as casting begins
+ * Barrier / Guardian's Blessing shield shell:
+ * - Motes rise from the ground as casting begins
  * - Bubble fades/scales in while absorb stacks > 0
  * - Shell dissolves as soon as shield HP hits 0 (broken or expired)
  */
 export function BarrierCastEffect({
   shot,
   follow,
+  statusId = "barrier",
+  shellColor = BARRIER_BLUE,
+  rimColor = BARRIER_BLUE_HOT,
 }: {
   shot: OneShotEffect;
   follow: VfxFollowContext;
+  statusId?: string;
+  shellColor?: string;
+  rimColor?: string;
 }) {
   const root = useRef<THREE.Group>(null);
   const bubble = useRef<THREE.Group>(null);
@@ -40,7 +48,7 @@ export function BarrierCastEffect({
   const shellMat = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
-        color: BARRIER_BLUE,
+        color: shellColor,
         transparent: true,
         opacity: 0,
         depthWrite: false,
@@ -52,7 +60,7 @@ export function BarrierCastEffect({
   const rimMat = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
-        color: BARRIER_BLUE_HOT,
+        color: rimColor,
         transparent: true,
         opacity: 0,
         depthWrite: false,
@@ -67,10 +75,11 @@ export function BarrierCastEffect({
     const safeDt = Math.min(0.05, Math.max(0, dt));
     const ageSec = (performance.now() - shot.born) / 1000;
 
-    if (shot.followOwnerId) {
+    const followId = shot.followTargetId ?? shot.followOwnerId;
+    if (followId) {
       const local =
         follow.localSessionId &&
-        shot.followOwnerId === follow.localSessionId &&
+        followId === follow.localSessionId &&
         follow.predictedRef
           ? follow.predictedRef.current
           : null;
@@ -79,7 +88,7 @@ export function BarrierCastEffect({
         pose.current.z = local.z;
         pose.current.yaw = local.yaw;
       } else {
-        const p = follow.room?.state?.players?.get(shot.followOwnerId) as
+        const p = follow.room?.state?.players?.get(followId) as
           | { x?: number; z?: number; yaw?: number }
           | undefined;
         if (p) {
@@ -92,8 +101,8 @@ export function BarrierCastEffect({
 
     // Active absorb only — 0 stacks means the bubble must go (broken or spent).
     let shieldHp = 0;
-    if (shot.followOwnerId && follow.room?.state?.players) {
-      const pl = follow.room.state.players.get(shot.followOwnerId) as
+    if (followId && follow.room?.state?.players) {
+      const pl = follow.room.state.players.get(followId) as
         | {
             statuses?: {
               forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void;
@@ -101,7 +110,7 @@ export function BarrierCastEffect({
           }
         | undefined;
       pl?.statuses?.forEach((row) => {
-        if (row.statusId === "barrier") {
+        if (row.statusId === statusId) {
           shieldHp = Math.max(shieldHp, Math.max(0, row.stacks ?? 0));
         }
       });
@@ -162,7 +171,7 @@ export function BarrierCastEffect({
   return (
     <group ref={root} position={[shot.x, 0, shot.z]}>
       <AdditiveParticleBurst
-        color={BARRIER_BLUE}
+        color={shellColor}
         origin={[0, 0.04, 0]}
         count={24}
         life={0.9}
@@ -177,7 +186,7 @@ export function BarrierCastEffect({
         trigger={shot.key}
       />
       <AdditiveParticleBurst
-        color={BARRIER_BLUE_HOT}
+        color={rimColor}
         origin={[0, 0.02, 0]}
         count={16}
         life={0.75}
@@ -200,5 +209,23 @@ export function BarrierCastEffect({
         </mesh>
       </group>
     </group>
+  );
+}
+
+export function GuardiansBlessingEffect({
+  shot,
+  follow,
+}: {
+  shot: OneShotEffect;
+  follow: VfxFollowContext;
+}) {
+  return (
+    <BarrierCastEffect
+      shot={shot}
+      follow={follow}
+      statusId="guardiansBlessing"
+      shellColor={BLESSING_GOLD}
+      rimColor={BLESSING_GOLD_HOT}
+    />
   );
 }

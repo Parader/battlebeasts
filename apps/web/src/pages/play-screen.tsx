@@ -16,6 +16,7 @@ import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
 import { QuestsPanel } from "@/game/ui/QuestsPanel";
 import { AdminPanel } from "@/game/ui/AdminPanel";
+import { VesselSetupPanel } from "@/game/ui/VesselSetupPanel";
 import { RankPanel } from "@/game/ui/RankPanel";
 import { ChestRevealPanel } from "@/game/ui/ChestRevealPanel";
 import { SettingsPanel } from "@/game/ui/SettingsPanel";
@@ -31,6 +32,7 @@ import { PartyLobbyPanel } from "@/game/ui/PartyLobbyPanel";
 import { InvitePromptStack } from "@/game/ui/InvitePromptStack";
 import { HudIconButton } from "@/game/ui/HudIconButton";
 import { AbilityBar } from "@/game/ui/AbilityBar";
+import { FirstBuildChecklist } from "@/game/ui/FirstBuildChecklist";
 import { CastBarHud } from "@/game/ui/CastBarHud";
 import { EmotePieHud } from "@/game/ui/EmotePieHud";
 import { StatusBar } from "@/game/ui/StatusBar";
@@ -46,6 +48,7 @@ import {
     startHubIntro,
     subscribeHubIntro,
 } from "@/game/intro/hubIntroRuntime";
+import { isLoadoutReady, TUTORIAL_CHEST_SOURCE } from "@battlebeasts/shared";
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
@@ -96,7 +99,7 @@ function ProfileLoadGate({
 }
 
 export const PlayScreen = () => {
-    const { ready, configured, user, profile, profileLoading, profileError, accessToken, needsNameSetup, signOut, refreshProfile } = useAuth();
+    const { ready, configured, user, profile, profileLoading, profileError, accessToken, needsNameSetup, needsVesselSetup, saveVesselChoice, signOut, refreshProfile } = useAuth();
 
     const userId = user?.id ?? "";
     const displayName = profile?.display_name ?? user?.user_metadata?.full_name ?? "Hunter";
@@ -164,12 +167,13 @@ export const PlayScreen = () => {
     const [loadingGate, setLoadingGate] = useState(true);
     const [introPlaying, setIntroPlaying] = useState(false);
     const [confirmSoftReset, setConfirmSoftReset] = useState(false);
+    const [vesselSaving, setVesselSaving] = useState(false);
 
     // Preload needs phase; start with hub until the room reports content.
     const [assetBundle, setAssetBundle] = useState<"hub" | "arena">("hub");
     const { progress, assetsReady } = useAssetPreload(assetBundle, canJoinRoom);
     const vfxGpuReady = useVfxGpuReady();
-    const propShaderReady = usePropShaderReady(assetBundle === "hub");
+    const propShaderReady = usePropShaderReady(true);
 
     const {
         status,
@@ -315,12 +319,12 @@ export const PlayScreen = () => {
         startHubIntro();
     }, [playReady, inContent, introCompleted, introReplayToken, effectiveHubOwnerId, userId]);
 
-    // Dismiss objective when player opens portal UI.
+    // First-build checklist replaces the cinematic objective chip.
     useEffect(() => {
-        if (activeUi === "portal_pvp" || activeUi === "portal_pve") {
+        if (playReady && !inContent && !introPlaying) {
             dismissHubIntroObjective();
         }
-    }, [activeUi]);
+    }, [playReady, inContent, introPlaying]);
 
     useEffect(() => {
         if (!playReady || inContent || !user) return;
@@ -335,8 +339,10 @@ export const PlayScreen = () => {
             : "Building village"
         : !vfxGpuReady
           ? "Warming spell FX"
-          : !inContent && !propShaderReady
-            ? "Warming village props"
+          : !propShaderReady
+            ? inContent
+              ? "Warming battlefield"
+              : "Warming village props"
             : status === "connecting"
             ? "Connecting"
             : status === "error"
@@ -406,7 +412,10 @@ export const PlayScreen = () => {
     // Appearance + Merchant + chest reveal each spin up a second WebGL Canvas; pause the game
     // view so dual contexts don't fight (gear mesh compile was crashing the tab).
     const suspendGameGl =
-        activeUi === "customization" || activeUi === "shop" || Boolean(chestReveal);
+        activeUi === "customization" ||
+        activeUi === "shop" ||
+        Boolean(chestReveal) ||
+        (playReady && needsVesselSetup && !introPlaying);
 
     return (
         <div className="relative h-dvh w-full overflow-hidden bg-black">
@@ -434,6 +443,14 @@ export const PlayScreen = () => {
             ) : null}
 
             {playReady && !inContent ? <HubIntroOverlay /> : null}
+
+            {playReady && !inContent && !introPlaying && !isSpectator && activeUi !== "build" ? (
+                <FirstBuildChecklist
+                    loadout={economy.loadout}
+                    hasTutorialChest={hubChests.some((c) => c.source === TUTORIAL_CHEST_SOURCE)}
+                    onOpenQuests={() => setQuestsOpen(true)}
+                />
+            ) : null}
 
             {/*
                 Health and energy clear the ability bar, which is now two rows
@@ -659,7 +676,9 @@ export const PlayScreen = () => {
                     className="bb-parchment bb-toast pointer-events-auto absolute inset-x-0 top-20 z-30 mx-auto flex max-w-md flex-col items-center gap-3 px-5 py-4 text-center"
                 >
                     <p className="bb-panel-title !text-xl">Searching for match…</p>
-                    <p className="bb-panel-sub !mt-0">{queueModes.join(" · ") || "PvP"}</p>
+                    <p className="bb-panel-sub !mt-0">
+                      {queueModes.length > 0 ? `Looking for ${queueModes.join(" · ")}` : "PvP"}
+                    </p>
                     <button type="button" className="bb-btn-ink" onClick={cancelQueue}>
                         Cancel queue
                     </button>
@@ -701,7 +720,7 @@ export const PlayScreen = () => {
                 <AbilityBar
                     loadout={economy.loadout}
                     flexLoadout={economy.flexLoadout}
-                    flexSlotCount={economy.unlocks?.flexSlotCount ?? 1}
+                    flexSlotCount={economy.unlocks?.flexSlotCount ?? 0}
                     energy={localHp.energy}
                     wallet={inContent ? undefined : economy}
                     talentIds={economy.talents}
@@ -729,7 +748,7 @@ export const PlayScreen = () => {
                         <li>LMB / RMB / Space / Q / E / R / F — cast</li>
                         <li>Space can interrupt other casts (missile keeps flying if already fired)</li>
                         <li>In a shop / stand zone, Space opens the menu instead of casting</li>
-                        <li>Walk into a portal to open its menu</li>
+                        <li>Walk into a portal to open its menu (slot every key first — flex is optional)</li>
                         <li>
                             C / Esc / mouse side buttons — cancel (Bolt: until projectile fires; others:
                             anticipation)
@@ -831,6 +850,7 @@ export const PlayScreen = () => {
                     onClose={() => setActiveUi(null)}
                     onConfirm={confirmPortal}
                     hubPlayerCount={Math.max(1, hubRoster.length || 1)}
+                    loadoutReady={isLoadoutReady(economy.loadout)}
                 />
             )}
 
@@ -853,6 +873,7 @@ export const PlayScreen = () => {
                     }}
                     onSetSeat={setPartySeat}
                     onKick={kickFromParty}
+                    loadoutReady={isLoadoutReady(economy.loadout)}
                     onLock={lockParty}
                     onCancel={cancelParty}
                     onLeave={leaveParty}
@@ -923,6 +944,11 @@ export const PlayScreen = () => {
                     onSpawnChest={spawnHubChest}
                     adminNoCooldown={adminNoCooldown}
                     onToggleAdminNoCooldown={setAdminNoCooldownEnabled}
+                    vessel={(localPlayer as { vessel?: string } | null)?.vessel}
+                    onSetVessel={(vessel) => {
+                        room?.send("set_vessel", { vessel });
+                        void saveVesselChoice(vessel);
+                    }}
                     onTpToMap={(mapId) => {
                         setAdminOpen(false);
                         adminTpToMap(mapId);
@@ -934,6 +960,21 @@ export const PlayScreen = () => {
                     onSoftResetCharacter={() => {
                         setAdminOpen(false);
                         setConfirmSoftReset(true);
+                    }}
+                />
+            )}
+
+            {playReady && needsVesselSetup && !introPlaying && (
+                <VesselSetupPanel
+                    open
+                    color={profile?.color}
+                    pattern={profile?.pattern}
+                    patternColor={profile?.pattern_color}
+                    saving={vesselSaving}
+                    onConfirm={(body) => {
+                        setVesselSaving(true);
+                        room?.send("set_vessel", { vessel: body });
+                        void saveVesselChoice(body).finally(() => setVesselSaving(false));
                     }}
                 />
             )}
@@ -951,7 +992,7 @@ export const PlayScreen = () => {
             <ConfirmDialog
                 open={playReady && confirmSoftReset}
                 title="Soft reset character?"
-                message="Resets wallet, loadouts, talents, quests, chests, and all bought customization (colors, patterns, cosmetics, emotes) back to starter slate. Keeps your name. The intro will replay."
+                message="Resets wallet, loadouts, talents, ranked, quests, chests, and all bought customization back to a blank first-build slate. Keeps your name. The intro will replay."
                 confirmLabel="Reset"
                 onConfirm={() => {
                     setConfirmSoftReset(false);

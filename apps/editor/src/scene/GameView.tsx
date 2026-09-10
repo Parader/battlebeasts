@@ -13,7 +13,7 @@ import { CAMERA } from "@battlebeasts/shared";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect } from "react";
 import * as THREE from "three";
-import { docStore, useEditor } from "../state/docStore";
+import { docStore, useEditorSlice } from "../state/docStore";
 
 /** Where the game camera looks, on the ground plane. */
 const GAME_LOOK = new THREE.Vector3(0, 0, -1);
@@ -39,7 +39,7 @@ const _up = new THREE.Vector3();
  * the only things that differ.
  */
 export function GameViewSnap() {
-  const { gameViewNonce } = useEditor();
+  const gameViewNonce = useEditorSlice((s) => s.gameViewNonce);
   const camera = useThree((s) => s.camera);
   const controls = useThree((s) => s.controls) as
     | { target: THREE.Vector3; update: () => void }

@@ -247,7 +247,14 @@ export function CastAimTelegraph({
     const pos = getPos();
     const yaw = getYaw();
     const healables: { id: string; x: number; z: number }[] = [];
-    if (id === "soulRelay" || id === "verdantLeap") {
+    if (
+      id === "soulRelay" ||
+      id === "verdantLeap" ||
+      id === "hexAnchor" ||
+      id === "chainLightning" ||
+      id === "elementalOverload" ||
+      id === "positionSwap"
+    ) {
       const players = room.state?.players;
       players?.forEach((p, pid) => {
         if (pid === sessionId) return;
@@ -328,6 +335,7 @@ export function CastAimTelegraph({
       preview.kind === "blink" ||
       preview.kind === "forwardPlace" ||
       preview.kind === "allyBind" ||
+      preview.kind === "enemyBind" ||
       preview.kind === "selfCircle";
     if (aimGroup.current) {
       aimGroup.current.visible = showAim && (preview.kind === "blink" || preview.aimRadius > 0.05);
@@ -563,7 +571,8 @@ export function CastAimTelegraph({
         {(kind === "placeCircle" ||
           kind === "forwardPlace" ||
           kind === "magmaOrbs" ||
-          kind === "allyBind") && (
+          kind === "allyBind" ||
+          kind === "enemyBind") && (
           <>
             <AoeRimMarker
               radius={1}

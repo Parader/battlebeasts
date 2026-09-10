@@ -6,7 +6,7 @@ import {
   fireballChargeWindowWallMs,
   FROST_MIST_CAST,
   GROOVE_CAST,
-  HEAL_BEAM_CAST,
+  DIVINE_BEAM_CAST,
   LIFE_LEECH_CAST,
   ICE_LANCE_CAST,
   POISON_DART_CAST,
@@ -16,6 +16,7 @@ import {
 } from "@battlebeasts/shared";
 import type { AbilityVfxProfile, AbilityVfxAssets } from "./types";
 import { VFX_WIND_STREAK_URL, VFX_CRUSHING_SIGIL_FLARE_URL, VFX_BLOOMING_VINE_STREAK_URL } from "../vfxUrls";
+import { ROCK_WALL_GLB_URL } from "../rockWallAsset";
 import {
   BARRIER_CHARGE_PAD_MS,
   BARRIER_DISSOLVE_MS,
@@ -535,6 +536,206 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
       skipLegacyBurst: true,
     },
   },
+  purgePulse: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "purgePulse",
+      onHit: "catalogImpact",
+      hitY: 1.1,
+      skipLegacyBurst: true,
+    },
+  },
+  rockWall: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: { onAoe: "rockWall", skipLegacyBurst: true },
+    assets: { glbs: [ROCK_WALL_GLB_URL] },
+  },
+  hexAnchor: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "hexAnchor",
+      onHit: "catalogImpact",
+      hitY: 1.0,
+      skipLegacyBurst: true,
+    },
+  },
+  bindingSigil: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: { onAoe: "bindingSigil", skipLegacyBurst: true },
+  },
+  massSilence: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: { onAoe: "massSilence", skipLegacyBurst: true },
+  },
+  tripleBlink: {
+    castEngine: "none",
+    projectile: "none",
+  },
+  flowAfterimage: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: { onAoe: "flowAfterimage", skipLegacyBurst: true },
+  },
+  ironGuard: {
+    castEngine: "none",
+    projectile: "none",
+  },
+  spellbreaker: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "spellbreaker",
+      // Missile shatter → Arc Thread break spark (see combatFxDispatch).
+      onHit: "none",
+      hitY: 0.85,
+      skipLegacyBurst: true,
+    },
+  },
+  gravityField: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "gravityField",
+      onHit: "none",
+      skipLegacyBurst: true,
+    },
+  },
+  timeFreeze: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "timeFreeze",
+      onHit: "none",
+      skipLegacyBurst: true,
+    },
+  },
+  bloodPact: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "bloodPact",
+      onHit: "catalogImpact",
+      hitY: 1.0,
+      skipLegacyBurst: true,
+    },
+  },
+  chainLightning: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "none",
+      onHit: "catalogImpact",
+      hitY: 1.1,
+      skipLegacyBurst: true,
+    },
+  },
+  elementalOverload: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "none",
+      onHit: "catalogImpact",
+      hitY: 0.2,
+      skipLegacyBurst: true,
+    },
+  },
+  positionSwap: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "positionSwap",
+      onHit: "catalogImpact",
+      hitY: 1.0,
+      skipLegacyBurst: true,
+    },
+  },
+  cycloneKick: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "cycloneKick",
+      skipLegacyBurst: true,
+    },
+  },
+  worldTree: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "worldTree",
+      onHit: "catalogImpact",
+      skipLegacyBurst: true,
+    },
+  },
+  phantomRush: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onDash: "phantomRush",
+      onHit: "catalogImpact",
+      skipLegacyBurst: true,
+    },
+  },
+  ascendantForm: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "ascendantForm",
+      skipLegacyBurst: true,
+    },
+  },
+  dreadAura: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "dreadAura",
+      skipLegacyBurst: true,
+    },
+  },
+  guardiansBlessing: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "catalogImpact",
+      skipLegacyBurst: true,
+    },
+  },
+  guardianAngel: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "catalogImpact",
+      skipLegacyBurst: true,
+    },
+  },
+  lastingGrace: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "catalogImpact",
+      skipLegacyBurst: true,
+    },
+  },
+  rebirth: {
+    castEngine: "combatFxOnly",
+    projectile: "none",
+    combatFx: {
+      onAoe: "catalogImpact",
+      skipLegacyBurst: true,
+    },
+  },
+  battleRhythm: {
+    castEngine: "none",
+    projectile: "none",
+    combatFx: {
+      onAoe: "catalogImpact",
+      skipLegacyBurst: true,
+    },
+  },
 };
 
 const DEFAULT_PROFILE: AbilityVfxProfile = {
@@ -542,8 +743,18 @@ const DEFAULT_PROFILE: AbilityVfxProfile = {
   projectile: "none",
 };
 
+const PICKUP_COLLECT_PROFILE: AbilityVfxProfile = {
+  castEngine: "none",
+  projectile: "none",
+  combatFx: {
+    onHit: "none",
+    skipLegacyBurst: true,
+  },
+};
+
 export function getAbilityVfxProfile(abilityId: string | undefined): AbilityVfxProfile {
   if (!abilityId) return DEFAULT_PROFILE;
+  if (abilityId.startsWith("pickup_")) return PICKUP_COLLECT_PROFILE;
   return PROFILES[abilityId] ?? DEFAULT_PROFILE;
 }
 
@@ -620,10 +831,10 @@ export const CHANNEL_VFX = {
   },
   healBeam: {
     lifePadMs: 280,
-    ticks: HEAL_BEAM_CAST.healTicks,
-    tickMs: HEAL_BEAM_CAST.healTickMs,
+    ticks: DIVINE_BEAM_CAST.totalTicks,
+    tickMs: DIVINE_BEAM_CAST.tickIntervalMs,
     growMs: 140,
-    fallbackRange: HEAL_BEAM_CAST.range,
+    fallbackRange: DIVINE_BEAM_CAST.range,
   },
   lifeLeech: {
     lifePadMs: 280,

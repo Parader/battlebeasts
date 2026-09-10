@@ -31,6 +31,7 @@ function formatChestSource(source: string): string {
     return `Ranked · ${key.replace(/_/g, " ")}`;
   }
   if (source.startsWith("admin:")) return "Admin";
+  if (source.startsWith("tutorial:")) return "Tutorial";
   return source;
 }
 

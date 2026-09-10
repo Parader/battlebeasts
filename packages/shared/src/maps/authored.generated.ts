@@ -4,6 +4,7 @@
 import { parseMapDoc } from "./mapDoc";
 import { registerMapDoc } from "./registry";
 
+import doc_arene_2 from "./arene_2.map.json";
 import doc_test_arena from "./test_arena.map.json";
 import doc_village from "./village.map.json";
 
@@ -27,9 +28,10 @@ function register(id: string, raw: unknown): void {
  * and the client; safe to call twice, since registration is keyed by map id.
  */
 export function registerAuthoredMaps(): void {
+  register("arene_2", doc_arene_2);
   register("test_arena", doc_test_arena);
   register("village", doc_village);
 }
 
 /** Ids of the authored maps compiled into this build. */
-export const AUTHORED_MAP_IDS: readonly string[] = ["test_arena", "village"];
+export const AUTHORED_MAP_IDS: readonly string[] = ["arene_2", "test_arena", "village"];

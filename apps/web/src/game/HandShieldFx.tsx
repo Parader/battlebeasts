@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { findHandBone } from "./vfx/attach";
 import { createHandShieldMaterial } from "./vfx/materials/handShield";
 import { useSpellLight, type SpellLight } from "./vfx/spellLights";
-import type { StatusRowLite } from "./StatusOrnaments";
+import type { StatusRowLite } from "./statusBadgeUtils";
 
 type Props = {
   characterRoot?: THREE.Object3D | null;

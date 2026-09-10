@@ -46,6 +46,10 @@ export default defineConfig({
         "**/packages/shared/src/maps/authored.generated.ts",
         // Painted-ground sidecars, written next to the document.
         "**/apps/web/public/assets/maps/**",
+        // Game source + public assets stay served; do not HMR/reload this app.
+        "**/apps/web/src/**",
+        "**/apps/web/public/**",
+        "**/apps/game-server/**",
       ],
     },
   },

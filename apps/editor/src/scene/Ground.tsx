@@ -5,6 +5,9 @@ import { useMemo, useSyncExternalStore } from "react";
 import * as THREE from "three";
 import { terrain } from "../state/terrain";
 
+/** Editor displacement lattice. Splat/height buffers stay at document res. */
+const EDITOR_GROUND_MESH_SEGS = 160;
+
 /**
  * The ground surface, and the raycast target every placement tool plants
  * against.
@@ -52,7 +55,7 @@ function PlaneGround({ sizeX, sizeZ, material }: { sizeX: number; sizeZ: number;
 
 function PaintedTerrain({ ground }: { ground: Extract<MapDoc["ground"], { kind: "painted" }> }) {
   // Re-read on every terrain mutation so brush strokes show up immediately.
-  useSyncExternalStore(terrain.subscribe, () => terrain.heightVersion);
+  useSyncExternalStore(terrain.subscribe, () => `${terrain.heightVersion}:${terrain.stroking ? 1 : 0}`);
   const splat = terrain.texture;
 
   // The live buffer, not a copy. `PaintedGround` reads it synchronously in a
@@ -69,7 +72,16 @@ function PaintedTerrain({ ground }: { ground: Extract<MapDoc["ground"], { kind: 
   );
 
   if (!splat) return null;
-  return <PaintedGround ground={ground} splat={splat} heights={heights} name={GROUND_NAME} />;
+  return (
+    <PaintedGround
+      ground={ground}
+      splat={splat}
+      heights={heights}
+      name={GROUND_NAME}
+      maxMeshSegs={EDITOR_GROUND_MESH_SEGS}
+      skipNormals={terrain.stroking}
+    />
+  );
 }
 
 export function Ground({ doc }: { doc: MapDoc }) {

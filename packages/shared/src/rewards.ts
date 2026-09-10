@@ -14,8 +14,8 @@ import {
 } from "./playerUnlocks";
 import {
   COSMETIC_COLORS,
+  COSMETIC_AURAS,
   COSMETIC_PATTERN_COLORS,
-  COSMETIC_PATTERNS,
 } from "./stands";
 import { STARTER_TALENT_POINTS, TALENT_POINT_BUDGET } from "./talentTrees";
 
@@ -593,7 +593,14 @@ export function resolveRewardMode(mode: string | undefined | null): MatchRewardM
   ) {
     return mode;
   }
-  if (mode === "battleground") return "battleground";
+  if (
+    mode === "battleground" ||
+    mode === "bg_ctf" ||
+    mode === "bg_koth" ||
+    mode === "bg_domination"
+  ) {
+    return "battleground";
+  }
   if (mode.startsWith("pve") || mode === "stub") return "pve";
   return "unknown";
 }
@@ -722,7 +729,10 @@ export function isPvpModeId(id: string): id is PvpModeId {
     id === "arena_1v1v1" ||
     id === "arena_2v2" ||
     id === "arena_3v3" ||
-    id === "battleground"
+    id === "battleground" ||
+    id === "bg_ctf" ||
+    id === "bg_koth" ||
+    id === "bg_domination"
   );
 }
 
@@ -843,11 +853,11 @@ export function rollChestLoot(
     weight: 2,
   }));
 
-  const patternPool: LootPoolEntry[] = COSMETIC_PATTERNS.filter(
+  const patternPool: LootPoolEntry[] = COSMETIC_AURAS.filter(
     (p) => !(STARTER_PATTERNS as readonly string[]).includes(p.id),
   ).map((p) => ({
     grant: { kind: "pattern", patternId: p.id },
-    label: `${p.name} pattern`,
+    label: `${p.name} aura`,
     weight: 2,
   }));
 

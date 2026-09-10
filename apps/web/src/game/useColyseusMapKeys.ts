@@ -203,3 +203,69 @@ export function useWorldTargetIds(room: Room | null): string[] {
 
   return keys;
 }
+
+export function useObjectiveIds(room: Room | null): string[] {
+  const [keys, setKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!room?.state) {
+      setKeys([]);
+      return;
+    }
+
+    const sync = () => {
+      const map = room.state?.objectives as StringMap | undefined;
+      if (!map) {
+        setKeys([]);
+        return;
+      }
+      const next = sortedKeys(map);
+      setKeys((prev) => (keysEqual(prev, next) ? prev : next));
+    };
+
+    sync();
+    return bindMapCollection(
+      room,
+      ($, state) => $(state).objectives as {
+        onAdd: (cb: (v: unknown, k: string) => void) => () => void;
+        onRemove: (cb: (v: unknown, k: string) => void) => () => void;
+      },
+      sync,
+    );
+  }, [room, room?.roomId]);
+
+  return keys;
+}
+
+export function usePickupIds(room: Room | null): string[] {
+  const [keys, setKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!room?.state) {
+      setKeys([]);
+      return;
+    }
+
+    const sync = () => {
+      const map = room.state?.pickups as StringMap | undefined;
+      if (!map) {
+        setKeys([]);
+        return;
+      }
+      const next = sortedKeys(map);
+      setKeys((prev) => (keysEqual(prev, next) ? prev : next));
+    };
+
+    sync();
+    return bindMapCollection(
+      room,
+      ($, state) => $(state).pickups as {
+        onAdd: (cb: (v: unknown, k: string) => void) => () => void;
+        onRemove: (cb: (v: unknown, k: string) => void) => () => void;
+      },
+      sync,
+    );
+  }, [room, room?.roomId]);
+
+  return keys;
+}

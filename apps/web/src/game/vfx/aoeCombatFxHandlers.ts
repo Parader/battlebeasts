@@ -6,7 +6,6 @@ import {
   FIREWALL_CAST,
   FROST_MIST_CAST,
   GROOVE_CAST,
-  HEAL_BEAM_CAST,
   HOLY_GROUND_CAST,
   LIFE_LEECH_CAST,
   POISON_CLOUD_CAST,
@@ -15,6 +14,20 @@ import {
   SLIPSTREAM_CAST,
   SMOKE_BOMB_CAST,
   VOLCANO_CAST,
+  HEX_ANCHOR_CAST,
+  BINDING_SIGIL_CAST,
+  MASS_SILENCE_CAST,
+  FLOW_AFTERIMAGE,
+  PURGE_PULSE_CAST,
+  SPELLBREAKER_CAST,
+  GRAVITY_FIELD_CAST,
+  TIME_FREEZE_CAST,
+  BLOOD_PACT_CAST,
+  CYCLONE_KICK_CAST,
+  WORLD_TREE_CAST,
+  ASCENDANT_FORM_CAST,
+  DREAD_AURA_CAST,
+  DIVINE_BEAM_CAST,
 } from "@battlebeasts/shared";
 import { playSlamHitSfx } from "../gameSfx";
 import type { CombatFxDispatchCtx, CombatFxMessage } from "./combatFxTypes";
@@ -177,6 +190,21 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
   },
 
   healBeam: (msg, ctx) => {
+    if ((msg.variant ?? 0) === 1) {
+      // Overflow branch jump from primary target (msg.x, msg.z) to secondary ally (msg.x2, msg.z2)
+      spawnImpactEffect(
+        msg.abilityId,
+        { x: msg.x, z: msg.z, y: 1.0 },
+        {
+          lifeMs: 420,
+          variant: 1,
+          originX: msg.x2,
+          originZ: msg.z2,
+          targetId: msg.targetId,
+        },
+      );
+      return;
+    }
     if ((msg.comboHit ?? 1) !== 1) return;
     const yaw = ownerYaw(msg, ctx);
     const beamDef = ABILITIES.healBeam;
@@ -187,7 +215,7 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
       { x: msg.x, z: msg.z, y: 1.1, yaw },
       {
         lifeMs: channelMs,
-        radius: beamDef?.range ?? HEAL_BEAM_CAST.range,
+        radius: beamDef?.range ?? DIVINE_BEAM_CAST.range,
         growMs: ch.growMs,
         followOwnerId: msg.ownerId,
       },
@@ -482,8 +510,288 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
     );
   },
 
+  purgePulse: (msg) => {
+    const variant = msg.variant ?? 0;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: msg.y ?? (variant === 0 ? 0.06 : 1.1) },
+      {
+        lifeMs: variant === 0 ? 780 : 420,
+        radius: msg.radius ?? PURGE_PULSE_CAST.radius,
+        variant,
+      },
+    );
+  },
+
+  rockWall: (msg) => {
+    const variant = msg.variant ?? 0;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.04, yaw: msg.yaw },
+      {
+        lifeMs: variant === 0 ? 480 : 420,
+        radius: msg.radius,
+        variant,
+      },
+    );
+  },
+
+  hexAnchor: (msg) => {
+    const variant = msg.variant ?? 0;
+    if (variant === 3) {
+      spawnImpactEffect(
+        msg.abilityId,
+        { x: msg.x, z: msg.z, y: 0.03 },
+        { lifeMs: 700, variant: 3, radius: msg.radius ?? HEX_ANCHOR_CAST.range },
+      );
+      return;
+    }
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: msg.y ?? (variant === 1 ? 0.08 : 1.0) },
+      { lifeMs: variant === 1 ? 520 : 480, radius: msg.radius, variant },
+    );
+  },
+
+  bindingSigil: (msg) => {
+    const variant = msg.variant ?? 0;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.04 },
+      {
+        lifeMs: variant === 3 ? 700 : BINDING_SIGIL_CAST.lifetimeMs,
+        radius: msg.radius ?? (variant === 3 ? 0.7 : BINDING_SIGIL_CAST.radius),
+        variant,
+      },
+    );
+  },
+
+  massSilence: (msg) => {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.04 },
+      {
+        lifeMs: MASS_SILENCE_CAST.silenceDurationMs,
+        radius: msg.radius ?? MASS_SILENCE_CAST.radius,
+      },
+    );
+  },
+
+  flowAfterimage: (msg) => {
+    const variant = msg.variant ?? 0;
+    const lifeMs =
+      variant === 2
+        ? FLOW_AFTERIMAGE.phantomMs
+        : variant === 1
+          ? FLOW_AFTERIMAGE.trailMs
+          : FLOW_AFTERIMAGE.staticMs;
+    spawnImpactEffect(
+      "flowAfterimage",
+      { x: msg.x, z: msg.z, y: 0, yaw: msg.yaw },
+      {
+        lifeMs,
+        variant,
+        originX: msg.x2,
+        originZ: msg.z2,
+        followOwnerId: msg.ownerId,
+      },
+    );
+  },
+
+  ironGuard: (msg) => {
+    // Steel emissive is status-driven — no stacked cast VFX.
+    void msg;
+  },
+
+  spellbreaker: (msg) => {
+    const variant = msg.variant ?? 0;
+    // Orb launch when charges fire with the next damaging spell.
+    if (variant === 2) {
+      spawnImpactEffect(
+        msg.abilityId,
+        { x: msg.x, z: msg.z, y: 1.15, yaw: msg.yaw ?? 0 },
+        {
+          lifeMs: 180,
+          variant: 2,
+          followOwnerId: msg.ownerId,
+          radius: msg.radius ?? 1,
+        },
+      );
+      return;
+    }
+    // Zone VFX only — missile shatter is Arc Thread break spark via hit dispatch.
+    if (variant !== 0) return;
+    const lifeMs =
+      SPELLBREAKER_CAST.expandMs + SPELLBREAKER_CAST.holdMs + SPELLBREAKER_CAST.vacuumMs + 120;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: msg.y ?? 0.06 },
+      {
+        lifeMs,
+        radius: msg.radius ?? SPELLBREAKER_CAST.radius,
+        followOwnerId: msg.ownerId,
+        variant: 0,
+      },
+    );
+  },
+
+  gravityField: (msg) => {
+    if ((msg.variant ?? 0) !== 0) return;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.05 },
+      {
+        lifeMs: GRAVITY_FIELD_CAST.durationMs + 200,
+        radius: msg.radius ?? GRAVITY_FIELD_CAST.outerRadius,
+        variant: 0,
+      },
+    );
+  },
+
+  timeFreeze: (msg) => {
+    if ((msg.variant ?? 0) !== 0) return;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.08 },
+      {
+        lifeMs: TIME_FREEZE_CAST.durationMs + 200,
+        radius: msg.radius ?? TIME_FREEZE_CAST.radius,
+        variant: 0,
+      },
+    );
+  },
+
+  bloodPact: (msg) => {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.06 },
+      {
+        lifeMs: 900,
+        radius: msg.radius ?? BLOOD_PACT_CAST.allyRadius,
+        variant: msg.variant ?? 0,
+      },
+    );
+  },
+
+  positionSwap: (msg) => {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.08 },
+      {
+        lifeMs: 520,
+        variant: msg.variant ?? 0,
+        originX: msg.x2,
+        originZ: msg.z2,
+      },
+    );
+  },
+
+  cycloneKick: (msg) => {
+    if ((msg.comboHit ?? 1) > 1) return;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.05, yaw: msg.yaw },
+      {
+        lifeMs: CYCLONE_KICK_CAST.durationMs,
+        radius: msg.radius ?? CYCLONE_KICK_CAST.radius,
+        variant: msg.variant ?? 0,
+        followOwnerId: msg.ownerId,
+      },
+    );
+  },
+
+  worldTree: (msg) => {
+    const variant = msg.variant ?? 0;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.05 },
+      {
+        lifeMs: variant === 2 ? 600 : WORLD_TREE_CAST.durationMs,
+        radius: msg.radius ?? WORLD_TREE_CAST.healRadius,
+        variant,
+      },
+    );
+  },
+
+  ascendantForm: (msg) => {
+    const variant = msg.variant ?? 0;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.05 },
+      {
+        lifeMs: variant === 1 ? 550 : ASCENDANT_FORM_CAST.durationMs,
+        radius: msg.radius ?? ASCENDANT_FORM_CAST.auraRadius,
+        variant,
+        followOwnerId: msg.ownerId,
+      },
+    );
+  },
+
+  dreadAura: (msg) => {
+    const variant = msg.variant ?? 0;
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.05 },
+      {
+        lifeMs: variant === 1 ? 750 : DREAD_AURA_CAST.durationMs,
+        radius: msg.radius ?? DREAD_AURA_CAST.radius,
+        variant,
+        targetId: msg.targetId,
+        followOwnerId: msg.ownerId,
+      },
+    );
+  },
+
   catalogImpact: (msg, ctx) => {
     const yaw = ownerYaw(msg, ctx);
+    if (msg.abilityId === "guardiansBlessing") {
+      const followId = msg.targetId ?? msg.ownerId;
+      spawnImpactEffect(
+        msg.abilityId,
+        { x: msg.x, z: msg.z, y: 0, yaw },
+        {
+          lifeMs: 6200,
+          followOwnerId: followId,
+          followTargetId: followId,
+          targetId: followId,
+        },
+      );
+      return;
+    }
+    if (msg.abilityId === "guardianAngel" || msg.abilityId === "lastingGrace") {
+      const followId = msg.targetId ?? msg.ownerId;
+      spawnImpactEffect(
+        msg.abilityId,
+        { x: msg.x, z: msg.z, y: 0, yaw },
+        {
+          lifeMs: 1600,
+          followOwnerId: followId,
+          followTargetId: followId,
+          targetId: followId,
+        },
+      );
+      return;
+    }
+    if (msg.abilityId === "rebirth") {
+      const followId = msg.targetId ?? msg.ownerId;
+      const variant = msg.variant ?? 0;
+      spawnImpactEffect(
+        msg.abilityId,
+        { x: msg.x, z: msg.z, y: 0, yaw },
+        {
+          lifeMs: variant === 1 ? 3200 : 1600,
+          followOwnerId: followId,
+          followTargetId: followId,
+          targetId: followId,
+          variant,
+        },
+      );
+      return;
+    }
+    if (msg.abilityId === "battleRhythm") {
+      spawnImpactEffect(msg.abilityId, { x: msg.x, z: msg.z, y: 0.04, yaw }, { lifeMs: 700 });
+      return;
+    }
     spawnImpactEffect(msg.abilityId, { x: msg.x, z: msg.z, y: 0.04, yaw });
   },
 

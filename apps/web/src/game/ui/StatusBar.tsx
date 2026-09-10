@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Room } from "colyseus.js";
 import { STATUSES, type StatusDef } from "@battlebeasts/shared";
 
@@ -50,7 +50,12 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
     const pct = Math.round(((def as any).anticipationMul - 1) * 100);
     parts.push(pct < 0 ? `${Math.abs(pct)}% faster cast windup` : `+${pct}% cast windup`);
   }
-  if ((def as any).damageDealtMul !== undefined && (def as any).damageDealtMul !== 1) {
+  if (
+    row.statusId !== "bloodPactEmpower" &&
+    row.statusId !== "suppressedControl" &&
+    (def as any).damageDealtMul !== undefined &&
+    (def as any).damageDealtMul !== 1
+  ) {
     const pct = Math.round(((def as any).damageDealtMul - 1) * 100);
     parts.push(`+${pct}% damage dealt`);
   }
@@ -59,7 +64,8 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
     parts.push(pct > 0 ? `+${pct}% damage taken` : `${pct}% damage taken`);
   }
   if (def.mechanic === "stun") parts.push("Stunned");
-  if (def.mechanic === "root") parts.push("Rooted");
+  if (def.mechanic === "root" && row.statusId !== "bindingRooted") parts.push("Rooted");
+  if (row.statusId === "bindingRooted") parts.push("Bound in place");
   if (def.mechanic === "silence") parts.push("Silenced");
   if (row.statusId === "frostChill") parts.push(`${row.stacks * 10}% slow`);
   if (row.statusId === "soulRelayLinked") {
@@ -67,6 +73,225 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
   }
   if (row.statusId === "cloaked") {
     parts.push("Invisible to enemies");
+  }
+  if (row.statusId === "ironGuard") {
+    parts.push("65% damage reduction · small shield · immune to displacement");
+  }
+  if (row.statusId === "hexAnchored") {
+    parts.push("Next spell roots and deals damage");
+  }
+  if (row.statusId === "spellbreakerCharge") {
+    parts.push(
+      `${row.stacks} orb${row.stacks === 1 ? "" : "s"} — bonus damage on next damaging spell`,
+    );
+  }
+  if (row.statusId === "gravityFieldSlow") {
+    parts.push("45% slower in the gravity ring");
+  }
+  if (row.statusId === "bloodPactEmpower") {
+    const pct = Math.round((((def as any).damageDealtMul ?? 1.35) - 1) * 100);
+    parts.push(`+${pct}% damage dealt`);
+  }
+  if (row.statusId === "conductiveSurge") {
+    parts.push("+15% move speed · faster casts");
+  }
+  if (row.statusId === "feared" || def.mechanic === "fear") {
+    parts.push("Feared · fleeing and cannot cast");
+  }
+  if (row.statusId === "ascendantForm") {
+    parts.push("22% damage reduction · enlarged presence · damage aura");
+  }
+  if (row.statusId === "dreadAuraActive") {
+    parts.push("Reactive fear aura · enemies who cast inside are feared");
+  }
+  if (row.statusId === "shocked") {
+    parts.push(`Shocked (${row.stacks}/3) · next hit jumps a bolt to a nearby enemy`);
+  }
+  if (row.statusId === "electrified") {
+    parts.push("Next attack inflicts Shocked on target");
+  }
+  if (row.statusId === "battleInstinct") {
+    parts.push("+9% damage dealt at close range");
+  }
+  if (row.statusId === "relentlessAssault") {
+    parts.push("Next offensive ability has 20% reduced cooldown");
+  }
+  if (row.statusId === "impactCatalyst") {
+    parts.push("Next elemental ability applies doubled status stacks");
+  }
+  if (row.statusId === "executionersRhythm") {
+    parts.push(`+${row.stacks * 8}% close-range damage (${row.stacks}/3 stacks)`);
+  }
+  if (row.statusId === "sniperFocus") {
+    parts.push(`${row.stacks}/2 stacks · 3rd long-range hit is guaranteed crit`);
+  }
+  if (row.statusId === "exposedAngle") {
+    parts.push("+20% damage taken from exposed flank");
+  }
+  if (row.statusId === "elementalSurge") {
+    parts.push("+15% elemental damage dealt (3+ enemy elemental stacks)");
+  }
+  if (row.statusId === "speedPickup") {
+    parts.push("+35% move speed surge");
+  }
+  if (row.statusId === "powerPickup") {
+    parts.push("+30% damage surge");
+  }
+  if (row.statusId === "absorbPickup") {
+    parts.push(`Absorb shield (${row.stacks} HP remaining)`);
+  }
+  if (row.statusId === "hastePickup") {
+    parts.push("Cooldown recovery haste");
+  }
+  if (row.statusId === "hardened") {
+    parts.push(`Hardened (${row.stacks} stacks) · stacking damage reduction`);
+  }
+  if (row.statusId === "guardDisciplineShield") {
+    parts.push(`Guard Discipline shield (${row.stacks} HP)`);
+  }
+  if (row.statusId === "sharedProtectionShield") {
+    parts.push(`Shared Protection shield (${row.stacks} HP)`);
+  }
+  if (row.statusId === "frontlineSupportShield") {
+    parts.push(`Frontline Support shield (${row.stacks} HP)`);
+  }
+  if (row.statusId === "guardiansBlessingShield") {
+    parts.push(`Guardian's Blessing shield (${row.stacks} HP)`);
+  }
+  if (row.statusId === "underPressure") {
+    parts.push("Under Pressure · damage reduction against focused attacker");
+  }
+  if (row.statusId === "bracedAssault") {
+    parts.push("+20% damage on next close-range hit");
+  }
+  if (row.statusId === "guardiansPresence") {
+    parts.push("+5% damage reduction (near ally)");
+  }
+  if (row.statusId === "aegisMomentum") {
+    parts.push("+10% move speed · +10% damage dealt");
+  }
+  if (row.statusId === "fortifiedResolve") {
+    parts.push("Fortified Resolve · next hit ≥ 10% max HP reduced by 25%");
+  }
+  if (row.statusId === "bastion") {
+    parts.push("+12% damage reduction (Bastion bond)");
+  }
+  if (row.statusId === "perfectDefense") {
+    parts.push("+25% passive block chance");
+  }
+  if (row.statusId === "forbiddenGround") {
+    parts.push("10% slower casts");
+  }
+  if (row.statusId === "suppressedControl") {
+    parts.push("−12% damage dealt");
+  }
+  if (row.statusId === "brokenCadence") {
+    parts.push("Next control ability has reduced cooldown");
+  }
+  if (row.statusId === "chainPullReady") {
+    parts.push("Next displacement +20% stronger");
+  }
+  if (row.statusId === "distortedWakeSlow") {
+    parts.push("20% slower in the wake");
+  }
+  if (row.statusId === "repositioningReady") {
+    parts.push("Next attacker is rooted");
+  }
+  if (row.statusId === "arcaneLocked") {
+    parts.push("Subsequent CC from this caster lasts longer");
+  }
+  if (row.statusId === "punishingSilence") {
+    parts.push("+15% move speed");
+  }
+  if (row.statusId === "contained") {
+    parts.push("Dash distance and haste bonuses reduced");
+  }
+  if (row.statusId === "spatiallyUnstable") {
+    parts.push("Next movement ability roots on arrival");
+  }
+  if (row.statusId === "fleetFooted") {
+    parts.push(`+${row.stacks}% move speed`);
+  }
+  if (row.statusId === "combatFlow") {
+    parts.push(`Next damaging spell ${row.stacks}% faster`);
+  }
+  if (row.statusId === "followThrough") {
+    parts.push(`Next damaging spell +${row.stacks}% range`);
+  }
+  if (row.statusId === "quickRecovery") {
+    parts.push("Next defensive or movement cooldown reduced");
+  }
+  if (row.statusId === "untouchable") {
+    parts.push("15% damage reduction · incoming CC shorter");
+  }
+  if (row.statusId === "reboundWindow") {
+    parts.push("First direct hit refunds movement cooldown");
+  }
+  if (row.statusId === "movementRepeatReady") {
+    parts.push("Recast the same Dash or Teleport");
+  }
+  if (row.statusId === "tripleBlinkReady") {
+    parts.push(`Recast Space (${row.stacks} hop${row.stacks === 1 ? "" : "s"} left)`);
+  }
+  if (row.statusId === "motionEcho") {
+    parts.push("Next different movement travels farther");
+  }
+  if (row.statusId === "phaseShield") {
+    parts.push(`Phase Shield (${row.stacks} HP)`);
+  }
+  if (row.statusId === "relentlessPursuit") {
+    parts.push("+15% move speed");
+  }
+  if (row.statusId === "momentumEngine") {
+    parts.push("+15% move speed · movement cooldowns recover faster");
+  }
+  if (row.statusId === "phantomCharge") {
+    parts.push(`${row.stacks}/3 phantom charges`);
+  }
+  if (row.statusId === "flowEngage") {
+    parts.push("Damage will ignite pursuit haste");
+  }
+  if (row.statusId === "empathicSurge") {
+    parts.push(`+${row.stacks}% move speed`);
+  }
+  if (row.statusId === "inspiringRecovery") {
+    parts.push("+8% cast speed");
+  }
+  if (row.statusId === "upliftingPresence") {
+    parts.push("+7% move speed (your healer's HoT)");
+  }
+  if (row.statusId === "lastingRescue") {
+    parts.push("12% damage reduction");
+  }
+  if (row.statusId === "overflowingGraceHot") {
+    parts.push(`HoT (${row.stacks} per tick)`);
+  }
+  if (row.statusId === "harmoniousGrowth") {
+    parts.push("+10% move · +10% cast speed");
+  }
+  if (row.statusId === "empoweredRecovery") {
+    parts.push("+10% damage · +8% cast speed");
+  }
+  if (row.statusId === "battleRhythm") {
+    parts.push(`+${row.stacks * 3}% move and cast speed (${row.stacks}/3)`);
+  }
+  if (row.statusId === "harmonyResonanceStacks") {
+    parts.push(`Resonance ${row.stacks}/3`);
+  }
+  if (row.statusId === "harmonyResonance") {
+    parts.push("+12% damage · +10% damage reduction");
+  }
+  if (row.statusId === "lastingGrace") {
+    parts.push("Cannot fall below 1 health");
+  }
+  if (row.statusId === "rebirthBlessing") {
+    parts.push("Will resurrect if slain");
+  }
+  if (row.statusId === "rebirthPending") {
+    parts.push("Resurrecting");
+  }
+  if (row.statusId === "disoriented") {
+    parts.push("Movement input reversed");
   }
   if (row.statusId === "fifthSpellCadence") parts.push(`${row.stacks}/5 stacks`);
   if (parts.length === 0) {
@@ -77,7 +302,8 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
 
 function StatusTooltip({ def, row, now }: { def: StatusDef; row: StatusHudRow; now: number }) {
   const permanent = (def as any).permanent === true || def.durationMs <= 0;
-  const left = permanent ? 0 : Math.max(0, row.expiresAt - now);
+  const isAura = (def as any).isAura === true || row.statusId === "gravityFieldSlow";
+  const left = permanent || isAura ? 0 : Math.max(0, row.expiresAt - now);
   return (
     <div
       className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-max max-w-[200px] -translate-x-1/2"
@@ -108,9 +334,14 @@ function StatusTooltip({ def, row, now }: { def: StatusDef; row: StatusHudRow; n
         <div className="mt-0.5 text-[10px] leading-tight text-[#d4cbb3]">
           {describeStatus(def, row)}
         </div>
-        {!permanent && (
+        {!permanent && !isAura && (
           <div className="mt-1 text-[9px] text-[#a09880]">
             {(left / 1000).toFixed(1)}s remaining
+          </div>
+        )}
+        {isAura && (
+          <div className="mt-1 text-[9px] text-[#a09880]">
+            Active while in area
           </div>
         )}
       </div>
@@ -143,13 +374,15 @@ export function StatusBar({ room, sessionId }: { room: Room | null; sessionId: s
           const def = STATUSES[row.statusId];
           if (!def) return null;
           const permanent = (def as any).permanent === true || def.durationMs <= 0;
-          const left = permanent ? 0 : Math.max(0, row.expiresAt - now);
+          const isAura = (def as any).isAura === true || row.statusId === "gravityFieldSlow";
+          const left = permanent || isAura ? 0 : Math.max(0, row.expiresAt - now);
           const total = Math.max(1, def.durationMs);
-          const frac = permanent ? 0 : Math.min(1, left / total);
+          const frac = permanent ? 0 : isAura ? 1 : Math.min(1, left / total);
           const showStacks =
             row.statusId === "fifthSpellCadence" ||
             row.statusId === "soulMarked" ||
             row.statusId === "frostChill" ||
+            row.statusId === "spellbreakerCharge" ||
             row.stacks > 1;
           const hovered = hoveredKey === row.key;
           return (

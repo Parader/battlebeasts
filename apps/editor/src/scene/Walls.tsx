@@ -2,7 +2,7 @@ import type { MapWall } from "@battlebeasts/shared";
 import type { ThreeEvent } from "@react-three/fiber";
 import { useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
-import { docStore, selectEntity, snap, useEditor } from "../state/docStore";
+import { docStore, selectEntity, snap, useEditor, useEditorSlice } from "../state/docStore";
 import { wasDragged } from "./clickGuard";
 
 /**
@@ -260,7 +260,8 @@ function WallMesh({
 
 /** The polyline currently being drawn, plus a rubber band to the cursor. */
 function Draft() {
-  const { wallDraft, wallCursor } = useEditor();
+  const wallDraft = useEditorSlice((s) => s.wallDraft);
+  const wallCursor = useEditorSlice((s) => s.wallCursor);
   if (!wallDraft?.length) return null;
   const preview = wallCursor ? [...wallDraft, wallCursor] : wallDraft;
   return (
@@ -279,11 +280,12 @@ function Draft() {
 }
 
 export function Walls() {
-  const { doc, selectedIds } = useEditor();
+  const walls = useEditorSlice((s) => s.doc.walls);
+  const selectedIds = useEditorSlice((s) => s.selectedIds);
   const solo = selectedIds.length === 1 ? selectedIds[0] : null;
   return (
     <>
-      {doc.walls.map((w) => (
+      {walls.map((w) => (
         <WallMesh
           key={w.id}
           wall={w}

@@ -13,6 +13,7 @@ import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity, tintCharacte
 import { CharacterAnimationController, heroAnimationConfig } from "../animation";
 import { cosmeticsKey, equippedFromPlayer } from "../cosmeticAttach";
 import { EquippedCosmetics } from "../EquippedCosmetics";
+import { VesselBody } from "../VesselBody";
 import { createEnergyBallMaterial } from "./materials/energyBall";
 
 type HuskNet = {
@@ -23,6 +24,7 @@ type HuskNet = {
   color?: string;
   pattern?: string;
   patternColor?: string;
+  vessel?: string;
   startedAt?: number;
   expiresAt?: number;
 };
@@ -222,6 +224,7 @@ function SpiritHuskAvatar({ room, huskId }: { room: Room; huskId: string }) {
   const patternColorRef = useRef("#1f2937");
   const cosmeticsKeyRef = useRef("");
   const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
+  const [vessel, setVessel] = useState("female");
   const gltf = useGLTF(CHARACTER_URL);
   const scene = useMemo(() => {
     const idle =
@@ -276,6 +279,9 @@ function SpiritHuskAvatar({ room, huskId }: { room: Room; huskId: string }) {
       setCharacterOpacity(scene, 0.42);
     }
 
+    const nextVessel = h.vessel ?? "female";
+    if (nextVessel !== vessel) setVessel(nextVessel);
+
     const nextCosmetics = cosmeticsKey(owner);
     if (nextCosmetics !== cosmeticsKeyRef.current) {
       cosmeticsKeyRef.current = nextCosmetics;
@@ -293,7 +299,8 @@ function SpiritHuskAvatar({ room, huskId }: { room: Room; huskId: string }) {
   return (
     <group ref={group}>
       <primitive object={scene} />
-      <EquippedCosmetics characterRoot={scene} equipped={equipped} />
+      <VesselBody characterRoot={scene} body={vessel} color={colorRef.current} />
+      <EquippedCosmetics characterRoot={scene} equipped={equipped} body={vessel} />
     </group>
   );
 }

@@ -10,7 +10,7 @@
 import { TransformControls } from "@react-three/drei";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { docStore, snap, useEditor } from "../state/docStore";
+import { docStore, snap, useEditorSlice } from "../state/docStore";
 
 /** Positions captured when a drag starts, so movement is absolute not cumulative. */
 type DragStart = {
@@ -21,7 +21,9 @@ type DragStart = {
 };
 
 export function GroupGizmo() {
-  const { doc, selectedIds, gridSnap } = useEditor();
+  const doc = useEditorSlice((s) => s.doc);
+  const selectedIds = useEditorSlice((s) => s.selectedIds);
+  const gridSnap = useEditorSlice((s) => s.gridSnap);
   const [proxy, setProxy] = useState<THREE.Group | null>(null);
   const drag = useRef<DragStart | null>(null);
 

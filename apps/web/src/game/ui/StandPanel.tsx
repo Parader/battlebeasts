@@ -1,26 +1,29 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Room } from "colyseus.js";
 import {
+  COSMETIC_AURAS,
   COSMETIC_COLORS,
   COSMETIC_PATTERN_COLORS,
-  COSMETIC_PATTERNS,
   COSMETIC_SLOTS,
   COSMETIC_SLOT_LABELS,
+  DEFAULT_COSMETIC_BODY,
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
   EMOTES,
   SPELL_SLOTS,
-  canEquipInSlot,
+  slotIndexForAbility,
   cosmeticsEquippedFromFields,
   cosmeticsForSlot,
   cosmeticColorName,
-  cosmeticMeshName,
   cosmeticPatternColorName,
   emptyPlayerUnlocks,
   getCosmeticItem,
+  punchAuraInk,
+  hideTintSwatchStyle,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   normalizeCosmeticsEquipped,
+  normalizeCosmeticBody,
   normalizeEmoteSlots,
   normalizeFlexLoadout,
   flexSlotShopItemId,
@@ -32,12 +35,14 @@ import {
   ownsPattern,
   ownsPatternColor,
   type CosmeticSlot,
+  type CosmeticBodyId,
   type CosmeticsEquipped,
   type FlexLoadout,
   type PlayerUnlocks,
   type TalentBuild,
 } from "@battlebeasts/shared";
 import { AppearancePreview } from "./AppearancePreview";
+import { AuraSwatch } from "./AuraSwatch";
 import { EmotePieEditor } from "./EmotePieHud";
 import { GameIcon } from "./GameIcon";
 import { GEAR_SLOT_ICONS } from "./gameIcons";
@@ -48,7 +53,6 @@ import { WalletDisplay } from "./CoinDisplay";
 import { SpellArmoury, SpellArmouryHeaderExtras } from "./SpellArmoury";
 import { TalentTreePanel } from "./TalentTreePanel";
 import { loadStandMenuMemory, saveStandMenuMemory } from "../standMenuMemory";
-import { getCreaturePatternTexture } from "../creaturePatterns";
 
 type Kind = "customization" | "build" | "talent" | "shop";
 
@@ -92,36 +96,6 @@ const TITLES: Record<Kind, string> = {
   shop: "Merchant",
 };
 
-function PatternSwatch({
-  patternId,
-  patternColor,
-}: {
-  patternId: string;
-  patternColor: string;
-}) {
-  const url = useMemo(() => {
-    if (patternId === "plain") return null;
-    const tex = getCreaturePatternTexture(patternId, patternColor, "#d1d5db");
-    const img = tex?.image as HTMLCanvasElement | undefined;
-    return img?.toDataURL?.() ?? null;
-  }, [patternId, patternColor]);
-
-  if (!url) {
-    return (
-      <span
-        className="block size-full rounded-[2px]"
-        style={{ background: "linear-gradient(135deg,#e5e7eb,#9ca3af)" }}
-      />
-    );
-  }
-  return (
-    <span
-      className="block size-full rounded-[2px] bg-cover bg-center"
-      style={{ backgroundImage: `url(${url})` }}
-    />
-  );
-}
-
 function AppearanceEditor({
   room,
   localSessionId,
@@ -135,6 +109,7 @@ function AppearanceEditor({
     color?: string;
     pattern?: string;
     patternColor?: string;
+    vessel?: string;
     cosmeticHat?: string;
     cosmeticShoulders?: string;
     cosmeticChest?: string;
@@ -157,6 +132,9 @@ function AppearanceEditor({
   const [patternColor, setPatternColor] = useState(
     normalizeCosmeticPatternColor(me?.patternColor ?? DEFAULT_COSMETIC_PATTERN_COLOR),
   );
+  const [body, setBody] = useState<CosmeticBodyId>(() =>
+    normalizeCosmeticBody(me?.vessel ?? DEFAULT_COSMETIC_BODY),
+  );
   const [gearSlot, setGearSlot] = useState<CosmeticSlot>("hat");
   const [equipped, setEquipped] = useState<CosmeticsEquipped>(() =>
     cosmeticsEquippedFromFields(me ?? {}),
@@ -173,11 +151,13 @@ function AppearanceEditor({
     }
     if (me?.pattern) setPattern(normalizeCosmeticPattern(me.pattern));
     if (me?.patternColor) setPatternColor(normalizeCosmeticPatternColor(me.patternColor));
+    if (me?.vessel) setBody(normalizeCosmeticBody(me.vessel));
     setEquipped(cosmeticsEquippedFromFields(me ?? {}));
   }, [
     me?.color,
     me?.pattern,
     me?.patternColor,
+    me?.vessel,
     me?.cosmeticHat,
     me?.cosmeticShoulders,
     me?.cosmeticChest,
@@ -191,7 +171,7 @@ function AppearanceEditor({
     setEmoteSlots(normalizeEmoteSlots(unlocks.emoteSlots, unlocks.emotes));
   }, [unlocks.emoteSlots, unlocks.emotes]);
 
-  const allSlotPool = useMemo(() => cosmeticsForSlot(gearSlot), [gearSlot]);
+  const allSlotPool = useMemo(() => cosmeticsForSlot(gearSlot, body), [gearSlot, body]);
   const ownedSlotPool = useMemo(
     () => allSlotPool.filter((item) => ownsCosmetic(unlocks.cosmetics, item.id)),
     [allSlotPool, unlocks.cosmetics],
@@ -204,8 +184,8 @@ function AppearanceEditor({
     () => COSMETIC_PATTERN_COLORS.filter((c) => ownsPatternColor(unlocks.patternColors, c)),
     [unlocks.patternColors],
   );
-  const ownedPatterns = useMemo(
-    () => COSMETIC_PATTERNS.filter((p) => ownsPattern(unlocks.patterns, p.id)),
+  const ownedAuras = useMemo(
+    () => COSMETIC_AURAS.filter((p) => ownsPattern(unlocks.patterns, p.id)),
     [unlocks.patterns],
   );
 
@@ -322,7 +302,7 @@ function AppearanceEditor({
                       className={["bb-appearance-swatch", on ? "bb-appearance-swatch--on" : ""].join(
                         " ",
                       )}
-                      style={{ backgroundColor: c }}
+                      style={hideTintSwatchStyle(c)}
                       title={cosmeticColorName(c)}
                       onClick={() => {
                         setColor(c);
@@ -337,39 +317,10 @@ function AppearanceEditor({
             </div>
 
             <div>
-              <p className="bb-section-label">Pattern color</p>
-              <div className="bb-appearance-swatches">
-                {ownedPatternColors.map((c) => {
-                  const on = c === patternColor;
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      className={["bb-appearance-swatch", on ? "bb-appearance-swatch--on" : ""].join(
-                        " ",
-                      )}
-                      style={{ backgroundColor: c }}
-                      title={cosmeticPatternColorName(c)}
-                      onClick={() => {
-                        setPatternColor(c);
-                        room?.send("set_pattern_color", { patternColor: c });
-                      }}
-                      aria-label={`Pattern color ${cosmeticPatternColorName(c)}`}
-                      aria-pressed={on}
-                      disabled={pattern === "plain"}
-                    />
-                  );
-                })}
-              </div>
-              {pattern === "plain" ? (
-                <p className="bb-meta mt-2">Pick a pattern first — plain hide has no markings.</p>
-              ) : null}
-            </div>
-
-            <div>
-              <p className="bb-section-label">Creature pattern</p>
+              <p className="bb-section-label">Vessel aura</p>
+              <p className="bb-meta -mt-1 mb-2">Motion — fire rises, frost falls. Color comes from ink.</p>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {ownedPatterns.map((p) => {
+                {ownedAuras.map((p) => {
                   const on = p.id === pattern;
                   return (
                     <button
@@ -382,8 +333,8 @@ function AppearanceEditor({
                       }}
                       aria-pressed={on}
                     >
-                      <span className="mb-1.5 block h-7 w-full overflow-hidden rounded-[2px] ring-1 ring-black/20">
-                        <PatternSwatch patternId={p.id} patternColor={patternColor} />
+                      <span className="mb-1.5 block h-11 w-full overflow-hidden rounded-[2px] ring-1 ring-black/20">
+                        <AuraSwatch auraId={p.id} auraColor={patternColor} />
                       </span>
                       <span
                         className="block text-sm font-semibold"
@@ -396,6 +347,38 @@ function AppearanceEditor({
                   );
                 })}
               </div>
+            </div>
+
+            <div>
+              <p className="bb-section-label">Aura ink</p>
+              <p className="bb-meta -mt-1 mb-2">The color of that aura. Ember + chalk is pale fire; Ember + maroon is dark fire.</p>
+              <div className="bb-appearance-swatches">
+                {ownedPatternColors.map((c) => {
+                  const on = c === patternColor;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      className={[
+                        "bb-appearance-swatch bb-appearance-swatch--ink",
+                        on ? "bb-appearance-swatch--on" : "",
+                      ].join(" ")}
+                      style={{ backgroundColor: punchAuraInk(c), boxShadow: on ? `0 0 12px ${punchAuraInk(c)}` : undefined }}
+                      title={cosmeticPatternColorName(c)}
+                      onClick={() => {
+                        setPatternColor(c);
+                        room?.send("set_pattern_color", { patternColor: c });
+                      }}
+                      aria-label={`Aura ink ${cosmeticPatternColorName(c)}`}
+                      aria-pressed={on}
+                      disabled={pattern === "plain"}
+                    />
+                  );
+                })}
+              </div>
+              {pattern === "plain" ? (
+                <p className="bb-meta mt-2">Pick Ember, Frost, Venom, Void, or Gold first — Bound has nothing to dye.</p>
+              ) : null}
             </div>
           </div>
         ) : tab === "gear" ? (
@@ -470,11 +453,10 @@ function AppearanceEditor({
                             <div className="bb-loadout-card__main">
                               <div className="bb-loadout-card__top">
                                 <span className="bb-loadout-card__name">{item.name}</span>
-                                <span className="bb-loadout-card__shape">{item.slot}</span>
+                                <span className="bb-loadout-card__shape">
+                                  {COSMETIC_SLOT_LABELS[item.slot]}
+                                </span>
                               </div>
-                              <p className="bb-loadout-card__desc">
-                                Object <code>{cosmeticMeshName(item)}</code> in hero.glb
-                              </p>
                             </div>
                             <span className="bb-loadout-card__action">
                               {on ? "Equipped" : "Equip"}
@@ -550,6 +532,7 @@ function AppearanceEditor({
           color={color}
           pattern={pattern}
           patternColor={patternColor}
+          body={body}
           cosmeticsEquipped={equipped}
           previewEmoteId={tab === "emotes" ? previewEmoteId : null}
         />
@@ -575,7 +558,6 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
   // two: editing a flex slot has to replace the pool, so both cannot be live.
   const [selectedFlex, setSelectedFlex] = useState<number | null>(null);
   const [hideOwnedShopItems, setHideOwnedShopItems] = useState(false);
-  const [talentHeaderActions, setTalentHeaderActions] = useState<ReactNode>(null);
   const [unlockConfirm, setUnlockConfirm] = useState<{
     abilityId: string;
     name: string;
@@ -602,7 +584,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
 
   const assignFlex = (abilityId: string | null) => {
     if (selectedFlex === null) return;
-    if (abilityId && !ownsAbility(unlocks.abilities, abilityId)) return;
+    if (abilityId && !ownsAbility(unlocks.abilities, abilityId, economy.talentBuild)) return;
     const next = [...draftFlex];
     next[selectedFlex] = abilityId;
     const cleaned = normalizeFlexLoadout(next);
@@ -611,14 +593,24 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
   };
 
   const assignAbility = (abilityId: string) => {
-    const slot = SPELL_SLOTS[selectedSlot];
-    if (!slot || !canEquipInSlot(abilityId, slot.id)) return;
-    if (!ownsAbility(unlocks.abilities, abilityId)) return;
-    if (draftLoadout[selectedSlot] === abilityId) return;
+    const index = slotIndexForAbility(abilityId, selectedSlot);
+    if (index < 0) return;
+    if (!ownsAbility(unlocks.abilities, abilityId, economy.talentBuild)) return;
+    if (draftLoadout[index] === abilityId) {
+      if (index !== selectedSlot) {
+        setSelectedSlot(index);
+        saveStandMenuMemory({ spellSlot: index });
+      }
+      return;
+    }
     const next = [...draftLoadout];
-    next[selectedSlot] = abilityId;
+    next[index] = abilityId;
     const cleaned = normalizeLoadout(next);
     setDraftLoadout(cleaned);
+    if (index !== selectedSlot) {
+      setSelectedSlot(index);
+      saveStandMenuMemory({ spellSlot: index });
+    }
     onLoadoutChange?.(cleaned);
     room?.send("set_loadout", { abilityIds: cleaned });
   };
@@ -661,9 +653,23 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
         onSelectFlex={setSelectedFlex}
         onEquipFlex={assignFlex}
         onRequestFlexSlotUnlock={(toCount, cost) => setFlexSlotConfirm({ toCount, cost })}
-        onRequestUnlock={(abilityId, name, cost) =>
-          setUnlockConfirm({ abilityId, name, cost })
-        }
+        onRequestUnlock={(abilityId, name, cost) => {
+          if (cost <= 0) {
+            room?.send("unlock_ability", { abilityId });
+            const index = slotIndexForAbility(abilityId, selectedSlot);
+            if (index >= 0) {
+              setSelectedSlot(index);
+              saveStandMenuMemory({ spellSlot: index });
+              if (!draftLoadout[index]) {
+                const next = [...draftLoadout];
+                next[index] = abilityId;
+                setDraftLoadout(normalizeLoadout(next));
+              }
+            }
+            return;
+          }
+          setUnlockConfirm({ abilityId, name, cost });
+        }}
         unlocks={unlocks}
         essence={economy.essence}
         talentIds={economy.talents}
@@ -681,7 +687,6 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
         activeLoadoutSlot={economy.activeLoadoutSlot}
         loadoutSlotCount={unlocks.loadoutSlotCount}
         onSelectPreset={selectPreset}
-        onHeaderActions={setTalentHeaderActions}
       />
     );
   } else if (kind === "shop") {
@@ -744,17 +749,11 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
       />
       <GamePanelShell
       title={TITLES[kind]}
-      subtitle={kind === "build" ? undefined : <WalletDisplay wallet={economy} />}
+      subtitle={kind === "build" || kind === "talent" ? undefined : <WalletDisplay wallet={economy} />}
       onClose={onClose}
-      floatingHeader={kind === "build"}
+      floatingHeader={kind === "build" || kind === "talent"}
       fullBleed={kind === "talent"}
-      titleAside={
-        kind === "talent"
-          ? talentHeaderActions
-          : kind === "build"
-            ? armouryHeader?.titleAside
-            : undefined
-      }
+      titleAside={kind === "build" ? armouryHeader?.titleAside : undefined}
       headerActions={
         kind === "shop" ? (
           <label className="bb-shop__hide-owned">
@@ -788,7 +787,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
           ? undefined
           : kind === "build"
             ? "h-[min(88dvh,52rem)] max-h-[min(88dvh,52rem)]"
-            : kind === "customization"
+            : kind === "customization" || kind === "shop"
               ? "h-[min(94dvh,58rem)] max-h-[min(94dvh,58rem)]"
               : "max-h-[min(92dvh,54rem)]"
       }

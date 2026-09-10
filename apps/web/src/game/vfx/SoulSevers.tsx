@@ -70,6 +70,16 @@ function SoulSeverInstance({ room, id }: { room: Room; id: string }) {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      mats.pillar.dispose();
+      mats.cross.dispose();
+      mats.ground.dispose();
+      mats.thread.dispose();
+      for (const d of mats.drips) d.dispose();
+    };
+  }, [mats]);
+
   useFrame(() => {
     const sever = room.state?.soulSevers?.get(id) as SeverNet | undefined;
     const eg = echo.current;

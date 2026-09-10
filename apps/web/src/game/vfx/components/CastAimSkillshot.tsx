@@ -8,7 +8,10 @@ import {
   tintCastAimSkillshotMaterial,
 } from "../materials/castAimSkillshot";
 
+import { registerSharedGeometry } from "../vfxDisposal";
+
 const sharedGeo = new THREE.PlaneGeometry(1, 1);
+registerSharedGeometry(sharedGeo);
 
 /**
  * Fixed-length direction skillshot (fireball / bolt) — shaft, chevrons, arrow tip.

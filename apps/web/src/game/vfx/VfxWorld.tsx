@@ -1,11 +1,23 @@
-import { useEffect, useState, type MutableRefObject } from "react";
+import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
+import * as THREE from "three";
 import { renderOneShot } from "./catalog";
 import { vfxRuntime } from "./runtime";
 import type { OneShotEffect } from "./types";
 import { PortalLandingTelegraph } from "./effects/portalChannel";
 import { CastAimTelegraph } from "./CastAimTelegraph";
+import { disposeVfxHierarchy } from "./vfxDisposal";
+
+function VfxOneShotContainer({ children }: { children: ReactNode }) {
+  const rootRef = useRef<THREE.Group>(null);
+  useEffect(() => {
+    return () => {
+      disposeVfxHierarchy(rootRef.current);
+    };
+  }, []);
+  return <group ref={rootRef}>{children}</group>;
+}
 
 type Props = {
   room: Room | null;
@@ -31,7 +43,15 @@ export function VfxWorld({ room, localSessionId, predictedRef }: Props) {
 
   return (
     <>
-      {shots.map((shot) => renderOneShot(shot, ctx))}
+      {shots.map((shot) => {
+        const node = renderOneShot(shot, ctx);
+        if (!node) return null;
+        return (
+          <VfxOneShotContainer key={shot.key}>
+            {node}
+          </VfxOneShotContainer>
+        );
+      })}
       {room && localSessionId && predictedRef ? (
         <>
           <CastAimTelegraph

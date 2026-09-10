@@ -251,6 +251,9 @@ export const RANKED_LP_MODE_MUL: Readonly<Record<string, number>> = {
   arena_2v2: 0.85,
   arena_3v3: 1,
   battleground: 1.1,
+  bg_ctf: 1.1,
+  bg_koth: 1.1,
+  bg_domination: 1.1,
 };
 
 export function rankedLpModeMultiplier(mode: string | undefined | null): number {

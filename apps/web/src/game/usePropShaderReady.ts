@@ -6,7 +6,7 @@ import {
 } from "./propShaderReady";
 
 /**
- * True after hub prop materials are shader-compiled on the loading gate.
+ * True after the live map (hub, desert, cemetery) is shader-compiled on the loading gate.
  * Does not reset on mount — {@link HubPropShaderWarmup} / play-screen own
  * that lifecycle (same pattern as {@link useVfxGpuReady}).
  */

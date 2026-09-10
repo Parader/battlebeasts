@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { docStore, useEditor } from "../state/docStore";
+import { memo, useEffect, useMemo, useState } from "react";
+import { docStore, useEditorSlice } from "../state/docStore";
 import { CATEGORY_LABELS, CATEGORY_ORDER, categorize } from "./categories";
 import { propDisplayName, searchProps, usePropIndex, type PropEntry } from "./manifest";
 import { colliderOverrides } from "./overrides";
@@ -37,9 +37,10 @@ type Tree = Array<{
   families: Array<{ key: string; family: PropEntry[] }>;
 }>;
 
-export function Palette() {
+export const Palette = memo(function Palette() {
   const { index, error } = usePropIndex();
-  const { brushProp, tool } = useEditor();
+  const brushProp = useEditorSlice((s) => s.brushProp);
+  const tool = useEditorSlice((s) => s.tool);
   const marksVersion = useUnusableVersion();
   const [query, setQuery] = useState("");
   const [biome, setBiome] = useState<string | null>(null);
@@ -331,4 +332,4 @@ export function Palette() {
       </div>
     </>
   );
-}
+});

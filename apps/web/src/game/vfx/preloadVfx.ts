@@ -7,7 +7,10 @@ import {
   acquireEnergyRingMaterial,
 } from "./materials/energyBall";
 import { createLightningBoltMaterial } from "./materials/lightningBolt";
-import { createCirclePointMaterial } from "./materials/circlePoint";
+import { createCirclePointMaterial, createSmokePointMaterial } from "./materials/circlePoint";
+import { createWorldTreeGroundMaterial } from "./materials/worldTreeGround";
+import { createAscendantColumnMaterial } from "./materials/ascendantColumn";
+import { warmPickupFumeMaterials } from "./pickupCollectFumes";
 import { createRuneMaterial } from "./materials/rune";
 import { createAoeRimMarkerMaterial } from "./materials/aoeRimMarker";
 import { createCastAimSkillshotMaterial } from "./materials/castAimSkillshot";
@@ -18,6 +21,8 @@ import { createHandShieldMaterial } from "./materials/handShield";
 import { createRiftArmRingMaterial } from "./effects/riftArmRing";
 import { createCooldownRingMaterial } from "./SpiritHusks";
 import { getSharedFireMaterial } from "./components/FireParticleField";
+import { warmAuraWispMaterials } from "./auraWispTextures";
+import { createAuraEyeMaterial } from "./auraEyesTexture";
 import { createLavaStripMaterial, getLavaTexture } from "./components/LavaGroundStrip";
 import { getChainTexture } from "./materials/chainTexture";
 import { getSmokeTexture } from "./smokeTexture";
@@ -71,7 +76,9 @@ export function warmSpellMaterials(
 
   const group = new THREE.Group();
   group.name = "VfxWarmup";
-  group.visible = false;
+  // Must stay visible through gl.compile — Three skips invisible objects.
+  // Parked below the map so gameplay cameras never see it.
+  group.visible = true;
   group.position.set(0, -500, 0);
 
   const plane = new THREE.PlaneGeometry(0.2, 0.2);
@@ -209,6 +216,13 @@ export function warmSpellMaterials(
   particleGeo.setAttribute("aSize", new THREE.BufferAttribute(new Float32Array([1]), 1));
   particleGeo.setAttribute("aAlpha", new THREE.BufferAttribute(new Float32Array([1]), 1));
   group.add(new THREE.Points(particleGeo, particleMat));
+  const smokePointMat = createSmokePointMaterial("#100914");
+  toDispose.push(smokePointMat);
+  group.add(new THREE.Points(particleGeo, smokePointMat));
+  for (const pickupFume of warmPickupFumeMaterials()) {
+    skipDispose.add(pickupFume);
+    group.add(new THREE.Points(particleGeo, pickupFume));
+  }
 
   // Firewall / volcano / fireball — shared fire program with real texture (do not dispose).
   const fireMat = getSharedFireMaterial();
@@ -220,6 +234,13 @@ export function warmSpellMaterials(
   fireGeo.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array([1, 1, 1, 1]), 4));
   fireGeo.setAttribute("aAngle", new THREE.BufferAttribute(new Float32Array([0]), 1));
   group.add(new THREE.Points(fireGeo, fireMat));
+  for (const auraMat of warmAuraWispMaterials()) {
+    skipDispose.add(auraMat);
+    group.add(new THREE.Points(fireGeo, auraMat));
+  }
+  const auraEyeMat = createAuraEyeMaterial();
+  skipDispose.add(auraEyeMat);
+  group.add(new THREE.Mesh(plane, auraEyeMat));
 
   /*
    * Programs reached by hits, buffs and status rings rather than by casting.
@@ -232,18 +253,61 @@ export function warmSpellMaterials(
   addMesh(createHandShieldMaterial());
   addMesh(createRiftArmRingMaterial());
   addMesh(createCooldownRingMaterial("#ddd6fe", "#4c1d95"));
+  addMesh(createWorldTreeGroundMaterial());
+  addMesh(createAscendantColumnMaterial());
+  // q/r/f MeshBasic telegraphs (additive + normal, both DoubleSide).
+  addMesh(
+    new THREE.MeshBasicMaterial({
+      color: "#fde68a",
+      transparent: true,
+      opacity: 0.01,
+      depthWrite: false,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  addMesh(
+    new THREE.MeshBasicMaterial({
+      color: "#241033",
+      transparent: true,
+      opacity: 0.01,
+      depthWrite: false,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+      blending: THREE.NormalBlending,
+    }),
+  );
+  // Counter / spirit second-skin (skinned MeshBasic, fog off).
+  addMesh(
+    new THREE.MeshBasicMaterial({
+      color: "#f5c542",
+      transparent: true,
+      opacity: 0.01,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+      side: THREE.FrontSide,
+      fog: false,
+    }),
+  );
 
   // Firewall corridor — same program regardless of strip length.
   addMesh(createLavaStripMaterial());
 
   // Chain-jump link + spike bark share one lit program under the scene lights.
-  addMesh(
-    new THREE.MeshStandardMaterial({
-      color: "#9ca3af",
-      roughness: 0.4,
-      metalness: 0.8,
-    }),
-  );
+  const chainLinkMat = new THREE.MeshStandardMaterial({
+    color: "#9ca3af",
+    roughness: 0.4,
+    metalness: 0.8,
+  });
+  toDispose.push(chainLinkMat);
+  group.add(new THREE.Mesh(plane, chainLinkMat));
+  const chainInst = new THREE.InstancedMesh(plane, chainLinkMat, 2);
+  chainInst.setMatrixAt(0, new THREE.Matrix4());
+  chainInst.setMatrixAt(1, new THREE.Matrix4());
+  chainInst.instanceMatrix.needsUpdate = true;
+  group.add(chainInst);
 
   // Touch lava / smoke / chain maps so GPU uploads before first cast.
   const lava = getLavaTexture();
@@ -276,6 +340,22 @@ export function warmSpellMaterials(
       depthWrite: false,
     }),
   );
+  // Rock wall / shroom: mapped PBR with fog off (arena fog would slab them).
+  addMesh(
+    new THREE.MeshStandardMaterial({
+      color: "#888888",
+      map: smoke,
+      fog: false,
+      roughness: 0.85,
+      metalness: 0.05,
+      emissive: new THREE.Color(0.04, 0.038, 0.035),
+      emissiveIntensity: 0.35,
+    }),
+  );
+  const pickupSmoke = createSmokePointMaterial("#86efac");
+  if (pickupSmoke.uniforms.uMap) pickupSmoke.uniforms.uMap.value = smoke;
+  toDispose.push(pickupSmoke);
+  group.add(new THREE.Points(particleGeo, pickupSmoke));
 
   scene.add(group);
 
@@ -297,6 +377,7 @@ export function warmSpellMaterials(
   const probe = new THREE.WebGLRenderTarget(1, 1);
   const previousTarget = gl.getRenderTarget();
   try {
+    group.visible = true;
     gl.setRenderTarget(probe);
     gl.compile(scene, camera);
     // And the direct-to-canvas variant, for any path that bypasses post.
@@ -305,10 +386,11 @@ export function warmSpellMaterials(
   } catch {
     // Best-effort — leave group parented so a partial warm still sticks.
   } finally {
+    group.visible = false;
     gl.setRenderTarget(previousTarget);
     probe.dispose();
   }
-  // Keep hidden group in the live scene so compiled programs stay resident.
+  // Keep the group parented (hidden) so compiled programs stay resident.
   activeWarm = {
     group,
     disposables: toDispose,

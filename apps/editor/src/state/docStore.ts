@@ -5,7 +5,7 @@ import {
   type MapDoc,
   type MapElementParams,
 } from "@battlebeasts/shared";
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import type { StickyCollider } from "../props/collider";
 import { DEFAULT_BRUSH, type BrushSettings } from "./terrain";
 
@@ -211,7 +211,16 @@ class DocStore {
     this.lastCoalesceKey = coalesce ?? null;
     this.lastCoalesceAt = now;
 
-    const next = structuredClone(this.state.doc);
+    /*
+     * Working copy is a shallow entity clone, not structuredClone.
+     *
+     * A gizmo frame used to deep-clone the whole document (undo snapshot +
+     * next state). On a dressed map that is tens of kilobytes of allocation
+     * every pointermove, and every prop became a new object so React
+     * remounted the lot. Undo still needs a true snapshot; the live edit
+     * only needs new array/object identities so subscribers can see it.
+     */
+    const next = cloneWorkingDoc(this.state.doc);
     recipe(next);
     this.state.doc = next;
     this.state.dirty = true;
@@ -286,8 +295,50 @@ class DocStore {
 
 export const docStore = new DocStore();
 
+/** Shallow-clone entities so React sees new identities without walking the whole tree. */
+function cloneWorkingDoc(doc: MapDoc): MapDoc {
+  return {
+    ...doc,
+    ground: { ...doc.ground },
+    env: { ...doc.env },
+    props: doc.props.map((p) => ({ ...p })),
+    walls: doc.walls.map((w) => ({ ...w, points: w.points.map((pt) => [pt[0], pt[1]] as [number, number]) })),
+    elements: doc.elements.map((e) => ({
+      ...e,
+      params: { ...e.params },
+      shape: e.shape ? { ...e.shape } : e.shape,
+    })),
+    suppressedWarnings: doc.suppressedWarnings?.slice(),
+  };
+}
+
 export function useEditor(): EditorState {
   return useSyncExternalStore(docStore.subscribe, docStore.getSnapshot);
+}
+
+/**
+ * Subscribe to a slice of editor state.
+ *
+ * The full store emits on every hover, gizmo frame and tool click. Panels
+ * that only need `tool` or `brushProp` must not rebuild a 3800-row palette
+ * because the wall cursor moved.
+ */
+export function useEditorSlice<T>(
+  selector: (s: EditorState) => T,
+  isEqual: (a: T, b: T) => boolean = Object.is,
+): T {
+  const selRef = useRef(selector);
+  selRef.current = selector;
+  const eqRef = useRef(isEqual);
+  eqRef.current = isEqual;
+  const cached = useRef(selector(docStore.getSnapshot()));
+
+  return useSyncExternalStore(docStore.subscribe, () => {
+    const next = selRef.current(docStore.getSnapshot());
+    if (eqRef.current(cached.current, next)) return cached.current;
+    cached.current = next;
+    return next;
+  });
 }
 
 /** Monotonic ids scoped per document prefix, e.g. `p`, `w`, `e`. */

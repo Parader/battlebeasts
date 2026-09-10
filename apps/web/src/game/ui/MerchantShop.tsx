@@ -3,13 +3,16 @@ import { Room } from "colyseus.js";
 import {
   COSMETIC_SLOTS,
   COSMETIC_SLOT_LABELS,
+  DEFAULT_COSMETIC_BODY,
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
   SHOP_CATEGORY_LABELS,
   SHOP_UI_CATEGORIES,
   canAffordShopCost,
   cosmeticsEquippedFromFields,
+  cosmeticFitsBody,
   getCosmeticItem,
+  normalizeCosmeticBody,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   normalizeCosmeticsEquipped,
@@ -97,6 +100,7 @@ export type AppearanceLooks = {
   color: string;
   pattern: string;
   patternColor: string;
+  body: string;
   cosmeticsEquipped: CosmeticsEquipped;
 };
 
@@ -104,6 +108,7 @@ export function appearanceFromPlayer(me: {
   color?: string;
   pattern?: string;
   patternColor?: string;
+  vessel?: string;
   cosmeticHat?: string;
   cosmeticShoulders?: string;
   cosmeticChest?: string;
@@ -118,6 +123,7 @@ export function appearanceFromPlayer(me: {
     patternColor: normalizeCosmeticPatternColor(
       me?.patternColor ?? DEFAULT_COSMETIC_PATTERN_COLOR,
     ),
+    body: normalizeCosmeticBody(me?.vessel ?? DEFAULT_COSMETIC_BODY),
     cosmeticsEquipped: cosmeticsEquippedFromFields(me ?? {}),
   };
 }
@@ -126,6 +132,7 @@ export function appearanceFromPlayer(me: {
 function previewLooksFromBase(
   base: AppearanceLooks,
   item: ShopItemDef | null,
+  owned = false,
 ): AppearanceLooks {
   if (!item) return base;
   const cosmeticsEquipped = { ...normalizeCosmeticsEquipped(base.cosmeticsEquipped) };
@@ -137,12 +144,13 @@ function previewLooksFromBase(
     return { ...base, pattern: grant.patternId, cosmeticsEquipped };
   }
   if (grant.kind === "pattern_color") {
-    const pattern = base.pattern === "plain" ? "scales" : base.pattern;
+    const pattern = base.pattern === "plain" ? "ember" : base.pattern;
     return { ...base, pattern, patternColor: grant.hex, cosmeticsEquipped };
   }
   if (grant.kind === "cosmetic") {
     const def = getCosmeticItem(grant.itemId);
-    if (def) cosmeticsEquipped[def.slot] = def.id;
+    // Owned gear follows Equip/Unequip. Try-on only for pieces you don't own yet.
+    if (def && !owned) cosmeticsEquipped[def.slot] = def.id;
     return { ...base, cosmeticsEquipped };
   }
   return { ...base, cosmeticsEquipped };
@@ -160,7 +168,7 @@ function isShopItemEquipped(
     case "pattern":
       return looks.pattern === grant.patternId;
     case "pattern_color":
-      return looks.pattern !== "plain" && looks.patternColor === grant.hex;
+      return looks.patternColor === grant.hex;
     case "cosmetic": {
       const def = getCosmeticItem(grant.itemId);
       return Boolean(def && looks.cosmeticsEquipped[def.slot] === def.id);
@@ -172,24 +180,28 @@ function isShopItemEquipped(
   }
 }
 
-function canEquipShopItem(item: ShopItemDef): boolean {
+function canEquipShopItem(item: ShopItemDef, looks: AppearanceLooks): boolean {
   const kind = item.grant.kind;
+  if (kind === "cosmetic") {
+    const def = getCosmeticItem(item.grant.itemId);
+    if (!def) return false;
+    return cosmeticFitsBody(def, normalizeCosmeticBody(looks.body));
+  }
   return (
     kind === "color" ||
     kind === "pattern" ||
     kind === "pattern_color" ||
-    kind === "cosmetic" ||
     kind === "emote"
   );
 }
 
-type CosmeticSub = null | "tints" | "inks" | "patterns" | "gear" | CosmeticSlot;
+type CosmeticSub = null | "tints" | "inks" | "auras" | "gear" | CosmeticSlot;
 
 function cosmeticSubItems(sub: Exclude<CosmeticSub, null>): ShopItemDef[] {
   const all = shopItemsForCategory("cosmetics");
   if (sub === "tints") return all.filter((i) => i.grant.kind === "color");
   if (sub === "inks") return all.filter((i) => i.grant.kind === "pattern_color");
-  if (sub === "patterns") return all.filter((i) => i.grant.kind === "pattern");
+  if (sub === "auras") return all.filter((i) => i.grant.kind === "pattern");
   if (sub === "gear") return all.filter((i) => i.grant.kind === "cosmetic");
   return all.filter(
     (i) => i.grant.kind === "cosmetic" && getCosmeticItem(i.grant.itemId)?.slot === sub,
@@ -236,6 +248,7 @@ export function MerchantPanel({
     appearanceBase.color,
     appearanceBase.pattern,
     appearanceBase.patternColor,
+    appearanceBase.body,
     appearanceBase.cosmeticsEquipped.hat,
     appearanceBase.cosmeticsEquipped.shoulders,
     appearanceBase.cosmeticsEquipped.chest,
@@ -263,6 +276,7 @@ export function MerchantPanel({
                     color?: string;
                     pattern?: string;
                     patternColor?: string;
+                    vessel?: string;
                     cosmeticHat?: string;
                     cosmeticShoulders?: string;
                     cosmeticChest?: string;
@@ -361,10 +375,12 @@ export function MerchantPanel({
     [browseItems, selectedId],
   );
 
-  const previewLooks = useMemo(
-    () => previewLooksFromBase(liveLooks, selectedItem),
-    [liveLooks, selectedItem],
-  );
+  const previewLooks = useMemo(() => {
+    const owned = selectedItem
+      ? ownsShopItem(unlocks, selectedItem, beachBallCount)
+      : false;
+    return previewLooksFromBase(liveLooks, selectedItem, owned);
+  }, [liveLooks, selectedItem, unlocks, beachBallCount]);
   const previewEmoteId =
     selectedItem?.grant.kind === "emote" ? selectedItem.grant.emoteId : null;
 
@@ -390,7 +406,7 @@ export function MerchantPanel({
     canAffordShopCost(wallet, selectedItem.cost);
   const selectedEquipped =
     selectedItem != null && isShopItemEquipped(selectedItem, liveLooks, emoteSlots);
-  const selectedCanEquip = selectedItem != null && canEquipShopItem(selectedItem);
+  const selectedCanEquip = selectedItem != null && canEquipShopItem(selectedItem, liveLooks);
   const gearSlotBrowse =
     category === "cosmetics" &&
     cosmeticSub != null &&
@@ -436,7 +452,7 @@ export function MerchantPanel({
   };
 
   const equipSelectedOwned = () => {
-    if (!selectedItem || !selectedOwned || !canEquipShopItem(selectedItem)) return;
+    if (!selectedItem || !selectedOwned || !canEquipShopItem(selectedItem, liveLooks)) return;
     const grant = selectedItem.grant;
 
     if (grant.kind === "cosmetic") {
@@ -486,10 +502,9 @@ export function MerchantPanel({
       if (liveLooks.pattern === "plain") {
         setLiveLooks((prev) => ({
           ...prev,
-          pattern: "scales",
           patternColor: grant.hex,
         }));
-        room?.send("set_pattern", { pattern: "scales", patternColor: grant.hex });
+        room?.send("set_pattern_color", { patternColor: grant.hex });
       } else {
         setLiveLooks((prev) => ({ ...prev, patternColor: grant.hex }));
         room?.send("set_pattern_color", { patternColor: grant.hex });
@@ -569,9 +584,9 @@ export function MerchantPanel({
               <div className="bb-shop__cat-grid">
                 {(
                   [
-                    ["tints", "Body Colors"],
-                    ["inks", "Pattern Inks"],
-                    ["patterns", "Patterns"],
+                    ["tints", "Hide (body)"],
+                    ["inks", "Ink (aura color)"],
+                    ["auras", "Auras (motion)"],
                     ["gear", "Gear"],
                   ] as const
                 ).map(([id, label]) => {
@@ -720,7 +735,7 @@ export function MerchantPanel({
                             ) : null}
                             {!owned && buyable ? (
                               <p className="bb-shop__card__hold-hint">Hold to buy</p>
-                            ) : owned && canEquipShopItem(item) && !equipped ? (
+                            ) : owned && canEquipShopItem(item, liveLooks) && !equipped ? (
                               <p className="bb-shop__card__hold-hint">Select to equip</p>
                             ) : null}
                           </div>
@@ -740,10 +755,11 @@ export function MerchantPanel({
               color={previewLooks.color}
               pattern={previewLooks.pattern}
               patternColor={previewLooks.patternColor}
+              body={previewLooks.body}
               cosmeticsEquipped={previewLooks.cosmeticsEquipped}
               previewEmoteId={previewEmoteId}
             />
-            <p className="bb-meta mt-2 text-center">
+            <p className="bb-shop__preview-caption bb-meta">
               {selectedItem
                 ? selectedItem.name
                 : inCosmeticOverview || inGearOverview

@@ -2,12 +2,13 @@ import { createClient } from "@supabase/supabase-js";
 import {
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
-  DEFAULT_LOADOUT,
+  EMPTY_LOADOUT,
   STARTER_COLORS,
   STARTER_TALENT_POINTS,
   STARTER_WALLET,
   cosmeticsEquippedToFields,
   normalizeCoins,
+  normalizeCosmeticBody,
   normalizeCosmeticsEquipped,
   normalizeLoadout,
   normalizePlayerUnlocks,
@@ -17,6 +18,7 @@ import {
   emptyPlayerUnlocks,
   normalizeFlexLoadout,
   EMPTY_FLEX_LOADOUT,
+  DEFAULT_COSMETIC_BODY,
   type FlexLoadout,
   type CosmeticsEquipped,
   type PlayerUnlocks,
@@ -48,6 +50,8 @@ export type EconomySnapshot = Wallet & {
   color?: string;
   pattern?: string;
   patternColor?: string;
+  vessel?: string;
+  vesselConfirmed?: boolean;
   cosmeticsEquipped?: CosmeticsEquipped;
   unlocks: PlayerUnlocks;
   loadoutPresets: LoadoutPresetRow[];
@@ -59,6 +63,8 @@ export type ProfileAppearance = {
   color?: string;
   pattern?: string;
   patternColor?: string;
+  vessel?: string;
+  vesselConfirmed?: boolean;
   cosmeticsEquipped?: CosmeticsEquipped;
 };
 
@@ -68,7 +74,7 @@ const DEFAULT_ECO: EconomySnapshot = {
   gold: 0,
   essence: 0,
   rubies: 0,
-  abilityIds: [...DEFAULT_LOADOUT],
+  abilityIds: [...EMPTY_LOADOUT],
   talentIds: [],
   talentPoints: STARTER_TALENT_POINTS,
   talentBuild: {},
@@ -78,7 +84,7 @@ const DEFAULT_ECO: EconomySnapshot = {
     {
       slotIndex: 0,
       name: "Loadout 1",
-      abilityIds: [...DEFAULT_LOADOUT],
+      abilityIds: [...EMPTY_LOADOUT],
       talentBuild: {},
       flexAbilityIds: [...EMPTY_FLEX_LOADOUT],
     },
@@ -107,7 +113,9 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
       .maybeSingle(),
     supabase
       .from("profiles")
-      .select("color, pattern, pattern_color, cosmetics_equipped, active_loadout_slot")
+      .select(
+        "color, pattern, pattern_color, cosmetics_equipped, active_loadout_slot, vessel, vessel_confirmed",
+      )
       .eq("id", userId)
       .maybeSingle(),
     supabase.from("player_unlocks").select("*").eq("user_id", userId).maybeSingle(),
@@ -134,7 +142,41 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     pattern_color?: string;
     cosmetics_equipped?: unknown;
     active_loadout_slot?: number;
+    vessel?: string;
+    vessel_confirmed?: boolean;
   } | null = profile.data ?? null;
+
+  if (profile.error && /vessel_confirmed/i.test(profile.error.message)) {
+    console.warn(
+      "[persistence] vessel_confirmed missing — run migration 20260910010000_profile_vessel_confirmed.sql",
+    );
+    const fallback = await supabase
+      .from("profiles")
+      .select("color, pattern, pattern_color, cosmetics_equipped, active_loadout_slot, vessel")
+      .eq("id", userId)
+      .maybeSingle();
+    if (!fallback.error) {
+      profileRow = fallback.data;
+    } else {
+      profile.error = fallback.error;
+    }
+  }
+
+  if (profile.error && /vessel/i.test(profile.error.message) && !/vessel_confirmed/i.test(profile.error.message)) {
+    console.warn(
+      "[persistence] vessel missing — run migration 20260910000000_profile_vessel.sql",
+    );
+    const fallback = await supabase
+      .from("profiles")
+      .select("color, pattern, pattern_color, cosmetics_equipped, active_loadout_slot")
+      .eq("id", userId)
+      .maybeSingle();
+    if (!fallback.error) {
+      profileRow = fallback.data;
+    } else if (/cosmetics_equipped|active_loadout_slot/i.test(fallback.error.message)) {
+      profile.error = fallback.error;
+    }
+  }
 
   if (profile.error && /cosmetics_equipped|active_loadout_slot/i.test(profile.error.message)) {
     const fallback = await supabase
@@ -299,6 +341,8 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     color: profileRow?.color ?? undefined,
     pattern: profileRow?.pattern ?? undefined,
     patternColor: profileRow?.pattern_color ?? undefined,
+    vessel: profileRow?.vessel ?? undefined,
+    vesselConfirmed: profileRow?.vessel_confirmed === true,
     cosmeticsEquipped,
     unlocks,
     loadoutPresets,
@@ -477,6 +521,8 @@ export async function saveProfileAppearance(
   if (appearance.color != null) patch.color = appearance.color;
   if (appearance.pattern != null) patch.pattern = appearance.pattern;
   if (appearance.patternColor != null) patch.pattern_color = appearance.patternColor;
+  if (appearance.vessel != null) patch.vessel = normalizeCosmeticBody(appearance.vessel);
+  if (appearance.vesselConfirmed != null) patch.vessel_confirmed = appearance.vesselConfirmed;
   if (appearance.cosmeticsEquipped != null) {
     patch.cosmetics_equipped = normalizeCosmeticsEquipped(appearance.cosmeticsEquipped);
   }
@@ -489,6 +535,26 @@ export async function saveProfileAppearance(
         "[persistence] cosmetics_equipped missing — run migration 20260726000000_profile_cosmetics_equipped.sql",
       );
       const { cosmetics_equipped: _drop, ...rest } = patch;
+      if (Object.keys(rest).length > 1) {
+        const retry = await supabase.from("profiles").update(rest).eq("id", userId);
+        if (!retry.error) return true;
+      }
+    }
+    if (appearance.vessel != null && /vessel/i.test(error.message)) {
+      console.warn(
+        "[persistence] vessel missing — run migration 20260910000000_profile_vessel.sql",
+      );
+      const { vessel: _drop, ...rest } = patch;
+      if (Object.keys(rest).length > 1) {
+        const retry = await supabase.from("profiles").update(rest).eq("id", userId);
+        if (!retry.error) return true;
+      }
+    }
+    if (appearance.vesselConfirmed != null && /vessel_confirmed/i.test(error.message)) {
+      console.warn(
+        "[persistence] vessel_confirmed missing — run migration 20260910010000_profile_vessel_confirmed.sql",
+      );
+      const { vessel_confirmed: _drop, ...rest } = patch;
       if (Object.keys(rest).length > 1) {
         const retry = await supabase.from("profiles").update(rest).eq("id", userId);
         if (!retry.error) return true;
@@ -509,6 +575,10 @@ export async function saveProfilePattern(userId: string, pattern: string): Promi
 
 export async function saveProfilePatternColor(userId: string, patternColor: string): Promise<boolean> {
   return saveProfileAppearance(userId, { patternColor });
+}
+
+export async function saveProfileVessel(userId: string, vessel: string): Promise<boolean> {
+  return saveProfileAppearance(userId, { vessel: normalizeCosmeticBody(vessel) });
 }
 
 export async function saveProfileCosmeticsEquipped(
@@ -575,6 +645,7 @@ export async function softResetCharacter(userId: string): Promise<SoftResetResul
         color: starterColor,
         pattern: DEFAULT_COSMETIC_PATTERN,
         patternColor: DEFAULT_COSMETIC_PATTERN_COLOR,
+        vessel: DEFAULT_COSMETIC_BODY,
         cosmeticsEquipped: normalizeCosmeticsEquipped({}),
         unlocks: starterUnlocks,
       },
@@ -587,12 +658,16 @@ export async function softResetCharacter(userId: string): Promise<SoftResetResul
     saveInventory(userId, wallet, STARTER_TALENT_POINTS),
     saveBeachBallCount(userId, 0),
     savePlayerUnlocks(userId, starterUnlocks),
-    saveLoadout(userId, [...DEFAULT_LOADOUT]),
+    saveLoadout(userId, [...EMPTY_LOADOUT]),
     saveTalents(userId, []),
     saveTalentBuild(userId, {}),
     setIntroCompleted(userId, false),
     supabase.from("quest_progress").delete().eq("user_id", userId),
     supabase.from("chests").delete().eq("user_id", userId),
+    supabase.from("reward_grants").delete().eq("user_id", userId),
+    supabase.from("season_reward_claims").delete().eq("user_id", userId),
+    supabase.from("player_ratings").delete().eq("user_id", userId),
+    supabase.from("ranked_match_players").delete().eq("user_id", userId),
     supabase.from("loadout_presets").delete().eq("user_id", userId),
     supabase
       .from("profiles")
@@ -601,13 +676,15 @@ export async function softResetCharacter(userId: string): Promise<SoftResetResul
         color: starterColor,
         pattern: DEFAULT_COSMETIC_PATTERN,
         pattern_color: DEFAULT_COSMETIC_PATTERN_COLOR,
+        vessel: DEFAULT_COSMETIC_BODY,
         cosmetics_equipped: {},
+        vessel_confirmed: false,
         updated_at: new Date().toISOString(),
       })
       .eq("id", userId),
   ]);
 
-  await saveLoadoutPreset(userId, 0, [...DEFAULT_LOADOUT], {
+  await saveLoadoutPreset(userId, 0, [...EMPTY_LOADOUT], {
     name: "Loadout 1",
     talentBuild: {},
   });

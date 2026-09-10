@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { pvpModeById } from "@battlebeasts/shared";
 import type { MatchRecapState } from "@/game/useBaseCityRoom";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RankRevealPanel, type RankRevealState } from "./RankRevealPanel";
@@ -92,6 +93,7 @@ export function MatchRecapPanel({
             <div>
               <h2 className="bb-panel-title">{winnerLabel(recap.winner)}</h2>
               <p className="bb-panel-sub tabular-nums">
+                {recap.matchMode ? `${pvpModeById(recap.matchMode)?.label ?? recap.matchMode} · ` : ""}
                 {typeof recap.scoreC === "number"
                   ? `${recap.scoreA} – ${recap.scoreB} – ${recap.scoreC}`
                   : `${recap.scoreA} – ${recap.scoreB}`}

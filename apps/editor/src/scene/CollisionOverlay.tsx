@@ -1,11 +1,6 @@
-import {
-  blocksProjectiles,
-  COLLISION,
-  mapStaticColliders,
-  type MapDoc,
-} from "@battlebeasts/shared";
-import { useMemo } from "react";
-import { useEditor } from "../state/docStore";
+import { blocksProjectiles, COLLISION, mapStaticColliders } from "@battlebeasts/shared";
+import { memo, useMemo } from "react";
+import { useEditorSlice } from "../state/docStore";
 
 /**
  * Draws every active collider flat on the ground.
@@ -60,8 +55,9 @@ function Box({
   );
 }
 
-export function CollisionOverlay({ doc }: { doc: MapDoc }) {
-  const { showColliders } = useEditor();
+export const CollisionOverlay = memo(function CollisionOverlay() {
+  const showColliders = useEditorSlice((s) => s.showColliders);
+  const doc = useEditorSlice((s) => s.doc);
 
   const colliders = useMemo(
     () => (showColliders ? mapStaticColliders(doc) : []),
@@ -119,4 +115,4 @@ export function CollisionOverlay({ doc }: { doc: MapDoc }) {
       })}
     </group>
   );
-}
+});

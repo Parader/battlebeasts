@@ -33,9 +33,9 @@ export interface PlayerSnapshot {
   hp: number;
   maxHp: number;
   color: string;
-  /** Creature hide pattern id (see COSMETIC_PATTERNS). */
+  /** Vessel aura id (persisted as `pattern`; see COSMETIC_AURAS). */
   pattern?: string;
-  /** Pattern marking / ink color. */
+  /** Aura ink color. */
   patternColor?: string;
   /** Equipped wearable cosmetic ids (empty string = none). */
   cosmeticHat?: string;
@@ -72,7 +72,11 @@ export type ClientMessage =
   | { type: "input"; input: PlayerInput }
   | { type: "open_ui"; ui: UiKind }
   | { type: "close_ui" }
-  | { type: "portal_confirm"; portal: "pvp" | "pve"; params: Record<string, unknown> }
+  | {
+      type: "portal_confirm";
+      portal: "pvp" | "pve";
+      params: Record<string, unknown>;
+    }
   | { type: "shop_buy"; itemId: string }
   | { type: "unlock_ability"; abilityId: string }
   | { type: "set_loadout"; abilityIds: string[] }
@@ -85,6 +89,7 @@ export type ClientMessage =
   | { type: "set_color"; color: string }
   | { type: "set_pattern"; pattern: string; patternColor?: string }
   | { type: "set_pattern_color"; patternColor: string }
+  | { type: "set_vessel"; vessel: string }
   | { type: "set_cosmetic"; slot: string; itemId: string | null }
   | { type: "respawn" }
   | { type: "hub_kick"; sessionId: string }
@@ -94,7 +99,7 @@ export type ClientMessage =
   | { type: "party_respond"; accept: boolean; partyId: string }
   | { type: "party_kick"; sessionId: string }
   | { type: "party_set_seat"; sessionId: string; seat: "teamA" | "teamB" | "teamC" | "spectator" }
-  | { type: "party_set_modes"; modes: string[] }
+  | { type: "party_set_modes"; modes: string[]; family?: "skirmish" | "battleground" }
   | { type: "party_lock"; matchKind?: "ranked" | "unranked" }
   | { type: "party_leave" }
   | { type: "party_cancel" }
@@ -116,6 +121,8 @@ export type PartySnapshot = {
   /** Defaults to "pvp" when omitted (older snapshots). */
   kind?: "pvp" | "coop_pve";
   modes: string[];
+  /** PvP family when kind is pvp (`skirmish` | `battleground`). */
+  family?: "skirmish" | "battleground";
   members: PartyMemberSnapshot[];
   /** Outstanding in-hub session invites (legacy / rare). */
   pendingInvites: string[];
@@ -173,7 +180,13 @@ export type ServerMessage =
    */
   | { type: "npc_dialogue"; npcId: string; name: string; line: string; action: NpcAction }
   | { type: "toast"; message: string }
-  | { type: "queue_status"; queued: boolean; modes?: string[] }
+  | {
+      type: "queue_status";
+      queued: boolean;
+      modes?: string[];
+      family?: "skirmish" | "battleground";
+      lookingFor?: string;
+    }
   | { type: "transfer"; room: string; roomId?: string; options?: Record<string, unknown> }
   | { type: "inventory"; resources: Record<string, number>; loadout?: string[]; talents?: string[] }
   | {
@@ -201,6 +214,7 @@ export type ServerMessage =
       scoreB: number;
       scoreC?: number;
       matchKind?: "ranked" | "custom";
+      matchMode?: string;
       rows: MatchRecapRow[];
     }
   | {

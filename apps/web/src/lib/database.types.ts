@@ -11,6 +11,8 @@ export type Database = {
                     color: string;
                     pattern: string;
                     pattern_color: string;
+                    vessel: string;
+                    vessel_confirmed: boolean;
                     name_confirmed: boolean;
                     name_changed_at: string | null;
                     created_at: string;
@@ -23,6 +25,8 @@ export type Database = {
                     color?: string;
                     pattern?: string;
                     pattern_color?: string;
+                    vessel?: string;
+                    vessel_confirmed?: boolean;
                     name_confirmed?: boolean;
                     name_changed_at?: string | null;
                     created_at?: string;
@@ -35,6 +39,8 @@ export type Database = {
                     color?: string;
                     pattern?: string;
                     pattern_color?: string;
+                    vessel?: string;
+                    vessel_confirmed?: boolean;
                     name_confirmed?: boolean;
                     name_changed_at?: string | null;
                     updated_at?: string;

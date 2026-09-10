@@ -2,6 +2,7 @@ import { useGLTF, useTexture } from "@react-three/drei";
 import {
   ARENA_SCENE_URL,
   CEMETERY_SCENE_URL,
+  catalogBoneSkinRelPaths,
   getMapSource,
   groundLayerUrls,
   HUB_MAP_ID,
@@ -10,13 +11,14 @@ import {
   type MapDoc,
 } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
-import { CHARACTER_URL } from "./characterVisual";
+import { CHARACTER_URL, YBOT_URL } from "./characterVisual";
 import { ZOMBIE_URL } from "./zombieAsset";
 import { preloadArenaMusic, preloadVillageMusic } from "./gameMusic";
 import { preloadArenaAmbiance, preloadVillageAmbiance } from "./gameAmbiance";
 import { preloadCombatSfx } from "./gameSfx";
 import { collectSpellVfxAssets } from "./vfx/spellVfxAssets";
 import { preloadSpellVfxTextures } from "./vfx/primeSpellTextures";
+import { BG_FLAG_CLOTH_URL, BG_FLAG_POLE_URL } from "./vfx/flagAsset";
 
 export type AssetBundle = "hub" | "arena";
 
@@ -35,24 +37,9 @@ function cemeterySceneUrl(): string {
   return assetUrl(CEMETERY_SCENE_URL.replace(/^\//, ""));
 }
 
-async function ensureFetched(url: string): Promise<void> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
-  await res.arrayBuffer();
-}
-
-async function awaitPreload(value: unknown): Promise<void> {
-  if (value != null && typeof (value as Promise<unknown>).then === "function") {
-    await value;
-  }
-}
-
-/** Warm drei/R3F cache for a GLB and wait until bytes (and parse, when promised) are ready. */
+/** Warm drei/R3F cache for a GLB. */
 async function preloadGltf(url: string): Promise<void> {
-  const pending = useGLTF.preload(url);
-  await Promise.all([awaitPreload(pending), ensureFetched(url)]);
-  // If preload was fire-and-forget, kick it again after HTTP cache is warm.
-  await awaitPreload(useGLTF.preload(url));
+  useGLTF.preload(url);
 }
 
 async function preloadGltfsBatched(urls: readonly string[], batchSize = 8): Promise<void> {
@@ -96,10 +83,7 @@ export async function preloadMapAssets(mapId: string): Promise<void> {
 }
 
 async function preloadTextures(urls: readonly string[]): Promise<void> {
-  const list = [...urls];
-  const pending = useTexture.preload(list);
-  await Promise.all([awaitPreload(pending), ...list.map((u) => ensureFetched(u))]);
-  await awaitPreload(useTexture.preload(list));
+  useTexture.preload([...urls]);
 }
 
 /** Spell VFX GLBs from the declarative asset manifest (core + profile.assets). */
@@ -117,13 +101,18 @@ async function runTracked(
   onProgress?.({ done: 0, total, percent: 0 });
   await Promise.all(
     tasks.map(async (task) => {
-      await task();
-      done += 1;
-      onProgress?.({
-        done,
-        total,
-        percent: Math.round((done / total) * 100),
-      });
+      try {
+        await task();
+      } catch (err) {
+        console.warn("[assets] subtask preload warning", err);
+      } finally {
+        done += 1;
+        onProgress?.({
+          done,
+          total,
+          percent: Math.round((done / total) * 100),
+        });
+      }
     }),
   );
 }
@@ -138,6 +127,8 @@ export async function preloadHubAssets(
   await runTracked(
     [
       () => preloadGltf(CHARACTER_URL),
+      () => preloadGltf(YBOT_URL),
+      () => preloadGltfsBatched(catalogBoneSkinRelPaths().map((rel) => assetUrl(rel))),
       () => preloadMapAssets(HUB_MAP_ID),
       () => preloadSpellGlbs(),
       () => preloadSpellVfxTextures(),
@@ -156,9 +147,13 @@ export async function preloadArenaAssets(
   await runTracked(
     [
       () => preloadGltf(CHARACTER_URL),
+      () => preloadGltf(YBOT_URL),
+      () => preloadGltfsBatched(catalogBoneSkinRelPaths().map((rel) => assetUrl(rel))),
       () => preloadGltf(arenaSceneUrl()),
       () => preloadGltf(cemeterySceneUrl()),
       () => preloadGltf(ZOMBIE_URL),
+      () => preloadGltf(BG_FLAG_CLOTH_URL),
+      () => preloadGltf(BG_FLAG_POLE_URL),
       () => preloadSpellGlbs(),
       () => preloadSpellVfxTextures(),
       () => preloadCombatSfx(),

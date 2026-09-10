@@ -4,8 +4,6 @@ import {
   localToWorldXZ,
   mapGroundExtent,
   mapGroundSize,
-  paramNumber,
-  paramString,
   propUrlForKey,
 } from "@battlebeasts/shared";
 import { Environment, Grid, OrbitControls, useGLTF } from "@react-three/drei";
@@ -15,7 +13,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { colliderForPlacement } from "../props/collider";
 import { usePropIndex } from "../props/manifest";
 import { colliderOverrides } from "../props/overrides";
-import { commitWall, docStore, nextId, rollYaw, snap, useEditor } from "../state/docStore";
+import { commitWall, docStore, nextId, rollYaw, snap, useEditor, useEditorSlice } from "../state/docStore";
 import { terrain } from "../state/terrain";
 import { wasDragged } from "./clickGuard";
 import { CollisionOverlay } from "./CollisionOverlay";
@@ -38,7 +36,7 @@ function Lights({ size }: { size: number }) {
         position={[size * 0.35, size * 0.6, size * 0.25]}
         intensity={2.1}
         castShadow
-        shadow-mapSize={[1024, 1024]}
+        shadow-mapSize={[512, 512]}
         shadow-camera-left={-d}
         shadow-camera-right={d}
         shadow-camera-top={d}
@@ -236,7 +234,7 @@ function GroundLayer() {
       window.removeEventListener("pointerup", endStroke);
       window.removeEventListener("pointercancel", endStroke);
     };
-  });
+  }, [canPaint]);
 
   /** Append a point, or close the loop when clicking back on the start. */
   const addWallPoint = (px: number, pz: number) => {
@@ -267,20 +265,6 @@ function GroundLayer() {
     const yaw = def.facing ? Math.atan2(-z, -x) : 0;
     const params = { ...ui.elementParams };
 
-    // Slots must be unique per team, so the armed slot advances on each place
-    // rather than stamping five spawns that all claim slot 0.
-    if (ui.elementType === "player_spawn") {
-      const team = String(params.team ?? "a");
-      const used = new Set(
-        doc.elements
-          .filter((e) => e.type === "player_spawn" && paramString(e, "team", "a") === team)
-          .map((e) => paramNumber(e, "slot")),
-      );
-      let slot = 0;
-      while (used.has(slot)) slot++;
-      params.slot = slot;
-    }
-
     const id = nextId(doc, "e");
     docStore.edit((d) => {
       d.elements.push({
@@ -296,11 +280,7 @@ function GroundLayer() {
       });
     });
 
-    if (ui.elementType === "player_spawn") {
-      docStore.setUi({ selectedId: id, elementParams: { ...params, slot: params.slot as number } });
-    } else {
-      docStore.setUi({ selectedId: id });
-    }
+    docStore.setUi({ selectedId: id });
   };
 
   const ghostRadius = armed
@@ -464,24 +444,24 @@ function FocusOnRequest() {
 }
 
 export function Viewport() {
-  const { doc, orbitLocked, showScaleRef } = useEditor();
-  const extent = mapGroundExtent(doc);
-  // Framing, fade and clip planes all key off the longest side, so a long map
-  // still fits in view rather than being cropped along its major axis.
-  const size = mapGroundSize(doc);
+  const orbitLocked = useEditorSlice((s) => s.orbitLocked);
+  const showScaleRef = useEditorSlice((s) => s.showScaleRef);
+  const size = useEditorSlice((s) => mapGroundSize(s.doc));
+  const extentX = useEditorSlice((s) => mapGroundExtent(s.doc).x);
+  const extentZ = useEditorSlice((s) => mapGroundExtent(s.doc).z);
 
   return (
     <>
     <Canvas
       shadows
-      dpr={[1, 1.5]}
+      dpr={[1, 1.25]}
       /*
        * Field of view matches the match camera's, so the only thing separating
        * this view from a player's is where it is pointed -- which is what the
        * compass and the game-view snap are for.
        */
       camera={{ position: [size * 0.45, size * 0.42, size * 0.45], fov: 45, near: 0.1, far: size * 6 }}
-      gl={{ antialias: true }}
+      gl={{ antialias: true, powerPreference: "high-performance", stencil: false }}
       /*
        * Hand keyboard focus back to the scene on any click in it.
        *
@@ -520,7 +500,7 @@ export function Viewport() {
       </Suspense>
 
       <Grid
-        args={[extent.x, extent.z]}
+        args={[extentX, extentZ]}
         cellSize={1}
         cellThickness={0.5}
         cellColor="#3d4654"
@@ -533,7 +513,7 @@ export function Viewport() {
         infiniteGrid={false}
       />
 
-      <CollisionOverlay doc={doc} />
+      <CollisionOverlay />
       <FocusOnRequest />
       <GameViewSnap />
       <OrientationProbe />

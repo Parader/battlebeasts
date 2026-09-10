@@ -14,6 +14,42 @@ export type PatchNote = {
  */
 export const PATCH_NOTES: readonly PatchNote[] = [
   {
+    id: "2026-09-09-first-build",
+    title: "Choose your first build",
+    date: "2026-09-09",
+    highlights: [
+      "New hunters start with an empty bar — pick a spell for every key at the House (first pick per family is free)",
+      "Queue unlocks once all seven keys are slotted; flex slots are essence buys and stay optional",
+      "Finish the first kit to earn a tutorial chest (essence for talent points — talents are bought, not gifted)",
+      "All characters have been reset to this first-build slate",
+    ],
+  },
+  {
+    id: "2026-09-05-f-ultimates",
+    title: "New F Ultimates & Divine Beam Rework",
+    date: "2026-09-05",
+    highlights: [
+      "Cyclone Kick: devastating spinning kick dealing massive melee damage in a 2.35m radius",
+      "World Tree: summon a persistent magical tree that intelligently heals the lowest-health nearby ally with flying seeds",
+      "Phantom Rush: rush rapidly through up to 4 nearby enemies, dealing 100 damage per strike",
+      "Ascendant Form: grow to 1.5x scale, gaining 22% damage reduction, +15% melee radius, and a 2.5m damage aura",
+      "Dread Aura: surround yourself with a terrifying reactive aura — enemies who begin casting inside are feared away",
+      "Divine Beam: reworked Heal Beam with ramping channel healing and cascading overflow to nearby injured allies",
+    ],
+  },
+  {
+    id: "2026-09-04-q-utility",
+    title: "Five new Q utility spells",
+    date: "2026-09-04",
+    highlights: [
+      "Purge Pulse: cleanse one debuff from nearby allies and strip one buff from nearby enemies",
+      "Rock Wall: raise a temporary stone barrier that blocks movement and projectiles",
+      "Hex Anchor: mark an enemy — their next movement ability roots them on arrival",
+      "Iron Guard: brief brace with damage reduction and displacement immunity (at a heavy slow)",
+      "Spellbreaker: shatter nearby hostile projectiles and bank cast-speed charges for your next hit",
+    ],
+  },
+  {
     id: "2026-09-04-space-spells",
     title: "Five new Space spells",
     date: "2026-09-04",

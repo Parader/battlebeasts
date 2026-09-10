@@ -1,7 +1,8 @@
-import type {
-  ElementTypeDef,
-  MapElementParams,
-  MapElementParamValue,
+import {
+  PICKUP_EFFECTS,
+  type ElementTypeDef,
+  type MapElementParams,
+  type MapElementParamValue,
 } from "@battlebeasts/shared";
 
 /**
@@ -32,6 +33,9 @@ export function ParamFields({
     <>
       {def.params.map((spec) => {
         const value = params[spec.key] ?? spec.default;
+        if (def.id === "pickup" && spec.key === "magnitude" && params.effect === "random") {
+          return null;
+        }
 
         if (spec.kind === "enum") {
           return (
@@ -40,7 +44,9 @@ export function ParamFields({
               <select value={String(value)} onChange={(e) => onChange(spec.key, e.target.value)}>
                 {spec.options.map((o) => (
                   <option key={o} value={o}>
-                    {o}
+                    {def.id === "pickup" && spec.key === "effect" && PICKUP_EFFECTS[o]
+                      ? PICKUP_EFFECTS[o]!.label
+                      : o}
                   </option>
                 ))}
               </select>

@@ -1,5 +1,6 @@
 import { combatMag } from "./combatMagnitude";
 import { getStatus, statusStackSlowPercent, type StatusApplication } from "./statuses";
+import type { TalentTreeId } from "./talentCatalog";
 
 export type AbilityShape = "projectile" | "aoe" | "dash" | "melee" | "buff";
 
@@ -178,10 +179,34 @@ export type AbilityEffectKind =
   | "bulwarkCharge"
   | "predatorStep"
   | "rebound"
-  | "teleportSlam";
+  | "teleportSlam"
+  | "purgePulse"
+  | "rockWall"
+  | "hexAnchor"
+  | "ironGuard"
+  | "spellbreaker"
+  | "gravityField"
+  | "timeFreeze"
+  | "bloodPact"
+  | "chainLightning"
+  | "positionSwap"
+  | "cycloneKick"
+  | "worldTree"
+  | "phantomRush"
+  | "ascendantForm"
+  | "dreadAura"
+  | "elementalOverload"
+  | "guardiansBlessing"
+  | "bindingSigil"
+  | "massSilence"
+  | "tripleBlink"
+  | "guardianAngel"
+  | "lastingGrace"
+  | "rebirth";
 
 /** Mechanical tags for talent matching (Tag Dictionary). */
 export type SpellTag =
+  | "Ultimate"
   | "Projectile"
   | "Explosion"
   | "Area"
@@ -309,6 +334,11 @@ export interface AbilityDef {
   /** Tags for talent hooks (design + runtime matching). */
   tags?: readonly SpellTag[];
   damage: number;
+  /**
+   * Damage dealt to Rock Wall / structure durability when this ability hits.
+   * Default when omitted: 1 if `damage > 0`, else 0. Heavy spells should set 2–3.
+   */
+  structureDamage?: number;
   /**
    * Soft floor for distance-scaled projectiles (Prism Lance).
    * Ramp starts after `damageRampStartDistance`; full power at `maxDamageDistance`.
@@ -467,8 +497,16 @@ export interface AbilityDef {
   /** Preferred slot when building the default kit (omit for alternate picks). */
   defaultSlot?: SpellSlotId;
   /**
+   * If this ability is unlocked by investing in a talent tree node rather than Essence.
+   */
+  talentTreeUnlock?: {
+    tree: TalentTreeId;
+    talentId: string;
+    tier: number;
+  };
+  /**
    * Essence cost to unlock in Spell Armoury.
-   * Omit / 0 = starter (always owned with DEFAULT_LOADOUT).
+   * First buy of each family is free via `hasFirstUnlockVoucher`.
    */
   unlockCostEssence?: number;
   /** Radial knockback distance (world units) on AoE/melee hit. */
@@ -529,6 +567,37 @@ export interface AbilityDef {
   channelCapGraceMs?: number;
   /** Minimum blink distance on an instant confirm (Portal). */
   channelMinRange?: number;
+
+  /** World Tree persistent summon settings. */
+  durationMs?: number;
+  healIntervalMs?: number;
+  healRadius?: number;
+  healPerSeed?: number;
+  structureDurability?: number;
+
+  /** Phantom Rush chaining attack settings. */
+  maxTargets?: number;
+  chainRadius?: number;
+  damagePerTarget?: number;
+  rushDurationPerTargetMs?: number;
+  finalOffsetFromTarget?: number;
+
+  /** Ascendant Form transformation settings. */
+  modelScaleMul?: number;
+  damageTakenMul?: number;
+  auraRadius?: number;
+  auraDamageIntervalMs?: number;
+  auraDamage?: number;
+  meleeRadiusMul?: number;
+
+  /** Dread Aura reactive fear settings. */
+  fearDurationMs?: number;
+  maxTriggersPerEnemy?: number;
+
+  /** Divine Beam channel & overflow settings. */
+  channelDurationMs?: number;
+  tickIntervalMs?: number;
+  overflowRadius?: number;
 }
 
 export const LOADOUT_SIZE = SPELL_SLOTS.length;
@@ -1150,6 +1219,318 @@ export const TELEPORT_SLAM_CAST = {
   ),
 } as const;
 
+/**
+ * Purge Pulse (Q) — cleanse one ally debuff + purge one enemy buff in radius.
+ */
+export const PURGE_PULSE_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 10000,
+  radius: 3.5,
+  /** Cleanse all dispellable ally debuffs in range (stun, root, bleed, etc.). */
+  maxAllyDebuffsRemoved: 12,
+  maxEnemyBuffsRemoved: 1,
+} as const;
+
+/**
+ * Rock Wall (Q) — temporary oriented wall that blocks move + projectiles.
+ */
+export const ROCK_WALL_CAST = {
+  unlockCostEssence: 110,
+  cooldownMs: 12000,
+  range: 7.5,
+  wallWidth: 3.0,
+  wallHeight: 2.2,
+  wallThickness: 0.45,
+  durationMs: 5000,
+  durability: 3,
+} as const;
+
+/**
+ * Hex Anchor (Q) — mark enemy; their next spell roots them and deals damage.
+ */
+export const HEX_ANCHOR_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 10500,
+  range: 9.0,
+  markDurationMs: 3000,
+  triggerRootMs: 850,
+  /** Damage dealt when the mark triggers on a spell cast. */
+  triggerDamage: combatMag(40),
+} as const;
+
+/**
+ * Iron Guard (Q) — brief brace: 65% DR + small shield + displacement immune + heavy slow.
+ */
+export const IRON_GUARD_CAST = {
+  unlockCostEssence: 100,
+  cooldownMs: 9500,
+  durationMs: 2600,
+  /** Take 35% damage → negate 65%. */
+  damageTakenMul: 0.35,
+  moveSpeedMul: 0.4,
+  /** Small absorb on cast. */
+  shield: combatMag(10),
+  shieldDurationMs: 2600,
+} as const;
+
+/**
+ * Spellbreaker (Q) — shatter nearby hostile projectiles; bank yellow orbs for bonus damage.
+ */
+export const SPELLBREAKER_CAST = {
+  unlockCostEssence: 110,
+  cooldownMs: 10000,
+  radius: 2.75,
+  maxCharges: 3,
+  /** How long banked orbs linger on the caster. */
+  chargeDurationMs: 8000,
+  /** Flat bonus damage added to the next damaging hit, per charge. */
+  damagePerCharge: combatMag(5),
+  /** Window after cast start to apply the orb bonus on a hit. */
+  empowerWindowMs: 4500,
+  /** Slow expand to full radius (ms). Projectiles inside are shattered. */
+  expandMs: 420,
+  /** Hold at full radius before vacuum (ms). */
+  holdMs: 550,
+  /** Visual + cleanup vacuum (ms). */
+  vacuumMs: 520,
+} as const;
+
+/**
+ * Gravity Field (R) — donut slow shroud; clear center, heavy slow in the ring.
+ */
+export const GRAVITY_FIELD_CAST = {
+  unlockCostEssence: 130,
+  cooldownMs: 18000,
+  /** Self-cast at feet — range unused for placement. */
+  range: 0,
+  durationMs: 5000,
+  /** Clear center so the caster can stand freely. */
+  innerRadius: 3.5,
+  outerRadius: 7.0,
+  enemyMoveSpeedMul: 0.55,
+  /** Refresh duration while standing in the ring (ms). */
+  slowRefreshMs: 350,
+} as const;
+
+/**
+ * Time Freeze (R) — zone that slows hostile projectiles heavily.
+ */
+export const TIME_FREEZE_CAST = {
+  unlockCostEssence: 130,
+  cooldownMs: 18000,
+  range: 8.5,
+  radius: 3.25,
+  durationMs: 4500,
+  hostileProjectileSpeedMul: 0.12,
+} as const;
+
+/**
+ * Blood Pact (R) — sacrifice current HP to empower self + nearby allies.
+ */
+export const BLOOD_PACT_CAST = {
+  unlockCostEssence: 130,
+  cooldownMs: 18000,
+  allyRadius: 4.5,
+  currentHpCostPct: 0.12,
+  damageDealtMul: 1.35,
+  buffDurationMs: 5000,
+} as const;
+
+/**
+ * Chain Lightning (R) — bounce between players; damage enemies, buff allies.
+ */
+export const CHAIN_LIGHTNING_CAST = {
+  unlockCostEssence: 130,
+  cooldownMs: 16000,
+  range: 9.0,
+  maxTargets: 5,
+  bounceRadius: 4.0,
+  bounceDelayMs: 110,
+  enemyDamage: combatMag(8),
+  allyMoveSpeedMul: 1.15,
+  /** Cast phase duration mul — 1/1.12 ≈ 12% faster casts. */
+  allyCastDurationMul: 1 / 1.12,
+  allyBuffDurationMs: 4000,
+} as const;
+
+/**
+ * Position Swap (R) — exchange places with a targeted ally or enemy.
+ */
+export const POSITION_SWAP_CAST = {
+  unlockCostEssence: 140,
+  cooldownMs: 18000,
+  range: 9.5,
+  /** Max clamp drift (m) before the swap is cancelled as invalid. */
+  maxDestDrift: 0.55,
+} as const;
+
+/**
+ * Cyclone Kick (F) — 360° close-range spinning whirlwind lasting 4 seconds.
+ * Spins continuously, vacuum-pulling and hitting nearby enemies over 4s.
+ */
+export const CYCLONE_KICK_CAST = {
+  unlockCostEssence: 160,
+  cooldownMs: 28000,
+  durationMs: 4000,
+  totalTicks: 16,
+  tickIntervalMs: 250,
+  radius: 2.75,
+  damagePerTick: combatMag(3), // 30 per tick -> 480 total over 4s
+  pullRadius: 4.25,
+  pullForce: 2.2,
+} as const;
+
+/**
+ * World Tree (F) — persistent smart healing summon.
+ */
+export const WORLD_TREE_CAST = {
+  unlockCostEssence: 160,
+  cooldownMs: 30000,
+  range: 8.0,
+  durationMs: 6500,
+  healIntervalMs: 1000,
+  healRadius: 7.0,
+  healPerSeed: combatMag(10), // 100
+  structureDurability: 5,
+} as const;
+
+/**
+ * Phantom Rush (F) — rapid chained mobility attack through up to 4 enemies/props.
+ * Shorter range (~4.5m) and lands on the opposite side of targets.
+ */
+export const PHANTOM_RUSH_CAST = {
+  unlockCostEssence: 160,
+  cooldownMs: 26000,
+  range: 4.5,
+  maxTargets: 4,
+  chainRadius: 7.5,
+  damagePerTarget: combatMag(10), // 100
+  rushDurationPerTargetMs: 140,
+  finalOffsetFromTarget: 1.4,
+} as const;
+
+/**
+ * Ascendant Form (F) — juggernaut transformation, DR, CC reduction, damage aura, melee presence.
+ */
+export const ASCENDANT_FORM_CAST = {
+  unlockCostEssence: 160,
+  cooldownMs: 30000,
+  durationMs: 5500,
+  modelScaleMul: 1.5,
+  damageTakenMul: 0.78, // 22% DR
+  auraRadius: 2.5,
+  auraDamageIntervalMs: 1000,
+  auraDamage: combatMag(4), // 40
+  meleeRadiusMul: 1.15,
+  ccReductionMul: 0.5, // 50% CC duration reduction
+} as const;
+
+/**
+ * Dread Aura (F) — reactive fear aura that interrupts and fears enemies who cast or dummies inside.
+ */
+export const DREAD_AURA_CAST = {
+  unlockCostEssence: 160,
+  cooldownMs: 28000,
+  durationMs: 2600,
+  radius: 4.25,
+  fearDurationMs: 1250,
+  maxTriggersPerEnemy: 1,
+} as const;
+
+/**
+ * Elemental Overload (E/R talent unlock) — detonate active elemental debuffs.
+ */
+export const ELEMENTAL_OVERLOAD_CAST = {
+  cooldownMs: 8000,
+  range: 11,
+  baseDamage: combatMag(20),
+  damagePerConsumedStack: combatMag(7),
+  shockBurstDamage: combatMag(12),
+} as const;
+
+/**
+ * Guardian's Blessing (Q/E talent unlock GUA_14) — target ally/self powerful shield.
+ */
+export const GUARDIANS_BLESSING_CAST = {
+  cooldownMs: 16000,
+  range: 9,
+  shieldFraction: 0.20,
+  shieldDurationMs: 5000,
+} as const;
+
+/** Binding Sigil (CON_16) — delayed root rune. */
+export const BINDING_SIGIL_CAST = {
+  cooldownMs: 16000,
+  range: 10,
+  radius: 2.6,
+  armingMs: 750,
+  rootDurationMs: 1250,
+  lifetimeMs: 4000,
+} as const;
+
+/** Mass Silence (CON_19) — pulse that hits enemies, allies, and self. */
+export const MASS_SILENCE_CAST = {
+  cooldownMs: 40000,
+  radius: 13,
+  silenceDurationMs: 4000,
+} as const;
+
+/** Guardian Angel (HAR_14) — spend current HP to rescue an ally. */
+export const GUARDIAN_ANGEL_CAST = {
+  cooldownMs: 20000,
+  range: 10,
+  healthCostFrac: 0.4,
+  casterFloorFrac: 0.1,
+  healMaxHpFrac: 0.35,
+} as const;
+
+/** Lasting Grace (HAR_19) — target cannot fall below 1 HP. */
+export const LASTING_GRACE_CAST = {
+  cooldownMs: 35000,
+  range: 10,
+  durationMs: 3000,
+} as const;
+
+/** Rebirth (F) — delayed resurrection blessing. */
+export const REBIRTH_CAST = {
+  unlockCostEssence: 120,
+  cooldownMs: 55000,
+  range: 10,
+  blessingMs: 5000,
+  delayMs: 2800,
+  rezHealthFrac: 0.4,
+} as const;
+
+/** Triple Blink (FLO_18) — optional recast hops. CD starts when the window ends. */
+export const TRIPLE_BLINK_CAST = {
+  cooldownMs: 16000,
+  hopDistance: 3.2,
+  hops: 3,
+  /** Minimum delay between hops. */
+  hopLockMs: 350,
+  /** Recast window after each hop (Ezmo Displace-style). Resets on recast. */
+  windowMs: 1800,
+  iframeMs: 100,
+} as const;
+
+/**
+ * Divine Beam (F rework of Heal Beam) — ramping targeted channel + cascading overflow.
+ */
+export const DIVINE_BEAM_CAST = {
+  range: 10.0,
+  breakRange: 12.0,
+  cooldownMs: 26000,
+  channelDurationMs: 3000,
+  tickIntervalMs: 250,
+  totalTicks: 12,
+  overflowRadius: 6.0,
+  healPerTickAt(tickIndex: number): number {
+    if (tickIndex < 4) return 35;
+    if (tickIndex < 8) return 50;
+    return 70;
+  },
+} as const;
+
 function teleportSlamImpactWallMs(): number {
   return (
     ((TELEPORT_SLAM_CAST.impactFrame - TELEPORT_SLAM_CAST.startFrame) /
@@ -1494,7 +1875,7 @@ export const HOLY_GROUND_CAST = {
   radius: 4.5,
   recoveryMs: 420,
   unlockCostEssence: 120,
-  cooldownMs: 14000,
+  cooldownMs: 16000,
 } as const;
 
 /**
@@ -1539,7 +1920,7 @@ export const PROTECTION_BUBBLE_CAST = {
   zoneDurationMs: 7000,
   /** Soft dissolve after active ends. */
   fadeMs: 550,
-  cooldownMs: 20000,
+  cooldownMs: 26000,
   unlockCostEssence: 120,
   /** Absorb ticks while the dome is fully formed. */
   shieldTickMs: 250,
@@ -1792,7 +2173,7 @@ export const BLOOD_RUSH_CAST = {
   /** Execute (remaining HP) when target is at/below this fraction. */
   executeBelowHpFrac: 0.2,
   unlockCostEssence: 100,
-  cooldownMs: 20000,
+  cooldownMs: 24000,
 } as const;
 
 /**
@@ -1849,7 +2230,7 @@ export const HEAL_BEAM_CAST = {
   range: 14,
 } as const;
 
-function healBeamReleaseWallMs(): number {
+export function healBeamReleaseWallMs(): number {
   return (
     (HEAL_BEAM_CAST.releaseFrame / HEAL_BEAM_CAST.fps / HEAL_BEAM_CAST.playbackRate) *
     1000
@@ -1913,7 +2294,7 @@ export const FIREBALL_CAST = {
   burnDurationMs: 1680,
   burnTickMs: 500,
   unlockCostEssence: 120,
-  cooldownMs: 20000,
+  cooldownMs: 24000,
 } as const;
 
 export function fireballFrameWallMs(frame: number): number {
@@ -2033,7 +2414,7 @@ export function fireballCharge01(elapsedMs: number): number {
   );
 }
 
-function healBeamChannelWallMs(): number {
+export function healBeamChannelWallMs(): number {
   return HEAL_BEAM_CAST.healTicks * HEAL_BEAM_CAST.healTickMs;
 }
 
@@ -2124,6 +2505,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   bolt: {
     id: "bolt",
+    unlockCostEssence: 80,
     name: "Bolt",
     description: "Fast single-target magic bolt. Low cooldown primary poke.",
     cooldownMs: 300,
@@ -2132,6 +2514,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     effectKind: "standard",
     tags: ["Projectile", "Damage", "SingleTarget", "Cast"],
     damage: combatMag(11),
+    structureDamage: 1,
     speed: 22,
     spawnOffset: BOLT_CAST.spawnOffset,
     allowedSlots: ["m1"],
@@ -2170,7 +2553,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
     threadDurationMs: ARC_THREAD_CAST.threadDurationMs,
     threadAimToleranceDegrees: ARC_THREAD_CAST.threadAimToleranceDegrees,
     spawnOffset: ARC_THREAD_CAST.spawnOffset,
-    applyOnHit: [{ statusId: "slowed", durationMs: 700, chance: 1 }],
+    applyOnHit: [
+      { statusId: "slowed", durationMs: 700, chance: 1 },
+      { statusId: "shocked", chance: 1 },
+    ],
     interruptible: true,
     allowedSlots: ["m1"],
     timing: {
@@ -2453,7 +2839,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "melee",
     effectKind: "standard",
     tags: ["Melee", "Damage", "MultiHit", "Combo", "Instant"],
-    damage: combatMag(11),
+    damage: combatMag(10),
     /** Tight frontal slash — was 2.0 and felt like a wide AoE. */
     radius: 1.15,
     allowedSlots: ["m1"],
@@ -2462,7 +2848,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       hits: 3,
       continueWindowMs: 220,
       moveMul: 0.65,
-      damageByHit: [combatMag(7), combatMag(7), combatMag(11)],
+      damageByHit: [combatMag(6), combatMag(6), combatMag(10)],
     },
     timing: {
       anticipationMs: 110,
@@ -2871,6 +3257,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   surge: {
     id: "surge",
+    unlockCostEssence: 80,
     name: "Surge",
     description: "Crackling self-buff — burst of move speed. Can interrupt your other casts.",
     cooldownMs: 10000,
@@ -2893,7 +3280,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
       canCancelAnticipation: true,
       cancelUntilPhase: "cast",
     },
-    applyOnSelf: [{ statusId: "surged", durationMs: 3000 }],
+    applyOnSelf: [
+      { statusId: "surged", durationMs: 4000 },
+      { statusId: "electrified", durationMs: 10000 },
+    ],
     interruptsOtherCasts: true,
   },
   /**
@@ -3022,10 +3412,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   barrier: {
     id: "barrier",
+    unlockCostEssence: 80,
     name: "Barrier",
     description:
       `Locked cast — absorb bubble charges to ${combatMag(30)} shield over the windup (3s once complete). Damage during cast only eats what you've built so far.`,
-    cooldownMs: 14000,
+    cooldownMs: 16000,
     range: 0,
     shape: "buff",
     effectKind: "standard",
@@ -3419,6 +3810,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   gust: {
     id: "gust",
+    unlockCostEssence: 80,
     name: "Push Back",
     description:
       "Circular push wave at your feet. Knocks enemies outward, then slows them briefly.",
@@ -3449,6 +3841,173 @@ export const ABILITIES: Record<string, AbilityDef> = {
       cancelUntilPhase: "cast",
     },
     applyOnHit: [{ statusId: "slowed", durationMs: 1000, chance: 1 }],
+  },
+  /**
+   * Purge Pulse (Q) — cleanse one debuff from nearby allies; purge one buff from enemies.
+   */
+  purgePulse: {
+    id: "purgePulse",
+    name: "Purge Pulse",
+    description:
+      "Release a cleansing pulse around you, stripping negative effects from nearby allies (stun, root, bleed, curse, and more) and removing one positive effect from nearby enemies.",
+    allowedSlots: ["q"],
+    defaultSlot: "q",
+    unlockCostEssence: PURGE_PULSE_CAST.unlockCostEssence,
+    cooldownMs: PURGE_PULSE_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "purgePulse",
+    tags: ["Area", "Cleanse", "Purge", "Ally", "Control", "Cast", "Utility"] as SpellTag[],
+    damage: 0,
+    radius: PURGE_PULSE_CAST.radius,
+    interruptible: true,
+    timing: {
+      anticipationMs: 65,
+      castMs: 95,
+      impactMs: 80,
+      recoveryMs: 95,
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Rock Wall (Q) — temporary physical wall that blocks movement and projectiles.
+   */
+  rockWall: {
+    id: "rockWall",
+    name: "Rock Wall",
+    description:
+      "Raise a short rock wall at the target location. It blocks movement and projectiles and can be destroyed by attacks.",
+    allowedSlots: ["q"],
+    defaultSlot: "q",
+    unlockCostEssence: ROCK_WALL_CAST.unlockCostEssence,
+    cooldownMs: ROCK_WALL_CAST.cooldownMs,
+    range: ROCK_WALL_CAST.range,
+    shape: "aoe",
+    effectKind: "rockWall",
+    tags: ["GroundEffect", "Defense", "Control", "Obstacle", "Wall", "Cast"] as SpellTag[],
+    damage: 0,
+    radius: ROCK_WALL_CAST.wallWidth * 0.5,
+    zoneDurationMs: ROCK_WALL_CAST.durationMs,
+    interruptible: true,
+    timing: {
+      anticipationMs: 90,
+      castMs: 120,
+      impactMs: 110,
+      recoveryMs: 110,
+      anticipationMoveMul: 0.85,
+      castMoveMul: 0.8,
+      impactMoveMul: 0.9,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Hex Anchor (Q) — mark an enemy; their next self-movement roots them at arrival.
+   */
+  hexAnchor: {
+    id: "hexAnchor",
+    name: "Hex Anchor",
+    description:
+      "Hex an enemy. If they cast any spell while marked, the anchor triggers — dealing damage and briefly rooting them.",
+    allowedSlots: ["q"],
+    defaultSlot: "q",
+    unlockCostEssence: HEX_ANCHOR_CAST.unlockCostEssence,
+    cooldownMs: HEX_ANCHOR_CAST.cooldownMs,
+    range: HEX_ANCHOR_CAST.range,
+    shape: "buff",
+    effectKind: "hexAnchor",
+    tags: ["SingleTarget", "Debuff", "Control", "Root", "Cast"] as SpellTag[],
+    damage: 0,
+    interruptible: true,
+    timing: {
+      anticipationMs: 70,
+      castMs: 100,
+      impactMs: 70,
+      recoveryMs: 95,
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.85,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Iron Guard (Q) — brief brace: damage reduction + displacement immunity + slow.
+   */
+  ironGuard: {
+    id: "ironGuard",
+    name: "Iron Guard",
+    description:
+      "Brace yourself with a small shield, negate 65% of incoming damage, and become immune to displacement at the cost of movement speed.",
+    allowedSlots: ["q"],
+    defaultSlot: "q",
+    unlockCostEssence: IRON_GUARD_CAST.unlockCostEssence,
+    cooldownMs: IRON_GUARD_CAST.cooldownMs,
+    range: 0,
+    shape: "buff",
+    effectKind: "ironGuard",
+    tags: ["Defense", "Buff", "Self", "Cast"] as SpellTag[],
+    damage: 0,
+    interruptible: true,
+    applyOnSelf: [
+      {
+        statusId: "ironGuard",
+        durationMs: IRON_GUARD_CAST.durationMs,
+      },
+    ],
+    shield: IRON_GUARD_CAST.shield,
+    shieldDurationMs: IRON_GUARD_CAST.shieldDurationMs,
+    timing: {
+      anticipationMs: 55,
+      castMs: 75,
+      impactMs: 60,
+      recoveryMs: 90,
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.6,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: false,
+    },
+  },
+  /**
+   * Spellbreaker (Q) — shatter nearby hostile projectiles; empower next damaging cast.
+   */
+  spellbreaker: {
+    id: "spellbreaker",
+    name: "Spellbreaker",
+    description:
+      "Shatter hostile projectiles around you. Each destroyed projectile banks a yellow orb (up to 3) that rides your next damaging spell for bonus damage.",
+    allowedSlots: ["q"],
+    defaultSlot: "q",
+    unlockCostEssence: SPELLBREAKER_CAST.unlockCostEssence,
+    cooldownMs: SPELLBREAKER_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "spellbreaker",
+    tags: ["Area", "Defense", "Buff", "Purge", "Cast", "Utility"] as SpellTag[],
+    damage: 0,
+    radius: SPELLBREAKER_CAST.radius,
+    interruptible: true,
+    timing: {
+      anticipationMs: 70,
+      castMs: 110,
+      impactMs: 90,
+      recoveryMs: 120,
+      anticipationMoveMul: 0.95,
+      castMoveMul: 0.88,
+      impactMoveMul: 0.9,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
   },
   /**
    * Grasp (E) — dark stretching arm / hand yank.
@@ -3571,6 +4130,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
    */
   spikes: {
     id: "spikes",
+    unlockCostEssence: 80,
     name: "Spikes",
     description:
       "Venomous spikes erupt from the ground in a fast staggered line. Narrow path, long reach; applies Poisoned (stacks with Poison Dart).",
@@ -3717,6 +4277,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       "Cast",
     ] as SpellTag[],
     damage: PRISM_LANCE_CAST.minDamage,
+    structureDamage: 2,
     minDamage: PRISM_LANCE_CAST.minDamage,
     maxDamage: PRISM_LANCE_CAST.maxDamage,
     maxDamageDistance: PRISM_LANCE_CAST.maxDamageDistance,
@@ -4072,6 +4633,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       "Channel",
     ],
     damage: FIREBALL_CAST.damageMax,
+    structureDamage: 3,
     speed: FIREBALL_CAST.speed,
     radius: FIREBALL_CAST.radiusMax,
     spawnOffset: FIREBALL_CAST.spawnOffset,
@@ -4117,7 +4679,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Volcano",
     description:
       "Crack the earth at your aim and raise a volcano. It shoves bodies aside as it emerges, burns anyone pressed against it, blocks the ground while active, and rains flaming rocks that shatter on impact and leave foes burning.",
-    cooldownMs: 20000,
+    cooldownMs: 26000,
     /** Max place distance from caster. */
     range: 10,
     shape: "aoe",
@@ -4234,7 +4796,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Frost Mist",
     description:
       "Spray an expanding cone of frost. Ticks damage and deepens chill — stacking onto whatever slow they already have — until they freeze solid at the feet.",
-    cooldownMs: 14000,
+    cooldownMs: 16000,
     range: 11,
     shape: "aoe",
     effectKind: "coneChannel",
@@ -4263,39 +4825,41 @@ export const ABILITIES: Record<string, AbilityDef> = {
     interruptible: false,
   },
   /**
-   * Heal Beam (F) — narrow forward heal channel.
-   * Anim: Standing 2H Magic Attack 04 — beam starts @ frame 32.
+   * Divine Beam (F rework of Heal Beam) — ramping targeted channel + cascading overflow.
+   * Anim: Standing 2H Magic Attack 04.
    */
   healBeam: {
     id: "healBeam",
-    name: "Heal Beam",
+    name: "Divine Beam",
     description:
-      "Channel a narrow beam of light. Allies and practice dummies in the line are healed each tick. Cancel anytime after the beam starts.",
-    cooldownMs: 20000,
-    range: HEAL_BEAM_CAST.range,
+      "Channel an increasingly powerful healing beam into an ally. Excess healing redirects to nearby injured allies.",
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    cooldownMs: DIVINE_BEAM_CAST.cooldownMs,
+    range: DIVINE_BEAM_CAST.range,
     shape: "aoe",
     effectKind: "healBeam",
-    tags: ["Line", "Channel", "Healing", "Ally", "Cast"],
+    tags: ["Healing", "Ally", "Channel", "SingleTarget", "Ultimate"] as SpellTag[],
     damage: 0,
-    heal: HEAL_BEAM_CAST.healPerTick,
-    healTicks: HEAL_BEAM_CAST.healTicks,
-    tickMs: HEAL_BEAM_CAST.healTickMs,
-    coneHalfAngle: HEAL_BEAM_CAST.beamHalfAngle,
-    allowedSlots: ["f"],
+    heal: 35,
+    healTicks: DIVINE_BEAM_CAST.totalTicks,
+    tickMs: DIVINE_BEAM_CAST.tickIntervalMs,
+    channelDurationMs: DIVINE_BEAM_CAST.channelDurationMs,
+    tickIntervalMs: DIVINE_BEAM_CAST.tickIntervalMs,
+    overflowRadius: DIVINE_BEAM_CAST.overflowRadius,
     timing: {
-      anticipationMs: authoredForWallMs(90),
-      castMs: authoredForWallMs(Math.max(16, healBeamReleaseWallMs() - 90)),
-      impactMs: authoredForWallMs(healBeamChannelWallMs()),
-      recoveryMs: authoredForWallMs(160),
-      anticipationMoveMul: 0.7,
-      castMoveMul: 0.6,
-      impactMoveMul: 0.55,
+      anticipationMs: 110,
+      castMs: 140,
+      impactMs: 80,
+      recoveryMs: 140,
+      anticipationMoveMul: 0.75,
+      castMoveMul: 0.65,
+      impactMoveMul: 0.8,
       recoveryMoveMul: 0.9,
-      canCancelAnticipation: true,
-      cancelUntilPhase: "impact",
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
     },
-    /** Channel — Surge/Dash/etc. cannot cut; cancel still works. */
-    interruptible: false,
+    interruptible: true,
   },
   /**
    * Groove (R) — Jazz Dancing heal channel.
@@ -4309,7 +4873,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     name: "Groove",
     description:
       `Break into a jazz groove and pulse healing — allies and dummies get full ticks; you receive half of the total healed to others. If a pulse heals nobody, gain a ${combatMag(4)} HP shield for 8s (stacks). 40% damage resistance while channeling. Cancel anytime.`,
-    cooldownMs: 17000,
+    cooldownMs: 20000,
     range: 0,
     shape: "aoe",
     effectKind: "pulseHeal",
@@ -4335,11 +4899,669 @@ export const ABILITIES: Record<string, AbilityDef> = {
     /** Channel — Surge/Dash/etc. cannot cut; cancel still works. */
     interruptible: false,
   },
+  /**
+   * Gravity Field (R) — donut-shaped gravitational shroud; clear center.
+   */
+  gravityField: {
+    id: "gravityField",
+    name: "Gravity Field",
+    description:
+      "Create a gravitational shroud around you. Enemies moving through its outer ring are heavily slowed, while the center remains clear.",
+    allowedSlots: ["r"],
+    defaultSlot: "r",
+    unlockCostEssence: GRAVITY_FIELD_CAST.unlockCostEssence,
+    cooldownMs: GRAVITY_FIELD_CAST.cooldownMs,
+    range: GRAVITY_FIELD_CAST.range,
+    shape: "aoe",
+    effectKind: "gravityField",
+    tags: ["Area", "GroundEffect", "Control", "Slow", "Persistent", "Cast", "Self"] as SpellTag[],
+    damage: 0,
+    radius: GRAVITY_FIELD_CAST.outerRadius,
+    zoneDurationMs: GRAVITY_FIELD_CAST.durationMs,
+    interruptible: true,
+    timing: {
+      anticipationMs: 110,
+      castMs: 150,
+      impactMs: 100,
+      recoveryMs: 120,
+      anticipationMoveMul: 0.8,
+      castMoveMul: 0.75,
+      impactMoveMul: 0.9,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Time Freeze (R) — temporal field that slows hostile projectiles.
+   */
+  timeFreeze: {
+    id: "timeFreeze",
+    name: "Time Freeze",
+    description:
+      "Create a temporal field that dramatically slows hostile projectiles passing through it.",
+    allowedSlots: ["r"],
+    defaultSlot: "r",
+    unlockCostEssence: TIME_FREEZE_CAST.unlockCostEssence,
+    cooldownMs: TIME_FREEZE_CAST.cooldownMs,
+    range: TIME_FREEZE_CAST.range,
+    shape: "aoe",
+    effectKind: "timeFreeze",
+    tags: ["Area", "GroundEffect", "Defense", "Control", "Persistent", "Cast"] as SpellTag[],
+    damage: 0,
+    radius: TIME_FREEZE_CAST.radius,
+    zoneDurationMs: TIME_FREEZE_CAST.durationMs,
+    interruptible: true,
+    timing: {
+      anticipationMs: 105,
+      castMs: 145,
+      impactMs: 95,
+      recoveryMs: 115,
+      anticipationMoveMul: 0.8,
+      castMoveMul: 0.75,
+      impactMoveMul: 0.9,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Blood Pact (R) — sacrifice current HP to empower self + nearby allies.
+   */
+  bloodPact: {
+    id: "bloodPact",
+    name: "Blood Pact",
+    description:
+      "Sacrifice part of your current health to empower yourself and nearby allies with increased damage.",
+    allowedSlots: ["r"],
+    defaultSlot: "r",
+    unlockCostEssence: BLOOD_PACT_CAST.unlockCostEssence,
+    cooldownMs: BLOOD_PACT_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "bloodPact",
+    tags: ["Area", "Buff", "Ally", "Self", "Cast"] as SpellTag[],
+    damage: 0,
+    radius: BLOOD_PACT_CAST.allyRadius,
+    interruptible: true,
+    timing: {
+      anticipationMs: 90,
+      castMs: 130,
+      impactMs: 90,
+      recoveryMs: 110,
+      anticipationMoveMul: 0.85,
+      castMoveMul: 0.8,
+      impactMoveMul: 0.9,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Chain Lightning (R) — bounce between players; damage enemies, buff allies.
+   */
+  chainLightning: {
+    id: "chainLightning",
+    name: "Chain Lightning",
+    description:
+      "Unleash lightning that jumps between nearby players. Enemies take damage while allies are briefly empowered.",
+    allowedSlots: ["r"],
+    defaultSlot: "r",
+    unlockCostEssence: CHAIN_LIGHTNING_CAST.unlockCostEssence,
+    cooldownMs: CHAIN_LIGHTNING_CAST.cooldownMs,
+    range: CHAIN_LIGHTNING_CAST.range,
+    shape: "buff",
+    effectKind: "chainLightning",
+    tags: ["SingleTarget", "MultiHit", "Damage", "Buff", "Ally", "Cast", "Chain", "Debuff"] as SpellTag[],
+    damage: CHAIN_LIGHTNING_CAST.enemyDamage,
+    applyOnHit: [{ statusId: "shocked", chance: 1 }],
+    interruptible: true,
+    timing: {
+      anticipationMs: 140,
+      castMs: 200,
+      impactMs: 120,
+      recoveryMs: 140,
+      anticipationMoveMul: 0.85,
+      castMoveMul: 0.75,
+      impactMoveMul: 0.9,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Position Swap (R) — exchange places with a targeted ally or enemy.
+   */
+  positionSwap: {
+    id: "positionSwap",
+    name: "Position Swap",
+    description: "Exchange positions with a targeted ally or enemy.",
+    allowedSlots: ["r"],
+    defaultSlot: "r",
+    unlockCostEssence: POSITION_SWAP_CAST.unlockCostEssence,
+    cooldownMs: POSITION_SWAP_CAST.cooldownMs,
+    range: POSITION_SWAP_CAST.range,
+    shape: "buff",
+    effectKind: "positionSwap",
+    tags: ["Movement", "Utility", "Control", "Ally", "Cast"] as SpellTag[],
+    damage: 0,
+    interruptible: true,
+    timing: {
+      anticipationMs: 200,
+      castMs: 320,
+      impactMs: 220,
+      recoveryMs: 160,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.55,
+      impactMoveMul: 0,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Cyclone Kick (F) — 360° close-range spinning whirlwind lasting 4 seconds.
+   * Spins continuously, vacuum-pulling nearby enemies inward and dealing damage each tick.
+   */
+  cycloneKick: {
+    id: "cycloneKick",
+    name: "Cyclone Kick",
+    description:
+      "Spin violently for 4 seconds, dealing rapid continuous damage each tick to nearby enemies.",
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    unlockCostEssence: CYCLONE_KICK_CAST.unlockCostEssence,
+    cooldownMs: CYCLONE_KICK_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "cycloneKick",
+    tags: ["Area", "Melee", "Damage", "Ultimate", "Cast"] as SpellTag[],
+    radius: CYCLONE_KICK_CAST.radius,
+    damage: CYCLONE_KICK_CAST.damagePerTick * CYCLONE_KICK_CAST.totalTicks,
+    durationMs: CYCLONE_KICK_CAST.durationMs,
+    structureDamage: 1,
+    timing: {
+      anticipationMs: 0,
+      castMs: 0,
+      impactMs: authoredForWallMs(4000),
+      recoveryMs: authoredForWallMs(100),
+      anticipationMoveMul: 1.0,
+      castMoveMul: 1.0,
+      impactMoveMul: 0.85,
+      recoveryMoveMul: 1.0,
+      cancelUntilPhase: "impact",
+      blocksOtherCasts: true,
+    },
+    interruptible: true,
+  },
+  /**
+   * World Tree (F) — persistent smart healing summon.
+   */
+  worldTree: {
+    id: "worldTree",
+    name: "World Tree",
+    description:
+      "Summon a magical tree that periodically sends healing seeds to the lowest-health nearby ally.",
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    unlockCostEssence: WORLD_TREE_CAST.unlockCostEssence,
+    cooldownMs: WORLD_TREE_CAST.cooldownMs,
+    range: WORLD_TREE_CAST.range,
+    shape: "aoe",
+    effectKind: "worldTree",
+    tags: ["Healing", "Summon", "Persistent", "Ally", "Area", "Ultimate", "Cast"] as SpellTag[],
+    damage: 0,
+    heal: WORLD_TREE_CAST.healPerSeed,
+    radius: WORLD_TREE_CAST.healRadius,
+    durationMs: WORLD_TREE_CAST.durationMs,
+    healIntervalMs: WORLD_TREE_CAST.healIntervalMs,
+    healRadius: WORLD_TREE_CAST.healRadius,
+    healPerSeed: WORLD_TREE_CAST.healPerSeed,
+    structureDurability: WORLD_TREE_CAST.structureDurability,
+    timing: {
+      anticipationMs: 130,
+      castMs: 180,
+      impactMs: 140,
+      recoveryMs: 150,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.6,
+      impactMoveMul: 0.8,
+      recoveryMoveMul: 0.95,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+    interruptible: true,
+  },
+  /**
+   * Phantom Rush (F) — rush through up to 4 nearby enemies in rapid succession.
+   */
+  phantomRush: {
+    id: "phantomRush",
+    name: "Phantom Rush",
+    description:
+      "Rush through nearby enemies in rapid succession, striking each target once and landing on their opposite side.",
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    unlockCostEssence: PHANTOM_RUSH_CAST.unlockCostEssence,
+    cooldownMs: PHANTOM_RUSH_CAST.cooldownMs,
+    range: PHANTOM_RUSH_CAST.range,
+    shape: "dash",
+    effectKind: "phantomRush",
+    tags: ["Movement", "MultiHit", "Damage", "Melee", "Ultimate", "Cast"] as SpellTag[],
+    maxTargets: PHANTOM_RUSH_CAST.maxTargets,
+    chainRadius: PHANTOM_RUSH_CAST.chainRadius,
+    damagePerTarget: PHANTOM_RUSH_CAST.damagePerTarget,
+    damage: PHANTOM_RUSH_CAST.damagePerTarget,
+    rushDurationPerTargetMs: PHANTOM_RUSH_CAST.rushDurationPerTargetMs,
+    finalOffsetFromTarget: PHANTOM_RUSH_CAST.finalOffsetFromTarget,
+    structureDamage: 1,
+    timing: {
+      anticipationMs: 100,
+      castMs: 140,
+      impactMs: 80,
+      recoveryMs: 140,
+      anticipationMoveMul: 0.8,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 0.9,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+    interruptible: true,
+  },
+  /**
+   * Ascendant Form (F) — transformation, 22% DR, CC reduction, damage aura, +15% melee radius.
+   */
+  ascendantForm: {
+    id: "ascendantForm",
+    name: "Ascendant Form",
+    description:
+      "Grow into an empowered form, reducing CC durations and damage taken while damaging nearby enemies.",
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    unlockCostEssence: ASCENDANT_FORM_CAST.unlockCostEssence,
+    cooldownMs: ASCENDANT_FORM_CAST.cooldownMs,
+    range: 0,
+    shape: "buff",
+    effectKind: "ascendantForm",
+    tags: ["Buff", "Self", "Defense", "Persistent", "Melee", "Damage", "Ultimate", "Cast"] as SpellTag[],
+    damage: 0,
+    durationMs: ASCENDANT_FORM_CAST.durationMs,
+    modelScaleMul: ASCENDANT_FORM_CAST.modelScaleMul,
+    damageTakenMul: ASCENDANT_FORM_CAST.damageTakenMul,
+    auraRadius: ASCENDANT_FORM_CAST.auraRadius,
+    auraDamageIntervalMs: ASCENDANT_FORM_CAST.auraDamageIntervalMs,
+    auraDamage: ASCENDANT_FORM_CAST.auraDamage,
+    meleeRadiusMul: ASCENDANT_FORM_CAST.meleeRadiusMul,
+    timing: {
+      anticipationMs: 120,
+      castMs: 320,
+      impactMs: 320,
+      recoveryMs: 240,
+      anticipationMoveMul: 0.75,
+      castMoveMul: 0.65,
+      impactMoveMul: 0.85,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+    interruptible: true,
+  },
+  /**
+   * Dread Aura (F) — reactive fear aura against casting enemies and dummies.
+   */
+  dreadAura: {
+    id: "dreadAura",
+    name: "Dread Aura",
+    description:
+      "Surround yourself with a terrifying sigil. Enemies who cast inside or approach are feared away from you.",
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    unlockCostEssence: DREAD_AURA_CAST.unlockCostEssence,
+    cooldownMs: DREAD_AURA_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "dreadAura",
+    tags: ["Area", "Persistent", "Control", "Fear", "Debuff", "Ultimate", "Cast"] as SpellTag[],
+    damage: 0,
+    durationMs: DREAD_AURA_CAST.durationMs,
+    radius: DREAD_AURA_CAST.radius,
+    fearDurationMs: DREAD_AURA_CAST.fearDurationMs,
+    maxTriggersPerEnemy: DREAD_AURA_CAST.maxTriggersPerEnemy,
+    timing: {
+      anticipationMs: 100,
+      castMs: 260,
+      impactMs: 240,
+      recoveryMs: 200,
+      anticipationMoveMul: 0.8,
+      castMoveMul: 0.75,
+      impactMoveMul: 0.95,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+    interruptible: true,
+  },
+  /**
+   * Elemental Overload (E/R) — talent unlock in Destruction tree (DES_16).
+   * Detonates all active elemental statuses on the target for scaled burst damage.
+   */
+  elementalOverload: {
+    id: "elementalOverload",
+    name: "Elemental Overload",
+    description:
+      "Call a lightning strike onto a targeted enemy. The bolt is a direct hit that consumes all active elemental statuses (Fire, Poison, Frost, Shock) for heavy bonus burst damage per stack, plus an explosive detonation if Shocked.",
+    allowedSlots: ["e", "r"],
+    defaultSlot: "e",
+    talentTreeUnlock: {
+      tree: "Destruction",
+      talentId: "DES_16",
+      tier: 4,
+    },
+    cooldownMs: ELEMENTAL_OVERLOAD_CAST.cooldownMs,
+    range: ELEMENTAL_OVERLOAD_CAST.range,
+    shape: "buff",
+    effectKind: "elementalOverload",
+    tags: [
+      "Damage",
+      "SingleTarget",
+      "Cast",
+      "Explosion",
+    ] as SpellTag[],
+    damage: ELEMENTAL_OVERLOAD_CAST.baseDamage,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(120),
+      castMs: authoredForWallMs(160),
+      impactMs: authoredForWallMs(80),
+      recoveryMs: authoredForWallMs(140),
+      anticipationMoveMul: 0.8,
+      castMoveMul: 0.7,
+      impactMoveMul: 0.85,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Guardian's Blessing (Q/E) — talent unlock in Guardian tree (GUA_14).
+   * Bestow a powerful protective aegis upon a targeted ally or self (20% max HP shield) for 5s.
+   */
+  guardiansBlessing: {
+    id: "guardiansBlessing",
+    name: "Guardian's Blessing",
+    description:
+      "Bestow a powerful protective aegis upon a targeted ally (or yourself), granting an absorb shield equal to 20% of their maximum health for 5 seconds.",
+    allowedSlots: ["q", "e"],
+    defaultSlot: "q",
+    talentTreeUnlock: {
+      tree: "Guardian",
+      talentId: "GUA_14",
+      tier: 4,
+    },
+    cooldownMs: GUARDIANS_BLESSING_CAST.cooldownMs,
+    range: GUARDIANS_BLESSING_CAST.range,
+    shape: "buff",
+    effectKind: "guardiansBlessing",
+    tags: [
+      "Defense",
+      "Defensive",
+      "Shield",
+      "Ally",
+      "Self",
+      "SingleTarget",
+      "Cast",
+    ] as SpellTag[],
+    damage: 0,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(100),
+      castMs: authoredForWallMs(160),
+      impactMs: authoredForWallMs(80),
+      recoveryMs: authoredForWallMs(120),
+      anticipationMoveMul: 0.8,
+      castMoveMul: 0.7,
+      impactMoveMul: 0.85,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Binding Sigil (CON_16) — visible delayed root rune.
+   */
+  bindingSigil: {
+    id: "bindingSigil",
+    name: "Binding Sigil",
+    description:
+      "Place a binding rune at the target location. After a short arming delay it activates and binds enemies who stand inside.",
+    allowedSlots: ["q", "e"],
+    defaultSlot: "e",
+    talentTreeUnlock: {
+      tree: "Control",
+      talentId: "CON_16",
+      tier: 4,
+    },
+    cooldownMs: BINDING_SIGIL_CAST.cooldownMs,
+    range: BINDING_SIGIL_CAST.range,
+    shape: "aoe",
+    effectKind: "bindingSigil",
+    tags: [
+      "Area",
+      "GroundEffect",
+      "Control",
+      "Root",
+      "Trap",
+      "CrowdControl",
+      "Cast",
+    ] as SpellTag[],
+    damage: 0,
+    radius: BINDING_SIGIL_CAST.radius,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(90),
+      castMs: authoredForWallMs(140),
+      impactMs: authoredForWallMs(80),
+      recoveryMs: authoredForWallMs(110),
+      anticipationMoveMul: 0.9,
+      castMoveMul: 0.8,
+      impactMoveMul: 0.9,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Mass Silence (CON_19) — fight-reset pulse that also hits allies and self.
+   */
+  massSilence: {
+    id: "massSilence",
+    name: "Mass Silence",
+    description:
+      "Release a wide pulse that silences everyone nearby — enemies, allies, and yourself. Movement is unaffected.",
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    talentTreeUnlock: {
+      tree: "Control",
+      talentId: "CON_19",
+      tier: 5,
+    },
+    cooldownMs: MASS_SILENCE_CAST.cooldownMs,
+    range: 0,
+    shape: "aoe",
+    effectKind: "massSilence",
+    tags: [
+      "Area",
+      "Nova",
+      "Control",
+      "Silence",
+      "CrowdControl",
+      "Interrupt",
+      "Cast",
+    ] as SpellTag[],
+    damage: 0,
+    radius: MASS_SILENCE_CAST.radius,
+    interruptible: true,
+    timing: {
+      anticipationMs: authoredForWallMs(100),
+      castMs: authoredForWallMs(160),
+      impactMs: authoredForWallMs(90),
+      recoveryMs: authoredForWallMs(130),
+      anticipationMoveMul: 0.75,
+      castMoveMul: 0.55,
+      impactMoveMul: 0.8,
+      recoveryMoveMul: 1,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Triple Blink (FLO_18) — three short cursor hops. Space only.
+   */
+  tripleBlink: {
+    id: "tripleBlink",
+    name: "Triple Blink",
+    description:
+      "Blink toward your cursor, then recast Space up to two more times. Cooldown starts when you stop recasting or after the third hop. Rooted, silenced, or stunned casters cannot hop.",
+    allowedSlots: ["space"],
+    defaultSlot: "space",
+    talentTreeUnlock: {
+      tree: "Flow",
+      talentId: "FLO_18",
+      tier: 4,
+    },
+    cooldownMs: TRIPLE_BLINK_CAST.cooldownMs,
+    range: TRIPLE_BLINK_CAST.hopDistance,
+    shape: "dash",
+    effectKind: "tripleBlink",
+    tags: ["Blink", "Movement", "Self", "Instant"] as SpellTag[],
+    damage: 0,
+    interruptible: false,
+    interruptsOtherCasts: true,
+    cutsAnyCast: true,
+    iFrames: {
+      startMs: 0,
+      durationMs: TRIPLE_BLINK_CAST.iframeMs,
+    },
+    timing: {
+      anticipationMs: 20,
+      castMs: 30,
+      impactMs: 80,
+      recoveryMs: 40,
+      anticipationMoveMul: 0.2,
+      castMoveMul: 0,
+      impactMoveMul: 0,
+      recoveryMoveMul: 0.9,
+      canCancelAnticipation: false,
+    },
+  },
+  /**
+   * Guardian Angel (HAR_14) — spend current HP to restore an ally.
+   */
+  guardianAngel: {
+    id: "guardianAngel",
+    name: "Guardian Angel",
+    description:
+      "Sacrifice a large portion of your current health to restore a large percentage of an ally's maximum health.",
+    allowedSlots: ["q", "e", "r"],
+    defaultSlot: "q",
+    talentTreeUnlock: {
+      tree: "Harmony",
+      talentId: "HAR_14",
+      tier: 4,
+    },
+    cooldownMs: GUARDIAN_ANGEL_CAST.cooldownMs,
+    range: GUARDIAN_ANGEL_CAST.range,
+    shape: "buff",
+    effectKind: "guardianAngel",
+    tags: ["Healing", "Ally", "SingleTarget", "Cast", "Instant"] as SpellTag[],
+    damage: 0,
+    interruptible: true,
+    timing: {
+      anticipationMs: 80,
+      castMs: 120,
+      impactMs: 80,
+      recoveryMs: 100,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.5,
+      impactMoveMul: 0.8,
+      recoveryMoveMul: 0.95,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Lasting Grace (HAR_19) — cannot fall below 1 HP.
+   */
+  lastingGrace: {
+    id: "lastingGrace",
+    name: "Lasting Grace",
+    description:
+      "Bless an ally so they cannot be reduced below 1 health for a short duration.",
+    allowedSlots: ["q", "e", "r"],
+    defaultSlot: "e",
+    talentTreeUnlock: {
+      tree: "Harmony",
+      talentId: "HAR_19",
+      tier: 5,
+    },
+    cooldownMs: LASTING_GRACE_CAST.cooldownMs,
+    range: LASTING_GRACE_CAST.range,
+    shape: "buff",
+    effectKind: "lastingGrace",
+    tags: ["Healing", "Ally", "Defense", "SingleTarget", "Cast"] as SpellTag[],
+    damage: 0,
+    interruptible: true,
+    timing: {
+      anticipationMs: 90,
+      castMs: 140,
+      impactMs: 80,
+      recoveryMs: 120,
+      anticipationMoveMul: 0.7,
+      castMoveMul: 0.55,
+      impactMoveMul: 0.8,
+      recoveryMoveMul: 0.95,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
+  /**
+   * Rebirth (F) — delayed resurrection blessing. Not a talent-tree node.
+   */
+  rebirth: {
+    id: "rebirth",
+    name: "Rebirth",
+    description:
+      "Bless an ally. If they die while blessed, they resurrect after a short delay with part of their health restored.",
+    allowedSlots: ["f"],
+    defaultSlot: "f",
+    unlockCostEssence: REBIRTH_CAST.unlockCostEssence,
+    cooldownMs: REBIRTH_CAST.cooldownMs,
+    range: REBIRTH_CAST.range,
+    shape: "buff",
+    effectKind: "rebirth",
+    tags: ["Healing", "Ally", "Ultimate", "SingleTarget", "Cast"] as SpellTag[],
+    damage: 0,
+    interruptible: true,
+    timing: {
+      anticipationMs: 120,
+      castMs: 200,
+      impactMs: 140,
+      recoveryMs: 160,
+      anticipationMoveMul: 0.65,
+      castMoveMul: 0.5,
+      impactMoveMul: 0.75,
+      recoveryMoveMul: 0.95,
+      cancelUntilPhase: "cast",
+      blocksOtherCasts: true,
+    },
+  },
 };
 
 /**
- * Starter spell per hotbar slot — armoury list order and DEFAULT_LOADOUT.
+ * Recommended first pick per hotbar slot — armoury list order only.
  * Keep in sync with STARTER_ABILITY_IDS in playerUnlocks.ts.
+ * New characters do not receive these automatically.
  */
 export const DEFAULT_ABILITY_BY_SLOT: Record<SpellSlotId, string> = {
   m1: "bolt",
@@ -4351,21 +5573,20 @@ export const DEFAULT_ABILITY_BY_SLOT: Record<SpellSlotId, string> = {
   f: "fireball",
 };
 
-/** Ordered by SPELL_SLOTS: LMB, RMB, Space, Q, E, R, F */
+/** Ordered by SPELL_SLOTS: LMB, RMB, Space, Q, E, R, F — catalogue defaults, not a granted kit. */
 export const DEFAULT_LOADOUT: readonly string[] = SPELL_SLOTS.map(
   (slot) => DEFAULT_ABILITY_BY_SLOT[slot.id],
 );
 
-/** True for the seven default loadout picks (always unlocked). */
+/** True for the seven recommended first picks (no longer auto-owned). */
 export function isStarterLoadoutAbility(abilityId: string): boolean {
   return (DEFAULT_LOADOUT as readonly string[]).includes(abilityId);
 }
 
-/** Essence needed to unlock; 0 = already free / starter. */
+/** Catalogue essence price. First family pick is waived by `abilityUnlockCostForPlayer`. */
 export function abilityUnlockCostEssence(abilityId: string): number {
-  if (isStarterLoadoutAbility(abilityId)) return 0;
   const def = ABILITIES[abilityId];
-  if (!def) return 0;
+  if (!def || def.talentTreeUnlock) return 0;
   return Math.max(0, def.unlockCostEssence ?? 80);
 }
 
@@ -4374,9 +5595,34 @@ export function canEquipInSlot(abilityId: string, slotId: SpellSlotId): boolean 
   return Boolean(def?.allowedSlots.includes(slotId));
 }
 
+/**
+ * Which bar index a click should fill.
+ *
+ * Uses the selected key when that family is legal; otherwise the spell's
+ * own family (Space, Q, …). First-build used to look like it required
+ * LMB then RMB in order because a Space pick was sent to whatever slot
+ * happened to be highlighted.
+ */
+export function slotIndexForAbility(abilityId: string, preferredIndex = -1): number {
+  const preferred = SPELL_SLOTS[preferredIndex];
+  if (preferred && canEquipInSlot(abilityId, preferred.id)) return preferredIndex;
+  const family = ABILITIES[abilityId]?.allowedSlots[0];
+  if (!family) return -1;
+  return SPELL_SLOTS.findIndex((s) => s.id === family);
+}
+
 /** Combat fire path for an ability (id-agnostic). */
 export function abilityEffectKind(def: AbilityDef | undefined): AbilityEffectKind {
   return def?.effectKind ?? "standard";
+}
+
+/** Structure durability chips for Rock Wall (and future destructibles). */
+export function abilityStructureDamage(def: AbilityDef | undefined): number {
+  if (!def) return 0;
+  if (typeof def.structureDamage === "number") {
+    return Math.max(0, Math.floor(def.structureDamage));
+  }
+  return def.damage > 0 ? 1 : 0;
 }
 
 /**
@@ -4406,7 +5652,7 @@ export function abilityTriggersCounter(
     return true;
   }
   if (!def || !(def.damage > 0)) return false;
-  if (def.id === "smash") return true;
+  if (def.id === "smash" || def.id === "elementalOverload") return true;
   if (def.shape === "melee") return true;
   if (def.shape === "projectile" && !def.aura) return true;
   return false;
@@ -4432,12 +5678,15 @@ export function isComboAbility(def: AbilityDef | undefined): boolean {
   return (def?.combo?.hits ?? 0) > 1;
 }
 
-/** Choosable spells for a hotbar slot (Spells UI catalog). Default starter first. */
+/** Choosable spells for a hotbar slot (Spells UI catalog). Default starter first; talent unlocks last. */
 export function abilitiesForSlot(slotId: SpellSlotId): AbilityDef[] {
   const preferred = DEFAULT_ABILITY_BY_SLOT[slotId];
   return Object.values(ABILITIES)
     .filter((a) => a.allowedSlots.includes(slotId))
     .sort((a, b) => {
+      const aTalent = a.talentTreeUnlock ? 1 : 0;
+      const bTalent = b.talentTreeUnlock ? 1 : 0;
+      if (aTalent !== bTalent) return aTalent - bTalent;
       if (a.id === preferred) return -1;
       if (b.id === preferred) return 1;
       return (
@@ -4584,7 +5833,7 @@ function defaultAbilityForSlot(slotId: SpellSlotId): string {
 
 /**
  * Produce a loadout aligned to SPELL_SLOTS.
- * Each index must be an ability allowed in that slot; illegal entries are replaced.
+ * Illegal entries become empty — new hunters start with a blank bar.
  */
 export function normalizeLoadout(abilityIds: string[] | null | undefined): string[] {
   const raw = abilityIds ?? [];
@@ -4595,7 +5844,7 @@ export function normalizeLoadout(abilityIds: string[] | null | undefined): strin
     if (candidate && canEquipInSlot(candidate, slotId)) {
       out.push(candidate);
     } else {
-      out.push(defaultAbilityForSlot(slotId));
+      out.push("");
     }
   }
   return out;

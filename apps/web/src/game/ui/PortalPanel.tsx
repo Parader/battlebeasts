@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   PVE_PORTAL_CONTENTS,
-  PVP_PORTAL_MODES,
-  pvpModeCapacity,
-  pvpModeFitsPlayerCount,
+  PVP_FAMILIES,
+  pvpFamilyFitsPlayerCount,
+  type PvpFamily,
 } from "@battlebeasts/shared";
 import { GamePanelShell } from "./GamePanelShell";
 
@@ -13,32 +13,38 @@ type Props = {
   hubPlayerCount?: number;
   onConfirm: (
     portal: "pvp" | "pve",
-    params: { modes?: string[]; content?: string; modifiers?: string[] },
+    params: { family?: PvpFamily; modes?: string[]; content?: string; modifiers?: string[] },
   ) => void;
+  /** Fighters need a full 7-spell bar before queueing. Lobby can still open. */
+  loadoutReady?: boolean;
 };
 
-export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Props) {
-  const enabledModes = useMemo(
-    () => PVP_PORTAL_MODES.filter((m) => pvpModeFitsPlayerCount(m.id, hubPlayerCount)),
-    [hubPlayerCount],
-  );
-  const [modes, setModes] = useState<string[]>(() =>
-    enabledModes[0] ? [enabledModes[0].id] : ["arena_1v1"],
-  );
+export function PortalPanel({
+  kind,
+  onClose,
+  onConfirm,
+  hubPlayerCount = 1,
+  loadoutReady = true,
+}: Props) {
+  const [family, setFamily] = useState<PvpFamily>("skirmish");
   const [pveContent, setPveContent] = useState(
     () => PVE_PORTAL_CONTENTS[0]?.id ?? "dungeon",
   );
 
   const isPvp = kind === "portal_pvp";
-  const title = isPvp ? "PvP Portal" : "PvE / Coop Portal";
-  const canEnterPvp = isPvp && modes.some((id) => pvpModeFitsPlayerCount(id, hubPlayerCount));
+  const title = isPvp ? "Play" : "PvE / Coop Portal";
+  const familyFits = pvpFamilyFitsPlayerCount(family, hubPlayerCount);
   const canEnterPve = !isPvp && PVE_PORTAL_CONTENTS.some((c) => c.id === pveContent);
 
   if (!isPvp) {
     return (
       <GamePanelShell
         title={title}
-        subtitle="Open a Wave Assault lobby — solo or up to 4 hunters."
+        subtitle={
+          loadoutReady
+            ? "Open a Wave Assault lobby — solo or up to 4 hunters."
+            : "Slot a spell on every key at the House before you can start."
+        }
         onClose={onClose}
         footer={
           <>
@@ -84,7 +90,11 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
   return (
     <GamePanelShell
       title={title}
-      subtitle="Pick the arena modes you want to queue for."
+      subtitle={
+        loadoutReady
+          ? "Pick a playlist. Matchmaking sizes the match from who’s queued."
+          : "Slot a spell on every key at the House before you can queue."
+      }
       onClose={onClose}
       footer={
         <>
@@ -94,41 +104,30 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
           <button
             type="button"
             className="bb-btn-brass disabled:opacity-45"
-            disabled={!canEnterPvp || modes.length === 0}
-            onClick={() => onConfirm("pvp", { modes })}
+            disabled={!familyFits}
+            onClick={() => onConfirm("pvp", { family })}
           >
-            Open party lobby
+            Open lobby
           </button>
         </>
       }
     >
       <div className="space-y-2">
-        {PVP_PORTAL_MODES.map((opt) => {
-          const fits = pvpModeFitsPlayerCount(opt.id, hubPlayerCount);
-          const on = modes.includes(opt.id);
-          const cap = pvpModeCapacity(opt.id);
+        {PVP_FAMILIES.map((opt) => {
+          const fits = pvpFamilyFitsPlayerCount(opt.id, hubPlayerCount);
+          const on = family === opt.id;
           return (
             <button
               key={opt.id}
               type="button"
               disabled={!fits}
-              title={
-                fits
-                  ? undefined
-                  : `Need a larger mode (${hubPlayerCount} in room, max ${cap})`
-              }
               className={[
                 "bb-choice",
                 on ? "bb-choice--on" : "",
                 !fits ? "opacity-40" : "",
               ].join(" ")}
               onClick={() => {
-                if (!fits) return;
-                setModes((prev) =>
-                  prev.includes(opt.id)
-                    ? prev.filter((x) => x !== opt.id)
-                    : [...prev, opt.id],
-                );
+                if (fits) setFamily(opt.id);
               }}
             >
               <span
@@ -137,9 +136,7 @@ export function PortalPanel({ kind, onClose, onConfirm, hubPlayerCount = 1 }: Pr
               >
                 {opt.label}
               </span>
-              {!fits ? (
-                <span className="bb-meta mt-1 block">too small for this hub</span>
-              ) : null}
+              <span className="bb-meta mt-1 block">{opt.description}</span>
             </button>
           );
         })}

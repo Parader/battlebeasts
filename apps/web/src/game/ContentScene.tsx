@@ -12,6 +12,8 @@ import {
   Projectiles,
   Decoys,
   Volcanoes,
+  RockWalls,
+  WorldTrees,
   ProtectionBubbles,
   OrbitingWisps,
   AstralChains,
@@ -20,6 +22,7 @@ import {
   Shrooms,
   SpiritHusks,
   WorldTargets,
+  PickupOrbs,
 } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { setGroundAim } from "./groundAimRuntime";
@@ -27,6 +30,7 @@ import { FollowSun } from "./FollowSun";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
 import { MapScene } from "./MapScene";
+import { ObjectiveMarkers } from "./vfx/ObjectiveMarkers";
 
 type Props = {
   room: Room | null;
@@ -151,9 +155,7 @@ export function ContentScene({
   return (
     <>
       <ambientLight intensity={isDungeon ? 0.4 : 0.9} />
-      {!isDungeon ? (
-        <hemisphereLight args={["#fff1d6", "#8b6a3c", 0.55]} />
-      ) : null}
+      <hemisphereLight args={["#fff1d6", "#8b6a3c", isDungeon ? 0 : 0.55]} />
       <FollowSun follow={localPos} intensity={isDungeon ? 0.95 : 1.55} />
       {/* Maps bring their own ground — no extra plane (avoids z-fight/clipping). */}
       <MapScene mapId={mapId} />
@@ -174,6 +176,8 @@ export function ContentScene({
       {isDungeon ? <WorldTargets room={room} /> : null}
       <Decoys room={room} />
       <Volcanoes room={room} />
+      <RockWalls room={room} />
+      <WorldTrees room={room} />
       <ProtectionBubbles room={room} />
       <OrbitingWisps room={room} />
       <AstralChains room={room} />
@@ -186,6 +190,12 @@ export function ContentScene({
         localTeam={localTeam}
       />
       <SpiritHusks
+        room={room}
+        localSessionId={localSessionId}
+        predictedRef={predictedRef}
+      />
+      <PickupOrbs room={room} localSessionId={localSessionId} predictedRef={predictedRef} />
+      <ObjectiveMarkers
         room={room}
         localSessionId={localSessionId}
         predictedRef={predictedRef}

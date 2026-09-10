@@ -14,7 +14,10 @@
     "build:shared": "pnpm --filter @battlebeasts/shared build",
     "gen:props": "node scripts/gen-prop-manifest.mjs",
     "gen:props:force": "node scripts/gen-prop-manifest.mjs --force",
-    "gen:maps": "node scripts/gen-map-index.mjs"
+    "gen:maps": "node scripts/gen-map-index.mjs",
+    "export:skins": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/export-skins.ps1",
+    "export:skins:install": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/export-skins.ps1 -Install",
+    "workbench:ybot": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/add-ybot-to-bind.ps1"
   },
   "engines": {
     "node": ">=20"

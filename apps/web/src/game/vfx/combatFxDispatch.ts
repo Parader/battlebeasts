@@ -5,6 +5,11 @@ import {
 import { abilityVfxColor } from "./colors";
 import { spawnImpactEffect } from "./runtime";
 import { getAbilityVfxProfile } from "./profiles/registry";
+import {
+  didJustPlayLocalPickupFumes,
+  pickupFumeColorForAbility,
+  spawnPickupCollectFumes,
+} from "./pickupCollectFumes";
 import { dispatchAoeCombatFx } from "./aoeCombatFxHandlers";
 import {
   usesMagmaOrbsFx,
@@ -176,6 +181,19 @@ export function dispatchCombatFxVfx(
     );
   }
 
+  if (msg.kind === "dash" && onDash === "phantomRush") {
+    spawnImpactEffect(
+      msg.abilityId,
+      { x: msg.x, z: msg.z, y: 0.55, yaw: resolveOwnerYaw(msg, ctx) },
+      {
+        lifeMs: 320,
+        originX: msg.x2,
+        originZ: msg.z2,
+        targetId: msg.targetId,
+      },
+    );
+  }
+
   if (usesMeleeSwoopFx(msg.abilityId) && msg.ownerId) {
     const owner = ctx.getOwner(msg.ownerId);
     const localOwner = msg.ownerId === ctx.localSessionId;
@@ -224,6 +242,27 @@ export function dispatchCombatFxVfx(
     if (msg.abilityId === "bolt") playBoltHitSfx();
   }
 
+  if (msg.kind === "hit" && msg.abilityId.startsWith("pickup_")) {
+    const local = !!msg.targetId && msg.targetId === ctx.localSessionId;
+    if (!(local && didJustPlayLocalPickupFumes())) {
+      spawnPickupCollectFumes({
+        color: pickupFumeColorForAbility(msg.abilityId),
+        x: msg.x,
+        z: msg.z,
+        targetId: msg.targetId,
+      });
+    }
+  }
+
+  // Spellbreaker missile consume — same crackle as Arc Thread chain break.
+  if (msg.kind === "hit" && msg.abilityId === "spellbreaker") {
+    spawnImpactEffect(
+      "arcThread",
+      { x: msg.x, z: msg.z, y: msg.y ?? 0.85 },
+      { lifeMs: 300, variant: 2 },
+    );
+  }
+
   if (msg.kind === "hit" && onHit === "catalogImpact") {
     const hitY = getAbilityVfxProfile(msg.abilityId).combatFx?.hitY ?? 0.7;
     const yaw = resolveOwnerYaw(msg, ctx, 0);
@@ -235,7 +274,23 @@ export function dispatchCombatFxVfx(
         y: hitY,
         yaw,
       },
-      { variant: msg.variant, lifeMs: msg.abilityId === "arcBlade" ? 220 : undefined },
+      {
+        variant: msg.variant,
+        lifeMs:
+          msg.abilityId === "arcBlade"
+            ? 220
+            : msg.abilityId === "chainLightning"
+              ? 220
+              : msg.abilityId === "elementalOverload"
+                ? 420
+                : msg.abilityId === "worldTree"
+                ? 1600
+                : undefined,
+        originX: msg.x2,
+        originZ: msg.z2,
+        targetId: msg.targetId,
+        followTargetId: msg.targetId,
+      },
     );
   }
 

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type * as THREE from "three";
-import type { CosmeticsEquipped } from "@battlebeasts/shared";
+import { normalizeCosmeticBody, type CosmeticsEquipped } from "@battlebeasts/shared";
+import { BoneSkins } from "./BoneSkins";
 import { setCharacterOpacity, syncEmbeddedCosmetics } from "./characterVisual";
 
 type Props = {
@@ -8,14 +9,15 @@ type Props = {
   equipped?: CosmeticsEquipped | null;
   /** Re-apply after gear show/hide (keeps cloak ghosting on newly visible pieces). */
   opacity?: number;
+  body?: string | null;
 };
 
 /**
- * Toggle `cosmetic_*` meshes inside hero.glb based on equipped slots.
- * Gear must be parented to the Mixamo skeleton in Blender and named
- * e.g. `cosmetic_hat_wizard` (see COSMETIC_CATALOG.meshName).
+ * Toggle embedded hero.glb gear and mount bone-attached skin GLBs.
+ * New skins: `file` + `bone` in COSMETIC_CATALOG (see tools/blender_export_skin.py).
  */
-export function EquippedCosmetics({ characterRoot, equipped, opacity = 1 }: Props) {
+export function EquippedCosmetics({ characterRoot, equipped, opacity = 1, body }: Props) {
+  const vessel = normalizeCosmeticBody(body);
   useEffect(() => {
     try {
       syncEmbeddedCosmetics(characterRoot, equipped);
@@ -25,5 +27,13 @@ export function EquippedCosmetics({ characterRoot, equipped, opacity = 1 }: Prop
     }
   }, [characterRoot, equipped, opacity]);
 
-  return null;
+  return (
+    <BoneSkins
+      key={vessel}
+      characterRoot={characterRoot}
+      equipped={equipped}
+      opacity={opacity}
+      body={vessel}
+    />
+  );
 }

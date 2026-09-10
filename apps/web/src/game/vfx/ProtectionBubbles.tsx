@@ -1,5 +1,5 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { PROTECTION_BUBBLE_CAST } from "@battlebeasts/shared";
@@ -72,6 +72,13 @@ function BubbleMesh({ room, id }: { room: Room; id: string }) {
       }),
     [],
   );
+
+  useEffect(() => {
+    return () => {
+      domeMat.dispose();
+      shellMat.dispose();
+    };
+  }, [domeMat, shellMat]);
 
   useFrame(() => {
     const v = room.state?.protectionBubbles?.get(id) as BubbleSchema | undefined;

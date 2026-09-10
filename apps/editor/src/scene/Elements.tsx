@@ -3,6 +3,8 @@ import {
   elementType,
   entityBehaviour,
   NPC_INTERACT_RADIUS,
+  PICKUP_EFFECTS,
+  PICKUP_PREVIEW_COLOR,
   paramNumber,
   paramString,
   type MapElement,
@@ -10,9 +12,9 @@ import {
 } from "@battlebeasts/shared";
 import { Html, TransformControls } from "@react-three/drei";
 import { useThree } from "@react-three/fiber";
-import { Suspense, useState, useSyncExternalStore } from "react";
+import { Suspense, memo, useState, useSyncExternalStore } from "react";
 import * as THREE from "three";
-import { docStore, selectEntity, useEditor } from "../state/docStore";
+import { docStore, selectEntity, useEditor, useEditorSlice } from "../state/docStore";
 import { terrain } from "../state/terrain";
 import { wasDragged } from "./clickGuard";
 import { GROUND_NAME } from "./Ground";
@@ -42,6 +44,10 @@ function elementColor(el: MapElement): string {
     const team = paramString(el, "team", "a");
     return TEAM_COLOR[team as MapTeam] ?? def.color;
   }
+  if (el.type === "pickup") {
+    const effect = paramString(el, "effect", "energy");
+    return PICKUP_PREVIEW_COLOR[effect] ?? def.color;
+  }
   return def.color;
 }
 
@@ -54,13 +60,17 @@ function elementLabel(el: MapElement): string {
   const def = elementType(el.type);
   if (!def) return el.type;
   if (el.type === "player_spawn") {
-    return `${paramString(el, "team", "a").toUpperCase()}${paramNumber(el, "slot")}`;
+    return `T${paramString(el, "team", "a").toUpperCase()}`;
   }
   if (el.type === "entity_spawn") {
     // Behaviour rides in the caption so a glance across the map tells you
     // which mobs hold their post and which will come at you.
     const marks: Record<string, string> = { fixed: "fixed", roam: "roams", guard: "guards" };
     return `${paramString(el, "entity", "entity")} · ${marks[entityBehaviour(el)]}`;
+  }
+  if (el.type === "pickup") {
+    const effect = paramString(el, "effect", "energy");
+    return PICKUP_EFFECTS[effect]?.label ?? def.label;
   }
   if (el.type === "npc") {
     // The action is the useful half: a town is read as "who sells things",
@@ -209,7 +219,20 @@ function groundHeightAt(scene: THREE.Object3D, x: number, z: number): number | n
   return hit && Number.isFinite(hit.point.y) ? hit.point.y : null;
 }
 
-function ElementView({
+const noopSubscribe = () => () => {};
+
+/** Only NPCs subscribe to terrain; a sculpt stroke must not rebuild every spawn. */
+function usePlantedY(el: MapElement, scene: THREE.Object3D): number {
+  const isNpc = el.type === "npc";
+  useSyncExternalStore(
+    isNpc ? terrain.subscribe : noopSubscribe,
+    () => (isNpc ? terrain.heightVersion : 0),
+  );
+  if (!isNpc) return el.y ?? 0;
+  return groundHeightAt(scene, el.x, el.z) ?? el.y ?? 0;
+}
+
+const ElementView = memo(function ElementView({
   el,
   selected,
   solo,
@@ -225,11 +248,7 @@ function ElementView({
   const color = elementColor(el);
   const facing = def?.facing ?? true;
   const r = COLLISION.playerRadius;
-  // NPC feet are planted on local y=0; snap the anchor to terrain when we can
-  // raycast it, otherwise keep the authored y from the map file.
-  useSyncExternalStore(terrain.subscribe, () => terrain.heightVersion);
-  const groundY = el.type === "npc" ? groundHeightAt(scene, el.x, el.z) : null;
-  const y = el.type === "npc" ? (groundY ?? el.y ?? 0) : (el.y ?? 0);
+  const y = usePlantedY(el, scene);
 
   const commit = (o: THREE.Object3D) =>
     docStore.edit((d) => {
@@ -338,6 +357,22 @@ function ElementView({
         )}
 
         {/*
+         * Pickup elements show a floating orb preview in the editor scene.
+         */}
+        {el.type === "pickup" && (
+          <group position={[0, 1.0, 0]}>
+            <mesh>
+              <sphereGeometry args={[0.26, 16, 16]} />
+              <meshBasicMaterial color={color} />
+            </mesh>
+            <mesh rotation={[1.1, 0, 0]}>
+              <torusGeometry args={[0.42, 0.02, 8, 24]} />
+              <meshBasicMaterial color={color} transparent opacity={0.8} />
+            </mesh>
+          </group>
+        )}
+
+        {/*
          * Cylinder hint so the element is visible from a low camera. NPCs skip
          * it -- they have a body to be seen by, and the haze only fogs it.
          */}
@@ -354,22 +389,25 @@ function ElementView({
         </mesh>
         )}
 
-        <group position={[0, 2.1, 0]}>
-          <Label text={elementLabel(el)} color={color} />
-        </group>
+        {(selected || el.type === "npc" || el.type === "player_spawn") && (
+          <group position={[0, 2.1, 0]}>
+            <Label text={elementLabel(el)} color={color} />
+          </group>
+        )}
       </group>
 
       {solo && <Gizmo object={group} onChange={commit} />}
     </>
   );
-}
+});
 
-export function Elements() {
-  const { doc, selectedIds } = useEditor();
+export const Elements = memo(function Elements() {
+  const list = useEditorSlice((s) => s.doc.elements);
+  const selectedIds = useEditorSlice((s) => s.selectedIds);
   const solo = selectedIds.length === 1 ? selectedIds[0] : null;
   return (
     <>
-      {doc.elements.map((el) => (
+      {list.map((el) => (
         <ElementView
           key={el.id}
           el={el}
@@ -379,4 +417,4 @@ export function Elements() {
       ))}
     </>
   );
-}
+});

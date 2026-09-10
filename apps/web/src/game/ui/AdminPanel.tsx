@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
-import { listMaps } from "@battlebeasts/shared";
+import { useEffect, useMemo, useState } from "react";
+import { listMaps, normalizeCosmeticBody, type CosmeticBodyId } from "@battlebeasts/shared";
 import { GamePanelShell } from "./GamePanelShell";
+import { VesselPicker } from "./VesselPicker";
 
 type ChestQuality = "green" | "blue" | "purple" | "legendary";
 
@@ -15,6 +16,8 @@ type Props = {
   onToggleAdminNoCooldown?: (enabled: boolean) => void;
   /** Drop into any registered map solo, for looking at authored maps. */
   onTpToMap?: (mapId: string) => void;
+  vessel?: string;
+  onSetVessel?: (vessel: "female" | "male") => void;
 };
 
 const ADMIN_QUALITIES: readonly ChestQuality[] = ["green", "blue", "purple", "legendary"];
@@ -29,8 +32,16 @@ export function AdminPanel({
   adminNoCooldown = false,
   onToggleAdminNoCooldown,
   onTpToMap,
+  vessel,
+  onSetVessel,
 }: Props) {
   const [spawnQuality, setSpawnQuality] = useState<ChestQuality>("blue");
+  const [adminVessel, setAdminVessel] = useState<CosmeticBodyId>(() =>
+    normalizeCosmeticBody(vessel),
+  );
+  useEffect(() => {
+    if (vessel) setAdminVessel(normalizeCosmeticBody(vessel));
+  }, [vessel]);
   // Registration happens once at startup, so the list never changes at runtime.
   const maps = useMemo(() => listMaps().sort((a, b) => a.name.localeCompare(b.name)), []);
   const [mapId, setMapId] = useState(() => maps[0]?.id ?? "");
@@ -42,9 +53,20 @@ export function AdminPanel({
       title="Admin"
       subtitle="Hub tools for testing and support"
       onClose={onClose}
-      maxHeightClass="max-h-[min(80dvh,480px)]"
+      maxHeightClass="max-h-[min(80dvh,560px)]"
     >
       <section className="space-y-2">
+        {onSetVessel ? (
+          <div className="bb-list-row">
+            <VesselPicker
+              value={adminVessel}
+              onChange={(id) => {
+                setAdminVessel(id);
+                onSetVessel(id);
+              }}
+            />
+          </div>
+        ) : null}
         {onSpawnChest ? (
           <div className="bb-list-row flex flex-wrap items-center gap-2">
             <select

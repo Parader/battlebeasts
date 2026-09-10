@@ -16,6 +16,7 @@ import {
     supabaseUrl,
 } from "@/lib/supabase";
 import type { Profile } from "@/lib/database.types";
+import { normalizeCosmeticBody, type CosmeticBodyId } from "@battlebeasts/shared";
 
 type AuthState = {
     ready: boolean;
@@ -29,12 +30,15 @@ type AuthState = {
     profileError: string | null;
     accessToken: string | null;
     needsNameSetup: boolean;
+    /** Named hunter who has not picked Female / Male yet. */
+    needsVesselSetup: boolean;
     signInWithGoogle: () => Promise<void>;
     signInWithEmail: (email: string, password: string) => Promise<void>;
     signUpWithEmail: (email: string, password: string) => Promise<{ needsEmailConfirmation: boolean }>;
     signOut: () => Promise<void>;
     refreshProfile: () => Promise<void>;
     claimDisplayName: (name: string) => Promise<Profile>;
+    saveVesselChoice: (vessel: CosmeticBodyId) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -44,8 +48,9 @@ const DESKTOP_OAUTH_WEB_REDIRECT = "http://127.0.0.1:3847/auth/callback";
 const SESSION_READY_TIMEOUT_MS = 8_000;
 const PROFILE_FETCH_TIMEOUT_MS = 12_000;
 
-const PROFILE_SELECT =
+const PROFILE_SELECT_CORE =
     "id,display_name,avatar_url,color,pattern,pattern_color,name_confirmed,name_changed_at,created_at,updated_at";
+const PROFILE_SELECT = `${PROFILE_SELECT_CORE},vessel,vessel_confirmed`;
 
 function abortableTimeout(ms: number, label = "Profile request"): { signal: AbortSignal; clear: () => void } {
     const ctrl = new AbortController();
@@ -60,11 +65,15 @@ function abortableTimeout(ms: number, label = "Profile request"): { signal: Abor
  * Fetch profile via REST — bypasses supabase-js auth locks that deadlock
  * after OAuth `exchangeCodeForSession` / `onAuthStateChange`.
  */
-async function fetchProfileRest(userId: string, accessToken: string): Promise<Profile | null> {
+async function fetchProfileRest(
+    userId: string,
+    accessToken: string,
+    select = PROFILE_SELECT,
+): Promise<Profile | null> {
     if (!supabaseUrl || !supabasePublishableKey) return null;
 
     const qs = new URLSearchParams({
-        select: PROFILE_SELECT,
+        select,
         id: `eq.${userId}`,
     });
     const { signal, clear } = abortableTimeout(PROFILE_FETCH_TIMEOUT_MS, "Profile REST");
@@ -99,13 +108,13 @@ async function fetchProfileRest(userId: string, accessToken: string): Promise<Pr
 }
 
 /** Fallback via supabase-js (also deferred off the auth lock). */
-async function fetchProfileClient(userId: string): Promise<Profile | null> {
+async function fetchProfileClient(userId: string, select = PROFILE_SELECT): Promise<Profile | null> {
     if (!supabase) return null;
     const { signal, clear } = abortableTimeout(PROFILE_FETCH_TIMEOUT_MS, "Profile client");
     try {
         const query = supabase
             .from("profiles")
-            .select(PROFILE_SELECT)
+            .select(select)
             .eq("id", userId)
             .maybeSingle();
         const result = await Promise.race([
@@ -132,12 +141,27 @@ async function fetchProfile(userId: string, accessToken: string): Promise<Profil
     } catch (err) {
         restErr = err;
         if (err instanceof Error && err.message === "PostgREST_RESTARTING") throw err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/vessel/i.test(msg)) {
+            try {
+                return await fetchProfileRest(userId, accessToken, PROFILE_SELECT_CORE);
+            } catch {
+                /* fall through to client */
+            }
+        }
     }
     try {
         return await fetchProfileClient(userId);
     } catch (clientErr) {
         const restMsg = restErr instanceof Error ? restErr.message : String(restErr);
         const clientMsg = clientErr instanceof Error ? clientErr.message : String(clientErr);
+        if (/vessel/i.test(clientMsg)) {
+            try {
+                return await fetchProfileClient(userId, PROFILE_SELECT_CORE);
+            } catch {
+                /* keep original */
+            }
+        }
         throw new Error(`Profile load failed. REST: ${restMsg} | Client: ${clientMsg}`);
     }
 }
@@ -482,7 +506,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return next;
     }, []);
 
+    const saveVesselChoice = useCallback(async (vessel: CosmeticBodyId) => {
+        if (!supabase) throw new Error("Supabase is not configured");
+        const userId = sessionRef.current?.user?.id;
+        if (!userId) throw new Error("Not signed in");
+        const next = normalizeCosmeticBody(vessel);
+        const patch: Record<string, unknown> = {
+            vessel: next,
+            vessel_confirmed: true,
+            updated_at: new Date().toISOString(),
+        };
+        const { error } = await supabase.from("profiles").update(patch).eq("id", userId);
+        if (error) {
+            if (/vessel_confirmed/i.test(error.message)) {
+                const { vessel_confirmed: _drop, ...rest } = patch;
+                const retry = await supabase.from("profiles").update(rest).eq("id", userId);
+                if (retry.error) throw new Error(retry.error.message);
+            } else {
+                throw new Error(error.message);
+            }
+        }
+        setProfile((prev) =>
+            prev ? { ...prev, vessel: next, vessel_confirmed: true } : prev,
+        );
+        setProfileError(null);
+    }, []);
+
     const needsNameSetup = Boolean(session?.user && profile && profile.name_confirmed !== true);
+    const needsVesselSetup = Boolean(
+        session?.user &&
+            profile &&
+            profile.name_confirmed === true &&
+            profile.vessel_confirmed !== true,
+    );
 
     const value = useMemo<AuthState>(
         () => ({
@@ -495,12 +551,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             profileError,
             accessToken: session?.access_token ?? null,
             needsNameSetup,
+            needsVesselSetup,
             signInWithGoogle,
             signInWithEmail,
             signUpWithEmail,
             signOut,
             refreshProfile: () => refreshProfile(),
             claimDisplayName,
+            saveVesselChoice,
         }),
         [
             ready,
@@ -509,12 +567,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             profileLoading,
             profileError,
             needsNameSetup,
+            needsVesselSetup,
             signInWithGoogle,
             signInWithEmail,
             signUpWithEmail,
             signOut,
             refreshProfile,
             claimDisplayName,
+            saveVesselChoice,
         ],
     );
 

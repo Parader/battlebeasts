@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
@@ -15,7 +15,7 @@ import { useHubBallIds } from "./useColyseusMapKeys";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, ProtectionBubbles, OrbitingWisps, AstralChains, SoulSevers, RiftPortals, Shrooms, SpiritHusks } from "./CombatVfx";
+import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, RockWalls, WorldTrees, ProtectionBubbles, OrbitingWisps, AstralChains, SoulSevers, RiftPortals, Shrooms, SpiritHusks, PickupOrbs } from "./CombatVfx";
 import { SpellVfxBridge, VfxWorld } from "./vfx";
 import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
@@ -23,6 +23,7 @@ import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
 import { PlacementHelper } from "./PlacementHelper";
 import { HubIntroCamera } from "./intro/HubIntroCamera";
 import { getHubIntroSnapshot, subscribeHubIntro } from "./intro/hubIntroRuntime";
+import { getFirstBuildGuide, subscribeFirstBuildGuide } from "./firstBuildGuideRuntime";
 import { MapScene } from "./MapScene";
 
 import type { PredictedPose } from "./useBaseCityRoom";
@@ -63,6 +64,38 @@ const STAND_MARKER_COLOR: Record<string, string> = {
     customization: "#f0a8d0",
     talent: "#c4b0ff",
 };
+
+/** Tall pulse over the stand the first-build checklist is sending you to. */
+function StandGuideBeacon({ x, z, color }: { x: number; z: number; color: string }) {
+    const column = useRef<THREE.Mesh>(null);
+    const ring = useRef<THREE.Mesh>(null);
+
+    useFrame(({ clock }) => {
+        const t = clock.elapsedTime;
+        if (column.current) {
+            column.current.position.y = 1.7 + Math.sin(t * 2.2) * 0.1;
+            const mat = column.current.material as THREE.MeshBasicMaterial;
+            mat.opacity = 0.42 + Math.sin(t * 3.1) * 0.16;
+        }
+        if (ring.current) {
+            const s = 1 + Math.sin(t * 2.4) * 0.08;
+            ring.current.scale.set(s, s, s);
+        }
+    });
+
+    return (
+        <group position={[x, 0, z]}>
+            <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+                <ringGeometry args={[1.15, 1.45, 40]} />
+                <meshBasicMaterial color={color} transparent opacity={0.75} depthWrite={false} />
+            </mesh>
+            <mesh ref={column} position={[0, 1.7, 0]}>
+                <cylinderGeometry args={[0.11, 0.2, 3.4, 12]} />
+                <meshBasicMaterial color={color} transparent opacity={0.5} depthWrite={false} />
+            </mesh>
+        </group>
+    );
+}
 
 type ZoneMote = {
     lx: number;
@@ -420,6 +453,8 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     const [followEnabled, setFollowEnabled] = useState(
         () => getHubIntroSnapshot().followCameraEnabled,
     );
+    const guideKind = useSyncExternalStore(subscribeFirstBuildGuide, getFirstBuildGuide);
+    const guideStand = guideKind ? HUB_STANDS.find((s) => s.kind === guideKind) : undefined;
 
     useEffect(() => {
         return subscribeHubIntro(() => {
@@ -461,6 +496,8 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     return (
         <>
             <ambientLight intensity={0.55} />
+            {/* Same light *count* as arena/dungeon so MeshStandard programs stay cached. */}
+            <hemisphereLight args={["#fff1d6", "#8b6a3c", 0]} />
             <FollowSun follow={localPos} intensity={1.2} />
 
             <MapScene mapId={HUB_MAP_ID} />
@@ -479,6 +516,13 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
                     color={STAND_MARKER_COLOR[s.kind] ?? "#94a3b8"}
                 />
             ))}
+            {guideStand ? (
+                <StandGuideBeacon
+                    x={guideStand.x}
+                    z={guideStand.z}
+                    color={STAND_MARKER_COLOR[guideStand.kind] ?? "#9ec5ff"}
+                />
+            ) : null}
 
             {HUB_PORTALS.map((p) => (
                 <PortalMarker
@@ -496,6 +540,8 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
             <Decoys room={room} />
             <HubPushBalls room={room} />
             <Volcanoes room={room} />
+            <RockWalls room={room} />
+            <WorldTrees room={room} />
             <ProtectionBubbles room={room} />
             <OrbitingWisps room={room} />
             <AstralChains room={room} />
@@ -503,6 +549,11 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
             <RiftPortals room={room} />
             <Shrooms room={room} localSessionId={localSessionId} />
             <SpiritHusks
+                room={room}
+                localSessionId={localSessionId}
+                predictedRef={predictedRef}
+            />
+            <PickupOrbs
                 room={room}
                 localSessionId={localSessionId}
                 predictedRef={predictedRef}

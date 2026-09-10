@@ -8,11 +8,11 @@ import { HEALTH_TONIC_HEAL } from "./combatMagnitude";
 import { COSMETIC_CATALOG, COSMETIC_SLOT_LABELS } from "./cosmetics";
 import { EMOTES } from "./emotes";
 import {
+  COSMETIC_AURAS,
   COSMETIC_COLORS,
   COSMETIC_PATTERN_COLORS,
-  COSMETIC_PATTERNS,
+  cosmeticAuraColorName,
   cosmeticColorName,
-  cosmeticPatternColorName,
 } from "./stands";
 import { STARTER_COLORS, STARTER_PATTERN_COLORS, STARTER_PATTERNS } from "./playerUnlocks";
 
@@ -80,6 +80,14 @@ export const SHOP_ITEMS: Record<string, ShopItemDef> = {
     grant: { kind: "loadout_slot", toCount: 2 },
     description: "Unlock a second saved spell loadout",
   },
+  flex_slot_1: {
+    id: "flex_slot_1",
+    name: "Flex Slot",
+    category: "loadouts",
+    cost: { kind: "essence", amount: 80 },
+    grant: { kind: "flex_slot", toCount: 1 },
+    description: "Unlock flex slot 1 (key 1)",
+  },
   flex_slot_2: {
     id: "flex_slot_2",
     name: "Second Flex Slot",
@@ -127,7 +135,7 @@ for (const hex of COSMETIC_COLORS) {
     category: "cosmetics",
     cost: coins(90),
     grant: { kind: "color", hex },
-    description: "Body hide tint.",
+    description: "Two-tone hide pigment.",
   };
 }
 
@@ -136,24 +144,24 @@ for (const hex of COSMETIC_PATTERN_COLORS) {
   const id = `ink_${hex.slice(1)}`;
   SHOP_ITEMS[id] = {
     id,
-    name: `${cosmeticPatternColorName(hex)} Ink`,
+    name: `${cosmeticAuraColorName(hex)} Ink`,
     category: "cosmetics",
     cost: coins(70),
     grant: { kind: "pattern_color", hex },
-    description: "Pattern marking color.",
+    description: "Color of the equipped aura. Bound has nothing to dye.",
   };
 }
 
-for (const pattern of COSMETIC_PATTERNS) {
-  if ((STARTER_PATTERNS as readonly string[]).includes(pattern.id)) continue;
-  const id = `pattern_${pattern.id}`;
+for (const aura of COSMETIC_AURAS) {
+  if ((STARTER_PATTERNS as readonly string[]).includes(aura.id)) continue;
+  const id = `aura_${aura.id}`;
   SHOP_ITEMS[id] = {
     id,
-    name: `${pattern.name} Pattern`,
+    name: `${aura.name} Aura`,
     category: "cosmetics",
     cost: coins(160),
-    grant: { kind: "pattern", patternId: pattern.id },
-    description: pattern.description,
+    grant: { kind: "pattern", patternId: aura.id },
+    description: aura.description,
   };
 }
 

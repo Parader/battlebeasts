@@ -15,12 +15,18 @@ import {
   instantiateBoulder,
 } from "../volcanoAsset";
 
+import { registerSharedGeometry, registerSharedMaterial } from "../vfxDisposal";
+
 const SHARD_COUNT = 9;
 const FIRE_COUNT = 22;
 const shardGeo = new THREE.DodecahedronGeometry(0.12, 0);
 const shardMatA = new THREE.MeshBasicMaterial({ color: "#7c2d12", toneMapped: true });
 const shardMatB = new THREE.MeshBasicMaterial({ color: "#ea580c", toneMapped: true });
 const shardMatC = new THREE.MeshBasicMaterial({ color: "#1c1917", toneMapped: true });
+registerSharedGeometry(shardGeo);
+registerSharedMaterial(shardMatA);
+registerSharedMaterial(shardMatB);
+registerSharedMaterial(shardMatC);
 
 /** variant 1 = telegraph (circle + arc), 2 = impact shatter. */
 export function VolcanoRockEffect({ shot }: { shot: OneShotEffect }) {

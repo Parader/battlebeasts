@@ -8,7 +8,7 @@ import {
   type MapTeam,
 } from "@battlebeasts/shared";
 import { TEAM_COLOR } from "../scene/Elements";
-import { docStore, setElementType, useEditor } from "../state/docStore";
+import { docStore, setElementType, useEditorSlice } from "../state/docStore";
 import type { BrushMode } from "../state/terrain";
 import { ParamFields } from "./ElementParams";
 
@@ -21,7 +21,7 @@ import { ParamFields } from "./ElementParams";
  * back to per-model fitting.
  */
 function PlaceOptions() {
-  const { stickyCollider } = useEditor();
+  const stickyCollider = useEditorSlice((s) => s.stickyCollider);
   if (!stickyCollider) return null;
 
   const { mode, blocksProjectiles } = stickyCollider;
@@ -50,7 +50,10 @@ function PlaceOptions() {
  * to place it.
  */
 export function ToolOptions() {
-  const { tool, doc, elementType: typeId, elementParams } = useEditor();
+  const tool = useEditorSlice((s) => s.tool);
+  const doc = useEditorSlice((s) => s.doc);
+  const typeId = useEditorSlice((s) => s.elementType);
+  const elementParams = useEditorSlice((s) => s.elementParams);
 
   if (tool === "paint") return <PaintOptions />;
   if (tool === "place") return <PlaceOptions />;
@@ -133,7 +136,8 @@ const BRUSH_MODES: { id: BrushMode; label: string }[] = [
 
 /** Terrain brush: material painting and height sculpting share one tool. */
 function PaintOptions() {
-  const { doc, brush } = useEditor();
+  const doc = useEditorSlice((s) => s.doc);
+  const brush = useEditorSlice((s) => s.brush);
   const g = doc.ground;
 
   if (g.kind !== "painted") {

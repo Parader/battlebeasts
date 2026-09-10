@@ -474,7 +474,10 @@ export function syncAbilityCast(
 
   if (binding.fullBody) {
     const logical = String(binding.fullBody);
-    const mapped = heroAnimationConfig[binding.fullBody];
+    const mapped =
+      binding.fullBody in heroAnimationConfig
+        ? heroAnimationConfig[binding.fullBody as keyof typeof heroAnimationConfig]
+        : undefined;
     const clipName = mapped != null ? String(mapped) : logical;
     const animSec =
       binding.fullBodyAnimDurationSec ??

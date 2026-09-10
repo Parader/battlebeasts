@@ -1,46 +1,17 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { STATUSES } from "@battlebeasts/shared";
 import { createLightningBoltMaterial, tickLightningBolt } from "./vfx/materials/lightningBolt";
 import { createCirclePointMaterial } from "./vfx/materials/circlePoint";
 import { CounterStatusFx } from "./CounterStatusFx";
 import { HandShieldFx } from "./HandShieldFx";
+import { HexAnchorOrnament } from "./HexAnchorOrnament";
+import { BindingRootedOrnament } from "./BindingRootedOrnament";
+import { SpellbreakerOrbOrnament } from "./SpellbreakerOrbOrnament";
 import { SoulMarkOrnament } from "./SoulMarkOrnament";
 import { SoulRelayOrnament } from "./SoulRelayOrnament";
-
-export type StatusRowLite = {
-  statusId: string;
-  stacks?: number;
-};
-
-type StatusMapLike = {
-  forEach: (cb: (row: { statusId?: string; stacks?: number }) => void) => void;
-} | null | undefined;
-
-/** Shared empty list — avoid allocating when a unit has no statuses. */
-const EMPTY_STATUS_ROWS: StatusRowLite[] = [];
-
-/** Read active status rows from a Colyseus MapSchema-like object. */
-export function collectStatusRows(map: StatusMapLike): StatusRowLite[] {
-  if (!map) return EMPTY_STATUS_ROWS;
-  const rows: StatusRowLite[] = [];
-  map.forEach((row) => {
-    if (row?.statusId && STATUSES[row.statusId]) {
-      rows.push({ statusId: row.statusId, stacks: row.stacks ?? 1 });
-    }
-  });
-  return rows.length === 0 ? EMPTY_STATUS_ROWS : rows;
-}
-
-export function hasStatusId(map: StatusMapLike, statusId: string): boolean {
-  if (!map) return false;
-  let found = false;
-  map.forEach((row) => {
-    if (row?.statusId === statusId) found = true;
-  });
-  return found;
-}
+import { BloodPactOrnament } from "./BloodPactOrnament";
+import { type StatusRowLite } from "./statusBadgeUtils";
 
 type Props = {
   /** Polled each frame — keep allocation light. */
@@ -75,6 +46,47 @@ const POISON_STATUS_IDS = new Set(["poisoned"]);
 const BURN_STATUS_IDS = new Set(["burning"]);
 const WEAKEN_STATUS_IDS = new Set(["weakened"]);
 
+const _tempQuat = new THREE.Quaternion();
+const _tempEuler = new THREE.Euler(0, 0, 0, "YXZ");
+
+function buildExposedChevronsGeo(): THREE.BufferGeometry {
+  const angles = [-0.46, 0, 0.46]; // Radians across the 90° (-0.785 to +0.785) sector
+  const rIn = 0.58;
+  const rOut = 0.70;
+  const rNotch = 0.65;
+  const halfSpread = 0.07;
+  const positions: number[] = [];
+
+  for (const a of angles) {
+    const tx = rIn * Math.sin(a);
+    const tz = rIn * Math.cos(a);
+
+    const lx = rOut * Math.sin(a - halfSpread);
+    const lz = rOut * Math.cos(a - halfSpread);
+
+    const rx = rOut * Math.sin(a + halfSpread);
+    const rz = rOut * Math.cos(a + halfSpread);
+
+    const nx = rNotch * Math.sin(a);
+    const nz = rNotch * Math.cos(a);
+
+    // Triangle 1: (Tip, Left, Notch)
+    positions.push(tx, 0, tz);
+    positions.push(lx, 0, lz);
+    positions.push(nx, 0, nz);
+
+    // Triangle 2: (Tip, Notch, Right)
+    positions.push(tx, 0, tz);
+    positions.push(nx, 0, nz);
+    positions.push(rx, 0, rz);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
 /**
  * World-space malus ornaments over a unit (stun tornado, poison, bleed, slow)
  * plus Surge lightning / Counter glow while buffed.
@@ -82,6 +94,9 @@ const WEAKEN_STATUS_IDS = new Set(["weakened"]);
 export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = null }: Props) {
   const stun = useRef<THREE.Group>(null);
   const stunRings = useRef<(THREE.Group | null)[]>([null, null, null]);
+  const fearGroup = useRef<THREE.Group>(null);
+  const fearOrbs = useRef<(THREE.Mesh | null)[]>([null, null, null]);
+  const fearAuras = useRef<(THREE.Mesh | null)[]>([null, null, null]);
   const poison = useRef<THREE.Group>(null);
   const poisonPoints = useRef<THREE.Points>(null);
   const weaken = useRef<THREE.Group>(null);
@@ -102,11 +117,51 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
   const chainReveal = useRef(0);
   const surge = useRef<THREE.Group>(null);
   const bolts = useRef<(THREE.Mesh | null)[]>([]);
+  const shockedGroup = useRef<THREE.Group>(null);
+  const shockBolts = useRef<(THREE.Mesh | null)[]>([]);
+  const shockRefresh = useRef(0);
+  const exposedAngleGroup = useRef<THREE.Group>(null);
+  const exposedReveal = useRef(0);
+  const lastExposedAngle = useRef(0);
 
   const stunMats = useMemo(
     () => [basicMat("#ffffff", 0.8), basicMat("#f8fafc", 0.65), basicMat("#e2e8f0", 0.5)] as const,
     [],
   );
+
+  const fearOrbMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#18042b",
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+      }),
+    [],
+  );
+  const fearAuraMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#c084fc",
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    [],
+  );
+  const FEAR_WISP_COUNT = 15;
+  const fearPositions = useMemo(() => new Float32Array(FEAR_WISP_COUNT * 3), []);
+  const fearSizes = useMemo(() => new Float32Array(FEAR_WISP_COUNT), []);
+  const fearAlphas = useMemo(() => new Float32Array(FEAR_WISP_COUNT), []);
+  const fearGeo = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(fearPositions, 3));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(fearSizes, 1));
+    geo.setAttribute("aAlpha", new THREE.BufferAttribute(fearAlphas, 1));
+    return geo;
+  }, [fearPositions, fearSizes, fearAlphas]);
+  const fearPointMat = useMemo(() => createCirclePointMaterial("#a855f7"), []);
   const poisonPositions = useMemo(() => new Float32Array(POISON_WISP_COUNT * 3), []);
   const poisonSizes = useMemo(() => new Float32Array(POISON_WISP_COUNT), []);
   const poisonAlphas = useMemo(() => new Float32Array(POISON_WISP_COUNT), []);
@@ -155,14 +210,6 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
   );
   const weakenRingMat = useMemo(() => basicMat("#94a3b8", 0.45), []);
 
-  useEffect(() => {
-    return () => {
-      poisonGeo.dispose();
-      poisonPointMat.dispose();
-      weakenGeo.dispose();
-      weakenPointMat.dispose();
-    };
-  }, [poisonGeo, poisonPointMat, weakenGeo, weakenPointMat]);
   const burnMats = useMemo(
     () =>
       Array.from({ length: BURN_WISP_COUNT }, (_, i) =>
@@ -255,6 +302,154 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       ),
     [],
   );
+
+  const SHOCK_BOLT_COUNT = 3;
+  const shockBoltMats = useMemo(
+    () =>
+      Array.from({ length: SHOCK_BOLT_COUNT }, (_, i) =>
+        createLightningBoltMaterial("#38bdf8", {
+          hot: "#e0f2fe",
+          opacity: 0.95,
+          seed: 37 + i * 9.1,
+        }),
+      ),
+    [],
+  );
+
+  const exposedArcBandGeo = useMemo(
+    () => new THREE.RingGeometry(0.48, 0.64, 36, 1, -Math.PI * 0.75, Math.PI * 0.5),
+    [],
+  );
+  const exposedArcCoreGeo = useMemo(
+    () => new THREE.RingGeometry(0.535, 0.565, 36, 1, -Math.PI * 0.75, Math.PI * 0.5),
+    [],
+  );
+  const exposedLightSpillGeo = useMemo(
+    () => new THREE.RingGeometry(0.22, 0.76, 36, 1, -Math.PI * 0.75, Math.PI * 0.5),
+    [],
+  );
+  const exposedChevronsGeo = useMemo(() => buildExposedChevronsGeo(), []);
+
+  const exposedBandMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#f97316",
+        transparent: true,
+        opacity: 0.75,
+        depthWrite: false,
+        toneMapped: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
+  const exposedCoreMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#fef08a",
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        toneMapped: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
+  const exposedSpillMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#ea580c",
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        toneMapped: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
+  const exposedChevronMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#fdba74",
+        transparent: true,
+        opacity: 0.92,
+        depthWrite: false,
+        toneMapped: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      stunMats.forEach((m) => m.dispose());
+      fearOrbMat.dispose();
+      fearAuraMat.dispose();
+      fearGeo.dispose();
+      fearPointMat.dispose();
+      poisonGeo.dispose();
+      poisonPointMat.dispose();
+      poisonCoreMat.dispose();
+      weakenGeo.dispose();
+      weakenPointMat.dispose();
+      weakenCoreMat.dispose();
+      weakenRingMat.dispose();
+      burnMats.forEach((m) => m.dispose());
+      burnCoreMat.dispose();
+      bleedMats.forEach((m) => m.dispose());
+      soulSeverMats.forEach((m) => m.dispose());
+      slowMat.dispose();
+      rootIceMat.dispose();
+      rootGlowMat.dispose();
+      chainOvalMat.dispose();
+      chainGlowMat.dispose();
+      boltMats.forEach((m) => m.dispose());
+      shockBoltMats.forEach((m) => m.dispose());
+      exposedArcBandGeo.dispose();
+      exposedArcCoreGeo.dispose();
+      exposedLightSpillGeo.dispose();
+      exposedChevronsGeo.dispose();
+      exposedBandMat.dispose();
+      exposedCoreMat.dispose();
+      exposedSpillMat.dispose();
+      exposedChevronMat.dispose();
+    };
+  }, [
+    stunMats,
+    fearOrbMat,
+    fearAuraMat,
+    fearGeo,
+    fearPointMat,
+    poisonGeo,
+    poisonPointMat,
+    poisonCoreMat,
+    weakenGeo,
+    weakenPointMat,
+    weakenCoreMat,
+    weakenRingMat,
+    burnMats,
+    burnCoreMat,
+    bleedMats,
+    soulSeverMats,
+    slowMat,
+    rootIceMat,
+    rootGlowMat,
+    chainOvalMat,
+    chainGlowMat,
+    boltMats,
+    shockBoltMats,
+    exposedArcBandGeo,
+    exposedArcCoreGeo,
+    exposedLightSpillGeo,
+    exposedChevronsGeo,
+    exposedBandMat,
+    exposedCoreMat,
+    exposedSpillMat,
+    exposedChevronMat,
+  ]);
 
   const stunLayers = useMemo(
     () =>
@@ -385,6 +580,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
 
     if (rows.length === 0) {
       if (stun.current) stun.current.visible = false;
+      if (fearGroup.current) fearGroup.current.visible = false;
       if (poison.current) poison.current.visible = false;
       if (weaken.current) weaken.current.visible = false;
       if (burn.current) burn.current.visible = false;
@@ -401,6 +597,45 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     const poisoned = rows.some((r) => POISON_STATUS_IDS.has(r.statusId));
     const weakened = rows.some((r) => WEAKEN_STATUS_IDS.has(r.statusId));
     const burning = rows.some((r) => BURN_STATUS_IDS.has(r.statusId));
+
+    const feared = has("feared");
+
+    if (fearGroup.current) {
+      fearGroup.current.visible = feared;
+      if (feared) {
+        fearGroup.current.position.y = headY + 0.12 + 0.03 * Math.sin(t * 5.0);
+        const orbitR = 0.34;
+        for (let i = 0; i < 3; i++) {
+          const ang = t * 6.2 + (i * Math.PI * 2) / 3;
+          const ox = Math.cos(ang) * orbitR;
+          const oz = Math.sin(ang) * orbitR;
+          const oy = 0.06 * Math.sin(t * 8.0 + i * 2.1);
+          const oMesh = fearOrbs.current[i];
+          if (oMesh) {
+            oMesh.position.set(ox, oy, oz);
+          }
+          const aMesh = fearAuras.current[i];
+          if (aMesh) {
+            aMesh.position.set(ox, oy, oz);
+            const pulse = 1.0 + 0.18 * Math.sin(t * 10.0 + i);
+            aMesh.scale.setScalar(pulse);
+          }
+        }
+        for (let j = 0; j < FEAR_WISP_COUNT; j++) {
+          const orbIdx = j % 3;
+          const ang = t * 6.2 + (orbIdx * Math.PI * 2) / 3 - (Math.floor(j / 3) + 1) * 0.18;
+          const trailR = orbitR * (0.95 - (j / FEAR_WISP_COUNT) * 0.2);
+          fearPositions[j * 3] = Math.cos(ang) * trailR;
+          fearPositions[j * 3 + 1] = 0.05 * Math.sin(t * 8.0 + orbIdx * 2.1) + ((j % 4) - 1.5) * 0.03;
+          fearPositions[j * 3 + 2] = Math.sin(ang) * trailR;
+          fearSizes[j] = 0.14 * (1.0 - (j / FEAR_WISP_COUNT) * 0.45) * 28;
+          fearAlphas[j] = 0.75 * (1.0 - (j / FEAR_WISP_COUNT) * 0.55);
+        }
+        fearGeo.attributes.position!.needsUpdate = true;
+        fearGeo.attributes.aSize!.needsUpdate = true;
+        fearGeo.attributes.aAlpha!.needsUpdate = true;
+      }
+    }
 
     if (stun.current) {
       stun.current.visible = has("stunned");
@@ -513,7 +748,8 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       }
     }
     if (slow.current) {
-      slow.current.visible = has("slowed") || has("frostChill") || has("poisonMiasma");
+      slow.current.visible =
+        has("slowed") || has("frostChill") || has("poisonMiasma") || has("gravityFieldSlow");
       if (slow.current.visible) {
         slow.current.rotation.y += safeDt * 0.9;
         slow.current.position.y = 0.12 + 0.03 * Math.sin(t * 2);
@@ -589,10 +825,104 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         if (m) m.visible = false;
       }
     }
+
+    const shockRow = rows.find((r) => r.statusId === "shocked");
+    const shockStacks = shockRow ? Math.max(1, shockRow.stacks ?? 1) : 0;
+    if (shockedGroup.current) shockedGroup.current.visible = shockStacks > 0;
+
+    if (shockStacks > 0) {
+      for (const mat of shockBoltMats) tickLightningBolt(mat, safeDt);
+      shockRefresh.current -= safeDt;
+      if (shockRefresh.current <= 0) {
+        shockRefresh.current = 0.05 + Math.random() * 0.04;
+        const activeCount = Math.min(SHOCK_BOLT_COUNT, shockStacks);
+        for (let i = 0; i < SHOCK_BOLT_COUNT; i++) {
+          const m = shockBolts.current[i];
+          if (!m) continue;
+          if (i >= activeCount) {
+            m.visible = false;
+            continue;
+          }
+          const ang = Math.random() * Math.PI * 2;
+          const rad = 0.06 + Math.random() * 0.12;
+          const y = 0.35 + Math.random() * (headY * 0.45);
+          m.position.set(Math.cos(ang) * rad, y, Math.sin(ang) * rad);
+          m.rotation.set(
+            (Math.random() - 0.5) * Math.PI,
+            (Math.random() - 0.5) * Math.PI,
+            (Math.random() - 0.5) * Math.PI,
+          );
+          const len = 0.1 + Math.random() * 0.12;
+          const h = 0.03 + Math.random() * 0.02;
+          m.scale.set(len, h, 1);
+          m.visible = true;
+        }
+      }
+    } else {
+      for (const m of shockBolts.current) {
+        if (m) m.visible = false;
+      }
+    }
+
+    const exposed = rows.find((r) => r.statusId === "exposedAngle");
+    const wantExposed = Boolean(exposed);
+    exposedReveal.current = THREE.MathUtils.clamp(
+      exposedReveal.current + (wantExposed ? 1 : -1) * safeDt * 7,
+      0,
+      1,
+    );
+    const expP = exposedReveal.current;
+    if (exposedAngleGroup.current) {
+      if (expP <= 0.001) {
+        exposedAngleGroup.current.visible = false;
+      } else {
+        exposedAngleGroup.current.visible = true;
+        if (exposed && typeof exposed.angle === "number") {
+          lastExposedAngle.current = exposed.angle;
+        }
+        if (root.current) {
+          root.current.getWorldQuaternion(_tempQuat);
+          _tempEuler.setFromQuaternion(_tempQuat);
+          exposedAngleGroup.current.rotation.y = lastExposedAngle.current - _tempEuler.y;
+        }
+        const pulse = 0.82 + 0.18 * Math.sin(t * 4.8);
+        const breath = 1.0 + 0.025 * Math.sin(t * 3.2);
+        exposedBandMat.opacity = 0.75 * expP * pulse;
+        exposedCoreMat.opacity = 0.95 * expP * pulse;
+        exposedSpillMat.opacity = 0.28 * expP * pulse;
+        exposedChevronMat.opacity = 0.92 * expP * (0.65 + 0.35 * Math.sin(t * 5.5));
+        exposedAngleGroup.current.scale.set(breath, 1, breath);
+      }
+    }
   });
 
   return (
     <group ref={root}>
+      {/* Feared: 3 orbiting shadowballs above the head with luminous aura and wisps */}
+      <group ref={fearGroup} position={[0, headY, 0]} visible={false}>
+        {[0, 1, 2].map((i) => (
+          <group key={i}>
+            <mesh
+              ref={(el) => {
+                fearOrbs.current[i] = el;
+              }}
+            >
+              <sphereGeometry args={[0.075, 12, 12]} />
+              <primitive object={fearOrbMat} attach="material" />
+            </mesh>
+            <mesh
+              ref={(el) => {
+                fearAuras.current[i] = el;
+              }}
+            >
+              <sphereGeometry args={[0.115, 12, 12]} />
+              <primitive object={fearAuraMat} attach="material" />
+            </mesh>
+          </group>
+        ))}
+        <points geometry={fearGeo} material={fearPointMat} frustumCulled={false} />
+      </group>
+
       <group ref={stun} position={[0, headY, 0]} visible={false}>
         {stunLayers.map((layer, i) => (
           <group
@@ -779,8 +1109,76 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         ))}
       </group>
 
+      {/* Shocked — crackling cyan electric arcs across the body */}
+      <group ref={shockedGroup} visible={false}>
+        {shockBoltMats.map((mat, i) => (
+          <mesh
+            key={`shock-bolt-${i}`}
+            ref={(el) => {
+              shockBolts.current[i] = el;
+            }}
+            visible={false}
+          >
+            <planeGeometry args={[1, 1]} />
+            <primitive object={mat} attach="material" />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Exposed Angle (DES_14) — illuminated 90° vulnerability light zone on ground circle */}
+      <group ref={exposedAngleGroup} position={[0, 0.028, 0]} visible={false}>
+        {/* Soft radial light spill / wash under the circle */}
+        <mesh
+          geometry={exposedLightSpillGeo}
+          material={exposedSpillMat}
+          rotation={[-Math.PI / 2, 0, 0]}
+          renderOrder={3}
+        />
+        {/* Main glowing amber arc band along the ground circle */}
+        <mesh
+          geometry={exposedArcBandGeo}
+          material={exposedBandMat}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.002, 0]}
+          renderOrder={4}
+        />
+        {/* Bright incandescent hot core line */}
+        <mesh
+          geometry={exposedArcCoreGeo}
+          material={exposedCoreMat}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.004, 0]}
+          renderOrder={5}
+        />
+        {/* Inward-pointing vulnerability warning chevrons */}
+        <mesh
+          geometry={exposedChevronsGeo}
+          material={exposedChevronMat}
+          position={[0, 0.006, 0]}
+          renderOrder={6}
+        />
+      </group>
+
       <CounterStatusFx characterRoot={characterRoot} getStatuses={getStatuses} />
       <HandShieldFx characterRoot={characterRoot} getStatuses={getStatuses} />
+      <HexAnchorOrnament
+        getActive={() => getStatuses().some((r) => r.statusId === "hexAnchored")}
+      />
+      <BindingRootedOrnament
+        getActive={() => getStatuses().some((r) => r.statusId === "bindingRooted")}
+      />
+      <SpellbreakerOrbOrnament
+        getActive={() => getStatuses().some((r) => r.statusId === "spellbreakerCharge")}
+        getStacks={() => {
+          for (const r of getStatuses()) {
+            if (r.statusId === "spellbreakerCharge") return r.stacks ?? 1;
+          }
+          return 1;
+        }}
+      />
+      <BloodPactOrnament
+        getActive={() => getStatuses().some((r) => r.statusId === "bloodPactEmpower")}
+      />
       <SoulRelayOrnament
         getActive={() => getStatuses().some((r) => r.statusId === "soulRelayLinked")}
       />

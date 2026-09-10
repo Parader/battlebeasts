@@ -18,15 +18,20 @@ import {
   setCharacterOpacity,
   tintCharacterSurface,
   warmCharacterOpacityVariants,
+  disposeCharacterMaterials,
 } from "./characterVisual";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
+import { VesselBody } from "./VesselBody";
+import { usePlayerVessel } from "./usePlayerVessel";
 import { syncPlayerCast } from "./syncPlayerCast";
 import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS, shortestAngleDelta } from "./visualYaw";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { smashHopOffsetY } from "./smashHop";
 import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
-import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
+import { StatusOrnaments } from "./StatusOrnaments";
+import { SpiritVesselFx } from "./SpiritVesselFx";
+import { collectStatusRows, hasStatusId } from "./statusBadgeUtils";
 import { findBone } from "./vfx/attach";
 import { registerCharacterRoot } from "./characterRoots";
 import type { PredictedPose } from "./useBaseCityRoom";
@@ -88,6 +93,7 @@ export function CharacterAvatar({
   const appearanceKey = useRef("");
   const cosmeticsKeyRef = useRef("");
   const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
+  const vessel = usePlayerVessel(room, localSessionId);
   const wasDeadRef = useRef(false);
   const deathSinkRef = useRef<DeathSinkState | null>(null);
 
@@ -108,6 +114,7 @@ export function CharacterAvatar({
           | {
               pattern?: string;
               patternColor?: string;
+              vessel?: string;
               cosmeticHat?: string;
               cosmeticShoulders?: string;
               cosmeticChest?: string;
@@ -120,8 +127,9 @@ export function CharacterAvatar({
       : undefined;
     const pattern = me?.pattern || "plain";
     const patternColor = me?.patternColor || "#1f2937";
+    const liveVessel = me?.vessel || "female";
     tintCharacterSurface(scene, color, pattern, patternColor);
-    appearanceKey.current = `${color}|${pattern}|${patternColor}`;
+    appearanceKey.current = `${color}|${pattern}|${patternColor}|${liveVessel}`;
     const nextKey = cosmeticsKey(me);
     if (nextKey !== cosmeticsKeyRef.current) {
       cosmeticsKeyRef.current = nextKey;
@@ -134,6 +142,12 @@ export function CharacterAvatar({
     registerCharacterRoot(localSessionId, scene);
     return () => registerCharacterRoot(localSessionId, null);
   }, [scene, localSessionId]);
+
+  useEffect(() => {
+    return () => {
+      disposeCharacterMaterials(scene);
+    };
+  }, [scene]);
 
   /*
    * Pre-compile the ghosted variant of this loadout, so the first decoy or
@@ -216,6 +230,7 @@ export function CharacterAvatar({
               cosmeticBelt?: string;
               cosmeticLegs?: string;
               cosmeticShoes?: string;
+              vessel?: string;
               statuses?: Parameters<typeof hasStatusId>[0];
             }
           | undefined)
@@ -223,7 +238,8 @@ export function CharacterAvatar({
     const liveColor = me?.color ?? color ?? STARTER_COLORS[0]!;
     const livePattern = me?.pattern ?? "plain";
     const livePatternColor = me?.patternColor ?? "#1f2937";
-    const key = `${liveColor}|${livePattern}|${livePatternColor}`;
+    const liveVessel = me?.vessel ?? "female";
+    const key = `${liveColor}|${livePattern}|${livePatternColor}|${liveVessel}`;
     if (key !== appearanceKey.current) {
       appearanceKey.current = key;
       tintCharacterSurface(scene, liveColor, livePattern, livePatternColor);
@@ -397,6 +413,11 @@ export function CharacterAvatar({
     }
 
     body.rotation.y = visualYaw.current;
+    const isAscendant = hasStatusId(me?.statuses, "ascendantForm");
+    const targetScale = isAscendant ? 1.5 : 1.0;
+    body.scale.setScalar(
+      THREE.MathUtils.damp(body.scale.x, targetScale, 10, safeDt),
+    );
     // Aim ring is a sibling of body under an unrotated root — use world aim yaw.
     if (aim) aim.rotation.y = p.yaw;
 
@@ -455,7 +476,38 @@ export function CharacterAvatar({
     <group ref={group}>
       <group ref={bodyRef}>
         <primitive object={scene} />
-        <EquippedCosmetics characterRoot={scene} equipped={equipped} opacity={cloakOpacity} />
+        <VesselBody
+          characterRoot={scene}
+          body={vessel}
+          color={color ?? STARTER_COLORS[0]!}
+        />
+        <EquippedCosmetics characterRoot={scene} equipped={equipped} opacity={cloakOpacity} body={vessel} />
+        <SpiritVesselFx
+          characterRoot={scene}
+          opacity={cloakOpacity}
+          getColor={() => color ?? STARTER_COLORS[0]!}
+          getAura={() => {
+            if (!room || !localSessionId) return "plain";
+            const me = room.state?.players?.get(localSessionId) as
+              | { pattern?: string }
+              | undefined;
+            return me?.pattern ?? "plain";
+          }}
+          getAuraColor={() => {
+            if (!room || !localSessionId) return "#1f2937";
+            const me = room.state?.players?.get(localSessionId) as
+              | { patternColor?: string }
+              | undefined;
+            return me?.patternColor ?? "#1f2937";
+          }}
+          getStatuses={() => {
+            if (!room || !localSessionId) return [];
+            const me = room.state?.players?.get(localSessionId) as
+              | { statuses?: Parameters<typeof collectStatusRows>[0] }
+              | undefined;
+            return collectStatusRows(me?.statuses);
+          }}
+        />
         <StatusOrnaments
           characterRoot={scene}
           getStatuses={() => {

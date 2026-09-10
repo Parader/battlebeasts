@@ -16,12 +16,14 @@ import {
   VFX_WIND_STREAK_URL,
   VFX_BLOOMING_VINE_STREAK_URL,
   VFX_CRUSHING_SIGIL_FLARE_URL,
+  VFX_AURA_EYES_URLS,
 } from "./vfxUrls";
 import { setShadowSpellTexture } from "./shadowSpellTexture";
 import { setSpellEffectsTexture } from "./spellEffectsTexture";
 import { setWindStreakTexture } from "./windStreakTexture";
 import { setBloomingVineStreakTexture } from "./bloomingVineTexture";
 import { setCrushingSigilFlareTexture } from "./crushingSigilFlareTexture";
+import { setAuraEyesTexture } from "./auraEyesTexture";
 
 let primed = false;
 const waiters: Array<() => void> = [];
@@ -44,8 +46,8 @@ function markPrimed(): void {
   for (const w of waiters.splice(0)) w();
 }
 
-function loadTexture(url: string): Promise<THREE.Texture> {
-  return new Promise((resolve, reject) => {
+function loadTexture(url: string): Promise<THREE.Texture | null> {
+  return new Promise((resolve) => {
     new THREE.TextureLoader().load(
       url,
       (tex) => {
@@ -54,7 +56,10 @@ function loadTexture(url: string): Promise<THREE.Texture> {
         resolve(tex);
       },
       undefined,
-      reject,
+      () => {
+        // Missing asset: return null so preload doesn't fail the entire gate
+        resolve(null);
+      },
     );
   });
 }
@@ -70,7 +75,9 @@ export async function preloadSpellVfxTextures(): Promise<void> {
     const loaded = await Promise.all(
       textures.map(async (url) => [url, await loadTexture(url)] as const),
     );
-    const byUrl = new Map(loaded);
+    const byUrl = new Map(
+      loaded.filter((pair): pair is [string, THREE.Texture] => pair[1] != null),
+    );
 
     const fire = byUrl.get(VFX_FIRE_URL);
     const smoke = byUrl.get(VFX_SMOKE_URL);
@@ -93,6 +100,10 @@ export async function preloadSpellVfxTextures(): Promise<void> {
     if (wind) setWindStreakTexture(wind);
     if (bloomingVine) setBloomingVineStreakTexture(bloomingVine);
     if (sigilFlare) setCrushingSigilFlareTexture(sigilFlare);
+    for (const [id, url] of Object.entries(VFX_AURA_EYES_URLS)) {
+      const plate = byUrl.get(url);
+      if (plate) setAuraEyesTexture(id as keyof typeof VFX_AURA_EYES_URLS, plate);
+    }
   } finally {
     // Always unblock GPU warmup (even on fetch failure).
     markPrimed();

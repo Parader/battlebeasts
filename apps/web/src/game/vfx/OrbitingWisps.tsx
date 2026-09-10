@@ -1,5 +1,5 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { ORBITING_WISP_CAST } from "@battlebeasts/shared";
@@ -89,6 +89,15 @@ function WispMesh({ room, id }: { room: Room; id: string }) {
   );
   const glowMat = useMemo(() => createEnergyBallMaterial(BRIGHT, 0.55), []);
   const pointMat = useMemo(() => createCirclePointMaterial(HIGHLIGHT), []);
+
+  useEffect(() => {
+    return () => {
+      geo.dispose();
+      coreMat.dispose();
+      glowMat.dispose();
+      pointMat.dispose();
+    };
+  }, [geo, coreMat, glowMat, pointMat]);
 
   useFrame((_, dt) => {
     const w = room.state?.orbitingWisps?.get(id) as WispNet | undefined;

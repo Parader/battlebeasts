@@ -3,6 +3,9 @@ import {
   getQuestDef,
   questIdsWithPrefix,
   questPeriodKey,
+  TUTORIAL_CHEST_COPPER,
+  TUTORIAL_CHEST_ESSENCE,
+  TUTORIAL_CHEST_SOURCE,
   rollChestLoot,
   rollQuestChestQuality,
   rewardRollSalt,
@@ -301,7 +304,7 @@ export async function openChest(
   }
   const { data: chest, error } = await supabase
     .from("chests")
-    .select("id, quality, status")
+    .select("id, quality, status, source")
     .eq("id", chestId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -309,11 +312,18 @@ export async function openChest(
   if (chest.status !== "closed") return { ok: false, error: "Already opened" };
 
   const quality = chest.quality as ChestQuality;
-  const rolled: ChestLootResult = rollChestLoot(
-    quality,
-    rewardRollSalt(chestId, userId),
-    owned,
-  );
+  const rolled: ChestLootResult =
+    chest.source === TUTORIAL_CHEST_SOURCE
+      ? {
+          essence: TUTORIAL_CHEST_ESSENCE,
+          copper: TUTORIAL_CHEST_COPPER,
+          lines: [
+            { kind: "essence", amount: TUTORIAL_CHEST_ESSENCE },
+            { kind: "copper", amount: TUTORIAL_CHEST_COPPER },
+          ],
+          grants: [],
+        }
+      : rollChestLoot(quality, rewardRollSalt(chestId, userId), owned);
   const result = {
     essence: rolled.essence,
     copper: rolled.copper,

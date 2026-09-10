@@ -4,6 +4,7 @@ import {
   ARENA_ROUND_END_MS,
   ARENA_ROUNDS_TO_WIN,
   ARENA_WIPE_EMOTE_MS,
+  BG_RESPAWN_MS,
   clampPvePartySize,
   COOP_PVE_MAX_PLAYERS,
   PVE_RECONNECT_GRACE_MS,
@@ -18,21 +19,25 @@ import {
   emptyPlayerUnlocks,
   getEmote,
   HAND_SHIELD_CAST,
-  arenaSpawnsForTeam,
   mapAttackablePropsFor,
+  mapPickupsFor,
   mapCollidersFor,
   mapNpcFor,
   npcElementIdFrom,
   NPC_INTERACT_RADIUS,
   mapIdForMode,
   mapSpawn,
+  mapSpawnsFor,
   type SpawnPose,
   computeMatchReward,
+  isBattlegroundMode,
   isPvpFfaTriosMode,
+  normalizeCosmeticBody,
   normalizeCosmeticPattern,
   normalizeCosmeticPatternColor,
   cosmeticsEquippedFromFields,
   cosmeticsEquippedToFields,
+  stripCosmeticsForBody,
   ownsEmote,
   outcomeFromMatch,
   rewardRollSalt,
@@ -49,6 +54,7 @@ import { grantPendingLoot } from "../pendingLoot.js";
 import { insertRewardGrant } from "../persistence.js";
 import { bumpQuest } from "../quests.js";
 import { applyRankedMatchFinish } from "../ranked.js";
+import { ObjectiveDirector } from "../pvp/ObjectiveDirector.js";
 import { WaveDirector } from "../pve/WaveDirector.js";
 import { ServicedRoom } from "./ServicedRoom.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
@@ -107,6 +113,8 @@ export class ContentRoom extends ServicedRoom {
   private wipeEndsAt = 0;
   private wipeWinner: "a" | "b" | "c" | null = null;
   private waveDirector: WaveDirector | null = null;
+  private objectiveDirector: ObjectiveDirector | null = null;
+  private bgRespawnAt = new Map<string, number>();
   /** Wave Assault wipe / score screen active. */
   private pveRunEnded = false;
   /** Difficulty scale for this dungeon run (locked at room create). */
@@ -140,6 +148,12 @@ export class ContentRoom extends ServicedRoom {
     this.partySize = clampPvePartySize(options.partySize ?? 1);
     this.expectedPartySize = this.partySize;
     this.state.matchMode = this.mode;
+    this.objectiveDirector = new ObjectiveDirector(
+      this.state,
+      () => this.fighters().filter((p) => this.isFighterLiving(p)),
+      (winner) => this.finishMatch(winner),
+      (type, payload) => this.broadcast(type, payload),
+    );
     this.setMetadata({
       mode: this.mode,
       matchId: this.matchId,
@@ -159,6 +173,7 @@ export class ContentRoom extends ServicedRoom {
         const atk = this.state.players.get(attackerId);
         if (atk && damage > 0) atk.statDamageDealt += damage;
         if (p.hp <= 0) {
+          if (this.combat.tryBeginRebirth(sessionId)) return;
           if (atk && this.kind === "pvp") atk.statKills += 1;
           this.onPlayerDied(sessionId, p);
         }
@@ -180,6 +195,7 @@ export class ContentRoom extends ServicedRoom {
       // Props the author gave health to become world targets. They keep the
       // collider they already contributed above; this only adds the HP.
       for (const p of mapAttackablePropsFor(this.mapId)) this.combat.spawnPropTarget(p);
+      this.combat.initPickups(mapPickupsFor(this.mapId));
     }
     this.setPatchRate(1000 / 30);
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
@@ -330,6 +346,7 @@ export class ContentRoom extends ServicedRoom {
     player.patternColor = normalizeCosmeticPatternColor(
       (options as { patternColor?: string }).patternColor,
     );
+    player.vessel = normalizeCosmeticBody((options as { vessel?: string }).vessel);
     {
       const o = options as {
         cosmeticHat?: string;
@@ -340,16 +357,20 @@ export class ContentRoom extends ServicedRoom {
         cosmeticLegs?: string;
         cosmeticShoes?: string;
       };
+      const body = normalizeCosmeticBody(player.vessel);
       const fields = cosmeticsEquippedToFields(
-        cosmeticsEquippedFromFields({
-          cosmeticHat: o.cosmeticHat,
-          cosmeticShoulders: o.cosmeticShoulders,
-          cosmeticChest: o.cosmeticChest,
-          cosmeticGloves: o.cosmeticGloves,
-          cosmeticBelt: o.cosmeticBelt,
-          cosmeticLegs: o.cosmeticLegs,
-          cosmeticShoes: o.cosmeticShoes,
-        }),
+        stripCosmeticsForBody(
+          cosmeticsEquippedFromFields({
+            cosmeticHat: o.cosmeticHat,
+            cosmeticShoulders: o.cosmeticShoulders,
+            cosmeticChest: o.cosmeticChest,
+            cosmeticGloves: o.cosmeticGloves,
+            cosmeticBelt: o.cosmeticBelt,
+            cosmeticLegs: o.cosmeticLegs,
+            cosmeticShoes: o.cosmeticShoes,
+          }),
+          body,
+        ),
       );
       player.cosmeticHat = fields.cosmeticHat;
       player.cosmeticShoulders = fields.cosmeticShoulders;
@@ -372,9 +393,7 @@ export class ContentRoom extends ServicedRoom {
       } else {
         const ffa = isPvpFfaTriosMode(this.mode);
         const team =
-          options.team === "a" ||
-          options.team === "b" ||
-          (ffa && options.team === "c")
+          options.team === "a" || options.team === "b" || options.team === "c"
             ? options.team
             : this.nextTeam;
         if (ffa) {
@@ -383,34 +402,15 @@ export class ContentRoom extends ServicedRoom {
           this.nextTeam = team === "a" ? "b" : "a";
         }
         player.team = team;
-        if (ffa) {
-          this.spawnSlotBySession.set(client.sessionId, 0);
-          const spawn = this.spawnPose(team as "a" | "b" | "c", 0, true);
-          player.x = spawn.x;
-          player.z = spawn.z;
-          player.yaw = spawn.yaw;
-          this.spawnBySession.set(client.sessionId, {
-            x: spawn.x,
-            z: spawn.z,
-            yaw: spawn.yaw,
-          });
-        } else {
-          const preferred = Number(options.spawnSlot);
-          const slot = this.claimTeamSpawnSlot(
-            team as "a" | "b",
-            Number.isFinite(preferred) ? Math.floor(preferred) : undefined,
-          );
-          this.spawnSlotBySession.set(client.sessionId, slot);
-          const spawn = this.spawnPose(team as "a" | "b", slot, false);
-          player.x = spawn.x;
-          player.z = spawn.z;
-          player.yaw = spawn.yaw;
-          this.spawnBySession.set(client.sessionId, {
-            x: spawn.x,
-            z: spawn.z,
-            yaw: spawn.yaw,
-          });
-        }
+        const spawn = this.pickPvpSpawn(team);
+        player.x = spawn.x;
+        player.z = spawn.z;
+        player.yaw = spawn.yaw;
+        this.spawnBySession.set(client.sessionId, {
+          x: spawn.x,
+          z: spawn.z,
+          yaw: spawn.yaw,
+        });
       }
     } else {
       // PvE / dungeon: staggered cemetery pads so coop fighters don't stack.
@@ -618,30 +618,22 @@ export class ContentRoom extends ServicedRoom {
     this.waveDirector.start(Date.now());
   }
 
-  /**
-   * Unique pad within a team (0-based). Prefers matchmaking's spawnSlot when free;
-   * otherwise the next open pad so allies never stack on the same marker.
-   */
-  private claimTeamSpawnSlot(team: "a" | "b", preferred?: number): number {
-    const max = Math.max(1, arenaSpawnsForTeam(team).length);
-    const used = new Set<number>();
-    for (const [sessionId, player] of this.state.players.entries()) {
-      if (player.role !== "fighter" || player.team !== team) continue;
-      const slot = this.spawnSlotBySession.get(sessionId);
-      if (typeof slot === "number") used.add(slot);
+  /** Random unused pad from the team's spawn pool. */
+  private pickPvpSpawn(team: "a" | "b" | "c"): SpawnPose {
+    const pads = this.mapId ? mapSpawnsFor(this.mapId, team) : [];
+    const taken = new Set<string>();
+    this.spawnBySession.forEach((pose, sessionId) => {
+      const p = this.state.players.get(sessionId);
+      if (!p || p.role !== "fighter" || p.team !== team) return;
+      taken.add(`${pose.x.toFixed(3)},${pose.z.toFixed(3)}`);
+    });
+    const free = pads.filter((p) => !taken.has(`${p.x.toFixed(3)},${p.z.toFixed(3)}`));
+    const pool = free.length > 0 ? free : pads;
+    if (pool.length === 0) {
+      console.warn(`[ContentRoom] no spawn pool for team ${team} on map "${this.mapId}"`);
+      return { x: 0, z: 0, yaw: 0 };
     }
-    if (
-      preferred != null &&
-      preferred >= 0 &&
-      preferred < max &&
-      !used.has(preferred)
-    ) {
-      return preferred;
-    }
-    for (let i = 0; i < max; i++) {
-      if (!used.has(i)) return i;
-    }
-    return Math.min(max - 1, Math.max(0, preferred ?? 0));
+    return pool[Math.floor(Math.random() * pool.length)]!;
   }
 
   private onPlayerDied(sessionId: string, player: PlayerState) {
@@ -656,6 +648,10 @@ export class ContentRoom extends ServicedRoom {
     if (this.kind === "pvp") {
       player.roundDead = true;
       player.hp = 0;
+      if (isBattlegroundMode(this.mode)) {
+        this.objectiveDirector?.onPlayerDied(sessionId, Date.now());
+        this.bgRespawnAt.set(sessionId, Date.now() + BG_RESPAWN_MS);
+      }
       return;
     }
     if (!this.diedAtBySession.has(sessionId)) {
@@ -674,7 +670,7 @@ export class ContentRoom extends ServicedRoom {
       if (p.disconnected) return;
       if (p.role === "spectator") return;
       fighters += 1;
-      if (p.hp > 0) living += 1;
+      if (this.isFighterLiving(p)) living += 1;
     });
     // Wipe when every present fighter is dead (no ally revive in v1).
     if (fighters > 0 && living === 0) {
@@ -760,6 +756,16 @@ export class ContentRoom extends ServicedRoom {
     this.combat.clearSession(sessionId);
   }
 
+  private isFighterLiving(p: PlayerState): boolean {
+    if (p.roundDead) return false;
+    if (p.hp > 0) return true;
+    let pending = false;
+    p.statuses.forEach((row) => {
+      if (row.statusId === "rebirthPending") pending = true;
+    });
+    return pending;
+  }
+
   private fighters(): PlayerState[] {
     const list: PlayerState[] = [];
     this.state.players.forEach((p) => {
@@ -818,36 +824,17 @@ export class ContentRoom extends ServicedRoom {
       });
     }
 
-    const ffa = isPvpFfaTriosMode(this.mode);
-    const fallbackSlots = { a: 0, b: 0 };
+    this.state.players.forEach((p, sessionId) => {
+      if (p.role === "fighter") this.spawnBySession.delete(sessionId);
+    });
     this.state.players.forEach((p, sessionId) => {
       if (p.role !== "fighter") return;
       if (p.team !== "a" && p.team !== "b" && p.team !== "c") return;
-      if (ffa) {
-        const team = p.team as "a" | "b" | "c";
-        const spawn = mapSpawn(this.mapId ?? "", { team, slot: 0, ffa: true });
-        if (spawn) {
-          p.x = spawn.x;
-          p.z = spawn.z;
-          p.yaw = spawn.yaw;
-          this.spawnBySession.set(sessionId, { x: spawn.x, z: spawn.z, yaw: spawn.yaw });
-        }
-      } else {
-        if (p.team === "c") return;
-        const team = p.team as "a" | "b";
-        let slot = this.spawnSlotBySession.get(sessionId);
-        if (typeof slot !== "number") {
-          slot = fallbackSlots[team]++;
-          this.spawnSlotBySession.set(sessionId, slot);
-        }
-        const spawn = mapSpawn(this.mapId ?? "", { team, slot });
-        if (spawn) {
-          p.x = spawn.x;
-          p.z = spawn.z;
-          p.yaw = spawn.yaw;
-          this.spawnBySession.set(sessionId, { x: spawn.x, z: spawn.z, yaw: spawn.yaw });
-        }
-      }
+      const spawn = this.pickPvpSpawn(p.team);
+      p.x = spawn.x;
+      p.z = spawn.z;
+      p.yaw = spawn.yaw;
+      this.spawnBySession.set(sessionId, { x: spawn.x, z: spawn.z, yaw: spawn.yaw });
       p.hp = p.maxHp;
       // No carry between rounds. Openings are then always played on the base
       // kit, and the payoff moments land late in a round once someone has
@@ -865,9 +852,22 @@ export class ContentRoom extends ServicedRoom {
       this.combat.clearSession(sessionId);
     });
 
+    if (this.mapId) {
+      this.combat.initPickups(mapPickupsFor(this.mapId));
+    }
+
+    this.bgRespawnAt.clear();
+    if (isBattlegroundMode(this.mode)) {
+      this.objectiveDirector?.start(this.mode, this.mapId, Date.now());
+    } else {
+      this.objectiveDirector?.stop();
+    }
+
     this.state.matchPhase = "countdown";
     this.state.phaseEndsAt = Date.now() + ARENA_ROUND_COUNTDOWN_MS;
-    this.broadcast("toast", { message: `Round ${round} — get ready` });
+    this.broadcast("toast", {
+      message: isBattlegroundMode(this.mode) ? "Battleground — get ready" : `Round ${round} — get ready`,
+    });
   }
 
   private endRound(winner: "a" | "b" | "c") {
@@ -922,6 +922,7 @@ export class ContentRoom extends ServicedRoom {
         scoreB: this.state.scoreB,
         scoreC: isPvpFfaTriosMode(this.mode) ? this.state.scoreC : undefined,
         matchKind: this.matchKind,
+        matchMode: this.mode,
         rows: augmented,
       });
     });
@@ -1130,11 +1131,23 @@ export class ContentRoom extends ServicedRoom {
     }
   }
 
+  private tickBattlegroundRespawns(now: number) {
+    if (!isBattlegroundMode(this.mode)) return;
+    for (const [sessionId, at] of this.bgRespawnAt) {
+      if (now < at) continue;
+      const player = this.state.players.get(sessionId);
+      this.bgRespawnAt.delete(sessionId);
+      if (!player || player.role !== "fighter") continue;
+      this.softRespawnPlayer(sessionId, player);
+    }
+  }
+
   private checkRoundWipe(now: number) {
     if (this.state.matchPhase !== "fighting") return;
+    if (isBattlegroundMode(this.mode)) return;
 
     if (isPvpFfaTriosMode(this.mode)) {
-      const living = this.fighters().filter((p) => !p.roundDead && p.hp > 0);
+      const living = this.fighters().filter((p) => this.isFighterLiving(p));
       if (living.length === 0) {
         this.wipeEndsAt = 0;
         this.wipeWinner = null;
@@ -1155,8 +1168,8 @@ export class ContentRoom extends ServicedRoom {
       return;
     }
 
-    const livingA = this.fighters().filter((p) => p.team === "a" && !p.roundDead && p.hp > 0);
-    const livingB = this.fighters().filter((p) => p.team === "b" && !p.roundDead && p.hp > 0);
+    const livingA = this.fighters().filter((p) => p.team === "a" && this.isFighterLiving(p));
+    const livingB = this.fighters().filter((p) => p.team === "b" && this.isFighterLiving(p));
     if (livingA.length === 0 && livingB.length === 0) {
       // Simultaneous wipe (e.g. shared AoE) — nobody wins, replay the round.
       this.wipeEndsAt = 0;
@@ -1203,6 +1216,8 @@ export class ContentRoom extends ServicedRoom {
         this.finishMatch("c");
       } else this.startRound(this.state.matchRound + 1);
     } else if (phase === "fighting") {
+      this.tickBattlegroundRespawns(now);
+      this.objectiveDirector?.tick(now);
       this.checkRoundWipe(now);
       if (
         this.wipeEndsAt > 0 &&
@@ -1320,6 +1335,14 @@ export class ContentRoom extends ServicedRoom {
 
     for (const [sessionId, player] of this.state.players.entries()) {
       if (player.disconnected) continue;
+
+      if (!Number.isFinite(player.x) || !Number.isFinite(player.z) || !Number.isFinite(player.yaw)) {
+        const spawn = this.spawnBySession.get(sessionId) ?? { x: 0, z: 0, yaw: 0 };
+        player.x = spawn.x;
+        player.z = spawn.z;
+        player.yaw = spawn.yaw;
+      }
+
       const queue = this.inputs.get(sessionId) ?? [];
       while (queue.length > 0) {
         const input = queue.shift()!;
@@ -1328,24 +1351,59 @@ export class ContentRoom extends ServicedRoom {
         const spectator = player.role === "spectator";
         if (!this.canMove(player)) continue;
 
+        const fearSourceId = this.combat.getFearSource(sessionId);
+        let moveX = input.moveX;
+        let moveZ = input.moveZ;
+        let yawIn = Number.isFinite(input.yaw) ? input.yaw : player.yaw;
+
+        if (this.combat.statuses.has(sessionId, "disoriented") && !fearSourceId) {
+          moveX = -moveX;
+          moveZ = -moveZ;
+        }
+
+        if (fearSourceId) {
+          // Feared! Involuntarily run in the opposite direction from fear source
+          let fleeDirX = 0;
+          let fleeDirZ = 0;
+          const fearSource = this.state.players.get(fearSourceId) ?? this.state.targets.get(fearSourceId);
+          if (fearSource) {
+            const dx = player.x - fearSource.x;
+            const dz = player.z - fearSource.z;
+            const d = Math.hypot(dx, dz);
+            if (d > 1e-4) {
+              fleeDirX = dx / d;
+              fleeDirZ = dz / d;
+            }
+          }
+          if (fleeDirX === 0 && fleeDirZ === 0) {
+            fleeDirX = Math.sin(player.yaw);
+            fleeDirZ = Math.cos(player.yaw);
+          }
+          moveX = fleeDirX;
+          moveZ = fleeDirZ;
+          yawIn = Math.atan2(fleeDirX, fleeDirZ);
+        }
+
         const speed = this.combat.getEffectiveMoveSpeed(sessionId);
         const from = { x: player.x, z: player.z };
         const desired = applyMovement(
           from,
-          { moveX: input.moveX, moveZ: input.moveZ, dt: input.dt || dt },
+          { moveX, moveZ, dt: input.dt || dt },
           speed,
         );
-        if (Math.abs(input.moveX) + Math.abs(input.moveZ) > 0.05) {
+        if (Math.abs(moveX) + Math.abs(moveZ) > 0.05) {
           this.activityOf(sessionId).moveTicks += 1;
         }
         const tethered = this.combat.constrainAstralChainDesired(sessionId, desired);
         const next = this.combat.movePlayer(sessionId, from, tethered);
-        player.x = next.x;
-        player.z = next.z;
+        if (Number.isFinite(next.x) && Number.isFinite(next.z)) {
+          player.x = next.x;
+          player.z = next.z;
+        }
 
         // Spectators: move + look only (no casts / aim refresh / shield turn lock).
         if (spectator) {
-          player.yaw = applyYaw(player.yaw, input.yaw, input.dt || dt);
+          player.yaw = applyYaw(player.yaw, yawIn, input.dt || dt);
           continue;
         }
         if (!this.canCombat(player)) continue;
@@ -1353,7 +1411,7 @@ export class ContentRoom extends ServicedRoom {
         const shieldTurning = this.combat.statuses.has(sessionId, "handShielding");
         player.yaw = applyYaw(
           player.yaw,
-          input.yaw,
+          yawIn,
           input.dt || dt,
           shieldTurning ? HAND_SHIELD_CAST.yawTurnRate : undefined,
         );

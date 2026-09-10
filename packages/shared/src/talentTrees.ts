@@ -21,8 +21,8 @@ export const ESSENCE_PER_TALENT_POINT = 40;
  * Essence charged per talent point removed from a build (refund rank, reshape, reset).
  */
 export const ESSENCE_PER_TALENT_REFUND = 10;
-/** Free points for new hunters so the tree is playable immediately. */
-export const STARTER_TALENT_POINTS = 1;
+/** New hunters buy talent points with essence (tutorial chest funds the first). */
+export const STARTER_TALENT_POINTS = 0;
 
 // Match payouts: see ./rewards (MATCH_REWARDS / computeMatchReward).
 
@@ -36,13 +36,14 @@ export const TALENT_TREE_IDS: readonly TalentTreeId[] = [
 
 /**
  * Points required in-tree before a tier unlocks (default).
- * Destruction tier 2 uses 3 (first-row foundations) via per-talent `requiredPoints`.
+ * 5-tier progression: Tier 1 (0), Tier 2 (2), Tier 3 (4), Tier 4 (7), Tier 5 (10).
  */
 export const TALENT_TIER_REQUIRED_POINTS: Record<number, number> = {
   1: 0,
-  2: 4,
-  3: 8,
-  4: 12,
+  2: 2,
+  3: 4,
+  4: 7,
+  5: 10,
 };
 
 /** Selected talent ids → ranks invested (1..maxRank). */
@@ -192,15 +193,17 @@ export function talentPrerequisites(talentId: string): readonly string[] {
   return merged;
 }
 
-/** True when every linked parent has at least one point invested. */
+/**
+ * True when at least one linked parent has at least one point invested (OR condition),
+ * or true if the node has no parent links (Tier 1 foundations).
+ */
 export function talentPrerequisitesMet(
   build: TalentBuild,
   talentId: string,
 ): boolean {
-  for (const pre of talentPrerequisites(talentId)) {
-    if (talentRank(build, pre) < 1) return false;
-  }
-  return true;
+  const prereqs = talentPrerequisites(talentId);
+  if (prereqs.length === 0) return true;
+  return prereqs.some((pre) => talentRank(build, pre) >= 1);
 }
 
 /**
@@ -411,12 +414,96 @@ export function clampBuildToOwned(build: TalentBuild, ownedPoints: number): Tale
   return next;
 }
 
-export const TALENT_TREE_COLUMNS = 4;
+export const TALENT_TREE_COLUMNS = 5;
 
 export type TalentGridCell = {
   talent: CatalogTalentDef;
   col: number;
   row: number;
+};
+
+/**
+ * Standard uniform column placement for each tier:
+ * Tier 1: 3 nodes (cols 0, 2, 4)
+ * Tier 2: 5 nodes (cols 0, 1, 2, 3, 4)
+ * Tier 3: 5 nodes (cols 0, 1, 2, 3, 4)
+ * Tier 4: 5 nodes (cols 0, 1, 2, 3, 4)
+ * Tier 5: 3 nodes (cols 0, 2, 4)
+ */
+export const TIER_COLUMNS: Record<number, number[]> = {
+  1: [0, 2, 4],
+  2: [0, 1, 2, 3, 4],
+  3: [0, 1, 2, 3, 4],
+  4: [0, 1, 2, 3, 4],
+  5: [0, 2, 4],
+};
+
+/**
+ * Standard uniform link transitions between adjacent tiers:
+ * Tier 1 -> Tier 2:
+ *   [0, 0], [0, 1],
+ *   [2, 1], [2, 2], [2, 3],
+ *   [4, 3], [4, 4]
+ * Tier 2 -> Tier 3:
+ *   [0, 0], [0, 1],
+ *   [1, 1], [1, 2],
+ *   [2, 2],
+ *   [3, 2], [3, 3],
+ *   [4, 3], [4, 4]
+ * Tier 3 -> Tier 4:
+ *   [0, 0], [0, 1],
+ *   [1, 1], [1, 2],
+ *   [2, 2],
+ *   [3, 2], [3, 3],
+ *   [4, 3], [4, 4]
+ * Tier 4 -> Tier 5:
+ *   [0, 0],
+ *   [1, 0], [1, 2],
+ *   [2, 2],
+ *   [3, 2], [3, 4],
+ *   [4, 4]
+ */
+export const UNIFORM_TIER_TRANSITIONS: Record<number, Array<[number, number]>> = {
+  1: [
+    [0, 0],
+    [0, 1],
+    [2, 1],
+    [2, 2],
+    [2, 3],
+    [4, 3],
+    [4, 4],
+  ],
+  2: [
+    [0, 0],
+    [0, 1],
+    [1, 1],
+    [1, 2],
+    [2, 2],
+    [3, 2],
+    [3, 3],
+    [4, 3],
+    [4, 4],
+  ],
+  3: [
+    [0, 0],
+    [0, 1],
+    [1, 1],
+    [1, 2],
+    [2, 2],
+    [3, 2],
+    [3, 3],
+    [4, 3],
+    [4, 4],
+  ],
+  4: [
+    [0, 0],
+    [1, 0],
+    [1, 2],
+    [2, 2],
+    [3, 2],
+    [3, 4],
+    [4, 4],
+  ],
 };
 
 export function layoutTalentTree(tree: TalentTreeId): {
@@ -431,70 +518,69 @@ export function layoutTalentTree(tree: TalentTreeId): {
   }
 
   const cells: TalentGridCell[] = [];
-  let row = 0;
-  const cols = TALENT_TREE_COLUMNS;
   const tiers = [...byTier.keys()].sort((a, b) => a - b);
+  const maxTier = Math.max(5, ...tiers, 0);
 
   for (const tier of tiers) {
     const list = byTier.get(tier) ?? [];
-    for (let start = 0; start < list.length; start += cols) {
-      const chunk = list.slice(start, start + cols);
-      const offset = Math.floor((cols - chunk.length) / 2);
-      chunk.forEach((talent, i) => {
-        cells.push({ talent, col: i + offset, row });
-      });
-      row += 1;
-    }
+    const tierCols = TIER_COLUMNS[tier];
+    const row = tier - 1;
+
+    list.forEach((talent, i) => {
+      let col: number;
+      if (tierCols && i < tierCols.length) {
+        col = tierCols[i];
+      } else {
+        const offset = Math.max(0, Math.floor((TALENT_TREE_COLUMNS - list.length) / 2));
+        col = Math.min(TALENT_TREE_COLUMNS - 1, i + offset);
+      }
+      cells.push({ talent, col, row });
+    });
   }
 
-  return { cells, rowCount: row };
+  return { cells, rowCount: maxTier };
 }
 
 export function talentTreeLinks(cells: TalentGridCell[]): Array<{
   fromId: string;
   toId: string;
 }> {
-  const byRow = new Map<number, TalentGridCell[]>();
+  const cellByRowCol = new Map<string, TalentGridCell>();
   for (const c of cells) {
-    const list = byRow.get(c.row) ?? [];
-    list.push(c);
-    byRow.set(c.row, list);
+    cellByRowCol.set(`${c.row}:${c.col}`, c);
   }
-  const rows = [...byRow.keys()].sort((a, b) => a - b);
+
   const links: Array<{ fromId: string; toId: string }> = [];
   const seen = new Set<string>();
 
-  for (let ri = 1; ri < rows.length; ri++) {
-    const prev = byRow.get(rows[ri - 1]!) ?? [];
-    const cur = byRow.get(rows[ri]!) ?? [];
-    for (const cell of cur) {
-      let best: TalentGridCell | null = null;
-      let bestDist = Infinity;
-      for (const p of prev) {
-        const d = Math.abs(p.col - cell.col);
-        if (d < bestDist) {
-          bestDist = d;
-          best = p;
-        }
-      }
-      if (best) {
-        const key = `${best.talent.id}->${cell.talent.id}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          links.push({ fromId: best.talent.id, toId: cell.talent.id });
-        }
+  const addLink = (fromId: string, toId: string) => {
+    const key = `${fromId}->${toId}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      links.push({ fromId, toId });
+    }
+  };
+
+  // 1. Uniform lattice links
+  for (const [tierStr, pairs] of Object.entries(UNIFORM_TIER_TRANSITIONS)) {
+    const tier = Number(tierStr);
+    const fromRow = tier - 1;
+    const toRow = tier;
+    for (const [fromCol, toCol] of pairs) {
+      const fromCell = cellByRowCol.get(`${fromRow}:${fromCol}`);
+      const toCell = cellByRowCol.get(`${toRow}:${toCol}`);
+      if (fromCell && toCell) {
+        addLink(fromCell.talent.id, toCell.talent.id);
       }
     }
   }
 
-  // Authored same-row (or extra) rails from `requires`.
+  // 2. Authored same-row (or extra) rails from `requires`.
   for (const cell of cells) {
     for (const fromId of cell.talent.requires ?? []) {
-      const key = `${fromId}->${cell.talent.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      links.push({ fromId, toId: cell.talent.id });
+      addLink(fromId, cell.talent.id);
     }
   }
+
   return links;
 }

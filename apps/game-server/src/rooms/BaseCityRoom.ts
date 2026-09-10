@@ -1,9 +1,11 @@
 import { Client, matchMaker } from "@colyseus/core";
 import {
   ABILITIES,
+  DEFAULT_COSMETIC_BODY,
   DEFAULT_COSMETIC_PATTERN,
   DEFAULT_COSMETIC_PATTERN_COLOR,
-  DEFAULT_LOADOUT,
+  EMPTY_LOADOUT,
+  isLoadoutReady,
   getMapSource,
   ROOM,
   sandboxModeFor,
@@ -33,15 +35,16 @@ import {
   ownsPatternColor,
   phaseDurationMs,
   COOP_PVE_MAX_PLAYERS,
-  isPvpFfaTriosMode,
-  PVP_MODES,
+  parsePvpFamilyToken,
+  pvpFamilyFromModes,
+  pvpFamilyToken,
   resolvePveTransfer,
   baseCityStaticColliders,
   mapAttackablePropsFor,
+  mapPickupsFor,
   pointInInteractZone,
   sweepTravel,
   type PlayerInput,
-  type PvpModeId,
   type PvpSeat,
   type ShopGrant,
   type StaticCollider,
@@ -60,7 +63,9 @@ import {
   defaultSeatFor,
   filterModesForHubSize,
   isFullPremadeLobby,
-  partyFitsMode,
+  partyFamily,
+  partyFitsFamily,
+  resolvePremadeMode,
   toPartySnapshot,
   type HubParty,
 } from "../matchmaking/hubParty.js";
@@ -130,6 +135,7 @@ export class BaseCityRoom extends ServicedRoom {
       onPlayerDamaged: (sessionId) => {
         const player = this.state.players.get(sessionId);
         if (player && player.hp <= 0) {
+          if (this.combat.tryBeginRebirth(sessionId)) return;
           this.onPlayerDied(sessionId, player);
         }
       },
@@ -160,6 +166,7 @@ export class BaseCityRoom extends ServicedRoom {
     for (const p of mapAttackablePropsFor(HUB_MAP_ID)) {
       this.combat.spawnPropTarget(p);
     }
+    this.combat.initPickups(mapPickupsFor(HUB_MAP_ID));
     this.combat.setStaticColliders(baseCityStaticColliders());
     this.setPatchRate(1000 / 30);
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
@@ -187,7 +194,10 @@ export class BaseCityRoom extends ServicedRoom {
       "portal_confirm",
       (
         client,
-        message: { portal: "pvp" | "pve"; params?: { modes?: string[]; content?: string; modifiers?: string[] } },
+        message: {
+          portal: "pvp" | "pve";
+          params?: { family?: string; modes?: string[]; content?: string; modifiers?: string[] };
+        },
       ) => {
         this.handlePortalConfirm(client, message);
       },
@@ -336,7 +346,7 @@ export class BaseCityRoom extends ServicedRoom {
     player.displayName = verified.displayName;
     player.x = HUB_SPAWN.x + (Math.random() - 0.5) * 1.2;
     player.z = HUB_SPAWN.z + (Math.random() - 0.5) * 1.2;
-    player.loadout = DEFAULT_LOADOUT.join(",");
+    player.loadout = EMPTY_LOADOUT.join(",");
     player.talents = "";
     await this.loadPlayerEconomy(client.sessionId, player, verified);
 
@@ -579,12 +589,18 @@ export class BaseCityRoom extends ServicedRoom {
 
   private handlePortalConfirm(
     client: Client,
-    message: { portal: "pvp" | "pve"; params?: { modes?: string[]; content?: string; modifiers?: string[] } },
+    message: {
+      portal: "pvp" | "pve";
+      params?: { family?: string; modes?: string[]; content?: string; modifiers?: string[] };
+    },
   ) {
     if (!message?.portal) return;
 
     if (message.portal === "pvp") {
-      this.handleOpenPvpParty(client, (message.params?.modes ?? []).filter(Boolean));
+      const family =
+        parsePvpFamilyToken(String(message.params?.family ?? "")) ??
+        pvpFamilyFromModes((message.params?.modes ?? []).filter(Boolean));
+      this.handleOpenPvpParty(client, family);
       return;
     }
 
@@ -761,6 +777,7 @@ export class BaseCityRoom extends ServicedRoom {
       eco.flexAbilityIds,
       normalizeLoadout(eco.abilityIds),
       eco.unlocks,
+      eco.talentBuild,
     )
       .map((id) => id ?? "")
       .join(",");
@@ -781,6 +798,8 @@ export class BaseCityRoom extends ServicedRoom {
     player.patternColor = ownsPatternColor(eco.unlocks.patternColors, eco.patternColor ?? "")
       ? (eco.patternColor as string)
       : DEFAULT_COSMETIC_PATTERN_COLOR;
+    player.vessel = DEFAULT_COSMETIC_BODY;
+    this.vesselConfirmedBySession.set(client.sessionId, false);
     this.applyCombatKit(client.sessionId, player);
     this.sendInventory(client, player);
     client.send("hub_intro_status", { completed: false, replay: true });
@@ -954,12 +973,7 @@ export class BaseCityRoom extends ServicedRoom {
     this.broadcastToParty(party, "toast", { message: reason });
   }
 
-  private handleOpenPvpParty(client: Client, requestedModes: string[]) {
-    if (requestedModes.length === 0) {
-      client.send("toast", { message: "Pick at least one PvP mode" });
-      return;
-    }
-
+  private handleOpenPvpParty(client: Client, family: "skirmish" | "battleground") {
     const existing = this.parties.getBySession(client.sessionId);
     if (existing && existing.leaderSessionId === client.sessionId) {
       this.dissolveParty(existing, "Party replaced by a new portal request");
@@ -972,9 +986,10 @@ export class BaseCityRoom extends ServicedRoom {
     const player = this.state.players.get(client.sessionId);
     if (!identity || !player) return;
 
-    const { validModes, rejectedModes } = filterModesForHubSize(requestedModes, this.state.players.size);
+    const token = pvpFamilyToken(family);
+    const { validModes } = filterModesForHubSize([token], this.state.players.size);
     if (validModes.length === 0) {
-      client.send("toast", { message: "No selected mode fits the current hub size" });
+      client.send("toast", { message: "This hub is too full for that playlist" });
       return;
     }
 
@@ -1006,10 +1021,9 @@ export class BaseCityRoom extends ServicedRoom {
     }
 
     this.broadcastPartyUpdate(party);
-    const suffix =
-      rejectedModes.length > 0 ? ` (${rejectedModes.join(", ")} dropped — hub too small)` : "";
+    const label = family === "battleground" ? "Battleground" : "Skirmish";
     this.broadcastToParty(party, "toast", {
-      message: `Party lobby — ${validModes.join(", ")}${suffix}. Set seats, invite friends, then lock.`,
+      message: `${label} lobby — invite friends, then Find Match.`,
     });
     this.broadcastToParty(party, "ui", { ui: "party_lobby" });
   }
@@ -1276,8 +1290,8 @@ export class BaseCityRoom extends ServicedRoom {
       client.send("toast", { message: "Wave Assault has fighter seats only" });
       return;
     }
-    if (seat === "teamC" && !party.modes.some((m) => isPvpFfaTriosMode(m))) {
-      client.send("toast", { message: "Team 3 is only used in Arena 1v1v1" });
+    if (seat === "teamC" && partyFamily(party) !== "skirmish") {
+      client.send("toast", { message: "Battlegrounds are two-team only" });
       return;
     }
     if (party.queued) {
@@ -1304,15 +1318,20 @@ export class BaseCityRoom extends ServicedRoom {
       return;
     }
 
-    const { validModes } = filterModesForHubSize(modes.filter(Boolean), this.state.players.size);
+    const family =
+      parsePvpFamilyToken(modes[0] ?? "") ?? pvpFamilyFromModes(modes.filter(Boolean));
+    const token = pvpFamilyToken(family);
+    const { validModes } = filterModesForHubSize([token], this.state.players.size);
     if (validModes.length === 0) {
-      client.send("toast", { message: "No selected mode fits the current hub size" });
+      client.send("toast", { message: "This hub is too full for that playlist" });
       return;
     }
 
     party.modes = validModes;
     this.broadcastPartyUpdate(party);
-    this.broadcastToParty(party, "toast", { message: `Modes updated: ${validModes.join(", ")}` });
+    this.broadcastToParty(party, "toast", {
+      message: family === "battleground" ? "Playlist: Battleground" : "Playlist: Skirmish",
+    });
   }
 
   private async handleRankedRequest(client: Client) {
@@ -1338,14 +1357,33 @@ export class BaseCityRoom extends ServicedRoom {
     }
     if (party.queued) return;
 
+    const notReady: string[] = [];
+    for (const member of party.members.values()) {
+      if (member.seat === "spectator") continue;
+      const fighter = this.state.players.get(member.sessionId);
+      const slotted = fighter
+        ? isLoadoutReady(normalizeLoadout(fighter.loadout.split(",")))
+        : false;
+      if (!slotted) notReady.push(fighter?.displayName || "A hunter");
+    }
+    if (notReady.length > 0) {
+      client.send("toast", {
+        message:
+          notReady.length === 1
+            ? `${notReady[0]} must slot a spell on every key before queueing`
+            : `${notReady.join(", ")} must slot a spell on every key before queueing`,
+      });
+      return;
+    }
+
     if (party.kind === "coop_pve" || matchKind === "coop_pve") {
       await this.startCoopPveAssault(client, party);
       return;
     }
 
-    const feasibleModes = party.modes.filter((mode) => partyFitsMode(party, mode));
-    if (feasibleModes.length === 0) {
-      client.send("toast", { message: "Party composition doesn't fit any selected mode — adjust seats" });
+    const family = partyFamily(party);
+    if (!partyFitsFamily(party, family)) {
+      client.send("toast", { message: "Party is too large for this playlist — move someone to observers" });
       return;
     }
 
@@ -1368,38 +1406,38 @@ export class BaseCityRoom extends ServicedRoom {
     }
     if (members.length === 0) return;
 
-    party.modes = feasibleModes;
-
-    const primaryMode = feasibleModes[0]!;
-    const fullPremade = feasibleModes.some((m) => isFullPremadeLobby(party, m));
-    const fullMode = feasibleModes.find((m) => isFullPremadeLobby(party, m)) ?? primaryMode;
-    const modeMeta = PVP_MODES.find((m) => m.id === fullMode);
-    const noQueue = Boolean(modeMeta?.noQueue);
-
-    if (!fullPremade && matchKind === "unranked") {
-      client.send("toast", {
-        message: isPvpFfaTriosMode(fullMode)
-          ? "Unranked requires all three fighter seats filled"
-          : "Unranked requires a full lobby (both teams filled)",
-      });
+    const fighters = members.filter((m) => m.seat !== "spectator").length;
+    if (fighters < 1) {
+      client.send("toast", { message: "Need at least one fighter" });
       return;
     }
 
-    if (!fullPremade && noQueue) {
-      client.send("toast", { message: "This mode requires a full premade lobby" });
+    const fullPremade = isFullPremadeLobby(party, family);
+    const premadeMode = fullPremade ? resolvePremadeMode(party) : null;
+
+    if (!fullPremade && matchKind === "unranked") {
+      client.send("toast", {
+        message: "Unranked needs both sides filled for a custom match",
+      });
       return;
     }
 
     const fighterIds = members.filter((m) => m.seat !== "spectator").map((m) => m.userId);
     const avgMmr = await resolvePartyAvgMmr(fighterIds);
 
-    if (fullPremade) {
+    if (fullPremade && premadeMode) {
       party.queued = true;
       this.broadcastPartyUpdate(party);
       try {
         await startDirectPvpMatch(
-          fullMode as PvpModeId,
-          { partyId: party.partyId, modes: [fullMode], members, avgMmr },
+          premadeMode,
+          {
+            partyId: party.partyId,
+            modes: [pvpFamilyToken(family)],
+            family,
+            members,
+            avgMmr,
+          },
           matchKind === "unranked" ? "custom" : "ranked",
         );
       } catch (err) {
@@ -1411,31 +1449,11 @@ export class BaseCityRoom extends ServicedRoom {
       return;
     }
 
-    // Partial lobby → ranked queue (FFA included; packs to 3 solos)
-    const queueModes = feasibleModes.filter((m) => !PVP_MODES.find((x) => x.id === m)?.noQueue);
-    if (queueModes.length === 0) {
-      client.send("toast", { message: "No queueable modes selected" });
-      return;
-    }
-
-    // FFA: refuse parties that already fill the lobby (should have taken direct path)
-    // or bring too many fighters for open queue packing.
-    if (queueModes.some((m) => isPvpFfaTriosMode(m))) {
-      const fighters = members.filter((m) => m.seat !== "spectator").length;
-      if (fighters >= 3) {
-        client.send("toast", { message: "Fill seats A/B/C then Start Ranked, or leave a seat open to queue" });
-        return;
-      }
-      if (fighters < 1) {
-        client.send("toast", { message: "Need at least one fighter to queue" });
-        return;
-      }
-    }
-
     party.queued = true;
     enqueuePvpParty({
       partyId: party.partyId,
-      modes: queueModes,
+      modes: [pvpFamilyToken(family)],
+      family,
       members,
       avgMmr,
     });
@@ -1550,27 +1568,70 @@ export class BaseCityRoom extends ServicedRoom {
     for (const [sessionId, player] of this.state.players.entries()) {
       if (player.disconnected) continue;
 
+      // Recover from corrupt poses (e.g. bad collider shape → NaN) so the client
+      // does not stay on a black screen until a full rejoin.
+      if (!Number.isFinite(player.x) || !Number.isFinite(player.z) || !Number.isFinite(player.yaw)) {
+        player.x = HUB_SPAWN.x;
+        player.z = HUB_SPAWN.z;
+        player.yaw = 0;
+      }
+
       const queue = this.inputs.get(sessionId) ?? [];
       while (queue.length > 0) {
         const input = queue.shift()!;
         player.lastInputSeq = input.seq;
         if (player.hp <= 0) continue;
 
+        const fearSourceId = this.combat.getFearSource(sessionId);
+        let moveX = input.moveX;
+        let moveZ = input.moveZ;
+        let yawIn = Number.isFinite(input.yaw) ? input.yaw : player.yaw;
+
+        if (this.combat.statuses.has(sessionId, "disoriented") && !fearSourceId) {
+          moveX = -moveX;
+          moveZ = -moveZ;
+        }
+
+        if (fearSourceId) {
+          // Feared! Involuntarily run in the opposite direction from fear source
+          let fleeDirX = 0;
+          let fleeDirZ = 0;
+          const fearSource = this.state.players.get(fearSourceId) ?? this.state.targets.get(fearSourceId);
+          if (fearSource) {
+            const dx = player.x - fearSource.x;
+            const dz = player.z - fearSource.z;
+            const d = Math.hypot(dx, dz);
+            if (d > 1e-4) {
+              fleeDirX = dx / d;
+              fleeDirZ = dz / d;
+            }
+          }
+          if (fleeDirX === 0 && fleeDirZ === 0) {
+            fleeDirX = Math.sin(player.yaw);
+            fleeDirZ = Math.cos(player.yaw);
+          }
+          moveX = fleeDirX;
+          moveZ = fleeDirZ;
+          yawIn = Math.atan2(fleeDirX, fleeDirZ);
+        }
+
         const speed = this.combat.getEffectiveMoveSpeed(sessionId);
         const from = { x: player.x, z: player.z };
         const desired = applyMovement(
           from,
-          { moveX: input.moveX, moveZ: input.moveZ, dt: input.dt || dt },
+          { moveX, moveZ, dt: input.dt || dt },
           speed,
         );
         const tethered = this.combat.constrainAstralChainDesired(sessionId, desired);
         const next = this.combat.movePlayer(sessionId, from, tethered);
-        player.x = next.x;
-        player.z = next.z;
+        if (Number.isFinite(next.x) && Number.isFinite(next.z)) {
+          player.x = next.x;
+          player.z = next.z;
+        }
         const shieldTurning = this.combat.statuses.has(sessionId, "handShielding");
         player.yaw = applyYaw(
           player.yaw,
-          input.yaw,
+          yawIn,
           input.dt || dt,
           shieldTurning ? HAND_SHIELD_CAST.yawTurnRate : undefined,
         );
@@ -1600,7 +1661,7 @@ export class BaseCityRoom extends ServicedRoom {
     }
 
     this.combat.tick(dt, now);
-    this.tickDummyAggro(now);
+    this.tickDummyAggro(now, dt);
     this.tickHubPushBall(dt);
 
     if (now - this.lastHubRosterBroadcastAt >= HUB_ROSTER_BROADCAST_MS) {
@@ -1842,7 +1903,50 @@ export class BaseCityRoom extends ServicedRoom {
     this.clearAllDummyAggro();
   }
 
-  private tickDummyAggro(now: number) {
+  private tickDummyAggro(now: number, dt = 0.05) {
+    const safeDt = Math.max(1e-4, Math.min(0.05, dt));
+
+    // Feared practice dummies: involuntarily run in the opposite direction from fear source!
+    this.state.targets.forEach((dummy, dummyId) => {
+      if (dummy.kind !== "dummy") return;
+      const fearSourceId = this.combat.getFearSource(dummyId);
+      if (!fearSourceId) return;
+
+      this.clearDummyCast(dummyId);
+      const aggro = this.dummyAggro.get(dummyId);
+      if (aggro) {
+        aggro.pendingReleaseAt = 0;
+        aggro.nextCastAt = now + 1600;
+      }
+
+      let fleeDirX = 0;
+      let fleeDirZ = 0;
+      const fearSource = this.state.players.get(fearSourceId) ?? this.state.targets.get(fearSourceId);
+      if (fearSource) {
+        const dx = dummy.x - fearSource.x;
+        const dz = dummy.z - fearSource.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 1e-4) {
+          fleeDirX = dx / d;
+          fleeDirZ = dz / d;
+        }
+      }
+      if (fleeDirX === 0 && fleeDirZ === 0) {
+        fleeDirX = Math.sin(dummy.yaw);
+        fleeDirZ = Math.cos(dummy.yaw);
+      }
+      const fleeSpeed = 5.5; // m/s normal run speed
+      const step = fleeSpeed * safeDt;
+      const from = { x: dummy.x, z: dummy.z };
+      const ideal = { x: dummy.x + fleeDirX * step, z: dummy.z + fleeDirZ * step };
+      const next = this.combat.sweepPlayerPos(dummyId, from, ideal);
+      if (Number.isFinite(next.x) && Number.isFinite(next.z)) {
+        dummy.x = next.x;
+        dummy.z = next.z;
+      }
+      dummy.yaw = Math.atan2(fleeDirX, fleeDirZ);
+    });
+
     const bolt = ABILITIES.bolt;
     if (!bolt) return;
     const windupMs =
@@ -1877,8 +1981,19 @@ export class BaseCityRoom extends ServicedRoom {
         continue;
       }
 
-      // Stun / silence: drop windup and never release the bolt.
-      if (!this.combat.statuses.canCast(dummyId)) {
+      // Dread Aura reactive check: if inside an active enemy Dread Aura, fear the dummy and abort attack
+      if (
+        (dummy.castAbilityId || aggro.pendingReleaseAt > 0 || now >= aggro.nextCastAt) &&
+        this.combat.checkDreadAuraTriggerTarget(dummyId, dummy.x, dummy.z, now)
+      ) {
+        this.clearDummyCast(dummyId);
+        aggro.pendingReleaseAt = 0;
+        aggro.nextCastAt = now + 1600;
+        continue;
+      }
+
+      // Fear / Stun / silence: drop windup and never release the bolt.
+      if (this.combat.getFearSource(dummyId) || !this.combat.statuses.canCast(dummyId)) {
         if (dummy.castAbilityId || aggro.pendingReleaseAt > 0) {
           this.clearDummyCast(dummyId);
           aggro.pendingReleaseAt = 0;

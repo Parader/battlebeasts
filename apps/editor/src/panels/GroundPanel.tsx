@@ -7,7 +7,7 @@ import {
   type MapGround,
 } from "@battlebeasts/shared";
 import { useState } from "react";
-import { docStore, useEditor } from "../state/docStore";
+import { docStore, useEditorSlice } from "../state/docStore";
 import { terrain } from "../state/terrain";
 
 /**
@@ -137,7 +137,7 @@ function anchorLabel(ax: number, az: number): string {
 }
 
 export function GroundPanel() {
-  const { doc } = useEditor();
+  const doc = useEditorSlice((s) => s.doc);
   const g = doc.ground;
 
   const setGround = (next: MapGround) => docStore.edit((d) => void (d.ground = next));

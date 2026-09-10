@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
@@ -6,21 +6,30 @@ import { getEmote, type CosmeticsEquipped } from "@battlebeasts/shared";
 import { emoteAnimationClips, heroAnimationConfig } from "../animation";
 import {
   CHARACTER_URL,
+  YBOT_URL,
   prepareCharacterScene,
   tintCharacterSurface,
+  disposeCharacterMaterials,
 } from "../characterVisual";
 import { EquippedCosmetics } from "../EquippedCosmetics";
+import { SpiritVesselFx } from "../SpiritVesselFx";
+import { VesselBody } from "../VesselBody";
 
 useGLTF.preload(CHARACTER_URL);
+useGLTF.preload(YBOT_URL);
 
 type PreviewProps = {
   color: string;
   pattern: string;
   patternColor: string;
+  body?: string;
   cosmeticsEquipped?: CosmeticsEquipped;
   /** When set, loop this emote clip instead of idle. */
   previewEmoteId?: string | null;
+  className?: string;
 };
+
+const YAW_PER_PX = 0.009;
 
 function resolveEmoteClipName(emoteId: string | null | undefined): string | null {
   if (!emoteId) return null;
@@ -33,13 +42,15 @@ function PreviewAvatar({
   color,
   pattern,
   patternColor,
+  body = "female",
   cosmeticsEquipped,
   previewEmoteId,
-}: PreviewProps) {
+  yawRef,
+}: PreviewProps & { yawRef: MutableRefObject<number> }) {
   const spinRef = useRef<THREE.Group>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const framedRef = useRef(false);
-  const { camera, size: viewSize } = useThree();
+  const { camera, size: viewSize, gl } = useThree();
   const gltf = useGLTF(CHARACTER_URL);
 
   const idleClip = useMemo(
@@ -81,6 +92,7 @@ function PreviewAvatar({
       mixer.stopAllAction();
       mixer.uncacheRoot(scene);
       mixerRef.current = null;
+      disposeCharacterMaterials(scene);
     };
   }, [scene, idleClip, emoteClip]);
 
@@ -89,11 +101,51 @@ function PreviewAvatar({
     framedRef.current = false;
   }, [scene, viewSize.width, viewSize.height]);
 
+  useEffect(() => {
+    const el = gl.domElement.parentElement ?? gl.domElement;
+    const drag = { active: false, x: 0 };
+    const previousTouchAction = el.style.touchAction;
+    const previousCursor = el.style.cursor;
+    el.style.touchAction = "none";
+    el.style.cursor = "grab";
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      drag.active = true;
+      drag.x = e.clientX;
+      el.setPointerCapture(e.pointerId);
+      el.style.cursor = "grabbing";
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!drag.active) return;
+      yawRef.current += (e.clientX - drag.x) * YAW_PER_PX;
+      drag.x = e.clientX;
+    };
+    const onUp = (e: PointerEvent) => {
+      drag.active = false;
+      el.style.cursor = "grab";
+      if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    };
+
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      el.style.touchAction = previousTouchAction;
+      el.style.cursor = previousCursor;
+    };
+  }, [gl, yawRef]);
+
   useFrame((_, dt) => {
     mixerRef.current?.update(dt);
 
     const spin = spinRef.current;
-    if (spin) spin.rotation.y += dt * (emoteClip ? 0.12 : 0.35);
+    if (spin) spin.rotation.y = yawRef.current;
 
     if (framedRef.current) return;
 
@@ -144,23 +196,43 @@ function PreviewAvatar({
   }, [scene, color, pattern, patternColor]);
 
   return (
-    <group ref={spinRef}>
-      <primitive object={scene} />
-      <EquippedCosmetics characterRoot={scene} equipped={cosmeticsEquipped} />
-    </group>
+    <>
+      <group ref={spinRef}>
+        <primitive object={scene} />
+        <VesselBody characterRoot={scene} body={body} color={color} />
+        <EquippedCosmetics characterRoot={scene} equipped={cosmeticsEquipped} body={body} />
+        <SpiritVesselFx
+          characterRoot={scene}
+          getColor={() => color}
+          getAura={() => pattern}
+          getAuraColor={() => patternColor}
+          stage="preview"
+        />
+      </group>
+    </>
   );
 }
 
-/** Tall orbiting hero for the Appearance stand panel / Merchant preview. */
+/** Still hero for the Appearance stand / Merchant / vessel picker. Drag to yaw. */
 export function AppearancePreview({
   color,
   pattern,
   patternColor,
+  body = "female",
   cosmeticsEquipped,
   previewEmoteId,
+  className,
 }: PreviewProps) {
+  const yawRef = useRef(0);
   return (
-    <div className="bb-appearance-preview relative w-full overflow-hidden rounded-sm border border-[var(--bb-panel-line)] bg-[#061220]">
+    <div
+      className={[
+        "bb-appearance-preview relative w-full overflow-hidden rounded-sm border border-[var(--bb-panel-line)] bg-[#061220]",
+        className ?? "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <Canvas
         camera={{ position: [0.8, 1.0, 3.4], fov: 32, near: 0.1, far: 40 }}
         dpr={[1, 1.5]}
@@ -168,9 +240,10 @@ export function AppearancePreview({
         style={{ width: "100%", height: "100%", display: "block" }}
       >
         <color attach="background" args={["#0a1628"]} />
-        <ambientLight intensity={0.55} />
-        <directionalLight position={[2.8, 4.2, 2.2]} intensity={1.25} />
-        <directionalLight position={[-2.2, 1.8, -1.2]} intensity={0.45} />
+        <ambientLight intensity={0.38} />
+        <directionalLight position={[2.8, 4.2, 2.2]} intensity={0.9} color="#fff2d8" />
+        <directionalLight position={[-2.2, 1.8, -1.2]} intensity={0.22} />
+        <directionalLight position={[0.2, 1.4, 2.6]} intensity={0.28} color="#f0ece4" />
         <Suspense fallback={null}>
           <PreviewAvatar
             color={color}
@@ -178,11 +251,13 @@ export function AppearancePreview({
             patternColor={patternColor}
             cosmeticsEquipped={cosmeticsEquipped}
             previewEmoteId={previewEmoteId}
+            body={body}
+            yawRef={yawRef}
           />
         </Suspense>
       </Canvas>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent px-2 py-1.5 text-[10px] text-white/80">
-        {previewEmoteId ? "Emote preview" : "Live preview"}
+        {previewEmoteId ? "Emote preview — drag to rotate" : "Drag to rotate"}
       </div>
     </div>
   );

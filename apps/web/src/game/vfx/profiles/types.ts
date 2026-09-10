@@ -41,9 +41,31 @@ export type CombatFxAoeMode =
   | "predatorStep"
   | "rebound"
   | "teleportSlam"
+  | "purgePulse"
+  | "rockWall"
+  | "hexAnchor"
+  | "bindingSigil"
+  | "massSilence"
+  | "tripleBlink"
+  | "flowAfterimage"
+  | "ironGuard"
+  | "spellbreaker"
+  | "gravityField"
+  | "timeFreeze"
+  | "bloodPact"
+  | "chainLightning"
+  | "positionSwap"
+  | "cycloneKick"
+  | "worldTree"
+  | "ascendantForm"
+  | "dreadAura"
+  | "guardianAngel"
+  | "lastingGrace"
+  | "rebirth"
+  | "battleRhythm"
   | "none";
 
-export type CombatFxDashMode = "bloodRushTrail" | "spiritForm" | "spaceStreak" | "none";
+export type CombatFxDashMode = "bloodRushTrail" | "spiritForm" | "spaceStreak" | "phantomRush" | "none";
 
 /** Extra GPU assets for this ability — merged into hub/arena preload. */
 export type AbilityVfxAssets = {

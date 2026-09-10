@@ -32,7 +32,7 @@ export const STARTER_WALLET: Wallet = {
   copper: 0,
   silver: 1,
   gold: 0,
-  essence: 100,
+  essence: 0,
   rubies: 0,
 };
 

@@ -36,13 +36,18 @@ export const HUB_INTRO_LINES: readonly HubIntroLine[] = [
     holdMs: 5800,
   },
   {
+    id: "spells",
+    text: "Visit the Spell Armoury and pick a spell for every key.\nFlex slots can wait until you want a bigger kit.",
+    holdMs: 5600,
+  },
+  {
     id: "go",
     text: "Now go.\nShow me which path is truly the strongest.",
     holdMs: 4800,
   },
 ] as const;
 
-export const HUB_INTRO_OBJECTIVE = "Enter the arena";
+export const HUB_INTRO_OBJECTIVE = "Choose your first spells at the Spell Armoury";
 
 /** Hold on black at intro start (ms). */
 export const HUB_INTRO_FADE_IN_MS = 900;

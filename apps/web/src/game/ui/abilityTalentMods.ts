@@ -33,11 +33,31 @@ export function talentModLines(ability: AbilityDef, kit: Kit): string[] {
   ) {
     lines.push(`AoE ×${kit.elementalAoeRadiusMul.toFixed(2)}`);
   }
-  if (ability.damage > 0 && kit.opportunistDmgBonus > 0) {
-    lines.push(`Opportunist +${Math.round(kit.opportunistDmgBonus * 100)}%`);
+  if (
+    kit.controlAoeRadiusMul > 1.001 &&
+    ability.tags?.some((t) => t === "Control" || t === "CrowdControl") &&
+    ability.tags?.some((t) => t === "Area" || t === "Nova" || t === "Cone" || t === "Explosion")
+  ) {
+    lines.push(`Control AoE ×${kit.controlAoeRadiusMul.toFixed(2)}`);
   }
-  if ((ability.heal ?? 0) > 0 && kit.overflowConvertFrac > 0) {
-    lines.push(`Overflow ${Math.round(kit.overflowConvertFrac * 100)}%`);
+  if (
+    kit.controlRangeMul > 1.001 &&
+    ability.tags?.some((t) => t === "Control" || t === "CrowdControl") &&
+    ability.range > 0
+  ) {
+    lines.push(`Control range ×${kit.controlRangeMul.toFixed(2)}`);
+  }
+  if (kit.displacementMul > 1.001 && ability.tags?.some((t) => t === "Knockback" || t === "Pull")) {
+    lines.push(`Displace ×${kit.displacementMul.toFixed(2)}`);
+  }
+  if (kit.extendedReachMul > 1.001 && ability.tags?.includes("Movement")) {
+    lines.push(`Travel ×${kit.extendedReachMul.toFixed(2)}`);
+  }
+  if ((ability.heal ?? 0) > 0 && (kit.restorativeTouchMul ?? 1) > 1.001) {
+    lines.push(`Direct heals ×${kit.restorativeTouchMul.toFixed(2)}`);
+  }
+  if ((ability.heal ?? 0) > 0 && kit.hasOverflowingGrace) {
+    lines.push("Overheal → HoT");
   }
   return lines;
 }

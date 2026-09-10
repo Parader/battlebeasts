@@ -1,6 +1,7 @@
 import { assetUrl } from "../assetUrl";
 import { VOLCANO_GLB_URL } from "./volcanoAsset";
 import { SHROOM_GREEN_GLB_URL, SHROOM_RED_GLB_URL } from "./shroomAsset";
+import { ROCK_WALL_GLB_URL } from "./rockWallAsset";
 import {
   CHEST_GLB_URL,
   VFX_CHAIN_URL,
@@ -11,6 +12,7 @@ import {
   VFX_SHADOW_SPELL_URL,
   VFX_SPELL_EFFECTS_URL,
   VFX_WIND_STREAK_URL,
+  VFX_AURA_EYES_URLS,
 } from "./vfxUrls";
 import { getRegisteredSpellVfxAssets } from "./profiles/registry";
 
@@ -40,6 +42,7 @@ export const CORE_SPELL_VFX_TEXTURES = [
   VFX_SHADOW_SPELL_URL,
   VFX_SPELL_EFFECTS_URL,
   VFX_WIND_STREAK_URL,
+  ...Object.values(VFX_AURA_EYES_URLS),
 ] as const;
 
 /** Shared meshes used by multiple spells / UI. */
@@ -47,6 +50,7 @@ export const CORE_SPELL_VFX_GLBS = [
   VOLCANO_GLB_URL,
   SHROOM_GREEN_GLB_URL,
   SHROOM_RED_GLB_URL,
+  ROCK_WALL_GLB_URL,
   CHEST_GLB_URL,
 ] as const;
 

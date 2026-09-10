@@ -1,6 +1,31 @@
 import * as THREE from "three";
 
 /**
+ * Find a Mixamo bone by short name (`Head`, `mixamorig:Head`, `LeftArm`).
+ * Exact after stripping `mixamorig:` — avoids matching HeadTop_End / fingers.
+ */
+export function findMixamoBone(
+  root: THREE.Object3D,
+  name: string,
+): THREE.Object3D | null {
+  const want = name
+    .toLowerCase()
+    .replace(/^mixamorig[:_]?/, "")
+    .replace(/[^a-z0-9]/g, "");
+  let found: THREE.Object3D | null = null;
+  root.traverse((obj) => {
+    if (found) return;
+    if (obj.userData.bbBoneSkin || obj.userData.bbVesselBody) return;
+    const n = obj.name
+      .toLowerCase()
+      .replace(/^mixamorig[:_]?/, "")
+      .replace(/[^a-z0-9]/g, "");
+    if (n === want) found = obj;
+  });
+  return found;
+}
+
+/**
  * Find a bone / Object3D by name (case-insensitive, partial match optional).
  */
 export function findBone(
@@ -77,6 +102,26 @@ export function attachToBone(
   const bone = findBone(characterRoot, boneName, { partial: true });
   if (!bone) return null;
   return attachToObject(fx, bone, offset);
+}
+
+/** Parent to a Mixamo bone without resetting the authored local transform. */
+export function attachToBoneKeepLocal(
+  fx: THREE.Object3D,
+  characterRoot: THREE.Object3D,
+  boneName: string,
+): AttachHandle | null {
+  const bone = findMixamoBone(characterRoot, boneName);
+  if (!bone) return null;
+  const prevParent = fx.parent;
+  bone.add(fx);
+  return {
+    release: () => {
+      if (fx.parent === bone) {
+        bone.remove(fx);
+        prevParent?.add(fx);
+      }
+    },
+  };
 }
 
 /**

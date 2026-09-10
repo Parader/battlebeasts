@@ -5,11 +5,13 @@ import {
   cosmeticMeshNames,
   cosmeticNameKey,
   getCosmeticItem,
+  isBoneSkin,
   isCosmeticMeshName,
   normalizeCosmeticsEquipped,
+  resolveHideTint,
+  type CosmeticItemDef,
   type CosmeticsEquipped,
 } from "@battlebeasts/shared";
-import { getCreaturePatternTexture } from "./creaturePatterns";
 import { assetUrl } from "./assetUrl";
 
 /** Desired standing height in world meters. */
@@ -17,6 +19,8 @@ export const CHARACTER_TARGET_HEIGHT = 1.7;
 
 /** Active player / remote avatar GLB (Blender Mixamo export). */
 export const CHARACTER_URL = assetUrl("hero.glb");
+/** Mixamo Y Bot body — animations stay on hero.glb. */
+export const YBOT_URL = assetUrl("ybot.glb");
 
 /**
  * Preferred surface mesh when the GLB ships multiple skinned bodies
@@ -184,7 +188,99 @@ export function selectCharacterMesh(root: THREE.Object3D, meshName: string): voi
 /** Hide every catalog / cosmetic_* gear mesh (default unequipped — players, remotes, dummies). */
 export function hideAllCosmeticMeshes(root: THREE.Object3D): void {
   root.traverse((obj) => {
+    if (obj.userData.bbBoneSkin) return;
     if (!isCosmeticObject(obj)) return;
+    obj.visible = false;
+  });
+}
+
+/** Show or hide the hero Mixamo body (not Y Bot overlays or gear). */
+export function setHeroSurfaceVisible(root: THREE.Object3D, visible: boolean): void {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (mesh.name.startsWith("bb")) return;
+    if (obj.userData.bbVesselBody || obj.userData.bbBoneSkin) return;
+    if (isCosmeticObject(obj) || isCosmeticMeshOrDescendant(obj)) return;
+    const lower = mesh.name.toLowerCase();
+    if (lower.includes("joint")) {
+      mesh.visible = false;
+      return;
+    }
+    if (lower.includes("surface") || mesh.name.startsWith("SM_Chr_")) {
+      mesh.visible = visible;
+    }
+  });
+}
+
+/** True when hero.glb already has this item (legacy Boot1/Boot2, Chest Set 1, etc.). */
+export function hasEmbeddedSkinnedMeshes(
+  root: THREE.Object3D,
+  def: CosmeticItemDef,
+): boolean {
+  const names = new Set(cosmeticMeshNames(def).map(cosmeticNameKey));
+  if (names.size === 0) return false;
+  const found = new Set<string>();
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    let cur: THREE.Object3D | null = obj;
+    while (cur) {
+      const key = cosmeticNameKey(cur.name);
+      if (names.has(key)) {
+        found.add(key);
+        break;
+      }
+      cur = cur.parent;
+    }
+  });
+  return found.size === names.size;
+}
+
+/** Unhide leftover hero.glb SkinnedMeshes for a catalog item (GLB bind failed). */
+export function revealEmbeddedSkinnedMeshes(
+  root: THREE.Object3D,
+  def: CosmeticItemDef,
+): boolean {
+  if (!hasEmbeddedSkinnedMeshes(root, def)) return false;
+  const names = new Set(cosmeticMeshNames(def).map(cosmeticNameKey));
+  root.traverse((obj) => {
+    if (obj.userData.bbBoneSkin) return;
+    let cur: THREE.Object3D | null = obj;
+    let match = false;
+    while (cur) {
+      if (names.has(cosmeticNameKey(cur.name))) {
+        match = true;
+        break;
+      }
+      cur = cur.parent;
+    }
+    if (!match) return;
+    obj.userData.bbEmbeddedSkin = true;
+    obj.visible = true;
+  });
+  return true;
+}
+
+/** Hide leftover meshes shown by `revealEmbeddedSkinnedMeshes`. */
+export function hideRevealedEmbeddedSkinnedMeshes(
+  root: THREE.Object3D,
+  def: CosmeticItemDef,
+): void {
+  const names = new Set(cosmeticMeshNames(def).map(cosmeticNameKey));
+  root.traverse((obj) => {
+    if (!obj.userData.bbEmbeddedSkin) return;
+    let cur: THREE.Object3D | null = obj;
+    let match = false;
+    while (cur) {
+      if (names.has(cosmeticNameKey(cur.name))) {
+        match = true;
+        break;
+      }
+      cur = cur.parent;
+    }
+    if (!match) return;
+    obj.userData.bbEmbeddedSkin = false;
     obj.visible = false;
   });
 }
@@ -202,11 +298,13 @@ export function syncEmbeddedCosmetics(
     const id = eq[slot];
     if (!id) continue;
     const def = getCosmeticItem(id);
-    if (!def) continue;
+    if (!def || isBoneSkin(def)) continue;
     for (const n of cosmeticMeshNames(def)) showNames.add(cosmeticNameKey(n));
   }
 
   root.traverse((obj) => {
+    if (obj.userData.bbBoneSkin) return;
+    if (obj.userData.bbEmbeddedSkin) return;
     if (!isCosmeticObject(obj)) return;
     const key = cosmeticNameKey(obj.name || (obj as THREE.Mesh).name || "");
     obj.visible = showNames.has(key);
@@ -373,20 +471,121 @@ function findBone(root: THREE.Object3D, key: string): THREE.Object3D | null {
  * Tint the visible character surface. Supports Mixamo Beta_Surface meshes
  * and hero.glb materials (lambert1 / any colored material on visible SM_Chr_*).
  *
- * With a pattern: albedo map bakes hide tint + pattern ink; material.color is white
- * so markings keep their true color. Plain: no map, material.color = hide tint.
+ * Hide tint only — vessel auras are a runtime overlay (`SpiritVesselFx`),
+ * not albedo stamps (those fought Mixamo UVs).
+ *
+ * Quiet inner emissive in hide color — bound-spirit core. Counter / Revenge
+ * overwrite emissive while active and restore this on clear.
  */
+export const SPIRIT_VESSEL_EMISSIVE = 0.18;
+
+type HideTintUniforms = {
+  a: { value: THREE.Color };
+  b: { value: THREE.Color };
+  grade: { value: number };
+  y0: { value: number };
+  y1: { value: number };
+};
+
+function hideYRange(mesh: THREE.Mesh): { y0: number; y1: number } {
+  const cached = mesh.userData.bbHideY as { y0: number; y1: number } | undefined;
+  if (cached) return cached;
+  mesh.geometry.computeBoundingBox();
+  const box = mesh.geometry.boundingBox;
+  const y0 = box?.min.y ?? 0;
+  const y1 = box?.max.y ?? 1;
+  const range = { y0, y1: Math.abs(y1 - y0) < 1e-4 ? y0 + 1 : y1 };
+  mesh.userData.bbHideY = range;
+  return range;
+}
+
+function applyHideTintMaterial(std: THREE.MeshStandardMaterial, mesh: THREE.Mesh, colorId: string): void {
+  const tint = resolveHideTint(colorId);
+  const range = hideYRange(mesh);
+  let hide = std.userData.bbHide as HideTintUniforms | undefined;
+  if (!hide) {
+    hide = {
+      a: { value: new THREE.Color(tint.a) },
+      b: { value: new THREE.Color(tint.b) },
+      grade: { value: 0 },
+      y0: { value: range.y0 },
+      y1: { value: range.y1 },
+    };
+    std.userData.bbHide = hide;
+    std.onBeforeCompile = (shader) => {
+      const u = std.userData.bbHide as HideTintUniforms;
+      shader.uniforms.uHideA = u.a;
+      shader.uniforms.uHideB = u.b;
+      shader.uniforms.uHideGrade = u.grade;
+      shader.uniforms.uHideY0 = u.y0;
+      shader.uniforms.uHideY1 = u.y1;
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+varying float vHideY;
+varying vec3 vHideN;`,
+        )
+        .replace(
+          "#include <defaultnormal_vertex>",
+          `#include <defaultnormal_vertex>
+vHideN = objectNormal;`,
+        )
+        .replace(
+          "#include <project_vertex>",
+          `#include <project_vertex>
+vHideY = transformed.y;`,
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+uniform vec3 uHideA;
+uniform vec3 uHideB;
+uniform float uHideGrade;
+uniform float uHideY0;
+uniform float uHideY1;
+varying float vHideY;
+varying vec3 vHideN;`,
+        )
+        .replace(
+          "#include <color_fragment>",
+          `#include <color_fragment>
+float hideT = 0.0;
+if (uHideGrade > 1.5) {
+  hideT = 1.0 - smoothstep(-0.35, 0.42, normalize(vHideN).y);
+} else if (uHideGrade > 0.5) {
+  hideT = 1.0 - clamp((vHideY - uHideY0) / max(0.001, uHideY1 - uHideY0), 0.0, 1.0);
+}
+diffuseColor.rgb = mix(uHideA, uHideB, hideT);`,
+        );
+    };
+    std.customProgramCacheKey = () => "bbHideTint2";
+  }
+  hide.a.value.set(tint.a);
+  hide.b.value.set(tint.b);
+  hide.grade.value = tint.grade === "belly" ? 2 : tint.grade === "vertical" ? 1 : 0;
+  hide.y0.value = range.y0;
+  hide.y1.value = range.y1;
+  if ("color" in std && std.color) std.color.set(tint.a);
+  if ("emissive" in std && std.emissive) {
+    std.emissive.set(tint.a);
+    std.emissiveIntensity = SPIRIT_VESSEL_EMISSIVE;
+  }
+  std.needsUpdate = true;
+}
+
 export function tintCharacterSurface(
   scene: THREE.Object3D,
   color: string,
-  patternId?: string | null,
-  patternColor?: string | null,
+  _auraId?: string | null,
+  _auraColor?: string | null,
 ): void {
-  const patternMap = getCreaturePatternTexture(patternId, patternColor, color);
-  const useMap = Boolean(patternMap);
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material || !mesh.visible) return;
+    if (mesh.name.startsWith("bb")) return;
+    if (obj.userData.bbBoneSkin) return;
     const name = mesh.name.toLowerCase();
     const isHeroOutfit = mesh.name.startsWith("SM_Chr_");
     const isMixamoSurface = name.includes("surface");
@@ -394,16 +593,14 @@ export function tintCharacterSurface(
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
       const std = m as THREE.MeshStandardMaterial;
-      if ("color" in std && std.color) {
-        // White when mapped so baked hide/ink colors display correctly.
-        std.color.set(useMap ? "#ffffff" : color);
-      }
-      if ("map" in std) {
-        if (std.map !== patternMap) {
-          std.map = patternMap;
-          std.needsUpdate = true;
-        }
-        if (patternMap) patternMap.needsUpdate = true;
+      applyHideTintMaterial(std, mesh, color);
+      if ("roughness" in std) std.roughness = Math.max(std.roughness ?? 0.5, 0.74);
+      if ("metalness" in std) std.metalness = Math.min(std.metalness ?? 0, 0.03);
+      if ("envMapIntensity" in std) std.envMapIntensity = 0;
+      if ("fog" in std) std.fog = false;
+      if ("map" in std && std.map) {
+        std.map = null;
+        std.needsUpdate = true;
       }
     }
   });
@@ -500,4 +697,20 @@ export function warmCharacterOpacityVariants(
       m.needsUpdate = true;
     }
   }
+}
+
+/**
+ * Dispose cloned materials allocated for a character scene instance.
+ * Call on unmount of avatars, previews, decoys, or NPCs so GPU memory is reclaimed.
+ */
+export function disposeCharacterMaterials(characterRoot: THREE.Object3D | null | undefined): void {
+  if (!characterRoot) return;
+  characterRoot.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      m.dispose();
+    }
+  });
 }

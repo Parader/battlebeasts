@@ -18,13 +18,18 @@ import {
   setCharacterOpacity,
   tintCharacterSurface,
   warmCharacterOpacityVariants,
+  disposeCharacterMaterials,
 } from "./characterVisual";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
+import { usePlayerVessel } from "./usePlayerVessel";
 import { syncPlayerCast } from "./syncPlayerCast";
 import { smashHopOffsetY } from "./smashHop";
 import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
-import { StatusOrnaments, collectStatusRows, hasStatusId } from "./StatusOrnaments";
+import { StatusOrnaments } from "./StatusOrnaments";
+import { SpiritVesselFx } from "./SpiritVesselFx";
+import { VesselBody } from "./VesselBody";
+import { collectStatusRows, hasStatusId } from "./statusBadgeUtils";
 import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndicator";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { PlayerCastChannelBar } from "./PlayerCastChannelBar";
@@ -53,6 +58,7 @@ type RemotePlayerState = {
   cosmeticBelt?: string;
   cosmeticLegs?: string;
   cosmeticShoes?: string;
+  vessel?: string;
   disconnected?: boolean;
   castPhase?: string;
   castAbilityId?: string;
@@ -105,6 +111,7 @@ function RemotePlayerAvatar({
   const patternColorRef = useRef("#1f2937");
   const cosmeticsKeyRef = useRef("");
   const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
+  const vessel = usePlayerVessel(room, sessionId);
   const seeded = useRef(false);
   const yawLocked = useRef(false);
   const wasDeadRef = useRef(false);
@@ -125,6 +132,12 @@ function RemotePlayerAvatar({
     registerCharacterRoot(sessionId, scene);
     return () => registerCharacterRoot(sessionId, null);
   }, [scene, sessionId]);
+
+  useEffect(() => {
+    return () => {
+      disposeCharacterMaterials(scene);
+    };
+  }, [scene]);
 
   /*
    * Warm this opponent's ghosted materials on sight rather than the first time
@@ -231,7 +244,6 @@ function RemotePlayerAvatar({
         patternColorRef.current,
       );
     }
-
     const nextCosmetics = cosmeticsKey(p);
     if (nextCosmetics !== cosmeticsKeyRef.current) {
       cosmeticsKeyRef.current = nextCosmetics;
@@ -385,7 +397,14 @@ function RemotePlayerAvatar({
     }
 
     g.position.set(renderPos.current.x, smashHopOffsetY(p), renderPos.current.z);
-    if (bodyRef.current) bodyRef.current.rotation.y = renderYaw.current;
+    if (bodyRef.current) {
+      bodyRef.current.rotation.y = renderYaw.current;
+      const isAscendant = hasStatusId(p.statuses, "ascendantForm");
+      const targetScale = isAscendant ? 1.5 : 1.0;
+      bodyRef.current.scale.setScalar(
+        THREE.MathUtils.damp(bodyRef.current.scale.x, targetScale, 10, safeDt),
+      );
+    }
     if (aim) aim.rotation.y = p.yaw - renderYaw.current;
 
     controller.setStunned(hasStatusId(p.statuses, "stunned"));
@@ -409,7 +428,31 @@ function RemotePlayerAvatar({
     <group ref={group}>
       <group ref={bodyRef}>
         <primitive object={scene} />
-        <EquippedCosmetics characterRoot={scene} equipped={equipped} />
+        <VesselBody characterRoot={scene} body={vessel} color={colorRef.current} />
+        <EquippedCosmetics characterRoot={scene} equipped={equipped} body={vessel} />
+        <SpiritVesselFx
+          characterRoot={scene}
+          getColor={() => colorRef.current}
+          getOpacity={() => ghostOpacityRef.current}
+          getAura={() => {
+            const p = room.state?.players?.get(sessionId) as
+              | { pattern?: string }
+              | undefined;
+            return p?.pattern ?? "plain";
+          }}
+          getAuraColor={() => {
+            const p = room.state?.players?.get(sessionId) as
+              | { patternColor?: string }
+              | undefined;
+            return p?.patternColor ?? "#1f2937";
+          }}
+          getStatuses={() => {
+            const p = room.state?.players?.get(sessionId) as
+              | { statuses?: Parameters<typeof collectStatusRows>[0] }
+              | undefined;
+            return collectStatusRows(p?.statuses);
+          }}
+        />
         <StatusOrnaments
           characterRoot={scene}
           getStatuses={() => {

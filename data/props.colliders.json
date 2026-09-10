@@ -208,6 +208,15 @@
       "offsetX": -1.9100000000000001,
       "offsetZ": -0.151
     },
+    "kingdom/PP_Tree_Pine_Cluster_04": {
+      "mode": "none"
+    },
+    "kingdom/PP_Tree_Thin_02": {
+      "mode": "circle",
+      "radius": 0.351,
+      "offsetX": 0.006000000000000005,
+      "offsetZ": -0.024
+    },
     "kingdom/PP_Workbench_01_Preset": {
       "mode": "none"
     },

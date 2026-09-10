@@ -28,6 +28,8 @@ export type CastPreviewKind =
   | "placeCircle"
   | "selfCircle"
   | "allyBind"
+  /** Soft-lock enemy (no self); OOR refuses like Soul Relay. */
+  | "enemyBind"
   | "cone"
   | "wall"
   | "line"
@@ -169,6 +171,20 @@ export function castPreviewKindFor(def: AbilityDef): CastPreviewKind {
   if (kind === "rebound") return "cone";
   if (kind === "bulwarkCharge") return "blink";
   if (kind === "teleportSlam") return "selfCircle";
+  if (kind === "purgePulse" || kind === "spellbreaker" || kind === "bloodPact") return "selfCircle";
+  if (kind === "ironGuard") return "none";
+  if (kind === "rockWall") return "placeCircle";
+  if (kind === "gravityField") return "selfCircle";
+  if (kind === "timeFreeze") return "placeCircle";
+  if (kind === "hexAnchor") return "enemyBind";
+  if (kind === "bindingSigil") return "placeCircle";
+  if (kind === "massSilence") return "selfCircle";
+  if (kind === "tripleBlink") return "blink";
+  if (kind === "chainLightning" || kind === "elementalOverload" || kind === "positionSwap") return "enemyBind";
+  if (kind === "cycloneKick" || kind === "dreadAura") return "selfCircle";
+  if (kind === "worldTree") return "placeCircle";
+  if (kind === "phantomRush") return "enemyBind";
+  if (kind === "ascendantForm") return "none";
   if (kind === "lifeLeech" || kind === "healBeam") return "line";
   if (kind === "riftFissure") return "placeCircle";
   if (
@@ -348,6 +364,64 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
         aimZ: !oorIntent && !selfIntent ? best.z : owner.z,
         // Ally in range: target ring. Self / no lock: soft self ring. OOR: range only.
         aimRadius: !oorIntent && !selfIntent ? 0.85 : oorIntent ? 0 : 0.65,
+      };
+    }
+    case "enemyBind": {
+      const range = Math.max(1, def.range > 0 ? def.range : 8.5);
+      const fx = Math.sin(owner.yaw);
+      const fz = Math.cos(owner.yaw);
+      const aimPt =
+        aim && Number.isFinite(aim.x) && Number.isFinite(aim.z)
+          ? aim
+          : { x: owner.x + fx * range, z: owner.z + fz * range };
+
+      let best: {
+        id: string;
+        x: number;
+        z: number;
+        aimDist: number;
+        casterDist: number;
+      } | null = null;
+
+      for (const h of input.healables ?? []) {
+        if (!h.id) continue;
+        const dx = h.x - owner.x;
+        const dz = h.z - owner.z;
+        const casterDist = Math.hypot(dx, dz);
+        if (casterDist < 0.05) continue;
+        const dot = (dx * fx + dz * fz) / casterDist;
+        if (dot < 0.5) continue;
+        const aimDist = Math.hypot(h.x - aimPt.x, h.z - aimPt.z);
+        if (
+          !best ||
+          aimDist < best.aimDist - 1e-4 ||
+          (Math.abs(aimDist - best.aimDist) <= 1e-4 && casterDist < best.casterDist)
+        ) {
+          best = { id: h.id, x: h.x, z: h.z, aimDist, casterDist };
+        }
+      }
+
+      if (!best) {
+        return {
+          ...base,
+          rangeRing: range,
+          rangeRingOutOfRange: false,
+          feetRadius: 0,
+          aimX: owner.x,
+          aimZ: owner.z,
+          aimRadius: 0,
+        };
+      }
+
+      const inRange = best.casterDist <= range;
+      return {
+        ...base,
+        rangeRing: range,
+        rangeRingOutOfRange: !inRange,
+        feetRadius: 0,
+        aimX: inRange ? best.x : owner.x,
+        aimZ: inRange ? best.z : owner.z,
+        aimRadius: inRange ? 0.85 : 0,
       };
     }
     case "cone": {

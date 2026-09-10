@@ -383,7 +383,7 @@ export function mapElementsOfType(doc: MapDoc, type: string): MapElement[] {
 export function mapPlayerSpawns(doc: MapDoc, team: MapTeam): MapElement[] {
   return doc.elements
     .filter((e) => e.type === "player_spawn" && paramString(e, "team", "a") === team)
-    .sort((a, b) => paramNumber(a, "slot") - paramNumber(b, "slot"));
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** nth fighter slot on a team. Clamps rather than returning undefined. */
@@ -408,6 +408,67 @@ export function mapNpcs(doc: MapDoc): NpcPlacement[] {
     if (el.type !== "npc") continue;
     const npc = npcPlacement(el);
     if (npc) out.push(npc);
+  }
+  return out;
+}
+
+export type MapPickupPlacement = {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  spec: ReturnType<typeof pickupSpec>;
+};
+
+/**
+ * Pickups authored in the map document (health orbs, energy motes, power buffs).
+ */
+export type MapObjectiveTag = "capture_point" | "flag_stand" | "payload_node" | "custom";
+
+export type MapObjectivePlacement = {
+  id: string;
+  tag: MapObjectiveTag;
+  team: "none" | "a" | "b" | "c";
+  x: number;
+  z: number;
+  radius: number;
+};
+
+export function mapObjectives(doc: MapDoc): MapObjectivePlacement[] {
+  const out: MapObjectivePlacement[] = [];
+  for (const el of doc.elements) {
+    if (el.type !== "objective") continue;
+    const tag = paramString(el, "tag", "capture_point") as MapObjectiveTag;
+    const teamRaw = paramString(el, "team", "none");
+    const team =
+      teamRaw === "a" || teamRaw === "b" || teamRaw === "c" ? teamRaw : "none";
+    const radius =
+      el.shape?.kind === "circle"
+        ? el.shape.radius
+        : (elementType("objective")?.defaultRadius ?? 3);
+    out.push({ id: el.id, tag, team, x: el.x, z: el.z, radius });
+  }
+  return out;
+}
+
+export function mapPickups(doc: MapDoc): MapPickupPlacement[] {
+  const out: MapPickupPlacement[] = [];
+  for (const el of doc.elements) {
+    if (el.type !== "pickup") continue;
+    const spec = pickupSpec(el);
+    const radius =
+      el.shape?.kind === "circle"
+        ? el.shape.radius
+        : (elementType("pickup")?.defaultRadius ?? 1.2);
+    out.push({
+      id: el.id,
+      x: el.x,
+      y: el.y ?? 0,
+      z: el.z,
+      radius,
+      spec,
+    });
   }
   return out;
 }
@@ -824,10 +885,10 @@ export function validateMapDoc(
       const spec = pickupSpec(el);
       // A buff with no duration applies and expires in the same tick, which
       // looks like a pickup that does nothing rather than an authoring slip.
-      if (spec.def.kind === "buff" && spec.durationMs <= 0) {
+      if (spec.effect !== "random" && spec.def.kind === "buff" && spec.durationMs <= 0) {
         warn("pickup-buff-no-duration", [el.id], `${spec.def.label} buff has no duration - it will do nothing`);
       }
-      if (spec.magnitude <= 0) {
+      if (spec.effect !== "random" && spec.magnitude <= 0) {
         warn("pickup-no-effect", [el.id], `${spec.def.label} pickup has an amount of 0`);
       }
     }
@@ -838,10 +899,6 @@ export function validateMapDoc(
     const needed = opts?.fightersPerTeam ?? 1;
     if (spawns.length < needed) {
       err("missing-spawns", [], `team ${team} has ${spawns.length} spawn(s) but needs ${needed}`);
-    }
-    const slots = new Set(spawns.map((s) => paramNumber(s, "slot")));
-    if (slots.size !== spawns.length) {
-      err("duplicate-spawn-slot", [], `team ${team} has duplicate spawn slots`);
     }
   }
 
