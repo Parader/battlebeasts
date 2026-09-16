@@ -2,6 +2,12 @@
   "version": 1,
   "id": "test_arena",
   "name": "Test Arena",
+  "modeIds": [
+    "arena_1v1",
+    "arena_2v2",
+    "arena_3v3",
+    "arena_1v1v1"
+  ],
   "ground": {
     "kind": "painted",
     "sizeX": 150,

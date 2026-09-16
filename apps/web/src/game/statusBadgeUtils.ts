@@ -4,13 +4,14 @@ export type StatusRowLite = {
   statusId: string;
   stacks?: number;
   expiresAt?: number;
+  startedAt?: number;
   angle?: number;
 };
 
 export type StatusMapLike =
   | {
       forEach: (
-        cb: (row: { statusId?: string; stacks?: number; expiresAt?: number; angle?: number }) => void,
+        cb: (row: { statusId?: string; stacks?: number; expiresAt?: number; startedAt?: number; angle?: number }) => void,
       ) => void;
     }
   | null
@@ -28,6 +29,7 @@ export function collectStatusRows(map: StatusMapLike): StatusRowLite[] {
         statusId: row.statusId,
         stacks: row.stacks ?? 1,
         expiresAt: row.expiresAt,
+        startedAt: row.startedAt,
         angle: row.angle,
       });
     }
@@ -42,6 +44,11 @@ export function hasStatusId(map: StatusMapLike, statusId: string): boolean {
     if (row?.statusId === statusId) found = true;
   });
   return found;
+}
+
+/** Cloak / Revenge vanish — hide auras, pulses, and lock-on chrome. */
+export function isStealthedStatus(map: StatusMapLike): boolean {
+  return hasStatusId(map, "cloaked") || hasStatusId(map, "revengePhased");
 }
 
 /** Status ids that show the poison badge above HP bars. */
@@ -108,6 +115,7 @@ export const SPELLBREAKER_BADGE_IDS = new Set(["spellbreakerCharge"]);
 export type BadgeRead = {
   stacks: number;
   expiresAt: number;
+  startedAt?: number;
   /** Winning status id when multiple ids share a badge slot. */
   statusId?: string;
 };
@@ -119,6 +127,7 @@ export const RING_C = 2 * Math.PI * RING_R;
 export function readBadge(rows: StatusRowLite[], ids: Set<string>): BadgeRead {
   let stacks = 0;
   let expiresAt = 0;
+  let startedAt = 0;
   let statusId: string | undefined;
   for (const row of rows) {
     if (!row.statusId || !ids.has(row.statusId)) continue;
@@ -127,10 +136,11 @@ export function readBadge(rows: StatusRowLite[], ids: Set<string>): BadgeRead {
     if (exp > expiresAt || (exp === expiresAt && s >= stacks)) {
       stacks = Math.max(stacks, s);
       expiresAt = Math.max(expiresAt, exp);
+      startedAt = row.startedAt ?? 0;
       statusId = row.statusId;
     }
   }
-  return { stacks, expiresAt, statusId };
+  return { stacks, expiresAt, startedAt, statusId };
 }
 
 export function readPoisonStacks(rows: StatusRowLite[]): number {
@@ -225,11 +235,26 @@ export function durationMsFor(statusId: string): number {
   return Math.max(1, STATUSES[statusId]?.durationMs ?? 3000);
 }
 
-/** Remaining fraction 1 → 0 based on server expiresAt (epoch ms). */
-export function badgeRemainFrac(expiresAt: number, durationMs: number, now = Date.now()): number {
+/** Remaining fraction 1 → 0 from server expiresAt, using apply start when known. */
+export function badgeRemainFrac(
+  expiresAt: number,
+  durationMs: number,
+  now = Date.now(),
+  startedAt = 0,
+): number {
   if (!(expiresAt > 0)) return 0;
   const left = Math.max(0, expiresAt - now);
-  return Math.max(0, Math.min(1, left / Math.max(1, durationMs)));
+  const span =
+    startedAt > 0 && expiresAt > startedAt ? expiresAt - startedAt : durationMs;
+  return Math.max(0, Math.min(1, left / Math.max(1, span)));
+}
+
+export function badgeRemainFromRead(
+  read: BadgeRead,
+  fallbackDurationMs: number,
+  now = Date.now(),
+): number {
+  return badgeRemainFrac(read.expiresAt, fallbackDurationMs, now, read.startedAt ?? 0);
 }
 
 export function setRingRemain(ring: SVGCircleElement | null, remain: number) {
@@ -255,7 +280,7 @@ export function syncPoisonBadge(
     lastStacks.current = read.stacks;
     if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("poisoned")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("poisoned")));
 }
 
 export function syncBurningBadge(
@@ -269,7 +294,7 @@ export function syncBurningBadge(
     return;
   }
   badge.style.display = "flex";
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("burning")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("burning")));
 }
 
 export function syncBleedingBadge(
@@ -290,7 +315,7 @@ export function syncBleedingBadge(
     lastStacks.current = read.stacks;
     if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("bleeding")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("bleeding")));
 }
 
 export function syncSoulSeverBadge(
@@ -304,7 +329,7 @@ export function syncSoulSeverBadge(
     return;
   }
   badge.style.display = "flex";
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("soulSevered")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("soulSevered")));
 }
 
 export function syncRejuvenationBadge(
@@ -325,7 +350,7 @@ export function syncRejuvenationBadge(
     lastStacks.current = read.stacks;
     if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("rejuvenated")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("rejuvenated")));
 }
 
 export function syncSilenceBadge(
@@ -339,7 +364,7 @@ export function syncSilenceBadge(
     return;
   }
   badge.style.display = "flex";
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("silenced")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("silenced")));
 }
 
 export function syncHolyBadge(
@@ -359,7 +384,7 @@ export function syncHolyBadge(
     return;
   }
   const span = Math.max(durationMsFor("holyBlessed"), 6500);
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, span));
+  setRingRemain(ring, badgeRemainFromRead(read, span));
 }
 
 export function syncBloodPactBadge(
@@ -373,7 +398,7 @@ export function syncBloodPactBadge(
     return;
   }
   badge.style.display = "flex";
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("bloodPactEmpower")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("bloodPactEmpower")));
 }
 
 export function syncSoulMarkBadge(
@@ -394,7 +419,7 @@ export function syncSoulMarkBadge(
     lastStacks.current = read.stacks;
     if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("soulMarked")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("soulMarked")));
 }
 
 export function syncChillBadge(
@@ -415,7 +440,7 @@ export function syncChillBadge(
     lastStacks.current = read.stacks;
     if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("frostChill")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("frostChill")));
 }
 
 export function syncShockBadge(
@@ -436,7 +461,7 @@ export function syncShockBadge(
     lastStacks.current = read.stacks;
     if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("shocked")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("shocked")));
 }
 
 export function syncHasteBadge(
@@ -456,7 +481,7 @@ export function syncHasteBadge(
     return;
   }
   const span = durationMsFor(read.statusId ?? "slipstreamHaste");
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, span));
+  setRingRemain(ring, badgeRemainFromRead(read, span));
 }
 
 export function syncRelayBadge(
@@ -470,7 +495,7 @@ export function syncRelayBadge(
     return;
   }
   badge.style.display = "flex";
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("soulRelayLinked")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("soulRelayLinked")));
 }
 
 export function syncSpellbreakerBadge(
@@ -491,7 +516,7 @@ export function syncSpellbreakerBadge(
     lastStacks.current = read.stacks;
     if (stacksEl) stacksEl.textContent = String(read.stacks);
   }
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor("spellbreakerCharge")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor("spellbreakerCharge")));
 }
 
 export function syncSlowBadge(
@@ -510,5 +535,5 @@ export function syncSlowBadge(
     setRingRemain(ring, 1);
     return;
   }
-  setRingRemain(ring, badgeRemainFrac(read.expiresAt, durationMsFor(read.statusId ?? "slowed")));
+  setRingRemain(ring, badgeRemainFromRead(read, durationMsFor(read.statusId ?? "slowed")));
 }

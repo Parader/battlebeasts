@@ -28,6 +28,7 @@ import { castAimRuntime } from "./castAimRuntime";
 import { hasStatusId } from "./statusBadgeUtils";
 import { getCombatOwnerPose } from "./characterRoots";
 import { beginRevengeVanish } from "./revengeVanishRuntime";
+import { beginRemoteDashTravel } from "./dashTravelRuntime";
 import {
   beginTeleportSlamFadeIn,
   beginTeleportSlamFadeOut,
@@ -494,7 +495,6 @@ export function useBaseCityRoom(options: Options) {
 
     const persistRejoinToken = useCallback((joined: Room, mode: string | null) => {
         const token = (joined as Room & { reconnectionToken?: string }).reconnectionToken;
-        if (!token) return;
         const opts = optionsRef.current;
         const hubOwnerId = opts.hubOwnerId ?? opts.userId;
         if (mode != null) {
@@ -508,7 +508,7 @@ export function useBaseCityRoom(options: Options) {
         } else {
             clearContentRejoin();
             saveHubRejoin({
-                token,
+                token: token ?? "",
                 roomId: joined.roomId,
                 hubOwnerId,
             });
@@ -1102,6 +1102,27 @@ export function useBaseCityRoom(options: Options) {
                         schemaCastSeenRef.current = false;
                         castAimRuntime.clear();
                         predictorRef.current.clearMoveMul();
+                    } else if (
+                        msg.kind === "dash" &&
+                        !isLocal &&
+                        msg.ownerId &&
+                        typeof msg.x2 === "number" &&
+                        typeof msg.z2 === "number"
+                    ) {
+                        const remaining =
+                            typeof msg.phaseEndsAt === "number"
+                                ? msg.phaseEndsAt - Date.now()
+                                : 280;
+                        if (remaining >= 48) {
+                            beginRemoteDashTravel(msg.ownerId, {
+                                fromX: msg.x,
+                                fromZ: msg.z,
+                                toX: msg.x2,
+                                toZ: msg.z2,
+                                durationMs: remaining,
+                                abilityId: msg.abilityId,
+                            });
+                        }
                     }
 
                     if (
@@ -1214,6 +1235,7 @@ export function useBaseCityRoom(options: Options) {
                                         yawRef.current,
                                         dashMoveRef.current.x,
                                         dashMoveRef.current.z,
+                                        getGroundAim(),
                                     );
                                 }
                             }
@@ -1414,20 +1436,50 @@ export function useBaseCityRoom(options: Options) {
         async (_code?: number) => {
             const client = clientRef.current;
             const saved = loadContentRejoin();
-            if (!client || !saved?.token || reconnectingRef.current) return false;
+            if (!client || reconnectingRef.current) return false;
+            if (!saved?.token && !saved?.roomId) return false;
 
             reconnectingRef.current = true;
             setStatus("connecting");
             showToast("Reconnecting to match…");
             try {
-                const rejoined = await withTimeout(
-                    client.reconnect(saved.token),
-                    ROOM_CONNECT_TIMEOUT_MS,
-                    "content reconnect",
-                );
-                wireRoom(rejoined, "content", saved.mode);
-                showToast("Back in match");
-                return true;
+                if (saved.token) {
+                    try {
+                        const rejoined = await withTimeout(
+                            client.reconnect(saved.token),
+                            ROOM_CONNECT_TIMEOUT_MS,
+                            "content reconnect",
+                        );
+                        wireRoom(rejoined, "content", saved.mode);
+                        showToast("Back in match");
+                        return true;
+                    } catch (err) {
+                        console.warn("content token reconnect failed", err);
+                    }
+                }
+                if (saved.roomId) {
+                    const opts = optionsRef.current;
+                    const rejoined = await withTimeout(
+                        client.joinById(saved.roomId, {
+                            userId: opts.userId,
+                            displayName: opts.displayName,
+                            color: opts.color,
+                            accessToken: opts.accessToken ?? undefined,
+                            hubOwnerId: saved.hubOwnerId || opts.hubOwnerId || opts.userId,
+                            mode: saved.mode ?? undefined,
+                            matchId: saved.matchId,
+                            team: saved.team,
+                            role: saved.role,
+                            spawnSlot: saved.spawnSlot,
+                        }),
+                        ROOM_CONNECT_TIMEOUT_MS,
+                        "content rejoin",
+                    );
+                    wireRoom(rejoined, "content", saved.mode);
+                    showToast("Back in match");
+                    return true;
+                }
+                throw new Error("no match seat");
             } catch (err) {
                 console.warn("content reconnect failed", err);
                 clearContentRejoin();
@@ -1469,7 +1521,10 @@ export function useBaseCityRoom(options: Options) {
             transferringRef.current = true;
             try {
                 clearHubRejoin();
-                clearContentRejoin();
+                const goingHome = msg.room === ROOM.BASE_CITY;
+                if (goingHome) {
+                    clearContentRejoin();
+                }
 
                 const prevRoom = roomRef.current;
                 const localPlayer = prevRoom?.state?.players?.get(prevRoom.sessionId) as
@@ -1520,6 +1575,19 @@ export function useBaseCityRoom(options: Options) {
                         return Number.isFinite(n) ? Math.floor(n) : undefined;
                     })(),
                 };
+
+                if (!goingHome && (msg.roomId || msg.options?.matchId)) {
+                    saveContentRejoin({
+                        roomId: msg.roomId ?? "",
+                        room: msg.room,
+                        mode: typeof msg.options?.mode === "string" ? msg.options.mode : null,
+                        matchId: typeof msg.options?.matchId === "string" ? msg.options.matchId : undefined,
+                        team: typeof msg.options?.team === "string" ? msg.options.team : undefined,
+                        role: typeof msg.options?.role === "string" ? msg.options.role : undefined,
+                        spawnSlot: typeof joinOpts.spawnSlot === "number" ? joinOpts.spawnSlot : undefined,
+                        hubOwnerId,
+                    });
+                }
 
                 const joined = msg.roomId
                     ? await withTimeout(
@@ -2259,20 +2327,47 @@ export function useBaseCityRoom(options: Options) {
         (async () => {
             try {
                 const savedContent = loadContentRejoin();
-                if (savedContent?.token) {
+                if (savedContent?.token || savedContent?.roomId) {
                     try {
-                        const rejoined = await withTimeout(
-                            client.reconnect(savedContent.token),
-                            ROOM_CONNECT_TIMEOUT_MS,
-                            "content reconnect",
-                        );
+                        let rejoined: Room | null = null;
+                        if (savedContent.token) {
+                            try {
+                                rejoined = await withTimeout(
+                                    client.reconnect(savedContent.token),
+                                    ROOM_CONNECT_TIMEOUT_MS,
+                                    "content reconnect",
+                                );
+                            } catch {
+                                rejoined = null;
+                            }
+                        }
+                        if (!rejoined && savedContent.roomId) {
+                            rejoined = await withTimeout(
+                                client.joinById(savedContent.roomId, {
+                                    userId: options.userId,
+                                    displayName: options.displayName,
+                                    color: options.color,
+                                    accessToken: options.accessToken ?? undefined,
+                                    hubOwnerId: savedContent.hubOwnerId || options.hubOwnerId || options.userId,
+                                    mode: savedContent.mode ?? undefined,
+                                    matchId: savedContent.matchId,
+                                    team: savedContent.team,
+                                    role: savedContent.role,
+                                    spawnSlot: savedContent.spawnSlot,
+                                }),
+                                ROOM_CONNECT_TIMEOUT_MS,
+                                "content rejoin",
+                            );
+                        }
                         if (cancelled) {
-                            rejoined.leave(true);
+                            rejoined?.leave(true);
                             return;
                         }
-                        wireRoom(rejoined, "content", savedContent.mode);
-                        showToast("Rejoined match");
-                        return;
+                        if (rejoined) {
+                            wireRoom(rejoined, "content", savedContent.mode);
+                            showToast("Rejoined match");
+                            return;
+                        }
                     } catch {
                         clearContentRejoin();
                     }
@@ -3251,7 +3346,7 @@ export function useBaseCityRoom(options: Options) {
         roomRef.current?.send("party_set_seat", { sessionId, seat });
     }, []);
 
-    const setPartyLayout = useCallback((layout: { splitSides?: boolean; teamCOpen?: boolean }) => {
+    const setPartyLayout = useCallback((layout: { splitSides?: boolean; teamCOpen?: boolean; teamSize?: number }) => {
         roomRef.current?.send("party_set_layout", layout);
     }, []);
 

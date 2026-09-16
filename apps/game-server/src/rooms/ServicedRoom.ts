@@ -59,6 +59,7 @@ import {
   ownsEmote,
   ownsPattern,
   ownsPatternColor,
+  ownsNonPlainAura,
   questPeriodKey,
   sanitizeTalentBuild,
   spendCoins,
@@ -350,6 +351,22 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     this.loadoutPresetsBySession.delete(sessionId);
     this.activeLoadoutSlotBySession.delete(sessionId);
     this.vesselConfirmedBySession.delete(sessionId);
+  }
+
+  /** Move economy caches when a hunter rejoins under a new session id. */
+  protected rebindPlayerServices(fromId: string, toId: string) {
+    if (!fromId || fromId === toId) return;
+    const move = <V>(m: Map<string, V>) => {
+      if (!m.has(fromId)) return;
+      m.set(toId, m.get(fromId)!);
+      m.delete(fromId);
+    };
+    move(this.talentPointsBySession);
+    move(this.talentBuildBySession);
+    move(this.unlocksBySession);
+    move(this.loadoutPresetsBySession);
+    move(this.activeLoadoutSlotBySession);
+    move(this.vesselConfirmedBySession);
   }
 
   // ---------------------------------------------------------------------
@@ -816,6 +833,10 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
   protected async applyPatternColor(client: Client, player: PlayerState, patternColor: string) {
     const unlocks = this.unlocksOf(client.sessionId);
+    if (normalizeCosmeticPattern(player.pattern) === "plain") {
+      client.send("toast", { message: "Pick an aura before dyeing it" });
+      return;
+    }
     const next = normalizeCosmeticPatternColor(patternColor);
     if (!ownsPatternColor(unlocks.patternColors, next)) {
       client.send("toast", { message: "Aura ink not unlocked" });
@@ -958,6 +979,11 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
         });
         return;
       }
+    }
+
+    if (item.grant.kind === "pattern_color" && !ownsNonPlainAura(unlocks.patterns)) {
+      client.send("toast", { message: "Unlock an aura before buying ink" });
+      return;
     }
 
     if (!this.debitShopCost(player, item.cost)) {
@@ -1130,9 +1156,6 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
     if (grant.kind === "pattern_color") {
       const next = normalizeCosmeticPatternColor(grant.hex);
-      if (player.pattern === "plain" || !player.pattern) {
-        player.pattern = "scales";
-      }
       player.patternColor = next;
       if (signedIn && identity) {
         await saveProfileAppearance(identity.userId, {

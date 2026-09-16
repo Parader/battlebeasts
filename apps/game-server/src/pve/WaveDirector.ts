@@ -274,11 +274,18 @@ export class WaveDirector {
   private tickMobs(dt: number, now: number) {
     const living: LivingPlayer[] = [];
     this.state.players.forEach((p, id) => {
-      if (p.hp > 0 && !p.disconnected && p.role !== "spectator") {
+      if (p.hp > 0 && !p.disconnected && p.role !== "spectator" && !this.combat.isHiddenFromAutoTarget(id)) {
         living.push({ id, x: p.x, z: p.z });
       }
     });
-    if (!living.length) return;
+    if (!living.length) {
+      this.state.targets.forEach((t, id) => {
+        if (!isPveWaveMobKind(t.kind) || t.hp <= 0) return;
+        this.targetSession.delete(id);
+        if (t.kind === PVE_ELITE_KIND) this.clearEliteCast(id, t);
+      });
+      return;
+    }
 
     this.state.targets.forEach((t, id) => {
       if (!isPveWaveMobKind(t.kind) || t.hp <= 0) return;

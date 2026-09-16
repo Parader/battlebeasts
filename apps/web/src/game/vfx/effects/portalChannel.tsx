@@ -7,6 +7,7 @@ import { GroundMagicCircle } from "../components/GroundMagicCircle";
 import { abilityVfxColor } from "../colors";
 import { createCirclePointMaterial } from "../materials/circlePoint";
 import { getWorldStaticColliders } from "../../worldCollidersRuntime";
+import { isStealthedStatus } from "../../statusBadgeUtils";
 import {
   clearPortalChannelBubbleScale,
   setPortalChannelBubbleScale,
@@ -167,6 +168,13 @@ export function PortalChannelAura({
       wasImpact.current = false;
       channelStart.current = 0;
       clearPortalChannelBubbleScale(sessionId);
+      return;
+    }
+    const stealthed = isStealthedStatus(
+      (p as { statuses?: Parameters<typeof isStealthedStatus>[0] } | undefined)?.statuses,
+    );
+    if (stealthed) {
+      g.visible = false;
       return;
     }
     g.visible = true;

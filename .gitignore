@@ -20,6 +20,7 @@ packages/shared/dist
 apps/desktop/release/
 apps/desktop/release-*/
 apps/desktop/dist-content/
+apps/desktop/dist-launcher/
 apps/desktop/config.json
 apps/desktop/node_modules/
 apps/desktop/renderer/

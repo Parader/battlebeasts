@@ -84,7 +84,7 @@ import {
   type StatusRowLite,
 } from "./statusBadgeUtils";
 import { syncAbilityCast } from "./syncPlayerCast";
-import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
+import { AimIndicator, AIM_RELATION_COLORS, resolveAimRelation, type AimRelation } from "./AimIndicator";
 import { combatOverlayRuntime } from "./combatOverlayRuntime";
 import { playBoltCastSfx } from "./gameSfx";
 import {
@@ -720,10 +720,12 @@ function DecoyHpBillboard({
     room,
     decoyId,
     y = 2.2,
+    fillColor = "#4ade80",
 }: {
     room: Room;
     decoyId: string;
     y?: number;
+    fillColor?: string;
 }) {
     const ratioRef = useRef(0);
     const visibleRef = useRef(false);
@@ -745,14 +747,71 @@ function DecoyHpBillboard({
             y={y}
             ratioRef={ratioRef}
             visibleRef={visibleRef}
-            fillColor="#4ade80"
+            fillColor={fillColor}
         />
     );
 }
 
-function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
+/** Owner's nameplate — does not hide when the owner cloaks (the clone is the visible fake). */
+function DecoyNameBillboard({
+    room,
+    decoyId,
+    y = 3.2,
+}: {
+    room: Room;
+    decoyId: string;
+    y?: number;
+}) {
+    const label = useRef<HTMLDivElement>(null);
+    const lastName = useRef("");
+
+    useFrame(() => {
+        const el = label.current;
+        if (!el) return;
+        const d = room.state?.decoys?.get(decoyId) as DecoyNet | undefined;
+        if (!d || (typeof d.hp === "number" && d.hp <= 0)) {
+            el.style.visibility = "hidden";
+            return;
+        }
+        const owner = d.ownerSessionId
+            ? (room.state?.players?.get(d.ownerSessionId) as
+                  | { displayName?: string }
+                  | undefined)
+            : undefined;
+        el.style.visibility = "visible";
+        const next = (owner?.displayName ?? "").trim() || "Hunter";
+        if (next !== lastName.current) {
+            lastName.current = next;
+            el.textContent = next;
+        }
+    });
+
+    return (
+        <Html
+            position={[0, y, 0]}
+            center
+            style={{ pointerEvents: "none" }}
+            zIndexRange={[20, 0]}
+        >
+            <div ref={label} className="bb-nameplate" style={{ visibility: "hidden" }} />
+        </Html>
+    );
+}
+
+function DecoyAvatar({
+    room,
+    decoyId,
+    localSessionId,
+    relation: fallbackRelation,
+}: {
+    room: Room;
+    decoyId: string;
+    localSessionId: string | null;
+    relation: AimRelation;
+}) {
     const group = useRef<THREE.Group>(null);
     const bodyRef = useRef<THREE.Group>(null);
+    const aimRef = useRef<THREE.Group>(null);
     const controllerRef = useRef<CharacterAnimationController | null>(null);
     const renderPos = useRef(new THREE.Vector3());
     const renderYaw = useRef(0);
@@ -761,6 +820,8 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
     const patternRef = useRef("plain");
     const patternColorRef = useRef("#1f2937");
     const cosmeticsKeyRef = useRef("");
+    const relationRef = useRef<AimRelation>(fallbackRelation);
+    const [relation, setRelation] = useState<AimRelation>(fallbackRelation);
     const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
     const [vessel, setVessel] = useState("female");
     const seeded = useRef(false);
@@ -772,6 +833,12 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
             null;
         return prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
     }, [gltf.scene, gltf.animations]);
+    const aimColor = AIM_RELATION_COLORS[relation];
+
+    useEffect(() => {
+        registerCharacterRoot(decoyId, scene);
+        return () => registerCharacterRoot(decoyId, null);
+    }, [scene, decoyId]);
 
     useEffect(() => {
         const controller = new CharacterAnimationController(
@@ -802,6 +869,8 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
         const owner = d.ownerSessionId
             ? (room.state?.players?.get(d.ownerSessionId) as
                   | {
+                        team?: string;
+                        displayName?: string;
                         cosmeticHat?: string;
                         cosmeticShoulders?: string;
                         cosmeticChest?: string;
@@ -812,6 +881,14 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
                     }
                   | undefined)
             : undefined;
+        const local = localSessionId
+            ? (room.state?.players?.get(localSessionId) as { team?: string } | undefined)
+            : undefined;
+        const nextRel = resolveAimRelation(local?.team, owner?.team, fallbackRelation);
+        if (nextRel !== relationRef.current) {
+            relationRef.current = nextRel;
+            setRelation(nextRel);
+        }
 
         if (!seeded.current) {
             renderPos.current.set(d.x, 0, d.z);
@@ -888,22 +965,43 @@ function DecoyAvatar({ room, decoyId }: { room: Room; decoyId: string }) {
                     getAura={() => patternRef.current}
                     getAuraColor={() => patternColorRef.current}
                 />
+                <group ref={aimRef}>
+                    <AimIndicator color={aimColor} />
+                </group>
             </group>
-            {/* Same HP bar as players — tracks decoy.hp until cloak ends / HP depleted. */}
-            <DecoyHpBillboard room={room} decoyId={decoyId} />
+            <DecoyHpBillboard
+                room={room}
+                decoyId={decoyId}
+                fillColor={relation === "enemy" ? "#f87171" : "#4ade80"}
+            />
+            <DecoyNameBillboard room={room} decoyId={decoyId} />
         </group>
     );
 }
 
 /** Visual clones from Decoy (Q). */
-export function Decoys({ room }: { room: Room | null }) {
+export function Decoys({
+    room,
+    localSessionId,
+    relation = "ally",
+}: {
+    room: Room | null;
+    localSessionId?: string | null;
+    relation?: AimRelation;
+}) {
     const ids = useDecoyIds(room);
 
     if (!room) return null;
     return (
         <>
             {ids.map((id) => (
-                <DecoyAvatar key={id} room={room} decoyId={id} />
+                <DecoyAvatar
+                    key={id}
+                    room={room}
+                    decoyId={id}
+                    localSessionId={localSessionId ?? null}
+                    relation={relation}
+                />
             ))}
         </>
     );

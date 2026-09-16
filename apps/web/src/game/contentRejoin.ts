@@ -1,12 +1,19 @@
+import { MATCH_REJOIN_MS } from "@battlebeasts/shared";
+
 const CONTENT_KEY = "bb_content_rejoin";
 const HUB_KEY = "bb_hub_rejoin";
 /** Last visited host hub — survives refresh so guests can rejoin without a new invite. */
 const PREFERRED_HUB_KEY = "bb_preferred_hub";
 
 export type ContentRejoinPayload = {
-    token: string;
+    token?: string;
     roomId: string;
+    room?: string;
     mode: string | null;
+    matchId?: string;
+    team?: string;
+    role?: string;
+    spawnSlot?: number;
     hubOwnerId: string;
     savedAt: number;
 };
@@ -24,9 +31,34 @@ type PreferredHubPayload = {
     savedAt: number;
 };
 
-export function saveContentRejoin(payload: Omit<ContentRejoinPayload, "savedAt">) {
+function readJson<T>(store: Storage, key: string): T | null {
     try {
-        sessionStorage.setItem(CONTENT_KEY, JSON.stringify({ ...payload, savedAt: Date.now() }));
+        const raw = store.getItem(key);
+        if (!raw) return null;
+        return JSON.parse(raw) as T;
+    } catch {
+        return null;
+    }
+}
+
+export function saveContentRejoin(payload: Omit<ContentRejoinPayload, "savedAt">) {
+    if (!payload.roomId && !payload.token) return;
+    try {
+        const prev = readJson<ContentRejoinPayload>(localStorage, CONTENT_KEY);
+        const next: ContentRejoinPayload = {
+            token: payload.token || prev?.token,
+            roomId: payload.roomId || prev?.roomId || "",
+            room: payload.room || prev?.room,
+            mode: payload.mode ?? prev?.mode ?? null,
+            matchId: payload.matchId || prev?.matchId,
+            team: payload.team || prev?.team,
+            role: payload.role || prev?.role,
+            spawnSlot: payload.spawnSlot ?? prev?.spawnSlot,
+            hubOwnerId: payload.hubOwnerId || prev?.hubOwnerId || "",
+            savedAt: Date.now(),
+        };
+        localStorage.setItem(CONTENT_KEY, JSON.stringify(next));
+        sessionStorage.removeItem(CONTENT_KEY);
     } catch {
         // ignore quota / private mode
     }
@@ -34,18 +66,19 @@ export function saveContentRejoin(payload: Omit<ContentRejoinPayload, "savedAt">
 
 export function clearContentRejoin() {
     try {
+        localStorage.removeItem(CONTENT_KEY);
         sessionStorage.removeItem(CONTENT_KEY);
     } catch {
         // ignore
     }
 }
 
-export function loadContentRejoin(maxAgeMs = 120_000): ContentRejoinPayload | null {
+export function loadContentRejoin(maxAgeMs = MATCH_REJOIN_MS): ContentRejoinPayload | null {
     try {
-        const raw = sessionStorage.getItem(CONTENT_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw) as ContentRejoinPayload;
-        if (!parsed?.token || !parsed.roomId) return null;
+        const parsed =
+            readJson<ContentRejoinPayload>(localStorage, CONTENT_KEY) ??
+            readJson<ContentRejoinPayload>(sessionStorage, CONTENT_KEY);
+        if (!parsed || (!parsed.roomId && !parsed.token)) return null;
         if (Date.now() - (parsed.savedAt ?? 0) > maxAgeMs) {
             clearContentRejoin();
             return null;

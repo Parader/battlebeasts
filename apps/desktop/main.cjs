@@ -541,12 +541,31 @@ if (!gotLock) {
     lastLauncherReady = null;
     updateInFlight = runUpdater({
       userData: app.getPath("userData"),
+      packaged: app.isPackaged,
+      execPath: process.execPath,
+      launcherVersion: app.getVersion(),
       onStatus: (payload) => sendToLauncher("updater:status", payload),
       onProgress: (payload) => sendToLauncher("updater:progress", payload),
       onNotes: (payload) => sendToLauncher("updater:notes", payload),
     })
       .then((result) => {
         updateResult = result;
+        if (result && result.restartLauncher) {
+          quitting = true;
+          stopUpdatePoll();
+          sendToLauncher("updater:status", {
+            phase: "updating",
+            message: "Restarting launcher…",
+          });
+          sendToLauncher("updater:ready", {
+            canPlay: false,
+            restartLauncher: true,
+            error: null,
+            stale: false,
+          });
+          setTimeout(() => app.quit(), 400);
+          return result;
+        }
         sendToLauncher("updater:ready", {
           canPlay: Boolean(result.canPlay),
           error: result.error || null,
@@ -563,6 +582,7 @@ if (!gotLock) {
   ipcMain.handle("launcher-play", async () => {
     sendToLauncher("updater:status", { phase: "checking", message: "Checking for updates…" });
     const result = await startUpdate();
+    if (result && result.restartLauncher) return false;
     if (!result || !result.canPlay || !result.contentDir) return false;
     hideLauncher();
     try {

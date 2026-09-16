@@ -1,7 +1,7 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { coneRayMaxLength } from "@battlebeasts/shared";
+import { coneRayMaxLength, isPveWaveMobKind } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope, smooth01 } from "../easing";
@@ -82,9 +82,10 @@ function collectOccludeBodies(
     out.push({ id, x: p.x ?? 0, z: p.z ?? 0, hp: p.hp });
   });
   const targets = room.state.targets as
-    | Map<string, { x?: number; z?: number; hp?: number }>
+    | Map<string, { x?: number; z?: number; hp?: number; kind?: string }>
     | undefined;
   targets?.forEach((t, id) => {
+    if (isPveWaveMobKind(t.kind)) return;
     out.push({ id, x: t.x ?? 0, z: t.z ?? 0, hp: t.hp });
   });
   return out;

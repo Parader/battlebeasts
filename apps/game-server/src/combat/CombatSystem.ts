@@ -104,6 +104,7 @@ import {
   orbitingWispWorldPos,
   lerpOrbitPhase,
   constrainAstralTetherDesired,
+  aimTravelAlongCursor,
   dashOffset,
   dashTravelYaw,
   isComboAbility,
@@ -674,6 +675,8 @@ type PendingPhantomRush = {
   maxTargets: number;
   chainRadius: number;
   damage: number;
+  /** True after the extra pass when the chain found nobody else. */
+  soloBounce?: boolean;
 };
 
 /** Cyclone Kick continuous 4-second spinning whirlwind. */
@@ -1044,6 +1047,28 @@ export class CombatSystem {
     const kit = resolveKit(loadoutCsv, talentIds, talentBuild);
     this.kits.set(sessionId, kit);
     this.syncFifthCadenceStatus(sessionId, Date.now());
+  }
+
+  /** Keep kit / CDs when a hunter rejoins the same match under a new socket. */
+  rebindSession(fromId: string, toId: string) {
+    if (!fromId || fromId === toId) return;
+    const move = <V>(m: Map<string, V>) => {
+      if (!m.has(fromId)) return;
+      m.set(toId, m.get(fromId)!);
+      m.delete(fromId);
+    };
+    move(this.kits);
+    move(this.cds);
+    move(this.casts);
+    move(this.travels);
+    move(this.combos);
+    move(this.engageBySession);
+    move(this.fifthSpellBySession);
+    move(this.energyLimiters);
+    this.statuses.rebindTarget(fromId, toId);
+    this.room.state.orbitingWisps.forEach((w) => {
+      if (w.ownerSessionId === fromId) w.ownerSessionId = toId;
+    });
   }
 
   /** Scale authored radii for Widened Elements (elemental AoE only) and Ascendant Form melee reach. */
@@ -1744,9 +1769,15 @@ export class CombatSystem {
     const target = this.room.state.players.get(targetSessionId);
     const attacker = this.room.state.targets.get(attackerTargetId);
     if (!target || !attacker || target.hp <= 0 || attacker.hp <= 0) return;
+    if (this.isHiddenFromAutoTarget(targetSessionId)) return;
     this.applyRawDamage(targetSessionId, damage, attackerTargetId, abilityId, {
       triggersCounter: true,
     });
+  }
+
+  /** Cloak / Revenge vanish — AI and lock-on spells must not pick this unit. */
+  isHiddenFromAutoTarget(id: string): boolean {
+    return this.statuses.has(id, "cloaked") || this.statuses.has(id, "revengePhased");
   }
 
   /** Scale aura / explode footprints for Widened Elements (not contact hitbox) + reach life. */
@@ -4298,16 +4329,35 @@ export class CombatSystem {
       travelLanding = clamped;
       this.notifySelfMovementCompleted(sessionId, now);
     } else if (travel.mode === "translate") {
-      const dist = this.scaleFlowTravelDistance(sessionId, travelDistance(def), def);
+      let dist = this.scaleFlowTravelDistance(sessionId, travelDistance(def), def);
       const dur = travelDurationMs(def);
       const from = { x: player.x, z: player.z };
+      if (def.id === "smash" || def.id === "dash") {
+        const live = this.casts.get(sessionId);
+        const aim =
+          live?.aimX != null &&
+          live?.aimZ != null &&
+          Number.isFinite(live.aimX) &&
+          Number.isFinite(live.aimZ)
+            ? { x: live.aimX, z: live.aimZ }
+            : null;
+        const along = aimTravelAlongCursor(
+          { x: from.x, z: from.z, yaw: travelYaw },
+          aim,
+          dist,
+        );
+        dist = along.distance;
+        travelYaw = along.yaw;
+        if (def.id === "dash") player.yaw = travelYaw;
+      }
       const ideal = sampleTravel(from, travelYaw, dist, 1);
       const clamped = this.sweepPlayerPos(sessionId, from, ideal);
       const actualDist = length2(clamped.x - from.x, clamped.z - from.z);
       // Shorten range (and duration) when a wall/solid cuts the path.
+      // 0-distance aim hops keep full air time so the jump clip still lands the slam.
       const scale = dist > 1e-6 ? Math.min(1, actualDist / dist) : 0;
       const travelDist = dist * scale;
-      const travelDur = Math.max(16, dur * Math.max(0.05, scale));
+      const travelDur = Math.max(16, dur * Math.max(0.05, scale || 1));
       const takeoffDelay = travelTakeoffDelayMs(def);
       travelLanding = clamped;
       this.travels.set(sessionId, {
@@ -4331,6 +4381,18 @@ export class CombatSystem {
           z: player.z,
           yaw: travelYaw,
           ownerId: sessionId,
+        });
+      } else if (travelDist > 0.15) {
+        this.fx({
+          kind: "dash",
+          abilityId: def.id,
+          x: from.x,
+          z: from.z,
+          x2: clamped.x,
+          z2: clamped.z,
+          yaw: travelYaw,
+          ownerId: sessionId,
+          phaseEndsAt: now + takeoffDelay + travelDur,
         });
       }
     }
@@ -5403,6 +5465,7 @@ export class CombatSystem {
 
     for (const [id, p] of this.room.state.players) {
       if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      if (this.isHiddenFromAutoTarget(id)) continue;
       consider(id, p.x, p.z);
     }
     for (const [id, t] of this.room.state.targets) {
@@ -5417,6 +5480,7 @@ export class CombatSystem {
       if ((tr.durability ?? 0) <= 0) continue;
       consider(id, tr.x, tr.z);
     }
+    this.eachLivingDecoy(consider);
     if (!bestId) return null;
     return { id: bestId, inRange: bestCasterDist <= range + 0.05 };
   }
@@ -5427,7 +5491,9 @@ export class CombatSystem {
     radius: number,
   ): string | null {
     const from =
-      this.room.state.players.get(fromId) ?? this.room.state.targets.get(fromId);
+      this.room.state.players.get(fromId) ??
+      this.room.state.targets.get(fromId) ??
+      this.room.state.decoys.get(fromId);
     if (!from) return null;
     let bestId: string | null = null;
     let bestDist = Infinity;
@@ -5442,12 +5508,14 @@ export class CombatSystem {
     };
     for (const [id, p] of this.room.state.players) {
       if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      if (this.isHiddenFromAutoTarget(id)) continue;
       consider(id, p.x, p.z);
     }
     for (const [id, t] of this.room.state.targets) {
       if (t.hp <= 0) continue;
       consider(id, t.x, t.z);
     }
+    this.eachLivingDecoy(consider);
     return bestId;
   }
 
@@ -5459,10 +5527,14 @@ export class CombatSystem {
     now: number,
   ) {
     const target =
-      this.room.state.players.get(targetId) ?? this.room.state.targets.get(targetId);
+      this.room.state.players.get(targetId) ??
+      this.room.state.targets.get(targetId) ??
+      this.room.state.decoys.get(targetId);
     const from =
       fromId != null
-        ? this.room.state.players.get(fromId) ?? this.room.state.targets.get(fromId)
+        ? this.room.state.players.get(fromId) ??
+          this.room.state.targets.get(fromId) ??
+          this.room.state.decoys.get(fromId)
         : this.room.state.players.get(ownerId);
     const isEnemy = this.canHurt(ownerId, targetId);
     if (isEnemy) {
@@ -5947,6 +6019,7 @@ export class CombatSystem {
 
     const p = this.room.state.players.get(targetId);
     const d = this.room.state.targets.get(targetId);
+    const decoy = this.room.state.decoys.get(targetId);
     const rw = this.room.state.rockWalls.get(targetId);
     const wt = this.room.state.worldTrees.get(targetId);
 
@@ -5957,6 +6030,10 @@ export class CombatSystem {
     } else if (d && d.hp > 0) {
       targetX = d.x;
       targetZ = d.z;
+      isAlive = true;
+    } else if (decoy && decoy.hp > 0) {
+      targetX = decoy.x;
+      targetZ = decoy.z;
       isAlive = true;
     } else if (rw && (rw.durability ?? 0) > 0) {
       targetX = rw.x;
@@ -6044,6 +6121,7 @@ export class CombatSystem {
       const currentTarget =
         this.room.state.players.get(rush.currentTargetId) ??
         this.room.state.targets.get(rush.currentTargetId) ??
+        this.room.state.decoys.get(rush.currentTargetId) ??
         this.room.state.rockWalls.get(rush.currentTargetId) ??
         this.room.state.worldTrees.get(rush.currentTargetId);
       const center = currentTarget ? { x: currentTarget.x, z: currentTarget.z } : { x: owner.x, z: owner.z };
@@ -6064,6 +6142,7 @@ export class CombatSystem {
 
       for (const [pid, p] of this.room.state.players) {
         if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+        if (this.isHiddenFromAutoTarget(pid)) continue;
         considerEnemy(pid, p.x, p.z);
       }
       for (const [tid, t] of this.room.state.targets) {
@@ -6078,14 +6157,20 @@ export class CombatSystem {
         if ((wt.durability ?? 0) <= 0) continue;
         considerEnemy(wtid, wt.x, wt.z);
       }
+      this.eachLivingDecoy(considerEnemy);
+
+      if (!nextId && rush.hitIds.size === 1 && !rush.soloBounce) {
+        nextId = rush.currentTargetId;
+        rush.soloBounce = true;
+      }
 
       if (!nextId) continue;
 
-      rush.hitIds.add(nextId);
+      if (!rush.hitIds.has(nextId)) rush.hitIds.add(nextId);
       this.executePhantomRushHop(rush.ownerId, nextId, rush.currentTargetId, now);
       rush.currentTargetId = nextId;
 
-      if (rush.hitIds.size < rush.maxTargets) {
+      if (!rush.soloBounce && rush.hitIds.size < rush.maxTargets) {
         rush.nextRushAt = now + PHANTOM_RUSH_CAST.rushDurationPerTargetMs;
         remain.push(rush);
       }
@@ -6631,6 +6716,7 @@ export class CombatSystem {
     for (const [id, p] of this.room.state.players) {
       if (id === casterId) continue;
       if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      if (this.isHiddenFromAutoTarget(id)) continue;
       if (!this.canHealTarget(casterId, id)) continue;
       consider(id, p.x, p.z, true);
     }
@@ -6639,6 +6725,10 @@ export class CombatSystem {
       if (!this.canHealTarget(casterId, id)) continue;
       consider(id, t.x, t.z, true);
     }
+    this.eachLivingDecoy((id, x, z) => {
+      if (!this.canHealTarget(casterId, id)) return;
+      consider(id, x, z, true);
+    });
 
     if (!bestId) return null;
     return { id: bestId, inRange: bestCasterDist <= range };
@@ -6673,8 +6763,8 @@ export class CombatSystem {
   }
 
   /**
-   * Called when a caster with an active relay deals direct damage.
-   * Consumes the relay and heals the linked target for the damage dealt.
+   * Called when a caster with an active relay deals damage or restores HP.
+   * Consumes the relay and heals the linked target for that amount.
    */
   private trySoulRelayTrigger(
     attackerSessionId: string,
@@ -8786,20 +8876,22 @@ export class CombatSystem {
         }
       }
 
-      this.fx({
-        kind: "aoe",
-        abilityId: beam.abilityId,
-        x: owner.x,
-        z: owner.z,
-        x2: target.x,
-        z2: target.z,
-        radius: beam.range,
-        yaw: owner.yaw,
-        ownerId: beam.ownerId,
-        targetId: beam.targetId,
-        comboHit: beam.tickIndex + 1,
-        variant: 0, // 0 = main beam
-      });
+      if (beam.tickIndex === 0) {
+        this.fx({
+          kind: "aoe",
+          abilityId: beam.abilityId,
+          x: owner.x,
+          z: owner.z,
+          x2: target.x,
+          z2: target.z,
+          radius: beam.range,
+          yaw: owner.yaw,
+          ownerId: beam.ownerId,
+          targetId: beam.targetId,
+          comboHit: 1,
+          variant: 0, // 0 = main beam
+        });
+      }
 
       beam.tickIndex += 1;
       if (beam.tickIndex < beam.ticksTotal) {
@@ -8848,6 +8940,11 @@ export class CombatSystem {
     if (casterId === targetId) return Boolean(opts?.allowSelf);
     const worldTarget = this.room.state.targets.get(targetId);
     if (worldTarget) return worldTarget.kind === "dummy";
+    const decoy = this.room.state.decoys.get(targetId);
+    if (decoy) {
+      if (decoy.hp <= 0) return false;
+      return this.canHealTarget(casterId, decoy.ownerSessionId, opts);
+    }
     const player = this.room.state.players.get(targetId);
     if (!player || player.disconnected || player.hp <= 0) return false;
     if (player.role === "spectator" || player.roundDead) return false;
@@ -9127,6 +9224,7 @@ export class CombatSystem {
     for (const [id, p] of this.room.state.players) {
       if (id === casterId) continue;
       if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      if (this.isHiddenFromAutoTarget(id)) continue;
       if (!this.canHealTarget(casterId, id)) continue;
       consider(id, p.x, p.z, true);
     }
@@ -9135,6 +9233,10 @@ export class CombatSystem {
       if (!this.canHealTarget(casterId, id)) continue;
       consider(id, t.x, t.z, true);
     }
+    this.eachLivingDecoy((id, x, z) => {
+      if (!this.canHealTarget(casterId, id)) return;
+      consider(id, x, z, true);
+    });
 
     if (!bestId) return null;
     return { id: bestId, inRange: bestCasterDist <= range + 0.05 };
@@ -9150,11 +9252,19 @@ export class CombatSystem {
     return null;
   }
 
+  private eachLivingDecoy(fn: (id: string, x: number, z: number) => void) {
+    this.room.state.decoys.forEach((decoy, id) => {
+      if (decoy.hp > 0) fn(id, decoy.x, decoy.z);
+    });
+  }
+
   private bodyYaw(id: string): number | null {
     const p = this.room.state.players.get(id);
     if (p && !p.disconnected && p.hp > 0) return p.yaw;
     const t = this.room.state.targets.get(id);
     if (t && t.hp > 0) return t.yaw;
+    const d = this.room.state.decoys.get(id);
+    if (d && d.hp > 0) return d.yaw;
     return null;
   }
 
@@ -9430,12 +9540,14 @@ export class CombatSystem {
     };
     for (const [id, p] of this.room.state.players) {
       if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      if (this.isHiddenFromAutoTarget(id)) continue;
       consider(id, p.x, p.z);
     }
     for (const [id, t] of this.room.state.targets) {
       if (t.hp <= 0) continue;
       consider(id, t.x, t.z);
     }
+    this.eachLivingDecoy(consider);
     if (!bestId) return;
 
     this.shockDischargeReadyAt.set(sourceId, now + SHOCKED_STATUS.dischargeIcdMs);
@@ -10132,7 +10244,9 @@ export class CombatSystem {
 
     const enemyId = pick.id;
     const target =
-      this.room.state.players.get(enemyId) ?? this.room.state.targets.get(enemyId);
+      this.room.state.players.get(enemyId) ??
+      this.room.state.targets.get(enemyId) ??
+      this.room.state.decoys.get(enemyId);
     this.statuses.apply(enemyId, "hexAnchored", sessionId, now, {
       durationMs: HEX_ANCHOR_CAST.markDurationMs,
     });
@@ -10189,12 +10303,14 @@ export class CombatSystem {
     for (const [id, p] of this.room.state.players) {
       if (id === casterId) continue;
       if (p.disconnected || p.hp <= 0 || p.role === "spectator" || p.roundDead) continue;
+      if (this.isHiddenFromAutoTarget(id)) continue;
       consider(id, p.x, p.z);
     }
     for (const [id, t] of this.room.state.targets) {
       if (t.hp <= 0) continue;
       consider(id, t.x, t.z);
     }
+    this.eachLivingDecoy(consider);
 
     if (!bestId) return null;
     return { id: bestId, inRange: bestCasterDist <= range + 0.05 };
@@ -10776,6 +10892,7 @@ export class CombatSystem {
 
     for (const [id, target] of this.room.state.targets) {
       if (target.hp <= 0) continue;
+      if (!this.canHealTarget(casterId, id)) continue;
       const dist = Math.hypot(target.x - center.x, target.z - center.z);
       if (dist > radius + soft) continue;
       healedOthers += this.applyHealAmount(id, amount, casterId, abilityId);
@@ -12407,20 +12524,40 @@ export class CombatSystem {
       return healed;
     };
 
+    const finish = (healed: number): number => {
+      if (healed > 0 && abilityId !== "soulRelay") {
+        this.trySoulRelayTrigger(healerId, abilityId, healed);
+      }
+      return healed;
+    };
+
     const player = this.room.state.players.get(targetId);
     if (player) {
       if (player.disconnected || player.hp <= 0) return 0;
-      return applyToHost(player.x, player.z, player.hp, player.maxHp, (hp) => {
-        player.hp = hp;
-      });
+      return finish(
+        applyToHost(player.x, player.z, player.hp, player.maxHp, (hp) => {
+          player.hp = hp;
+        }),
+      );
     }
 
     const target = this.room.state.targets.get(targetId);
     if (target) {
       if (target.hp <= 0) return 0;
-      return applyToHost(target.x, target.z, target.hp, target.maxHp, (hp) => {
-        target.hp = hp;
-      });
+      return finish(
+        applyToHost(target.x, target.z, target.hp, target.maxHp, (hp) => {
+          target.hp = hp;
+        }),
+      );
+    }
+    const decoy = this.room.state.decoys.get(targetId);
+    if (decoy) {
+      if (decoy.hp <= 0) return 0;
+      return finish(
+        applyToHost(decoy.x, decoy.z, decoy.hp, decoy.maxHp, (hp) => {
+          decoy.hp = hp;
+        }),
+      );
     }
     return 0;
   }
@@ -13087,9 +13224,13 @@ export class CombatSystem {
       return false;
     }
     if (this.room.state.targets.has(targetId)) return true;
-    // Decoy clones absorb hits (dummy bolts while owner is cloaked, etc.).
+    // Decoy clones stand in for their owner: enemies shoot them, allies cannot.
     if (this.room.state.decoys.has(targetId)) {
-      return this.room.state.targets.has(ownerId) || this.room.state.players.has(ownerId);
+      const decoy = this.room.state.decoys.get(targetId);
+      if (!decoy || decoy.hp <= 0) return false;
+      if (decoy.ownerSessionId === ownerId) return false;
+      if (this.room.state.targets.has(ownerId)) return true;
+      return this.canHurt(ownerId, decoy.ownerSessionId);
     }
     // Attackable props (rock walls, world trees) can be damaged
     if (this.room.state.rockWalls.has(targetId) || this.room.state.worldTrees.has(targetId)) {

@@ -4650,6 +4650,25 @@
   min-height: 2.75rem;
 }
 
+.bb-lobby-btn--on {
+  border-color: var(--lobby-accent);
+  color: #f4efe4;
+  background: rgba(46, 92, 140, 0.95);
+}
+
+.bb-lobby-size {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 1rem 0.75rem;
+}
+
+.bb-lobby-size .bb-lobby-btn {
+  min-width: 3.4rem;
+  min-height: 2.2rem;
+  padding: 0.4rem 0.65rem;
+}
+
 .bb-lobby-btn--danger {
   color: #f3d4d0;
   background: linear-gradient(180deg, #6a3030 0%, #4a1c1c 100%);

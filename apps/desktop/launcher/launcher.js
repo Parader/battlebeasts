@@ -75,6 +75,12 @@ if (api) {
   api.onNotes(renderNotes);
 
   api.onReady((payload) => {
+    if (payload && payload.restartLauncher) {
+      playEl.disabled = true;
+      retryEl.classList.add("hidden");
+      setStatus("Restarting launcher…", false);
+      return;
+    }
     const canPlay = Boolean(payload && payload.canPlay);
     playEl.disabled = !canPlay;
     retryEl.classList.toggle("hidden", canPlay && !(payload && payload.error));

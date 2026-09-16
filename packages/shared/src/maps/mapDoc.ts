@@ -237,6 +237,12 @@ export type MapDoc = {
    * Errors are never suppressible -- only `severity: "warning"` consults this.
    */
   suppressedWarnings?: string[];
+  /**
+   * Mode ids this map is tagged for (skirmish 2v2, Wave Assault, …).
+   * When set, `mapIdForMode` prefers a tagged authored map over the mode's
+   * default `mapId`.
+   */
+  modeIds?: string[];
 };
 
 export const MAP_DOC_VERSION = 1;
@@ -853,6 +859,7 @@ export function parseMapDoc(raw: unknown): Parsed {
       suppressedWarnings: Array.isArray(raw.suppressedWarnings)
         ? raw.suppressedWarnings.filter(isStr)
         : undefined,
+      modeIds: Array.isArray(raw.modeIds) ? raw.modeIds.filter(isStr) : undefined,
     },
     errors,
   };

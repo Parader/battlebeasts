@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { RIFT_FISSURE_CAST } from "@battlebeasts/shared";
+import { isStealthedStatus } from "../../statusBadgeUtils";
 
 type RiftSchema = {
   ownerSessionId?: string;
@@ -100,6 +101,13 @@ export function RiftArmRing({
       armEndsAt = Math.max(armEndsAt, raw.armEndsAt ?? 0);
     });
     if (armEndsAt <= 0) {
+      if (g) g.visible = false;
+      return;
+    }
+    const owner = room.state?.players?.get(sessionId) as
+      | { statuses?: Parameters<typeof isStealthedStatus>[0] }
+      | undefined;
+    if (isStealthedStatus(owner?.statuses)) {
       if (g) g.visible = false;
       return;
     }

@@ -167,6 +167,16 @@ export function ownsPattern(owned: string[] | null | undefined, patternId: strin
 
 export const ownsAura = ownsPattern;
 
+/** True when the hunter owns a vessel aura other than Bound (plain). */
+export function ownsNonPlainAura(owned: string[] | null | undefined): boolean {
+  return Boolean(
+    owned?.some((id) => {
+      const aura = normalizeCosmeticAura(id);
+      return aura !== "plain";
+    }),
+  );
+}
+
 export function ownsPatternColor(owned: string[] | null | undefined, hex: string): boolean {
   if ((STARTER_PATTERN_COLORS as readonly string[]).includes(hex)) return true;
   return Boolean(owned?.includes(hex));

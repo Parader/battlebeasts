@@ -14,6 +14,8 @@ export class StatusInstanceState extends Schema {
   @type("string") id = "";
   @type("string") statusId = "";
   @type("number") expiresAt = 0;
+  /** Wall-clock apply/refresh time — HUD drain uses expiresAt − startedAt. */
+  @type("number") startedAt = 0;
   @type("number") stacks = 1;
   @type("number") nextTickAt = 0;
   @type("string") sourceId = "";

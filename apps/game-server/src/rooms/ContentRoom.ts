@@ -10,6 +10,7 @@ import {
   PVE_RECONNECT_GRACE_MS,
   isPveWaveMobKind,
   PVP_RECONNECT_GRACE_MS,
+  MATCH_REJOIN_MS,
   RECONNECT_RESUME_GRACE_MS,
   RESPAWN_LOCK_MS,
   ROOM,
@@ -59,6 +60,12 @@ import { bumpQuest } from "../quests.js";
 import { applyRankedMatchFinish } from "../ranked.js";
 import { ObjectiveDirector } from "../pvp/ObjectiveDirector.js";
 import { WaveDirector } from "../pve/WaveDirector.js";
+import {
+  rememberActiveMatch,
+  releaseActiveMatch,
+  releaseMatchesForRoom,
+  getActiveMatch,
+} from "../matchmaking/activeMatches.js";
 import { ServicedRoom } from "./ServicedRoom.js";
 import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
 
@@ -129,6 +136,8 @@ export class ContentRoom extends ServicedRoom {
   /** Shared Wave Assault start pad; whole party clusters here. */
   private pveHoldoutIndex = 0;
 
+  private emptyDisposeClear: (() => void) | null = null;
+
   private matchGrantKey(): string {
     return `${this.matchId || this.roomId}:r${this.rematchIndex}`;
   }
@@ -182,6 +191,13 @@ export class ContentRoom extends ServicedRoom {
           if (atk && this.kind === "pvp") atk.statKills += 1;
           this.onPlayerDied(sessionId, p);
         }
+      },
+      onTargetDamaged: (targetId, damage, attackerId) => {
+        if (this.kind !== "pve" || !(damage > 0)) return;
+        const target = this.state.targets.get(targetId);
+        if (!target || !isPveWaveMobKind(target.kind)) return;
+        const atk = this.state.players.get(attackerId);
+        if (atk) atk.statDamageDealt += damage;
       },
       onTargetKilled: (targetId, killerSessionId) => {
         this.waveDirector?.onTargetKilled(targetId);
@@ -341,17 +357,27 @@ export class ContentRoom extends ServicedRoom {
     }
     const verified = identity;
 
-    const existing = this.state.players.get(client.sessionId);
-    if (existing) {
-      existing.disconnected = false;
+    const sameSocket = this.state.players.get(client.sessionId);
+    if (sameSocket) {
+      sameSocket.disconnected = false;
       this.awaitingReconnect.delete(client.sessionId);
       this.identities.set(client.sessionId, verified);
       if (!this.inputs.has(client.sessionId)) this.inputs.set(client.sessionId, []);
-      // Keep prior return hub; refresh if join options still carry one.
       this.rememberReturnHub(client.sessionId, verified.userId, options);
+      this.rememberSeat(client.sessionId, verified.userId, options);
+      this.clearEmptyDispose();
       client.send("toast", { message: "Reconnected" });
       this.scheduleResumeGrace();
       return;
+    }
+
+    const previousSid = this.sessionForUser(verified.userId);
+    if (previousSid && previousSid !== client.sessionId) {
+      if (this.state.players.has(previousSid)) {
+        this.reclaimSeat(previousSid, client, verified, options);
+        return;
+      }
+      this.stripPlayer(previousSid);
     }
 
     this.rememberReturnHub(client.sessionId, verified.userId, options);
@@ -481,6 +507,8 @@ export class ContentRoom extends ServicedRoom {
     await this.loadPlayerEconomy(client.sessionId, player, verified);
     this.applyCombatKit(client.sessionId, player);
     this.sendInventory(client, player);
+    this.rememberSeat(client.sessionId, verified.userId, options);
+    this.clearEmptyDispose();
 
     client.send("toast", {
       message:
@@ -500,10 +528,18 @@ export class ContentRoom extends ServicedRoom {
     if (!player) return;
 
     if (consented) {
-      const name = player.displayName;
-      this.stripPlayer(sessionId);
-      this.afterSeatEmpty(name, "abandon");
-      return;
+      const userId = this.identities.get(sessionId)?.userId;
+      const liveSeat = userId ? getActiveMatch(userId) : undefined;
+      const liveMatch =
+        Boolean(liveSeat && liveSeat.roomId === this.roomId) &&
+        this.state.matchPhase !== "match_end";
+      if (!liveMatch) {
+        const name = player.displayName;
+        this.stripPlayer(sessionId);
+        this.afterSeatEmpty(name, "abandon");
+        return;
+      }
+      // Reload / tab close during a live match — keep the seat for rejoin.
     }
 
     player.disconnected = true;
@@ -512,18 +548,26 @@ export class ContentRoom extends ServicedRoom {
     const reason = this.kind === "pvp" ? "pvp_reconnect" : "pve_reconnect";
     const displayName = player.displayName;
     this.beginPause(reason, graceMs, displayName);
+    this.armEmptyDispose();
+    this.clock.setTimeout(() => {
+      if (!this.state.players.get(sessionId)?.disconnected) return;
+      this.awaitingReconnect.delete(sessionId);
+      if (this.canResume()) this.forceResume();
+    }, graceMs);
 
     try {
-      await this.allowReconnection(client, graceMs / 1000);
+      await this.allowReconnection(client, MATCH_REJOIN_MS / 1000);
       const restored = this.state.players.get(sessionId);
       if (restored) restored.disconnected = false;
       this.awaitingReconnect.delete(sessionId);
+      this.clearEmptyDispose();
       this.broadcast("toast", { message: `${displayName} reconnected` });
       this.scheduleResumeGrace();
     } catch {
+      // Seat stays reserved so they can joinById / bounce from hub.
+      this.awaitingReconnect.delete(sessionId);
       if (!this.state.players.has(sessionId)) return;
-      this.stripPlayer(sessionId);
-      this.afterSeatEmpty(displayName, "timeout");
+      if (this.canResume()) this.forceResume();
     }
   }
 
@@ -561,11 +605,7 @@ export class ContentRoom extends ServicedRoom {
   }
 
   private canResume() {
-    let anyDisconnected = false;
-    this.state.players.forEach((p) => {
-      if (p.disconnected) anyDisconnected = true;
-    });
-    return !anyDisconnected && this.awaitingReconnect.size === 0;
+    return this.awaitingReconnect.size === 0;
   }
 
   private forceResume() {
@@ -578,6 +618,7 @@ export class ContentRoom extends ServicedRoom {
   }
 
   private stripPlayer(sessionId: string) {
+    const userId = this.identities.get(sessionId)?.userId;
     this.awaitingReconnect.delete(sessionId);
     this.state.players.delete(sessionId);
     this.inputs.delete(sessionId);
@@ -589,6 +630,7 @@ export class ContentRoom extends ServicedRoom {
     this.emoteUntilBySession.delete(sessionId);
     this.returnHubBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
+    if (userId) releaseActiveMatch(userId, this.roomId);
   }
 
   /** Pick one authored player pad; the whole Wave Assault party starts there. */
@@ -1319,6 +1361,108 @@ export class ContentRoom extends ServicedRoom {
     if (hub) this.returnHubBySession.set(sessionId, hub);
   }
 
+  private sessionForUser(userId: string): string | undefined {
+    if (!userId) return undefined;
+    for (const [sessionId, identity] of this.identities) {
+      if (identity.userId === userId) return sessionId;
+    }
+    for (const [sessionId, player] of this.state.players) {
+      if (player.id === userId) return sessionId;
+    }
+    return undefined;
+  }
+
+  private rememberSeat(sessionId: string, userId: string, options?: ContentJoinOptions) {
+    const player = this.state.players.get(sessionId);
+    if (!player || !userId) return;
+    const team = player.team === "a" || player.team === "b" || player.team === "c" ? player.team : "";
+    rememberActiveMatch({
+      userId,
+      roomId: this.roomId,
+      roomName: this.roomName,
+      matchId: this.matchId,
+      mode: this.mode,
+      matchKind: this.matchKind,
+      team,
+      role: player.role === "spectator" ? "spectator" : "fighter",
+      spawnSlot: this.spawnSlotBySession.get(sessionId),
+      hubOwnerId: this.returnHubBySession.get(sessionId) ?? options?.hubOwnerId ?? userId,
+    });
+  }
+
+  private moveKeyed<V>(map: Map<string, V>, fromId: string, toId: string) {
+    if (!map.has(fromId) || fromId === toId) return;
+    map.set(toId, map.get(fromId)!);
+    map.delete(fromId);
+  }
+
+  private reclaimSeat(
+    fromId: string,
+    client: Client,
+    verified: VerifiedIdentity,
+    options: ContentJoinOptions,
+  ) {
+    const toId = client.sessionId;
+    const player = this.state.players.get(fromId);
+    if (!player) {
+      this.rememberReturnHub(toId, verified.userId, options);
+      return;
+    }
+
+    this.state.players.delete(fromId);
+    this.state.players.set(toId, player);
+    player.disconnected = false;
+    this.identities.delete(fromId);
+    this.identities.set(toId, verified);
+    this.moveKeyed(this.inputs, fromId, toId);
+    if (!this.inputs.has(toId)) this.inputs.set(toId, []);
+    this.moveKeyed(this.spawnBySession, fromId, toId);
+    this.moveKeyed(this.spawnSlotBySession, fromId, toId);
+    this.moveKeyed(this.diedAtBySession, fromId, toId);
+    this.moveKeyed(this.returnHubBySession, fromId, toId);
+    this.moveKeyed(this.activityBySession, fromId, toId);
+    this.moveKeyed(this.recapRewardsBySession, fromId, toId);
+    this.moveKeyed(this.emoteUntilBySession, fromId, toId);
+    this.moveKeyed(this.bgRespawnAt, fromId, toId);
+    this.awaitingReconnect.delete(fromId);
+    this.awaitingReconnect.delete(toId);
+    this.rebindPlayerServices(fromId, toId);
+    this.combat.rebindSession(fromId, toId);
+    this.rememberReturnHub(toId, verified.userId, options);
+    this.rememberSeat(toId, verified.userId, options);
+    this.clearEmptyDispose();
+    this.sendInventory(client, player);
+    client.send("toast", { message: "Rejoined match" });
+    this.scheduleResumeGrace();
+  }
+
+  private armEmptyDispose() {
+    let anyConnected = false;
+    this.state.players.forEach((p) => {
+      if (!p.disconnected) anyConnected = true;
+    });
+    if (anyConnected) {
+      this.clearEmptyDispose();
+      return;
+    }
+    if (this.emptyDisposeClear) return;
+    const timeout = this.clock.setTimeout(() => {
+      this.emptyDisposeClear = null;
+      this.endMatch("Everyone disconnected — returning to city");
+    }, MATCH_REJOIN_MS);
+    this.emptyDisposeClear = () => timeout.clear();
+  }
+
+  private clearEmptyDispose() {
+    this.emptyDisposeClear?.();
+    this.emptyDisposeClear = null;
+  }
+
+  onDispose() {
+    this.clearEmptyDispose();
+    releaseMatchesForRoom(this.roomId);
+  }
+
   private hubForClient(client: Client): string {
     return (
       this.returnHubBySession.get(client.sessionId) ??
@@ -1329,6 +1473,8 @@ export class ContentRoom extends ServicedRoom {
   }
 
   private endMatch(message: string) {
+    releaseMatchesForRoom(this.roomId);
+    this.clearEmptyDispose();
     this.broadcast("toast", { message });
     const earlyLeave = !this.lastMatchWinner;
     for (const client of this.clients) {
@@ -1347,6 +1493,8 @@ export class ContentRoom extends ServicedRoom {
   private sendHome(client: Client) {
     const player = this.state.players.get(client.sessionId);
     if (player) this.grantMatchLoot(player, client.sessionId, true);
+    const userId = this.identities.get(client.sessionId)?.userId;
+    if (userId) releaseActiveMatch(userId, this.roomId);
     client.send("transfer", {
       room: ROOM.BASE_CITY,
       options: { hubOwnerId: this.hubForClient(client) },

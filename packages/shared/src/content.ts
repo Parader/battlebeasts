@@ -1,4 +1,5 @@
 import { ROOM } from "./constants";
+import { listMaps } from "./maps/registry";
 
 export type PvpFamily = "skirmish" | "battleground";
 
@@ -94,7 +95,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 3,
     maxSpectators: 1,
     enabled: true,
-    mapId: "desert",
+    mapId: "test_arena",
   },
   {
     id: "arena_2v2",
@@ -107,7 +108,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: true,
-    mapId: "desert",
+    mapId: "test_arena",
   },
   {
     id: "arena_3v3",
@@ -120,7 +121,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: true,
-    mapId: "desert",
+    mapId: "test_arena",
   },
   {
     id: "battleground",
@@ -128,7 +129,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     family: "battleground",
     room: ROOM.BATTLEGROUND,
     teamSize: 4,
-    teamSizeMin: 3,
+    teamSizeMin: 2,
     teamSizeMax: 5,
     teamCount: 2,
     maxSpectators: 2,
@@ -141,7 +142,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     family: "battleground",
     room: ROOM.BATTLEGROUND,
     teamSize: 4,
-    teamSizeMin: 3,
+    teamSizeMin: 2,
     teamSizeMax: 5,
     teamCount: 2,
     maxSpectators: 2,
@@ -154,7 +155,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     family: "battleground",
     room: ROOM.BATTLEGROUND,
     teamSize: 4,
-    teamSizeMin: 3,
+    teamSizeMin: 2,
     teamSizeMax: 5,
     teamCount: 2,
     maxSpectators: 2,
@@ -167,7 +168,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     family: "battleground",
     room: ROOM.BATTLEGROUND,
     teamSize: 4,
-    teamSizeMin: 3,
+    teamSizeMin: 2,
     teamSizeMax: 5,
     teamCount: 2,
     maxSpectators: 2,
@@ -261,7 +262,7 @@ export function pvpFamilyFitsPlayerCount(family: PvpFamily, playerCount: number)
 
 /** Two-team side sizes, largest first. */
 export function pvpFamilyTeamSizes(family: PvpFamily): number[] {
-  if (family === "battleground") return [5, 4, 3];
+  if (family === "battleground") return [5, 4, 3, 2];
   return [3, 2, 1];
 }
 
@@ -293,7 +294,7 @@ export function resolvePremadeSkirmishMode(
 }
 
 export function resolvePremadeBattlegroundSize(teamA: number, teamB: number): number | null {
-  if (teamA < 3 || teamA > 5 || teamA !== teamB) return null;
+  if (teamA < 2 || teamA > 5 || teamA !== teamB) return null;
   return teamA;
 }
 
@@ -361,6 +362,11 @@ export function mapIdForMode(mode: string | null | undefined): string | undefine
   if (!mode) return undefined;
   const sandbox = sandboxMapId(mode);
   if (sandbox) return sandbox;
+  for (const src of listMaps()) {
+    if (src.kind === "doc" && src.doc.modeIds?.includes(mode)) {
+      return src.doc.id;
+    }
+  }
   return (
     PVP_MODES.find((m) => m.id === mode)?.mapId ??
     PVE_CONTENTS.find((c) => c.id === mode)?.mapId

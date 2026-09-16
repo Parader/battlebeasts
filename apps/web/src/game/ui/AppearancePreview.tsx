@@ -54,7 +54,7 @@ function PreviewAvatar({
   const spinRef = useRef<THREE.Group>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const framedRef = useRef(false);
-  const { camera, size: viewSize, gl } = useThree();
+  const { camera, size: viewSize } = useThree();
   const gltf = useGLTF(CHARACTER_URL);
 
   const idleClip = useMemo(
@@ -114,46 +114,6 @@ function PreviewAvatar({
   useLayoutEffect(() => {
     framedRef.current = false;
   }, [scene, viewSize.width, viewSize.height, bindPose]);
-
-  useEffect(() => {
-    const el = gl.domElement.parentElement ?? gl.domElement;
-    const drag = { active: false, x: 0 };
-    const previousTouchAction = el.style.touchAction;
-    const previousCursor = el.style.cursor;
-    el.style.touchAction = "none";
-    el.style.cursor = "grab";
-
-    const onDown = (e: PointerEvent) => {
-      if (e.button !== 0 && e.pointerType === "mouse") return;
-      drag.active = true;
-      drag.x = e.clientX;
-      el.setPointerCapture(e.pointerId);
-      el.style.cursor = "grabbing";
-    };
-    const onMove = (e: PointerEvent) => {
-      if (!drag.active) return;
-      yawRef.current += (e.clientX - drag.x) * YAW_PER_PX;
-      drag.x = e.clientX;
-    };
-    const onUp = (e: PointerEvent) => {
-      drag.active = false;
-      el.style.cursor = "grab";
-      if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-    };
-
-    el.addEventListener("pointerdown", onDown);
-    el.addEventListener("pointermove", onMove);
-    el.addEventListener("pointerup", onUp);
-    el.addEventListener("pointercancel", onUp);
-    return () => {
-      el.removeEventListener("pointerdown", onDown);
-      el.removeEventListener("pointermove", onMove);
-      el.removeEventListener("pointerup", onUp);
-      el.removeEventListener("pointercancel", onUp);
-      el.style.touchAction = previousTouchAction;
-      el.style.cursor = previousCursor;
-    };
-  }, [gl, yawRef]);
 
   useFrame((_, dt) => {
     mixerRef.current?.update(dt);
@@ -251,11 +211,57 @@ export function AppearancePreview({
   className,
 }: PreviewProps) {
   const yawRef = useRef(0);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [bindPose, setBindPose] = useState(false);
   const poseLocked = Boolean(previewEmoteId);
   const usingBind = bindPose && !poseLocked;
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const drag = { active: false, x: 0 };
+    const previousTouchAction = el.style.touchAction;
+    const previousCursor = el.style.cursor;
+    el.style.touchAction = "none";
+    el.style.cursor = "grab";
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      const hit = e.target as HTMLElement | null;
+      if (hit?.closest(".bb-appearance-preview__pose")) return;
+      drag.active = true;
+      drag.x = e.clientX;
+      el.setPointerCapture(e.pointerId);
+      el.style.cursor = "grabbing";
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!drag.active) return;
+      yawRef.current += (e.clientX - drag.x) * YAW_PER_PX;
+      drag.x = e.clientX;
+    };
+    const onUp = (e: PointerEvent) => {
+      drag.active = false;
+      el.style.cursor = "grab";
+      if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    };
+
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      el.style.touchAction = previousTouchAction;
+      el.style.cursor = previousCursor;
+    };
+  }, []);
+
   return (
     <div
+      ref={rootRef}
       className={[
         "bb-appearance-preview relative w-full overflow-hidden rounded-sm border border-[var(--bb-panel-line)] bg-[#061220]",
         className ?? "",

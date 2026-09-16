@@ -50,6 +50,7 @@ import {
   type StaticCollider,
 } from "@battlebeasts/shared";
 import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "../auth.js";
+import { getActiveMatch, releaseActiveMatch } from "../matchmaking/activeMatches.js";
 import {
   dequeuePvpParty,
   dequeuePvpSession,
@@ -66,6 +67,7 @@ import {
   partyFamily,
   partyFitsFamily,
   resolvePremadeMode,
+  seatCounts,
   toPartySnapshot,
   type HubParty,
 } from "../matchmaking/hubParty.js";
@@ -426,6 +428,35 @@ export class BaseCityRoom extends ServicedRoom {
     this.purgeDuplicateUserSeats(client.sessionId);
     this.tryJoinPendingParty(client);
     this.tryJoinOpenHubParty(client);
+    void this.bounceToActiveMatch(client, verified);
+  }
+
+  private async bounceToActiveMatch(client: Client, verified: VerifiedIdentity) {
+    const seat = getActiveMatch(verified.userId);
+    if (!seat) return;
+    try {
+      const rooms = await matchMaker.query({ name: seat.roomName });
+      if (!rooms.some((r) => r.roomId === seat.roomId)) {
+        releaseActiveMatch(verified.userId, seat.roomId);
+        return;
+      }
+    } catch {
+      return;
+    }
+    client.send("toast", { message: "Rejoining your match…" });
+    client.send("transfer", {
+      room: seat.roomName,
+      roomId: seat.roomId,
+      options: {
+        mode: seat.mode,
+        matchId: seat.matchId,
+        matchKind: seat.matchKind,
+        team: seat.team,
+        role: seat.role,
+        spawnSlot: seat.spawnSlot,
+        hubOwnerId: seat.hubOwnerId,
+      },
+    });
   }
 
   async onLeave(client: Client, consented: boolean) {
@@ -1340,7 +1371,7 @@ export class BaseCityRoom extends ServicedRoom {
 
   private handlePartySetLayout(
     client: Client,
-    message: { splitSides?: boolean; teamCOpen?: boolean },
+    message: { splitSides?: boolean; teamCOpen?: boolean; teamSize?: number },
   ) {
     const party = this.parties.getBySession(client.sessionId);
     if (!party || party.leaderSessionId !== client.sessionId) {
@@ -1355,6 +1386,13 @@ export class BaseCityRoom extends ServicedRoom {
 
     if (typeof message.splitSides === "boolean") party.splitSides = message.splitSides;
     if (typeof message.teamCOpen === "boolean") party.teamCOpen = message.teamCOpen;
+    if (typeof message.teamSize === "number" && Number.isFinite(message.teamSize)) {
+      if (partyFamily(party) === "battleground") {
+        const { teamA, teamB } = seatCounts(party);
+        const occupied = Math.max(teamA, teamB, 2);
+        party.teamSize = Math.max(occupied, Math.min(5, Math.floor(message.teamSize)));
+      }
+    }
     if (party.teamCOpen && partyFamily(party) !== "skirmish") party.teamCOpen = false;
 
     if (!party.splitSides) {
@@ -1397,6 +1435,8 @@ export class BaseCityRoom extends ServicedRoom {
     }
 
     party.modes = validModes;
+    party.teamSize = family === "battleground" ? (party.teamSize ?? 5) : undefined;
+    if (family !== "skirmish") party.teamCOpen = false;
     this.broadcastPartyUpdate(party);
     this.broadcastToParty(party, "toast", {
       message: family === "battleground" ? "Playlist: Battleground" : "Playlist: Skirmish",

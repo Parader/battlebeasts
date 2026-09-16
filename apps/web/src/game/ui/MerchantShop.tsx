@@ -21,6 +21,7 @@ import {
   ownsColor,
   ownsCosmetic,
   ownsEmote,
+  ownsNonPlainAura,
   ownsPattern,
   ownsPatternColor,
   STARTER_COLORS,
@@ -144,8 +145,7 @@ function previewLooksFromBase(
     return { ...base, pattern: grant.patternId, cosmeticsEquipped };
   }
   if (grant.kind === "pattern_color") {
-    const pattern = base.pattern === "plain" ? "ember" : base.pattern;
-    return { ...base, pattern, patternColor: grant.hex, cosmeticsEquipped };
+    return { ...base, patternColor: grant.hex, cosmeticsEquipped };
   }
   if (grant.kind === "cosmetic") {
     const def = getCosmeticItem(grant.itemId);
@@ -186,12 +186,10 @@ function canEquipShopItem(item: ShopItemDef, looks: AppearanceLooks): boolean {
     if (!def) return false;
     return cosmeticFitsBody(def, normalizeCosmeticBody(looks.body));
   }
-  return (
-    kind === "color" ||
-    kind === "pattern" ||
-    kind === "pattern_color" ||
-    kind === "emote"
-  );
+  if (kind === "pattern_color") {
+    return normalizeCosmeticPattern(looks.pattern) !== "plain";
+  }
+  return kind === "color" || kind === "pattern" || kind === "emote";
 }
 
 type CosmeticSub = null | "tints" | "inks" | "auras" | "gear" | CosmeticSlot;
@@ -397,11 +395,13 @@ export function MerchantPanel({
     : false;
   const selectedNeedsOwnLobby =
     selectedItem?.grant.kind === "lobby_beach_ball" && !isOwnLobby;
+  const hasAura = ownsNonPlainAura(unlocks.patterns);
   const canBuySelected =
     selectedItem != null &&
     !selectedOwned &&
     !selectedNeedsOwnLobby &&
-    canAffordShopCost(wallet, selectedItem.cost);
+    canAffordShopCost(wallet, selectedItem.cost) &&
+    !(selectedItem.grant.kind === "pattern_color" && !hasAura);
   const selectedEquipped =
     selectedItem != null && isShopItemEquipped(selectedItem, liveLooks, emoteSlots);
   const selectedCanEquip = selectedItem != null && canEquipShopItem(selectedItem, liveLooks);
@@ -415,9 +415,11 @@ export function MerchantPanel({
   const canHoldBuyItem = (item: ShopItemDef) =>
     canAffordShopCost(wallet, item.cost) &&
     !ownsShopItem(unlocks, item, beachBallCount) &&
-    !(item.grant.kind === "lobby_beach_ball" && !isOwnLobby);
+    !(item.grant.kind === "lobby_beach_ball" && !isOwnLobby) &&
+    !(item.grant.kind === "pattern_color" && !hasAura);
 
   const commitShopBuy = (item: ShopItemDef) => {
+    if (!canHoldBuyItem(item) && !ownsShopItem(unlocks, item, beachBallCount)) return;
     room?.send("shop_buy", { itemId: item.id });
     clearHoldBuy();
   };
@@ -582,7 +584,7 @@ export function MerchantPanel({
               <div className="bb-shop__cat-grid">
                 {(
                   [
-                    ["tints", "Hide (body)"],
+                    ["tints", "Body color"],
                     ["inks", "Ink (aura color)"],
                     ["auras", "Auras (motion)"],
                     ["gear", "Gear"],
@@ -666,6 +668,10 @@ export function MerchantPanel({
                 <div className="bb-shop__slot-head bb-shop__slot-head--stats-only">
                   <ShopCatStats stats={subOwnership(cosmeticSub)} />
                 </div>
+              ) : null}
+
+              {cosmeticSub === "inks" && !hasAura ? (
+                <p className="bb-muted mb-2">Unlock an aura before buying ink.</p>
               ) : null}
 
               <ul className="bb-shop__list" role="listbox" aria-label="Shop items">

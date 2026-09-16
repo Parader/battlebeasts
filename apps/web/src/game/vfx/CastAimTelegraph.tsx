@@ -16,6 +16,7 @@ import {
   type CastPreviewKind,
 } from "./castAimPreview";
 import { ABILITIES } from "@battlebeasts/shared";
+import { hasStatusId } from "../statusBadgeUtils";
 
 type CastLite = {
   castAbilityId?: string;
@@ -254,7 +255,8 @@ export function CastAimTelegraph({
       id === "hexAnchor" ||
       id === "chainLightning" ||
       id === "elementalOverload" ||
-      id === "positionSwap"
+      id === "positionSwap" ||
+      id === "phantomRush"
     ) {
       const players = room.state?.players;
       players?.forEach((p, pid) => {
@@ -266,8 +268,12 @@ export function CastAimTelegraph({
           disconnected?: boolean;
           role?: string;
           roundDead?: boolean;
+          statuses?: Parameters<typeof hasStatusId>[0];
         };
         if (pl.disconnected || (pl.hp ?? 0) <= 0 || pl.role === "spectator" || pl.roundDead) {
+          return;
+        }
+        if (hasStatusId(pl.statuses, "cloaked") || hasStatusId(pl.statuses, "revengePhased")) {
           return;
         }
         if (typeof pl.x === "number" && typeof pl.z === "number") {
@@ -280,6 +286,20 @@ export function CastAimTelegraph({
         if ((tg.hp ?? 0) <= 0) return;
         if (typeof tg.x === "number" && typeof tg.z === "number") {
           healables.push({ id: tid, x: tg.x, z: tg.z });
+        }
+      });
+      const decoys = room.state?.decoys;
+      decoys?.forEach((d, did) => {
+        const dd = d as {
+          x?: number;
+          z?: number;
+          hp?: number;
+          ownerSessionId?: string;
+        };
+        if (dd.ownerSessionId === sessionId) return;
+        if ((dd.hp ?? 0) <= 0) return;
+        if (typeof dd.x === "number" && typeof dd.z === "number") {
+          healables.push({ id: did, x: dd.x, z: dd.z });
         }
       });
     }

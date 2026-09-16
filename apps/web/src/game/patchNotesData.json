@@ -1,5 +1,34 @@
 [
   {
+    "id": "2026-09-16-combat-stealth",
+    "title": "Combat polish, rejoin, and stealth",
+    "date": "2026-09-16",
+    "content": [
+      "Battlegrounds queue 2v2 through 5v5 from the lobby",
+      "Skirmish arenas play on Test Arena; maps can be tagged for modes in the builder",
+      "If you drop from a live match, rejoin it from the lobby while it is still going"
+    ],
+    "balance": [
+      "Orbiting Wisp damage 120 → 110",
+      "Phantom Rush dashes through a lone target twice when nobody else is in reach",
+      "Silence lasts 2s, and the debuff bar matches remaining time",
+      "Jump Slam and Dash follow the cursor for shorter hops and rolls (max range unchanged)",
+      "Wave Assault spawn counts and caps are lower",
+      "Soul Relay also triggers from heals, including shrooms",
+      "Divine Beam is a true 3s hold channel",
+      "Blooming Path is wider, lingers longer, and grows a bit slower"
+    ],
+    "fixes": [
+      "Cloak works in Wave Assault; auto-target spells skip invisible hunters",
+      "Decoy looks like you to enemies (name, bar, and ring) instead of an ally",
+      "Cloak no longer shows your aura, pulse, or ground ring",
+      "Bulwark Charge looks smooth for other players — no mid-charge teleport",
+      "Groove and other heals no longer heal Wave Assault mobs",
+      "Shop: Hide renamed to Body color; ink stays locked until you own an aura",
+      "An empty first spell slot is forced onto M1"
+    ]
+  },
+  {
     "id": "2026-09-16-infinite-waves",
     "title": "Wave Assault — Infinite Waves",
     "date": "2026-09-16",

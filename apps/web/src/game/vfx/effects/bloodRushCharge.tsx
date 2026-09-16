@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { BLOOD_RUSH_CAST } from "@battlebeasts/shared";
 import { abilityVfxColor } from "../colors";
 import { createCirclePointMaterial } from "../materials/circlePoint";
+import { isStealthedStatus } from "../../statusBadgeUtils";
 
 const WISP_COUNT = 16;
 const BLOOD = "#9f1239";
@@ -96,6 +97,13 @@ export function BloodRushChargeAura({
       chargeStart.current = 0;
       ringMat.opacity = 0;
       hazeMat.opacity = 0;
+      return;
+    }
+    const stealthed = isStealthedStatus(
+      (p as { statuses?: Parameters<typeof isStealthedStatus>[0] } | undefined)?.statuses,
+    );
+    if (stealthed) {
+      g.visible = false;
       return;
     }
 

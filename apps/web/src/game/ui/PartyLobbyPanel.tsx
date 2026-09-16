@@ -34,7 +34,7 @@ type Props = {
   /** Hub invite + mark pending party join (remote friends). */
   onInviteFriend: (friendUserId: string) => void;
   onSetSeat: (sessionId: string, seat: PvpSeat) => void;
-  onSetLayout: (layout: { splitSides?: boolean; teamCOpen?: boolean }) => void;
+  onSetLayout: (layout: { splitSides?: boolean; teamCOpen?: boolean; teamSize?: number }) => void;
   onKick: (sessionId: string) => void;
   onLock: (matchKind?: "ranked" | "unranked" | "coop_pve") => void;
   onCancel: () => void;
@@ -53,7 +53,10 @@ type ContextMenu = {
 function familyMeta(party: PartySnapshot) {
   const family = party.family ?? pvpFamilyFromModes(party.modes);
   const sizes = pvpFamilyTeamSizes(family);
-  const maxSide = sizes[0] ?? 3;
+  const maxSide =
+    family === "battleground"
+      ? Math.max(2, Math.min(5, party.teamSize ?? sizes[0] ?? 5))
+      : (sizes[0] ?? 3);
   return {
     family,
     label: PVP_FAMILIES.find((f) => f.id === family)?.label ?? "Skirmish",
@@ -477,6 +480,25 @@ export function PartyLobbyPanel({
             ×
           </button>
         </header>
+
+        {!isSkirmish && splitSides && isLeader && !party.queued ? (
+          <div className="bb-lobby-size" role="group" aria-label="Battleground size">
+            {[2, 3, 4, 5].map((n) => {
+              const on = teamSize === n;
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  className={["bb-lobby-btn bb-lobby-btn--slot", on ? "bb-lobby-btn--on" : ""].join(" ")}
+                  aria-pressed={on}
+                  onClick={() => onSetLayout({ teamSize: n })}
+                >
+                  {n}v{n}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
         <div
           className={[

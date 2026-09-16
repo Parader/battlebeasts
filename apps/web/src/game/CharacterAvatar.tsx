@@ -33,7 +33,7 @@ import { smashHopOffsetY } from "./smashHop";
 import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments } from "./StatusOrnaments";
 import { SpiritVesselFx } from "./SpiritVesselFx";
-import { collectStatusRows, hasStatusId } from "./statusBadgeUtils";
+import { collectStatusRows, hasStatusId, isStealthedStatus } from "./statusBadgeUtils";
 import { registerCharacterRoot } from "./characterRoots";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
@@ -77,6 +77,7 @@ export function CharacterAvatar({
   const group = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
   const aimRef = useRef<THREE.Group>(null);
+  const cloakRingRef = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
   const prevPos = useRef(new THREE.Vector3());
   const velocity = useRef(new THREE.Vector3());
@@ -434,6 +435,8 @@ export function CharacterAvatar({
     // Fully hide mesh, ornaments, and aim during Revenge blink — no pre-appear flash.
     if (bodyRef.current) bodyRef.current.visible = !revengeVanished;
     if (aimRef.current) aimRef.current.visible = !revengeVanished;
+    // Vessel pulse / ground ring would leak the ghost — keep hover telegraph only.
+    if (cloakRingRef.current) cloakRingRef.current.visible = !cloaked && !revengeVanished;
 
     const ghostOpacity = revengeVanished
       ? 0
@@ -486,8 +489,15 @@ export function CharacterAvatar({
         <EquippedCosmetics characterRoot={scene} equipped={equipped} opacity={cloakOpacity} body={vessel} />
         <SpiritVesselFx
           characterRoot={scene}
-          opacity={cloakOpacity}
           getColor={() => color ?? STARTER_COLORS[0]!}
+          getOpacity={() => {
+            if (!room || !localSessionId) return cloakOpacity;
+            const me = room.state?.players?.get(localSessionId) as
+              | { statuses?: Parameters<typeof isStealthedStatus>[0] }
+              | undefined;
+            if (isStealthedStatus(me?.statuses)) return 0;
+            return cloakOpacity;
+          }}
           getAura={() => {
             if (!room || !localSessionId) return "plain";
             const me = room.state?.players?.get(localSessionId) as
@@ -507,6 +517,7 @@ export function CharacterAvatar({
             const me = room.state?.players?.get(localSessionId) as
               | { statuses?: Parameters<typeof collectStatusRows>[0] }
               | undefined;
+            if (isStealthedStatus(me?.statuses)) return [];
             return collectStatusRows(me?.statuses);
           }}
         />
@@ -517,10 +528,7 @@ export function CharacterAvatar({
             const me = room.state?.players?.get(localSessionId) as
               | { statuses?: Parameters<typeof collectStatusRows>[0] }
               | undefined;
-            if (
-              hasStatusId(me?.statuses, "cloaked") ||
-              hasStatusId(me?.statuses, "revengePhased")
-            ) {
+            if (isStealthedStatus(me?.statuses)) {
               return [];
             }
             return collectStatusRows(me?.statuses);
@@ -534,7 +542,9 @@ export function CharacterAvatar({
         ) : null}
       </group>
       <group ref={aimRef}>
-        <AimIndicator color={AIM_RELATION_COLORS.self} />
+        <group ref={cloakRingRef}>
+          <AimIndicator color={AIM_RELATION_COLORS.self} />
+        </group>
         <AbilityHoverTelegraph />
       </group>
       <PlayerHpBillboard room={room} sessionId={localSessionId} />

@@ -780,6 +780,31 @@ export function spikeLinePoints(
 }
 
 /**
+ * Directional travel toward a ground cursor, capped at `maxRange`.
+ * Missing aim uses facing at full range. Aim on the caster yields distance 0.
+ */
+export function aimTravelAlongCursor(
+  from: { x: number; z: number; yaw: number },
+  aim: { x: number; z: number } | null | undefined,
+  maxRange: number,
+): { yaw: number; distance: number } {
+  const cap = Math.max(0, maxRange);
+  if (!aim || !Number.isFinite(aim.x) || !Number.isFinite(aim.z)) {
+    return { yaw: from.yaw, distance: cap };
+  }
+  const dx = aim.x - from.x;
+  const dz = aim.z - from.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.05) {
+    return { yaw: from.yaw, distance: 0 };
+  }
+  return {
+    yaw: Math.atan2(dx, dz),
+    distance: Math.min(cap, dist),
+  };
+}
+
+/**
  * Clamp a ground aim point to `maxRange` from the caster.
  * Degenerate aim (on top of caster) falls back along `yaw` at mid-range.
  */

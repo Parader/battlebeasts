@@ -83,6 +83,16 @@ export class StatusSystem {
     this.hardCcRecent.delete(targetId);
   }
 
+  /** Move CC-DR bookkeeping when a hunter rejoins under a new session id. */
+  rebindTarget(fromId: string, toId: string) {
+    if (!fromId || fromId === toId) return;
+    const recent = this.hardCcRecent.get(fromId);
+    if (recent) {
+      this.hardCcRecent.set(toId, recent);
+      this.hardCcRecent.delete(fromId);
+    }
+  }
+
   /** True when the target already has a timed control effect (hard CC or slow). */
   hasTimedControl(targetId: string): boolean {
     const host = this.getHost(targetId);
@@ -194,6 +204,7 @@ export class StatusSystem {
       if (def?.mechanic !== "hot" || row.sourceId !== sourceId || def.permanent) return;
       const duration = Math.max(50, Math.round(def.durationMs * Math.max(0.1, durationMul)));
       row.expiresAt = now + duration;
+      row.startedAt = now;
     });
   }
 
@@ -380,6 +391,7 @@ export class StatusSystem {
       if (existing) {
         existing.stacks = stacks;
         existing.expiresAt = expiresAt;
+        existing.startedAt = now;
         existing.sourceId = sourceId;
         if (typeof opts?.angle === "number") existing.angle = opts.angle;
         if (def.tickMs) existing.nextTickAt = Math.min(existing.nextTickAt || now + def.tickMs, now + def.tickMs);
@@ -388,6 +400,7 @@ export class StatusSystem {
         row.id = mapKey;
         row.statusId = statusId;
         row.expiresAt = expiresAt;
+        row.startedAt = now;
         row.stacks = stacks;
         row.sourceId = sourceId;
         if (typeof opts?.angle === "number") row.angle = opts.angle;
@@ -408,6 +421,7 @@ export class StatusSystem {
       if (rule === "ignore") return false;
       if (rule === "refresh") {
         existing.expiresAt = expiresAt;
+        existing.startedAt = now;
         existing.sourceId = sourceId;
         // Re-apply replaces stack count (e.g. Barrier refills absorb HP).
         existing.stacks = Math.min(maxStacks, addStacks);
@@ -416,6 +430,7 @@ export class StatusSystem {
       } else if (rule === "stack") {
         existing.stacks = Math.min(maxStacks, existing.stacks + addStacks);
         existing.expiresAt = expiresAt;
+        existing.startedAt = now;
         existing.sourceId = sourceId;
         if (typeof opts?.angle === "number") existing.angle = opts.angle;
       }
@@ -424,6 +439,7 @@ export class StatusSystem {
       row.id = mapKey;
       row.statusId = statusId;
       row.expiresAt = expiresAt;
+      row.startedAt = now;
       row.stacks = Math.min(maxStacks, addStacks);
       row.sourceId = sourceId;
       if (typeof opts?.angle === "number") row.angle = opts.angle;
@@ -485,6 +501,7 @@ export class StatusSystem {
     host.statuses.forEach((row) => {
       if (row.statusId === statusId) {
         row.expiresAt = now + def.durationMs;
+        row.startedAt = now;
         refreshed = true;
       }
     });

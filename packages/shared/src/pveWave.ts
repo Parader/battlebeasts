@@ -1,7 +1,7 @@
 /** Wave Assault (PvE dungeon) constants and soft perf caps. */
 
-export const PVE_WAVE_ENEMY_SOFT_CAP = 22;
-export const PVE_WAVE_ENEMY_HARD_CAP = 28;
+export const PVE_WAVE_ENEMY_SOFT_CAP = 14;
+export const PVE_WAVE_ENEMY_HARD_CAP = 18;
 
 /** WorldTarget.kind for cemetery rushers. */
 export const PVE_ZOMBIE_KIND = "zombie";
@@ -40,8 +40,8 @@ export const PVE_ENEMY_APPROACH_MAX_M = 22;
 /** Pads closer than this are the holdout itself and are not ingress. */
 export const PVE_ENEMY_INGRESS_MIN_M = 8;
 
-/** First wave enemy count; scales +2/wave, capped. */
-export const PVE_WAVE_BASE_COUNT = 6;
+/** First wave enemy count; scales +1/wave, capped. */
+export const PVE_WAVE_BASE_COUNT = 4;
 
 /** Clamp locked coop party size used for difficulty scaling (1–4). */
 export function clampPvePartySize(partySize: number): number {
@@ -64,7 +64,7 @@ export function pvePartyDamageMul(partySize: number): number {
 
 export function pveWaveEnemyCount(waveIndex: number, partySize = 1): number {
   const n = clampPvePartySize(partySize);
-  const count = PVE_WAVE_BASE_COUNT + Math.max(0, waveIndex - 1) * 2 + (n - 1);
+  const count = PVE_WAVE_BASE_COUNT + Math.max(0, waveIndex - 1) * 1 + (n - 1);
   return Math.min(PVE_WAVE_ENEMY_SOFT_CAP, count);
 }
 

@@ -177,7 +177,11 @@ export function ContentScene({
         localTeam={localTeam}
       />
       {isDungeon ? <WorldTargets room={room} /> : null}
-      <Decoys room={room} />
+      <Decoys
+        room={room}
+        localSessionId={localSessionId}
+        relation={isDungeon ? "ally" : "enemy"}
+      />
       <Volcanoes room={room} />
       <RockWalls room={room} />
       <WorldTrees room={room} />

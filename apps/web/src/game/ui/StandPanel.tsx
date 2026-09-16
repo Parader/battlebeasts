@@ -554,7 +554,11 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
   };
 
   const [draftLoadout, setDraftLoadout] = useState(() => normalizeLoadout(economy.loadout));
-  const [selectedSlot, setSelectedSlot] = useState(() => loadStandMenuMemory().spellSlot);
+  const [selectedSlot, setSelectedSlot] = useState(() => {
+    const loadout = normalizeLoadout(economy.loadout);
+    if (!loadout[0]) return 0;
+    return loadStandMenuMemory().spellSlot;
+  });
   const [draftFlex, setDraftFlex] = useState(() => normalizeFlexLoadout(economy.flexLoadout));
   // null means a main slot is selected. The two pickers are one selection, not
   // two: editing a flex slot has to replace the pool, so both cannot be live.
@@ -595,7 +599,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
   };
 
   const assignAbility = (abilityId: string) => {
-    const index = slotIndexForAbility(abilityId, selectedSlot);
+    const index = !draftLoadout[0] ? 0 : slotIndexForAbility(abilityId, selectedSlot);
     if (index < 0) return;
     if (!ownsAbility(unlocks.abilities, abilityId, economy.talentBuild)) return;
     if (draftLoadout[index] === abilityId) {

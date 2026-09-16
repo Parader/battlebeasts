@@ -61,11 +61,15 @@ Requires [GitHub CLI](https://cli.github.com/) (`gh auth login`) and a **public*
 
 ## Package the launcher EXE (rare)
 
+Bump `version` in [package.json](package.json), then from repo root:
+
 ```bash
-pnpm --filter @battlebeasts/desktop dist
+pnpm dist:launcher
 ```
 
-Output: `apps/desktop/release-v5/MageTrials-Launcher-*.exe` (gitignored). This no longer embeds the 1 GB game. Upload it as a GitHub Release tag `launcher-*` with `--latest=false` so it does not steal the game content feed.
+That builds `apps/desktop/release-v5/MageTrials-Launcher-*.exe` and uploads a stable `MageTrials-Launcher.exe` to a rolling GitHub tag `launcher` (`--latest=false`, so it never steals the game content feed). Packaged launchers check that tag when the hub is open and when Play is clicked. Windows cannot overwrite a running EXE, so the hub downloads the new file, quits, swaps, and relaunches.
+
+Friends on an older EXE (before self-update) still need **one** last copy of this launcher. After that, `pnpm dist:launcher` is enough — you do not hand out a new file each time.
 
 Beside the exe you can drop a `config.json` to override `gameServerUrl` (see [config.example.json](config.example.json)). If that file is absent, the launcher uses `gameServerUrl` from the GitHub feed, then the baked home IP.
 

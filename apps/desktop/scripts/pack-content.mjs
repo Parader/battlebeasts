@@ -11,6 +11,8 @@ const outDir = path.join(desktop, "dist-content");
 const notesPath = path.join(desktop, "patch-notes.json");
 const gameNotesPath = path.join(root, "apps/web/src/game/patchNotesData.json");
 const FEED_URL = "https://github.com/Parader/battlebeasts/releases/latest/download/latest.json";
+const LAUNCHER_FEED_URL =
+  "https://github.com/Parader/battlebeasts/releases/download/launcher/latest-launcher.json";
 const REPO = "Parader/battlebeasts";
 const DEFAULT_GAME_SERVER_URL = "ws://74.59.153.60:2567";
 
@@ -195,9 +197,27 @@ if (prevFeed && prevFeed.contentVersion && prevFeed.contentVersion !== notes.con
 }
 
 const tag = `game-${notes.contentVersion}`;
+const launcherFeed = await fetchJson(LAUNCHER_FEED_URL);
+const launcherName =
+  typeof launcherFeed?.name === "string" && launcherFeed.name.trim()
+    ? launcherFeed.name.trim()
+    : "MageTrials-Launcher.exe";
+const launcher =
+  launcherFeed && launcherFeed.version
+    ? {
+        version: String(launcherFeed.version),
+        name: launcherName,
+        sha256: typeof launcherFeed.sha256 === "string" ? launcherFeed.sha256 : "",
+        size: Number(launcherFeed.size) || undefined,
+        url:
+          typeof launcherFeed.url === "string" && launcherFeed.url.trim()
+            ? launcherFeed.url.trim()
+            : `https://github.com/${REPO}/releases/download/launcher/${launcherName}`,
+      }
+    : null;
 const latest = {
   contentVersion: notes.contentVersion,
-  minLauncher: "0.0.1",
+  minLauncher: launcher ? launcher.version : "0.0.2",
   gameServerUrl: DEFAULT_GAME_SERVER_URL,
   title: notes.title,
   date: notes.date,
@@ -210,6 +230,7 @@ const latest = {
     url: `https://github.com/${REPO}/releases/download/${tag}/content.zip`,
   },
 };
+if (launcher) latest.launcher = launcher;
 if (patch) latest.patch = patch;
 
 fs.writeFileSync(path.join(outDir, "latest.json"), `${JSON.stringify(latest, null, 2)}\n`);

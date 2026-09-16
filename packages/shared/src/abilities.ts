@@ -1137,13 +1137,13 @@ export const BLOOMING_PATH_CAST = {
   heal: combatMag(2),
   /** Delay between corridor heal ticks (ms). */
   healTickMs: 500,
-  /** Tip travel speed — very slow so the vine reads as a growing path. */
-  speed: 4.5,
-  /** Half-width ~0.55 → ~1.1m total corridor. */
-  radius: 0.55,
+  /** Tip travel speed — slow enough to read as a growing path. */
+  speed: 3.8,
+  /** Half-width ~0.85 → ~1.7m total corridor. */
+  radius: 0.85,
   spawnOffset: 0.35,
   /** How long the laid path stays after the tip despawns (ms). */
-  trailLingerMs: 3200,
+  trailLingerMs: 4500,
 } as const;
 
 /**
@@ -1419,6 +1419,7 @@ export const WORLD_TREE_CAST = {
 /**
  * Phantom Rush (F) — rapid chained mobility attack through up to 4 enemies/props.
  * Shorter range (~4.5m) and lands on the opposite side of targets.
+ * Solo target: a second pass through the same foe when nobody else is in chain range.
  */
 export const PHANTOM_RUSH_CAST = {
   unlockCostEssence: 160,
@@ -1707,7 +1708,7 @@ export const SILENCE_SWEEP_CAST = {
   sweepBladeHalfAngle: 0.2,
   /** True sweep travel time (R→L). */
   sweepMs: 280,
-  silenceDurationMs: 3000,
+  silenceDurationMs: 2000,
   /** Reuse Right Hook release timing. */
   fps: POISON_DART_CAST.fps,
   releaseFrame: POISON_DART_CAST.releaseFrame,
@@ -2738,7 +2739,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shape: "buff",
     effectKind: "orbitingWisp",
     tags: ["Damage", "Persistent", "Summon", "Melee", "Self", "MultiHit", "Cast"],
-    damage: combatMag(12),
+    damage: combatMag(11),
     orbitingWisp: {
       maxCount: ORBITING_WISP_CAST.maxCount,
       durationMs: ORBITING_WISP_CAST.durationMs,
@@ -2885,7 +2886,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "smash",
     name: "Jump Slam",
     description:
-      "Leap to your aim and slam the ground. Airborne iframes; stuns enemies on landing.",
+      "Leap toward your cursor and slam the ground — shorter hops when you aim close, up to max range. Airborne iframes; stuns enemies on landing.",
     cooldownMs: 9000,
     range: 4.0,
     shape: "aoe",
@@ -3545,7 +3546,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "dash",
     unlockCostEssence: 60,
     name: "Dash",
-    description: "Dive forward with brief iframes, then a short haste. Cuts other casts.",
+    description:
+      "Dive toward your cursor — shorter rolls when you aim close, up to max range. Brief iframes, then a short haste. Cuts other casts.",
     cooldownMs: 10000,
     range: 5,
     shape: "dash",
@@ -4469,7 +4471,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: SILENCE_SWEEP_CAST.unlockCostEssence,
     name: "Silence",
     description:
-      "Hook a crescent of cursed shadow across the field in front of you. Enemies caught in the sweep are Silenced — casts interrupt and stay blocked for a few seconds.",
+      "Hook a crescent of cursed shadow across the field in front of you. Enemies caught in the sweep are Silenced — casts interrupt and stay blocked briefly.",
     cooldownMs: SILENCE_SWEEP_CAST.cooldownMs,
     range: SILENCE_SWEEP_CAST.range,
     shape: "aoe",
@@ -4872,19 +4874,20 @@ export const ABILITIES: Record<string, AbilityDef> = {
     channelDurationMs: DIVINE_BEAM_CAST.channelDurationMs,
     tickIntervalMs: DIVINE_BEAM_CAST.tickIntervalMs,
     overflowRadius: DIVINE_BEAM_CAST.overflowRadius,
+    holdChannel: true,
     timing: {
       anticipationMs: 110,
       castMs: 140,
-      impactMs: 80,
+      impactMs: authoredForWallMs(DIVINE_BEAM_CAST.channelDurationMs),
       recoveryMs: 140,
       anticipationMoveMul: 0.75,
       castMoveMul: 0.65,
-      impactMoveMul: 0.8,
+      impactMoveMul: 0.55,
       recoveryMoveMul: 0.9,
-      cancelUntilPhase: "cast",
+      cancelUntilPhase: "impact",
       blocksOtherCasts: true,
     },
-    interruptible: true,
+    interruptible: false,
   },
   /**
    * Groove (R) — Jazz Dancing heal channel.
@@ -5164,7 +5167,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "phantomRush",
     name: "Phantom Rush",
     description:
-      "Rush through nearby enemies in rapid succession, striking each target once and landing on their opposite side.",
+      "Rush through nearby enemies in rapid succession, striking each once and landing on their far side. If only one foe is in reach, dash through them twice.",
     allowedSlots: ["f"],
     defaultSlot: "f",
     unlockCostEssence: PHANTOM_RUSH_CAST.unlockCostEssence,

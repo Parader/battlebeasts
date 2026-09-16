@@ -135,6 +135,8 @@ export type PartySnapshot = {
   splitSides?: boolean;
   /** PvP skirmish: show an empty Team 3 column. */
   teamCOpen?: boolean;
+  /** Battleground custom-side size (2–5). */
+  teamSize?: number;
 };
 
 export type MatchRecapRewards = {

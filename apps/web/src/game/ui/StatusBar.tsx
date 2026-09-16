@@ -6,6 +6,7 @@ type StatusHudRow = {
   statusId: string;
   stacks: number;
   expiresAt: number;
+  startedAt: number;
   key: string;
 };
 
@@ -16,7 +17,7 @@ function readStatuses(room: Room | null, sessionId: string | null): StatusHudRow
         statuses?: {
           forEach: (
             cb: (
-              row: { statusId: string; stacks: number; expiresAt: number; sourceId?: string },
+              row: { statusId: string; stacks: number; expiresAt: number; startedAt?: number; sourceId?: string },
               key?: string,
             ) => void,
           ) => void;
@@ -32,6 +33,7 @@ function readStatuses(room: Room | null, sessionId: string | null): StatusHudRow
         statusId: row.statusId,
         stacks: row.stacks ?? 1,
         expiresAt: row.expiresAt ?? 0,
+        startedAt: row.startedAt ?? 0,
         key: typeof key === "string" ? key : `${row.statusId}:${row.sourceId ?? ""}`,
       });
     }
@@ -376,7 +378,11 @@ export function StatusBar({ room, sessionId }: { room: Room | null; sessionId: s
           const permanent = (def as any).permanent === true || def.durationMs <= 0;
           const isAura = (def as any).isAura === true || row.statusId === "gravityFieldSlow";
           const left = permanent || isAura ? 0 : Math.max(0, row.expiresAt - now);
-          const total = Math.max(1, def.durationMs);
+          const appliedSpan =
+            row.startedAt > 0 && row.expiresAt > row.startedAt
+              ? row.expiresAt - row.startedAt
+              : 0;
+          const total = Math.max(1, appliedSpan || def.durationMs);
           const frac = permanent ? 0 : isAura ? 1 : Math.min(1, left / total);
           const showStacks =
             row.statusId === "fifthSpellCadence" ||

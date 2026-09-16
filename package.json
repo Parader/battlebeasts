@@ -9,6 +9,8 @@
     "dev:editor": "pnpm --filter @battlebeasts/editor dev",
     "dev:desktop": "pnpm --filter @battlebeasts/desktop dev",
     "dist:desktop": "pnpm --filter @battlebeasts/desktop dist",
+    "publish:launcher": "node ./apps/desktop/scripts/publish-launcher.mjs",
+    "dist:launcher": "pnpm dist:desktop && node ./apps/desktop/scripts/publish-launcher.mjs",
     "prod:up": "docker compose --env-file compose.env up -d",
     "prod:down": "docker compose --env-file compose.env down",
     "publish:game": "node ./apps/desktop/scripts/publish-content.mjs",

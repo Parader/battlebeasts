@@ -29,8 +29,8 @@ import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSi
 import { StatusOrnaments } from "./StatusOrnaments";
 import { SpiritVesselFx } from "./SpiritVesselFx";
 import { VesselBody } from "./VesselBody";
-import { collectStatusRows, hasStatusId } from "./statusBadgeUtils";
-import { AimIndicator, AIM_RELATION_COLORS, type AimRelation } from "./AimIndicator";
+import { collectStatusRows, hasStatusId, isStealthedStatus } from "./statusBadgeUtils";
+import { AimIndicator, AIM_RELATION_COLORS, resolveAimRelation, type AimRelation } from "./AimIndicator";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { PlayerCastChannelBar } from "./PlayerCastChannelBar";
 import { PlayerNameBillboard } from "./PlayerNameBillboard";
@@ -40,6 +40,7 @@ import { RiftArmRing } from "./vfx/effects/riftArmRing";
 import { registerCharacterRoot } from "./characterRoots";
 import { isRevengeVanished } from "./revengeVanishRuntime";
 import { getTeleportSlamOpacity, hasTeleportSlamFade } from "./teleportSlamFadeRuntime";
+import { sampleRemoteDashTravel } from "./dashTravelRuntime";
 
 useGLTF.preload(CHARACTER_URL);
 
@@ -65,19 +66,6 @@ type RemotePlayerState = {
   castPhaseEndsAt?: number;
   statuses?: Parameters<typeof hasStatusId>[0];
 };
-
-function resolveAimRelation(
-  localTeam: string | undefined,
-  remoteTeam: string | undefined,
-  fallback: AimRelation,
-): AimRelation {
-  if (localTeam && remoteTeam) {
-    // Same non-empty team = ally; any other team letter (a/b/c/…) = enemy (FFA inclusive).
-    if (remoteTeam === localTeam) return "ally";
-    return "enemy";
-  }
-  return fallback;
-}
 
 function RemotePlayerAvatar({
   room,
@@ -215,6 +203,7 @@ function RemotePlayerAvatar({
 
     const now = performance.now();
     const safeDt = Math.max(1e-4, Math.min(0.05, dt));
+    const dashPos = sampleRemoteDashTravel(sessionId, now);
 
     if (!seeded.current) {
       renderPos.current.set(p.x, 0, p.z);
@@ -254,7 +243,15 @@ function RemotePlayerAvatar({
     }
 
     const serverMoved = p.x !== lastServer.current.x || p.z !== lastServer.current.z;
-    if (serverMoved) {
+    if (dashPos) {
+      renderPos.current.set(dashPos.x, 0, dashPos.z);
+      vel.current.set(
+        (dashPos.x - g.position.x) / safeDt,
+        0,
+        (dashPos.z - g.position.z) / safeDt,
+      );
+      lastServer.current = { x: dashPos.x, z: dashPos.z, t: now };
+    } else if (serverMoved) {
       const elapsed = Math.max(0.016, (now - lastServer.current.t) / 1000);
       vel.current.set(
         (p.x - lastServer.current.x) / elapsed,
@@ -272,17 +269,21 @@ function RemotePlayerAvatar({
       }
     }
 
-    // Dead-reckon between patches, then soft-correct to authority
-    renderPos.current.x += vel.current.x * safeDt;
-    renderPos.current.z += vel.current.z * safeDt;
-    const blend = 1 - Math.exp(-18 * safeDt);
-    renderPos.current.x = THREE.MathUtils.lerp(renderPos.current.x, p.x, blend * 0.85);
-    renderPos.current.z = THREE.MathUtils.lerp(renderPos.current.z, p.z, blend * 0.85);
+    if (!dashPos) {
+      // Dead-reckon between patches, then soft-correct to authority
+      renderPos.current.x += vel.current.x * safeDt;
+      renderPos.current.z += vel.current.z * safeDt;
+      const blend = 1 - Math.exp(-18 * safeDt);
+      renderPos.current.x = THREE.MathUtils.lerp(renderPos.current.x, p.x, blend * 0.85);
+      renderPos.current.z = THREE.MathUtils.lerp(renderPos.current.z, p.z, blend * 0.85);
 
-    const err = Math.hypot(renderPos.current.x - p.x, renderPos.current.z - p.z);
-    if (err > 2.5) {
-      renderPos.current.set(p.x, 0, p.z);
-      vel.current.set(0, 0, 0);
+      const err = Math.hypot(renderPos.current.x - p.x, renderPos.current.z - p.z);
+      const spd = Math.hypot(vel.current.x, vel.current.z);
+      // Hard snap only for true teleports — keep fast dashes (Charge) fluid.
+      if (err > 2.5 && spd < 7) {
+        renderPos.current.set(p.x, 0, p.z);
+        vel.current.set(0, 0, 0);
+      }
     }
 
     g.position.set(
@@ -436,7 +437,13 @@ function RemotePlayerAvatar({
         <SpiritVesselFx
           characterRoot={scene}
           getColor={() => colorRef.current}
-          getOpacity={() => ghostOpacityRef.current}
+          getOpacity={() => {
+            const p = room.state?.players?.get(sessionId) as
+              | { statuses?: Parameters<typeof isStealthedStatus>[0] }
+              | undefined;
+            if (isStealthedStatus(p?.statuses)) return 0;
+            return ghostOpacityRef.current;
+          }}
           getAura={() => {
             const p = room.state?.players?.get(sessionId) as
               | { pattern?: string }
@@ -453,6 +460,7 @@ function RemotePlayerAvatar({
             const p = room.state?.players?.get(sessionId) as
               | { statuses?: Parameters<typeof collectStatusRows>[0] }
               | undefined;
+            if (isStealthedStatus(p?.statuses)) return [];
             return collectStatusRows(p?.statuses);
           }}
         />
@@ -463,10 +471,7 @@ function RemotePlayerAvatar({
               | { statuses?: Parameters<typeof collectStatusRows>[0] }
               | undefined;
             // Html ornaments ignore mesh visibility — hide while stealthed.
-            if (
-              hasStatusId(p?.statuses, "cloaked") ||
-              hasStatusId(p?.statuses, "revengePhased")
-            ) {
+            if (isStealthedStatus(p?.statuses)) {
               return [];
             }
             return collectStatusRows(p?.statuses);

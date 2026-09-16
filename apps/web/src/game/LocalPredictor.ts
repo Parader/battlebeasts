@@ -10,6 +10,7 @@ import {
   resolveCastMoveMul,
   resolveComboContinueMoveMul,
   sampleTravel,
+  aimTravelAlongCursor,
   dashTravelYaw,
   sweepTravel,
   travelDistance,
@@ -211,13 +212,19 @@ export class LocalPredictor {
     return Boolean(this.comboGapAbilityId && performance.now() < this.comboGapUntil);
   }
 
-  beginTravelFromCast(abilityId: string, yaw: number, moveX = 0, moveZ = 0) {
+  beginTravelFromCast(
+    abilityId: string,
+    yaw: number,
+    moveX = 0,
+    moveZ = 0,
+    aim?: { x: number; z: number } | null,
+  ) {
     const def = ABILITIES[abilityId];
     if (!def) return;
     const travel = resolveTravel(def);
     // Hold-to-confirm blinks wait for confirmCast — don't snap on impact enter.
     if (def.confirmOnRelease) return;
-    const travelYaw = abilityId === "dash" ? dashTravelYaw(yaw, moveX, moveZ) : yaw;
+    let travelYaw = abilityId === "dash" ? dashTravelYaw(yaw, moveX, moveZ) : yaw;
     if (travel.mode === "instant") {
       const dist = travelDistance(def);
       const ideal = sampleTravel(this.state, travelYaw, dist, 1);
@@ -232,7 +239,16 @@ export class LocalPredictor {
       return;
     }
     if (travel.mode !== "translate") return;
-    const dist = travelDistance(def);
+    let dist = travelDistance(def);
+    if (abilityId === "smash" || abilityId === "dash") {
+      const along = aimTravelAlongCursor(
+        { x: this.state.x, z: this.state.z, yaw: travelYaw },
+        aim,
+        dist,
+      );
+      dist = along.distance;
+      travelYaw = along.yaw;
+    }
     const dur = travelDurationMs(def);
     const from = { x: this.state.x, z: this.state.z };
     const ideal = sampleTravel(from, travelYaw, dist, 1);
@@ -246,7 +262,7 @@ export class LocalPredictor {
       yaw: travelYaw,
       distance: dist * scale,
       startMs: performance.now() + travelTakeoffDelayMs(def),
-      durationMs: Math.max(16, dur * Math.max(0.05, scale)),
+      durationMs: Math.max(16, dur * Math.max(0.05, scale || 1)),
     };
   }
 

@@ -1,5 +1,7 @@
 import {
   elementType,
+  PVE_CONTENTS,
+  PVP_MODES,
   type MapColliderSpec,
   type MapElement,
   type MapElementParamValue,
@@ -519,6 +521,51 @@ function GroupInspector({ ids }: { ids: string[] }) {
   );
 }
 
+function MapInspector() {
+  const { doc } = useEditor();
+  const tagged = new Set(doc.modeIds ?? []);
+  const toggle = (modeId: string, on: boolean) => {
+    docStore.edit((d) => {
+      const next = new Set(d.modeIds ?? []);
+      if (on) next.add(modeId);
+      else next.delete(modeId);
+      d.modeIds = next.size > 0 ? [...next] : undefined;
+    }, "modeIds");
+  };
+
+  return (
+    <div className="section">
+      <h3>Map</h3>
+      <span className="muted">
+        {doc.name} · {doc.id}
+      </span>
+      <p className="muted" style={{ marginTop: 10, marginBottom: 6 }}>
+        Modes this map is tagged for. Tagged maps win over a mode&apos;s default arena.
+      </p>
+      {PVP_MODES.filter((m) => m.enabled).map((mode) => (
+        <label key={mode.id} className="check">
+          <input
+            type="checkbox"
+            checked={tagged.has(mode.id)}
+            onChange={(e) => toggle(mode.id, e.target.checked)}
+          />
+          {mode.label}
+        </label>
+      ))}
+      {PVE_CONTENTS.filter((c) => c.enabled).map((content) => (
+        <label key={content.id} className="check">
+          <input
+            type="checkbox"
+            checked={tagged.has(content.id)}
+            onChange={(e) => toggle(content.id, e.target.checked)}
+          />
+          {content.label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export function Inspector() {
   const { doc, selectedId, selectedIds } = useEditor();
   const { index } = usePropIndex();
@@ -531,12 +578,7 @@ export function Inspector() {
   if (element) return <ElementInspector el={element} />;
 
   if (!prop) {
-    return (
-      <div className="section">
-        <h3>Inspector</h3>
-        <span className="muted">Nothing selected.</span>
-      </div>
-    );
+    return <MapInspector />;
   }
 
   const entry = index?.byKey.get(prop.prop);

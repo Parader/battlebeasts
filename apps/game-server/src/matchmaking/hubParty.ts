@@ -35,6 +35,8 @@ export type HubParty = {
   splitSides: boolean;
   /** PvP skirmish third column. */
   teamCOpen: boolean;
+  /** Battleground custom-side size (2–5). */
+  teamSize?: number;
 };
 
 export function partyFamily(party: HubParty): PvpFamily {
@@ -143,6 +145,7 @@ export function toPartySnapshot(party: HubParty): PartySnapshot {
     queued: party.queued,
     splitSides: party.splitSides,
     teamCOpen: party.teamCOpen,
+    teamSize: party.teamSize,
   };
 }
 
@@ -181,6 +184,7 @@ export class HubPartyRegistry {
       queued: false,
       splitSides: kind === "pvp",
       teamCOpen: false,
+      teamSize: family === "battleground" ? 5 : undefined,
     };
     party.members.set(leader.sessionId, { ...leader, seat: "teamA" });
     this.parties.set(party.partyId, party);

@@ -539,7 +539,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
             ))}
 
             <WorldTargets room={room} />
-            <Decoys room={room} />
+            <Decoys room={room} localSessionId={localSessionId} relation="ally" />
             <HubPushBalls room={room} />
             <Volcanoes room={room} />
             <RockWalls room={room} />

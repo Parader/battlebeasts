@@ -213,7 +213,7 @@ export const STATUSES: Record<string, StatusDef> = {
     name: "Silenced",
     polarity: "debuff",
     mechanic: "silence",
-    durationMs: 1500,
+    durationMs: 2000,
     blocksMove: false,
     blocksCast: true,
     maxStacks: 1,

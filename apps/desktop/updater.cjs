@@ -1,10 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 
 const DEFAULT_FEED =
   "https://github.com/Parader/battlebeasts/releases/latest/download/latest.json";
+const DEFAULT_LAUNCHER_FEED =
+  "https://github.com/Parader/battlebeasts/releases/download/launcher/latest-launcher.json";
 const DEFAULT_GAME_SERVER_URL = "ws://74.59.153.60:2567";
 const MAX_ATTEMPTS = 3;
 
@@ -166,6 +168,147 @@ function atomicReplace(fromDir, toDir) {
   rmrf(bak);
 }
 
+function cmpVersion(a, b) {
+  const pa = String(a || "")
+    .split(/[^\d]+/)
+    .filter(Boolean)
+    .map((n) => Number.parseInt(n, 10) || 0);
+  const pb = String(b || "")
+    .split(/[^\d]+/)
+    .filter(Boolean)
+    .map((n) => Number.parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+function launcherSpecFrom(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const version = raw.version != null ? String(raw.version).trim() : "";
+  const name =
+    typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : "MageTrials-Launcher.exe";
+  const url =
+    typeof raw.url === "string" && raw.url.trim()
+      ? raw.url.trim()
+      : name
+        ? `https://github.com/Parader/battlebeasts/releases/download/launcher/${name}`
+        : "";
+  if (!version || !url) return null;
+  return {
+    version,
+    url,
+    sha256: typeof raw.sha256 === "string" ? raw.sha256.trim() : "",
+    name,
+  };
+}
+
+function batQuote(value) {
+  return `"${String(value).replaceAll("%", "%%").replaceAll('"', '""')}"`;
+}
+
+function scheduleLauncherSwap(currentExe, nextExe) {
+  const bat = `${nextExe}.swap.cmd`;
+  const pid = process.pid;
+  const src = batQuote(nextExe);
+  const dest = batQuote(currentExe);
+  fs.writeFileSync(
+    bat,
+    [
+      "@echo off",
+      "setlocal",
+      ":wait",
+      "ping 127.0.0.1 -n 2 >nul",
+      `tasklist /FI "PID eq ${pid}" 2>nul | findstr /I /C:"No tasks" >nul`,
+      "if errorlevel 1 goto wait",
+      "set tries=0",
+      ":copy",
+      `copy /Y ${src} ${dest} >nul`,
+      "if not errorlevel 1 goto launch",
+      "set /a tries+=1",
+      "if %tries% GEQ 40 goto launch",
+      "ping 127.0.0.1 -n 2 >nul",
+      "goto copy",
+      ":launch",
+      `start "" ${dest}`,
+      `del /F /Q ${src} >nul 2>&1`,
+      `(goto) 2>nul & del /F /Q "%~f0"`,
+    ].join("\r\n"),
+    "utf8",
+  );
+  const child = spawn(process.env.ComSpec || "cmd.exe", ["/d", "/c", bat], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+}
+
+async function applyLauncherUpdate(spec, opts) {
+  const execPath = opts.execPath;
+  const onStatus = opts.onStatus;
+  const onProgress = opts.onProgress;
+  const dest = path.join(
+    path.dirname(execPath),
+    `.${path.basename(execPath, ".exe")}.${spec.version}.new.exe`,
+  );
+  onStatus({ phase: "updating", message: "Updating launcher…" });
+  await downloadFile(spec.url, dest, onProgress);
+  if (spec.sha256) {
+    const hash = await sha256File(dest);
+    if (hash.toLowerCase() !== spec.sha256.toLowerCase()) {
+      try {
+        fs.rmSync(dest, { force: true });
+      } catch {
+        // ignore
+      }
+      throw new Error("Launcher checksum mismatch");
+    }
+  }
+  onStatus({ phase: "updating", message: "Restarting launcher…" });
+  scheduleLauncherSwap(execPath, dest);
+  return true;
+}
+
+async function resolveLauncherSpec(feed) {
+  const fromFeed = launcherSpecFrom(feed && feed.launcher);
+  if (fromFeed) return fromFeed;
+  try {
+    return launcherSpecFrom(await fetchJson(DEFAULT_LAUNCHER_FEED));
+  } catch {
+    return null;
+  }
+}
+
+async function tryLauncherUpdate(opts, ctx) {
+  if (!opts.packaged || !opts.execPath || process.platform !== "win32") return null;
+  if (path.basename(opts.execPath).toLowerCase() === "electron.exe") return null;
+  const spec = await resolveLauncherSpec(ctx.feed);
+  if (!spec || cmpVersion(spec.version, String(opts.launcherVersion || "")) <= 0) return null;
+  try {
+    await applyLauncherUpdate(spec, {
+      execPath: opts.execPath,
+      onStatus: opts.onStatus,
+      onProgress: opts.onProgress,
+    });
+    return {
+      ok: true,
+      canPlay: false,
+      restartLauncher: true,
+      contentDir: ctx.playable ? ctx.installed : undefined,
+      gameServerUrl: ctx.gameServerUrl || DEFAULT_GAME_SERVER_URL,
+      version: ctx.localVersion,
+      notes: ctx.notes,
+      title: ctx.title,
+    };
+  } catch (err) {
+    console.warn("[updater] launcher self-update failed", err);
+    return null;
+  }
+}
+
 function assetUrl(feed, pack) {
   if (!pack || typeof pack !== "object") return null;
   if (typeof pack.url === "string" && pack.url.trim()) return pack.url.trim();
@@ -182,6 +325,9 @@ function assetUrl(feed, pack) {
  *   onStatus?: (s: object) => void,
  *   onProgress?: (p: { received: number, total: number }) => void,
  *   onNotes?: (n: object) => void,
+ *   packaged?: boolean,
+ *   execPath?: string,
+ *   launcherVersion?: string,
  * }} opts
  */
 async function runUpdater(opts) {
@@ -190,6 +336,7 @@ async function runUpdater(opts) {
   const onStatus = typeof opts.onStatus === "function" ? opts.onStatus : () => {};
   const onProgress = typeof opts.onProgress === "function" ? opts.onProgress : () => {};
   const onNotes = typeof opts.onNotes === "function" ? opts.onNotes : () => {};
+  const launcherOpts = { ...opts, onStatus, onProgress };
 
   const installed = contentDir(userData);
   const localVersion = readLocalVersion(installed);
@@ -200,6 +347,14 @@ async function runUpdater(opts) {
     onStatus({ phase: "checking", message: "Checking for updates…" });
     feed = await fetchJson(feedUrl);
   } catch (err) {
+    const restarted = await tryLauncherUpdate(launcherOpts, {
+      feed: null,
+      playable,
+      installed,
+      localVersion,
+      gameServerUrl: DEFAULT_GAME_SERVER_URL,
+    });
+    if (restarted) return restarted;
     if (playable) {
       onStatus({
         phase: "stale",
@@ -239,6 +394,17 @@ async function runUpdater(opts) {
     typeof feed.gameServerUrl === "string" && feed.gameServerUrl.trim()
       ? feed.gameServerUrl.trim()
       : DEFAULT_GAME_SERVER_URL;
+
+  const restarted = await tryLauncherUpdate(launcherOpts, {
+    feed,
+    playable,
+    installed,
+    localVersion,
+    gameServerUrl,
+    notes,
+    title,
+  });
+  if (restarted) return restarted;
 
   const remoteVersion = feed.contentVersion != null ? String(feed.contentVersion) : "";
   if (playable && remoteVersion && localVersion === remoteVersion) {
@@ -344,5 +510,6 @@ module.exports = {
   runUpdater,
   contentDir,
   DEFAULT_FEED,
+  DEFAULT_LAUNCHER_FEED,
   DEFAULT_GAME_SERVER_URL,
 };

@@ -12,6 +12,19 @@ export const AIM_RELATION_COLORS = {
 
 export type AimRelation = "ally" | "enemy" | "neutral";
 
+/** Same non-empty team = ally; any other team letter = enemy (FFA inclusive). */
+export function resolveAimRelation(
+  localTeam: string | undefined,
+  remoteTeam: string | undefined,
+  fallback: AimRelation,
+): AimRelation {
+  if (localTeam && remoteTeam) {
+    if (remoteTeam === localTeam) return "ally";
+    return "enemy";
+  }
+  return fallback;
+}
+
 type Props = {
   /** Accent color; readable on dark ground. */
   color?: string;

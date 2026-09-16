@@ -5,6 +5,7 @@ import {
   RIFT_FISSURE_CAST,
   abilityEffectKind,
   buildMagmaOrbsFlightPath,
+  aimTravelAlongCursor,
   clampGroundAim,
   clampTargetBeforeWalls,
   dashTravelYaw,
@@ -494,10 +495,20 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
           : def.range > 0
             ? def.range
             : 5;
-      // Smash / aim dashes: land at clamped cursor when range allows.
+      // Smash / Dash: land at clamped cursor when range allows.
       let land: { x: number; z: number };
-      if (def.id === "smash" && def.range > 0) {
-        land = clampPlace(owner, aim, def.range, Math.max(0.5, def.radius ?? 2), statics);
+      if ((def.id === "smash" || def.id === "dash") && def.range > 0) {
+        const facingYaw =
+          def.id === "dash"
+            ? dashTravelYaw(owner.yaw, input.moveX ?? 0, input.moveZ ?? 0)
+            : owner.yaw;
+        const along = aimTravelAlongCursor(
+          { x: owner.x, z: owner.z, yaw: facingYaw },
+          aim,
+          def.range,
+        );
+        const ideal = sampleTravel(owner, along.yaw, along.distance, 1);
+        land = sweepTravel(owner, ideal, COLLISION.playerRadius, statics);
       } else {
         const dashYaw =
           def.id === "dash"
@@ -508,7 +519,7 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
       const aoe = Math.max(0.5, def.radius ?? 0.95);
       return {
         ...base,
-        rangeRing: 0,
+        rangeRing: def.id === "smash" || def.id === "dash" ? def.range : 0,
         aimX: land.x,
         aimZ: land.z,
         aimRadius: aoe,
