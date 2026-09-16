@@ -14,6 +14,26 @@
       "offsetX": 0.215,
       "offsetZ": -0.044
     },
+    "cemetery/PP_Cemetery_Grass_03": {
+      "mode": "none"
+    },
+    "cemetery/PP_Tree_Spooky_05": {
+      "mode": "circle",
+      "radius": 0.957,
+      "offsetX": 0.127
+    },
+    "cemetery/PP_Tree_Spooky_10": {
+      "mode": "circle",
+      "radius": 0.735,
+      "offsetX": -0.268,
+      "offsetZ": 0.56
+    },
+    "cemetery/PP_Tree_Spooky_11": {
+      "mode": "circle",
+      "radius": 1.286,
+      "offsetX": 0.891,
+      "offsetZ": 0.5
+    },
     "desert/PP_Sphinx_01": {
       "mode": "none"
     },
@@ -90,6 +110,12 @@
       "mode": "box",
       "halfX": 0.535,
       "halfZ": 0.535,
+      "yaw": 0
+    },
+    "kingdom/PP_Destroyed_House_Preset_01": {
+      "mode": "box",
+      "halfX": 4.184,
+      "halfZ": 4.184,
       "yaw": 0
     },
     "kingdom/PP_Preset_Blacksmith_01": {

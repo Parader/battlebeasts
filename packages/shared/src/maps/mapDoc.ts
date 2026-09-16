@@ -393,6 +393,62 @@ export function mapSpawnForSlot(doc: MapDoc, team: MapTeam, slot: number): MapEl
   return list[Math.max(0, Math.min(list.length - 1, slot))];
 }
 
+const PVE_HOLDOUT_STAGGER_M = 1.75;
+
+type PvePose = { x: number; z: number; yaw: number };
+
+function groundHalf(doc: MapDoc): { halfX: number; halfZ: number } {
+  const g = doc.ground;
+  if (g.kind === "painted" || g.kind === "plane") {
+    return { halfX: g.sizeX / 2, halfZ: g.sizeZ / 2 };
+  }
+  return { halfX: 40, halfZ: 40 };
+}
+
+/** Team-A player pads — one is rolled as the party's shared start. */
+export function mapDocPveStartPads(doc: MapDoc): PvePose[] {
+  return mapPlayerSpawns(doc, "a").map((el) => ({ x: el.x, z: el.z, yaw: el.yaw }));
+}
+
+/**
+ * Coop Wave Assault pads: the whole party clusters on one rolled start pad.
+ */
+export function mapDocPvePlayerSpawn(doc: MapDoc, slot: number, holdoutIndex = 0): PvePose {
+  const pads = mapDocPveStartPads(doc);
+  const home = pads.length
+    ? pads[((holdoutIndex % pads.length) + pads.length) % pads.length]!
+    : { x: 0, z: 0, yaw: 0 };
+  const s = Math.max(0, Math.floor(slot));
+  if (s === 0) return home;
+  const angle = ((s - 1) / 3) * Math.PI * 2;
+  return {
+    x: home.x + Math.sin(angle) * PVE_HOLDOUT_STAGGER_M,
+    z: home.z + Math.cos(angle) * PVE_HOLDOUT_STAGGER_M,
+    yaw: home.yaw,
+  };
+}
+
+/**
+ * Directions enemies rush in from: authored entity pads, or the other player
+ * pads when the map has no entity layer. WaveDirector pulls each point in
+ * toward the living party rather than spawning on the pad itself.
+ */
+export function mapDocPveIngressPoints(doc: MapDoc): Array<{ x: number; z: number }> {
+  const entities = mapElementsOfType(doc, "entity_spawn");
+  if (entities.length > 0) return entities.map((e) => ({ x: e.x, z: e.z }));
+  const pads = mapDocPveStartPads(doc);
+  if (pads.length > 1) return pads.map((p) => ({ x: p.x, z: p.z }));
+  const { halfX, halfZ } = groundHalf(doc);
+  const r = Math.max(28, Math.min(Math.min(halfX, halfZ) * 0.55, Math.min(halfX, halfZ) - 8));
+  const home = pads[0] ?? { x: 0, z: 0, yaw: 0 };
+  const out: Array<{ x: number; z: number }> = [];
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    out.push({ x: home.x + Math.sin(a) * r, z: home.z + Math.cos(a) * r });
+  }
+  return out;
+}
+
 /**
  * Every placeable NPC in a map, resolved and ready to render or talk to.
  *

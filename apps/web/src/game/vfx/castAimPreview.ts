@@ -7,6 +7,7 @@ import {
   buildMagmaOrbsFlightPath,
   clampGroundAim,
   clampTargetBeforeWalls,
+  dashTravelYaw,
   firewallWallPoints,
   magmaOrbsMaxFlightTs,
   pointInFront,
@@ -113,8 +114,9 @@ function blinkLand(
   owner: { x: number; z: number; yaw: number },
   distance: number,
   statics: readonly StaticCollider[],
+  yaw = owner.yaw,
 ): { x: number; z: number } {
-  const ideal = sampleTravel(owner, owner.yaw, Math.max(0.5, distance), 1);
+  const ideal = sampleTravel(owner, yaw, Math.max(0.5, distance), 1);
   return sweepTravel(owner, ideal, COLLISION.playerRadius, statics);
 }
 
@@ -225,6 +227,9 @@ export type CastPreviewInput = {
   statics: readonly StaticCollider[];
   /** Optional healable bodies for ally-bind aim (players / dummies). */
   healables?: readonly { id: string; x: number; z: number }[];
+  /** Live WASD world stick — dash lands along this when moving. */
+  moveX?: number;
+  moveZ?: number;
 };
 
 /** Build a frame of cast-aim geometry (world XZ). */
@@ -494,7 +499,11 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
       if (def.id === "smash" && def.range > 0) {
         land = clampPlace(owner, aim, def.range, Math.max(0.5, def.radius ?? 2), statics);
       } else {
-        land = blinkLand(owner, dist, statics);
+        const dashYaw =
+          def.id === "dash"
+            ? dashTravelYaw(owner.yaw, input.moveX ?? 0, input.moveZ ?? 0)
+            : owner.yaw;
+        land = blinkLand(owner, dist, statics, dashYaw);
       }
       const aoe = Math.max(0.5, def.radius ?? 0.95);
       return {

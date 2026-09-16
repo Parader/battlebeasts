@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 type Props = {
   /** 0–100 asset download/compile progress */
   percent: number;
@@ -10,6 +12,16 @@ type Props = {
  */
 export function GameLoadingOverlay({ percent, statusLabel }: Props) {
   const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  const [showReload, setShowReload] = useState(false);
+
+  useEffect(() => {
+    if (clamped < 98) {
+      setShowReload(false);
+      return;
+    }
+    const id = window.setTimeout(() => setShowReload(true), 6000);
+    return () => window.clearTimeout(id);
+  }, [clamped]);
 
   return (
     <div
@@ -35,6 +47,18 @@ export function GameLoadingOverlay({ percent, statusLabel }: Props) {
             style={{ width: `${clamped}%` }}
           />
         </div>
+        {showReload ? (
+          <div className="mt-4">
+            <p className="bb-meta mb-2">Taking longer than expected.</p>
+            <button
+              type="button"
+              className="bb-btn-brass"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

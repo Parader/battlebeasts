@@ -29,6 +29,7 @@ export * from "./maps/groundMaterials";
 export * from "./maps/mapDoc";
 export * from "./maps/registry";
 export * from "./pveWave";
+export * from "./pveElites";
 export * from "./npcs";
 export * from "./content";
 export * from "./ranked";

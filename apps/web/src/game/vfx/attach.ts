@@ -12,17 +12,22 @@ export function findMixamoBone(
     .toLowerCase()
     .replace(/^mixamorig[:_]?/, "")
     .replace(/[^a-z0-9]/g, "");
-  let found: THREE.Object3D | null = null;
+  let bone: THREE.Object3D | null = null;
+  let fallback: THREE.Object3D | null = null;
   root.traverse((obj) => {
-    if (found) return;
     if (obj.userData.bbBoneSkin || obj.userData.bbVesselBody) return;
     const n = obj.name
       .toLowerCase()
       .replace(/^mixamorig[:_]?/, "")
       .replace(/[^a-z0-9]/g, "");
-    if (n === want) found = obj;
+    if (n !== want) return;
+    if ((obj as THREE.Bone).isBone) {
+      if (!bone) bone = obj;
+      return;
+    }
+    if (!fallback) fallback = obj;
   });
-  return found;
+  return bone ?? fallback;
 }
 
 /**

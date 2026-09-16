@@ -442,6 +442,7 @@ function HubPushBalls({ room }: { room: Room | null }) {
 
 export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
+    const cameraYaw = useRef(0);
     const aimNdc = useRef(new THREE.Vector2(0, 0));
     const aimReady = useRef(false);
     const { camera, gl } = useThree();
@@ -465,6 +466,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
     useFrame(() => {
         const p = predictedRef.current;
         localPos.current.set(p.x, 0, p.z);
+        cameraYaw.current = p.yaw;
     });
 
     useEffect(() => {
@@ -578,6 +580,7 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
             <HubIntroCamera predictedRef={predictedRef} />
             <FixedFollowCamera
                 target={localPos}
+                yawRef={cameraYaw}
                 pitchDeg={CAMERA.pitchDeg}
                 distance={CAMERA.distance}
                 minDistance={CAMERA.minDistance}

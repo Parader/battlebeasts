@@ -1,41 +1,73 @@
-# Mage Trials desktop (Electron)
+# Mage Trials desktop launcher
 
-Local client that packages the web build + GLB assets so friends load them from disk instead of through a tunnel.
+Players download this EXE **once**. Game files live in `%APPDATA%\Mage Trials\content\` and update themselves from GitHub. Play talks to the **prod** game-server on this PC (`ws://74.59.153.60:2567`).
 
-## Dev (you host game-server locally)
+## Two servers on this machine
+
+| | Port | Who |
+|---|---|---|
+| **Prod (Docker)** | `2567` public | Friends / packaged launcher |
+| **Dev (Node)** | `2568` localhost | You, `pnpm dev` |
+
+`pnpm dev:server` never binds 2567, so you can keep coding while people play. Recreating Docker **drops anyone in a match**.
+
+## You (local)
 
 ```bash
-# terminal 1
+# terminal 1 — your work server (2568)
 pnpm --filter @battlebeasts/game-server dev
 
-# terminal 2
+# terminal 2 — Vite + Electron against 2568
 pnpm --filter @battlebeasts/desktop dev
 ```
 
 Optional:
 
 ```bash
-BB_GAME_SERVER_URL=ws://192.168.1.42:2567 pnpm --filter @battlebeasts/desktop dev
+BB_GAME_SERVER_URL=ws://127.0.0.1:2568 pnpm --filter @battlebeasts/desktop dev
 BB_OPEN_DEVTOOLS=1 pnpm --filter @battlebeasts/desktop dev
 ```
 
-## Package a Windows portable build
+## Prod on this PC (Docker Desktop)
+
+Needs `apps/game-server/.env` (`SUPABASE_URL`, `SUPABASE_SECRET_KEY`). Port 2567 must stay forwarded on the router like today. Docker Compose uses `compose.env` (empty) so `$` in those keys is not eaten.
+
+```bash
+pnpm prod:up      # start last built image
+pnpm prod:down    # stop
+```
+
+If this PC is off or Docker is down, friends can still update the client but cannot play.
+
+## Ship a stable patch
+
+1. Add/update the newest entry in [apps/web/src/game/patchNotesData.json](../web/src/game/patchNotesData.json) (`balance` / `fixes` / `content`). That file is what players see in-game **and** on the launcher.
+2. Bump `contentVersion` in [patch-notes.json](patch-notes.json) if you ship more than once the same day.
+3. From repo root:
+
+```bash
+pnpm release
+```
+
+That rebuilds/restarts **Docker prod** (kicks live matches) and uploads `latest.json` + `content.zip` to GitHub. The launcher checks the feed when it opens, every minute while it is showing, and again when you press Play, so a new drop applies before the game window appears.
+
+Client-only (cosmetics / UI, no server change):
+
+```bash
+pnpm publish:game
+```
+
+Requires [GitHub CLI](https://cli.github.com/) (`gh auth login`) and a **public** Releases download (private release assets will not work for players).
+
+## Package the launcher EXE (rare)
 
 ```bash
 pnpm --filter @battlebeasts/desktop dist
 ```
 
-Output: `apps/desktop/release-v5/` (portable / unpacked). That folder is **gitignored** — do not commit packaged builds.
+Output: `apps/desktop/release-v5/MageTrials-Launcher-*.exe` (gitignored). This no longer embeds the 1 GB game. Upload it as a GitHub Release tag `launcher-*` with `--latest=false` so it does not steal the game content feed.
 
-Next to the exe (or extract folder), edit `config.json`:
-
-```json
-{
-  "gameServerUrl": "ws://YOUR_LAN_IP:2567"
-}
-```
-
-Your friend runs the portable app; you run `pnpm --filter @battlebeasts/game-server dev` (firewall allow port 2567). Assets stay local — only gameplay traffic hits the network.
+Beside the exe you can drop a `config.json` to override `gameServerUrl` (see [config.example.json](config.example.json)). If that file is absent, the launcher uses `gameServerUrl` from the GitHub feed, then the baked home IP.
 
 ## Google sign-in (desktop)
 

@@ -1536,7 +1536,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     maxRank: 1,
     affectedTags: ["Movement", "Dash", "Blink"] as const,
     exactEffect:
-      "After Dash or Teleport, you may recast the same spell once within 2.5 seconds at 75% travel. The recast does not restart cooldown.",
+      "After a Space movement (except Spirit Form, Rift Fissure, and Triple Blink), you may recast the same spell once within 2.5 seconds at 75% travel. The recast does not restart cooldown.",
     balanceNote: "Full recast (i-frames, haste, Teleport channel). Never a third cast.",
     status: "catalog",
     implemented: true,

@@ -8,7 +8,7 @@ import {
   clampPvePartySize,
   COOP_PVE_MAX_PLAYERS,
   PVE_RECONNECT_GRACE_MS,
-  PVE_ZOMBIE_KIND,
+  isPveWaveMobKind,
   PVP_RECONNECT_GRACE_MS,
   RECONNECT_RESUME_GRACE_MS,
   RESPAWN_LOCK_MS,
@@ -26,6 +26,9 @@ import {
   npcElementIdFrom,
   NPC_INTERACT_RADIUS,
   mapIdForMode,
+  mapPveIngressPoints,
+  mapPvePlayerSpawn,
+  mapPveStartPads,
   mapSpawn,
   mapSpawnsFor,
   type SpawnPose,
@@ -123,6 +126,8 @@ export class ContentRoom extends ServicedRoom {
   private expectedPartySize = 1;
   private waveStartArmed = false;
   private waveStartTimeout: { clear: () => void } | null = null;
+  /** Shared Wave Assault start pad; whole party clusters here. */
+  private pveHoldoutIndex = 0;
 
   private matchGrantKey(): string {
     return `${this.matchId || this.roomId}:r${this.rematchIndex}`;
@@ -165,7 +170,7 @@ export class ContentRoom extends ServicedRoom {
       this.maxClients = COOP_PVE_MAX_PLAYERS;
     }
     this.combat = new CombatSystem(this as never, {
-      canHurtPlayers: true,
+      canHurtPlayers: this.kind !== "pve",
       onPlayerDamaged: (sessionId, damage, attackerId) => {
         const p = this.state.players.get(sessionId);
         if (!p) return;
@@ -201,9 +206,18 @@ export class ContentRoom extends ServicedRoom {
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
 
     if (this.kind === "pve" && this.mode === "dungeon") {
-      this.waveDirector = new WaveDirector(this.state, this.combat, (hud) => {
-        this.broadcast("wave_hud", hud);
-      }, this.partySize);
+      this.rollPveHoldout();
+      const holdout = this.pveHoldoutPose();
+      this.waveDirector = new WaveDirector(
+        this.state,
+        this.combat,
+        (hud) => {
+          this.broadcast("wave_hud", hud);
+        },
+        this.partySize,
+        this.mapId ? mapPveIngressPoints(this.mapId) : [],
+        holdout,
+      );
     }
 
     this.onMessage("input", (client, message: { input: PlayerInput }) => {
@@ -222,6 +236,15 @@ export class ContentRoom extends ServicedRoom {
       this.state.paused = pause;
       this.state.pauseReason = pause ? "pve_manual" : "";
       this.broadcast("pve_pause", { paused: pause });
+    });
+
+    this.onMessage("pve_friendly_fire", (client, message: { enabled?: boolean }) => {
+      if (this.kind !== "pve") return;
+      if (!this.state.players.has(client.sessionId)) return;
+      const enabled = Boolean(message?.enabled);
+      this.state.pveFriendlyFire = enabled;
+      this.combat.setCanHurtPlayers(enabled);
+      this.broadcast("pve_friendly_fire", { enabled });
     });
 
     this.onMessage("return_hub", (client) => {
@@ -413,7 +436,7 @@ export class ContentRoom extends ServicedRoom {
         });
       }
     } else {
-      // PvE / dungeon: staggered cemetery pads so coop fighters don't stack.
+      // PvE / dungeon: cluster at the map holdout so coop fighters don't stack.
       let spawn: { x: number; z: number; yaw: number };
       if (this.mode === "dungeon") {
         const preferred = Number(options.spawnSlot);
@@ -421,7 +444,9 @@ export class ContentRoom extends ServicedRoom {
           Number.isFinite(preferred) ? Math.floor(preferred) : undefined,
         );
         this.spawnSlotBySession.set(client.sessionId, slot);
-        spawn = this.spawnPose("a", slot, false);
+        spawn = this.mapId
+          ? mapPvePlayerSpawn(this.mapId, slot, this.pveHoldoutIndex)
+          : this.spawnPose("a", slot, false);
       } else {
         const spawnIndex = this.state.players.size;
         const angle = (spawnIndex / Math.max(1, this.maxClients)) * Math.PI * 2;
@@ -566,6 +591,17 @@ export class ContentRoom extends ServicedRoom {
     this.combat.clearSession(sessionId);
   }
 
+  /** Pick one authored player pad; the whole Wave Assault party starts there. */
+  private rollPveHoldout() {
+    const pads = this.mapId ? mapPveStartPads(this.mapId) : [];
+    this.pveHoldoutIndex = pads.length > 0 ? Math.floor(Math.random() * pads.length) : 0;
+  }
+
+  private pveHoldoutPose(): SpawnPose {
+    if (!this.mapId) return { x: 0, z: 0, yaw: 0 };
+    return mapPvePlayerSpawn(this.mapId, 0, this.pveHoldoutIndex);
+  }
+
   /**
    * Unique cemetery pad (0..COOP_PVE_MAX_PLAYERS-1). Prefers matchmaking spawnSlot when free.
    */
@@ -681,7 +717,7 @@ export class ContentRoom extends ServicedRoom {
   private clearWaveMobs() {
     const ids: string[] = [];
     this.state.targets.forEach((t, id) => {
-      if (t.kind === PVE_ZOMBIE_KIND) ids.push(id);
+      if (isPveWaveMobKind(t.kind)) ids.push(id);
     });
     for (const id of ids) {
       this.waveDirector?.onTargetKilled(id);
@@ -699,12 +735,23 @@ export class ContentRoom extends ServicedRoom {
     this.combat.clearRoundWorldEffects();
 
     let kills = 0;
-    this.state.players.forEach((p) => {
+    const rows: MatchRecapRow[] = [];
+    this.state.players.forEach((p, sessionId) => {
       kills += p.statKills;
       p.rematchReady = false;
+      rows.push({
+        sessionId,
+        displayName: p.displayName,
+        team: p.team,
+        kills: p.statKills,
+        damageDealt: p.statDamageDealt,
+        damageTaken: p.statDamageTaken,
+        healing: p.statHealing,
+        shield: p.statShield,
+      });
     });
     const wave = this.waveDirector?.getWaveIndex() ?? 0;
-    this.broadcast("pve_run_end", { kills, wave });
+    this.broadcast("pve_run_end", { kills, wave, rows });
     this.broadcast("pve_pause", { paused: true });
   }
 
@@ -724,6 +771,8 @@ export class ContentRoom extends ServicedRoom {
     this.state.pauseReason = "";
     this.clearWaveMobs();
     this.combat.clearRoundWorldEffects();
+    this.rollPveHoldout();
+    this.waveDirector?.setHoldout(this.pveHoldoutPose());
     this.state.players.forEach((p, sessionId) => {
       p.statKills = 0;
       p.statDamageDealt = 0;
@@ -731,6 +780,11 @@ export class ContentRoom extends ServicedRoom {
       p.statHealing = 0;
       p.statShield = 0;
       p.rematchReady = false;
+      const slot = this.spawnSlotBySession.get(sessionId) ?? 0;
+      const pose = this.mapId
+        ? mapPvePlayerSpawn(this.mapId, slot, this.pveHoldoutIndex)
+        : this.pveHoldoutPose();
+      this.spawnBySession.set(sessionId, pose);
       this.softRespawnPlayer(sessionId, p);
     });
     this.waveDirector?.resetRun(Date.now());

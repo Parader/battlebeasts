@@ -2,6 +2,7 @@ const { app, BrowserWindow, shell, ipcMain } = require("electron");
 const http = require("node:http");
 const path = require("node:path");
 const fs = require("node:fs");
+const { runUpdater, DEFAULT_GAME_SERVER_URL } = require("./updater.cjs");
 
 const isDev = !app.isPackaged;
 const PROTOCOL = "battlebeasts";
@@ -20,6 +21,18 @@ const UI_PORT = 3850;
 let oauthLoopbackServer = null;
 let oauthLoopbackTimer = null;
 let uiServer = null;
+let uiRoot = null;
+let launcherWin = null;
+let gameWin = null;
+let updateResult = null;
+let updateInFlight = null;
+let lastLauncherStatus = null;
+let lastLauncherProgress = null;
+let lastLauncherNotes = null;
+let lastLauncherReady = null;
+let quitting = false;
+let updatePollTimer = null;
+const UPDATE_POLL_MS = 60_000;
 /** Last OAuth redirect URL (with ?code=). Survives until the renderer consumes it. */
 let pendingOAuthCallbackUrl = null;
 
@@ -47,16 +60,14 @@ function saveAuthStorage() {
   }
 }
 
-/** Default host for friend builds — override with config.json or BB_GAME_SERVER_URL. */
-const DEFAULT_GAME_SERVER_URL = "ws://74.59.153.60:2567";
+const DEV_GAME_SERVER_URL = "ws://127.0.0.1:2568";
 
-/** Resolve game server URL: env > config.json beside exe > baked host IP. */
+/** Resolve game server URL: env > packaged feed/config > baked home IP. Dev always uses 2568. */
 function resolveGameServerUrl() {
-  if (process.env.BB_GAME_SERVER_URL) return process.env.BB_GAME_SERVER_URL;
+  if (process.env.BB_GAME_SERVER_URL) return process.env.BB_GAME_SERVER_URL.trim();
+  if (isDev) return DEV_GAME_SERVER_URL;
   try {
-    const configPath = isDev
-      ? path.join(__dirname, "config.json")
-      : path.join(path.dirname(process.execPath), "config.json");
+    const configPath = path.join(path.dirname(process.execPath), "config.json");
     if (fs.existsSync(configPath)) {
       const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
       if (typeof raw.gameServerUrl === "string" && raw.gameServerUrl.trim()) {
@@ -66,6 +77,9 @@ function resolveGameServerUrl() {
   } catch {
     // ignore malformed config
   }
+  if (updateResult && typeof updateResult.gameServerUrl === "string" && updateResult.gameServerUrl.trim()) {
+    return updateResult.gameServerUrl.trim();
+  }
   return DEFAULT_GAME_SERVER_URL;
 }
 
@@ -74,12 +88,33 @@ function findProtocolUrl(argv = process.argv) {
 }
 
 function focusMainWindow() {
-  const win = BrowserWindow.getAllWindows()[0];
+  const win =
+    (gameWin && !gameWin.isDestroyed() ? gameWin : null) ||
+    (launcherWin && !launcherWin.isDestroyed() ? launcherWin : null) ||
+    BrowserWindow.getAllWindows()[0];
   if (!win) return null;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
   return win;
+}
+
+function sendToLauncher(channel, payload) {
+  if (channel === "updater:status") lastLauncherStatus = payload;
+  if (channel === "updater:progress") lastLauncherProgress = payload;
+  if (channel === "updater:notes") lastLauncherNotes = payload;
+  if (channel === "updater:ready") lastLauncherReady = payload;
+  if (launcherWin && !launcherWin.isDestroyed()) {
+    launcherWin.webContents.send(channel, payload);
+  }
+}
+
+function flushLauncherState() {
+  if (!launcherWin || launcherWin.isDestroyed()) return;
+  if (lastLauncherNotes) launcherWin.webContents.send("updater:notes", lastLauncherNotes);
+  if (lastLauncherStatus) launcherWin.webContents.send("updater:status", lastLauncherStatus);
+  if (lastLauncherProgress) launcherWin.webContents.send("updater:progress", lastLauncherProgress);
+  if (lastLauncherReady) launcherWin.webContents.send("updater:ready", lastLauncherReady);
 }
 
 function publishAuthCallback(url) {
@@ -198,23 +233,38 @@ function contentTypeFor(filePath) {
   return MIME[path.extname(filePath).toLowerCase()] || "application/octet-stream";
 }
 
-function startUiServer() {
-  if (uiServer) return Promise.resolve(`http://${UI_HOST}:${UI_PORT}/`);
-  const root = path.join(__dirname, "renderer");
+function isInsideRoot(root, filePath) {
+  const rel = path.relative(path.resolve(root), path.resolve(filePath));
+  return Boolean(rel) && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+function startUiServer(root) {
+  const resolvedRoot = path.resolve(root);
+  if (uiServer) {
+    if (uiRoot === resolvedRoot) return Promise.resolve(`http://${UI_HOST}:${UI_PORT}/`);
+    return new Promise((resolve, reject) => {
+      uiServer.close(() => {
+        uiServer = null;
+        uiRoot = null;
+        startUiServer(resolvedRoot).then(resolve, reject);
+      });
+    });
+  }
+  uiRoot = resolvedRoot;
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       try {
         const url = new URL(req.url || "/", `http://${UI_HOST}:${UI_PORT}`);
         let rel = decodeURIComponent(url.pathname);
-        if (rel === "/") rel = "/index.html";
-        const filePath = path.normalize(path.join(root, rel));
-        if (!filePath.startsWith(root)) {
+        if (rel === "/" || rel === "") rel = "index.html";
+        rel = rel.replace(/^\/+/, "");
+        const filePath = path.normalize(path.join(resolvedRoot, rel));
+        if (!isInsideRoot(resolvedRoot, filePath)) {
           res.writeHead(403).end("Forbidden");
           return;
         }
         if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-          // SPA fallback
-          const indexPath = path.join(root, "index.html");
+          const indexPath = path.join(resolvedRoot, "index.html");
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
           fs.createReadStream(indexPath).pipe(res);
           return;
@@ -227,6 +277,7 @@ function startUiServer() {
     });
     server.once("error", (err) => {
       uiServer = null;
+      uiRoot = null;
       reject(err);
     });
     server.listen(UI_PORT, UI_HOST, () => {
@@ -358,16 +409,15 @@ if (!gotLock) {
     return true;
   });
 
-  async function createWindow() {
-    const gameServerUrl = resolveGameServerUrl();
-
-    const win = new BrowserWindow({
+  function gameWindowOptions(gameServerUrl) {
+    return {
       width: 1280,
       height: 800,
       minWidth: 960,
       minHeight: 600,
       title: "Mage Trials",
       backgroundColor: "#000000",
+      autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(__dirname, "preload.cjs"),
         contextIsolation: true,
@@ -375,34 +425,171 @@ if (!gotLock) {
         sandbox: true,
         additionalArguments: [`--bb-game-server=${gameServerUrl}`],
       },
-    });
+    };
+  }
 
-    win.webContents.setWindowOpenHandler(({ url }) => {
-      void shell.openExternal(url);
+  function createLauncherWindow() {
+    if (launcherWin && !launcherWin.isDestroyed()) {
+      launcherWin.setSkipTaskbar(false);
+      if (launcherWin.isMinimized()) launcherWin.restore();
+      launcherWin.show();
+      launcherWin.focus();
+      return launcherWin;
+    }
+    launcherWin = new BrowserWindow({
+      width: 1100,
+      height: 720,
+      minWidth: 800,
+      minHeight: 520,
+      title: "Mage Trials",
+      backgroundColor: "#242424",
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: path.join(__dirname, "preload.cjs"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    launcherWin.setMenuBarVisibility(false);
+    launcherWin.webContents.on("did-finish-load", () => flushLauncherState());
+    launcherWin.on("show", () => {
+      startUpdatePoll();
+      void startUpdate();
+    });
+    launcherWin.on("hide", () => stopUpdatePoll());
+    launcherWin.on("closed", () => {
+      stopUpdatePoll();
+      launcherWin = null;
+    });
+    void launcherWin.loadFile(path.join(__dirname, "launcher", "index.html"));
+    return launcherWin;
+  }
+
+  function hideLauncher() {
+    stopUpdatePoll();
+    if (!launcherWin || launcherWin.isDestroyed()) return;
+    launcherWin.setSkipTaskbar(true);
+    launcherWin.hide();
+  }
+
+  function showLauncher() {
+    const win = createLauncherWindow();
+    win.setSkipTaskbar(false);
+    win.show();
+    win.focus();
+    if (updateResult && updateResult.canPlay) {
+      sendToLauncher("updater:ready", {
+        canPlay: true,
+        error: null,
+        stale: Boolean(updateResult.stale),
+      });
+    }
+    flushLauncherState();
+    return win;
+  }
+
+  async function createGameWindow(contentRoot, gameServerUrl) {
+    if (gameWin && !gameWin.isDestroyed()) {
+      gameWin.focus();
+      return gameWin;
+    }
+    const url = gameServerUrl || resolveGameServerUrl();
+    gameWin = new BrowserWindow(gameWindowOptions(url));
+    gameWin.setMenuBarVisibility(false);
+    gameWin.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+      void shell.openExternal(openUrl);
       return { action: "deny" };
+    });
+    gameWin.on("closed", () => {
+      gameWin = null;
+      if (isDev || quitting) return;
+      showLauncher();
     });
 
     if (isDev) {
-      const url = process.env.BB_VITE_URL ?? "http://localhost:5173";
-      void win.loadURL(url);
+      const viteUrl = process.env.BB_VITE_URL ?? "http://localhost:5173";
+      void gameWin.loadURL(viteUrl);
       if (process.env.BB_OPEN_DEVTOOLS === "1") {
-        win.webContents.openDevTools({ mode: "detach" });
+        gameWin.webContents.openDevTools({ mode: "detach" });
       }
-      return;
+      return gameWin;
     }
 
-    try {
-      const uiUrl = await startUiServer();
-      void win.loadURL(uiUrl);
-    } catch (err) {
-      console.error("[desktop] UI server failed, falling back to loadFile", err);
-      void win.loadFile(path.join(__dirname, "renderer", "index.html"));
-    }
+    const uiUrl = await startUiServer(contentRoot);
+    void gameWin.loadURL(uiUrl);
+    return gameWin;
   }
+
+  function startUpdatePoll() {
+    if (updatePollTimer) return;
+    updatePollTimer = setInterval(() => {
+      if (gameWin && !gameWin.isDestroyed()) return;
+      if (!launcherWin || launcherWin.isDestroyed() || !launcherWin.isVisible()) return;
+      void startUpdate();
+    }, UPDATE_POLL_MS);
+  }
+
+  function stopUpdatePoll() {
+    if (!updatePollTimer) return;
+    clearInterval(updatePollTimer);
+    updatePollTimer = null;
+  }
+
+  async function startUpdate() {
+    if (updateInFlight) return updateInFlight;
+    lastLauncherReady = null;
+    updateInFlight = runUpdater({
+      userData: app.getPath("userData"),
+      onStatus: (payload) => sendToLauncher("updater:status", payload),
+      onProgress: (payload) => sendToLauncher("updater:progress", payload),
+      onNotes: (payload) => sendToLauncher("updater:notes", payload),
+    })
+      .then((result) => {
+        updateResult = result;
+        sendToLauncher("updater:ready", {
+          canPlay: Boolean(result.canPlay),
+          error: result.error || null,
+          stale: Boolean(result.stale),
+        });
+        return result;
+      })
+      .finally(() => {
+        updateInFlight = null;
+      });
+    return updateInFlight;
+  }
+
+  ipcMain.handle("launcher-play", async () => {
+    sendToLauncher("updater:status", { phase: "checking", message: "Checking for updates…" });
+    const result = await startUpdate();
+    if (!result || !result.canPlay || !result.contentDir) return false;
+    hideLauncher();
+    try {
+      await createGameWindow(result.contentDir, resolveGameServerUrl());
+      return true;
+    } catch (err) {
+      showLauncher();
+      const message = err instanceof Error ? err.message : String(err);
+      sendToLauncher("updater:status", { phase: "error", message: "Couldn’t start the game." });
+      sendToLauncher("updater:ready", { canPlay: true, error: message });
+      return false;
+    }
+  });
+
+  ipcMain.handle("updater-retry", async () => {
+    await startUpdate();
+    return true;
+  });
 
   app.whenReady().then(() => {
     registerProtocolClient();
-    void createWindow();
+    if (isDev) {
+      void createGameWindow(path.join(__dirname, "renderer"), resolveGameServerUrl());
+    } else {
+      createLauncherWindow();
+      void startUpdate();
+    }
 
     const coldStartUrl = findProtocolUrl(process.argv);
     if (coldStartUrl && coldStartUrl.includes("code=")) {
@@ -410,7 +597,13 @@ if (!gotLock) {
     }
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+      if (BrowserWindow.getAllWindows().length === 0) {
+        if (isDev) void createGameWindow(path.join(__dirname, "renderer"), resolveGameServerUrl());
+        else {
+          createLauncherWindow();
+          void startUpdate();
+        }
+      }
     });
   });
 
@@ -428,6 +621,7 @@ if (!gotLock) {
   });
 
   app.on("before-quit", () => {
+    quitting = true;
     stopOAuthLoopback();
   });
 }

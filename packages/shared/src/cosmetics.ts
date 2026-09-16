@@ -82,8 +82,8 @@ export type CosmeticItemDef = {
   /** Uniform or per-axis scale on top of the exported mesh. */
   scale?: number | { x?: number; y?: number; z?: number };
   /**
-   * `skinned` = deform with the live Mixamo skeleton (chest, pants).
-   * Default `rigid` = parent meshes to one bone each (hat, pads).
+   * `skinned` = deform with the live Mixamo skeleton.
+   * Default `rigid` is leftover — every shipped GLB is skinned.
    */
   rig?: "rigid" | "skinned";
   /**
@@ -91,6 +91,11 @@ export type CosmeticItemDef = {
    * `male` / `female` hide it on the other vessel (Y Bot / current hero).
    */
   body?: "any" | "male" | "female";
+  /**
+   * Rest-pose outward push in meters. Default 0 — UV-chip garments read as
+   * separate plates if inflated.
+   */
+  inflate?: number;
 };
 
 export type CosmeticFit = {
@@ -163,6 +168,12 @@ export function isSkinnedCosmetic(def: CosmeticItemDef): boolean {
   return Boolean((def.file || def.fileMale) && def.rig === "skinned");
 }
 
+/** Outward rest-pose inflate. Off unless a catalog item sets `inflate`. */
+export function cosmeticInflateMeters(def: CosmeticItemDef): number {
+  if (typeof def.inflate === "number") return Math.max(0, def.inflate);
+  return 0;
+}
+
 /** Rigid skin shipped as its own GLB and parented to Mixamo bones at runtime. */
 export function isBoneSkin(def: CosmeticItemDef): boolean {
   return Boolean(def.file || def.fileMale);
@@ -201,14 +212,62 @@ export const COSMETIC_CATALOG: Record<string, CosmeticItemDef> = {
     meshName: "WizardHat",
     file: "hat_wizard.glb",
     bone: "Head",
+    rig: "skinned",
+  },
+  head_set_2: {
+    id: "head_set_2",
+    slot: "hat",
+    name: "Head Set 2",
+    meshName: "Head set 2",
+    file: "head_set_2.glb",
+    bone: "Head",
+    rig: "skinned",
+  },
+  head_set_3: {
+    id: "head_set_3",
+    slot: "hat",
+    name: "Head Set 3",
+    meshName: "Head set 3",
+    file: "head_set_3.glb",
+    bone: "Head",
+    rig: "skinned",
+  },
+  head_set_4: {
+    id: "head_set_4",
+    slot: "hat",
+    name: "Head Set 4",
+    meshName: "Head Set 4",
+    file: "head_set_4.glb",
+    bone: "Head",
+    rig: "skinned",
+  },
+  head_set_5: {
+    id: "head_set_5",
+    slot: "hat",
+    name: "Head Set 5",
+    meshName: "Head Set 5",
+    file: "head_set_5.glb",
+    bone: "Head",
+    rig: "skinned",
+  },
+  head_set_6: {
+    id: "head_set_6",
+    slot: "hat",
+    name: "Head Set 6",
+    meshName: "Head set 6",
+    file: "head_set_6.glb",
+    rig: "skinned",
+    bones: ["Head"],
   },
   shoulders_set_1: {
     id: "shoulders_set_1",
     slot: "shoulders",
     name: "Shoulder Set 1",
-    meshNames: ["Shoulder set 1 - 1", "Shoulder set 1 - 2"],
+    meshName: "Shoulder set 1",
+    meshNames: ["Shoulder set 1 - 1", "Shoulder set 1 - 2", "Shoulder set 1"],
     file: "shoulders_set_1.glb",
     fileMale: "shoulders_set_1_male.glb",
+    rig: "skinned",
     bones: ["LeftShoulder", "RightShoulder"],
   },
   shoulders_set_2: {
@@ -262,6 +321,25 @@ export const COSMETIC_CATALOG: Record<string, CosmeticItemDef> = {
     rig: "skinned",
     bones: ["Spine", "Spine1", "Spine2"],
   },
+  chest_set_5: {
+    id: "chest_set_5",
+    slot: "chest",
+    name: "Chest Set 5",
+    meshName: "Chest Set 5",
+    file: "chest_set_5.glb",
+    fileMale: "chest_set_5_male.glb",
+    rig: "skinned",
+    bones: ["Spine", "Spine1", "Spine2"],
+  },
+  chest_set_6: {
+    id: "chest_set_6",
+    slot: "chest",
+    name: "Chest Set 6",
+    meshName: "Chest Set 6",
+    file: "chest_set_6.glb",
+    rig: "skinned",
+    bones: ["Spine", "Spine1", "Spine2"],
+  },
   pants_set_1: {
     id: "pants_set_1",
     slot: "legs",
@@ -269,6 +347,15 @@ export const COSMETIC_CATALOG: Record<string, CosmeticItemDef> = {
     meshName: "Pants Set 1",
     file: "pants_set_1.glb",
     fileMale: "pants_set_1_male.glb",
+    rig: "skinned",
+    bones: ["Hips", "LeftUpLeg", "LeftLeg", "RightUpLeg", "RightLeg"],
+  },
+  pants_set_2: {
+    id: "pants_set_2",
+    slot: "legs",
+    name: "Pants Set 2",
+    meshName: "Pants Set 2",
+    file: "pants_set_2.glb",
     rig: "skinned",
     bones: ["Hips", "LeftUpLeg", "LeftLeg", "RightUpLeg", "RightLeg"],
   },
@@ -290,30 +377,66 @@ export const COSMETIC_CATALOG: Record<string, CosmeticItemDef> = {
     name: "Bracer Set 1",
     meshName: "Bracers set 1",
     file: "bracers_set_1.glb",
+    rig: "skinned",
     bones: ["LeftForeArm", "RightForeArm"],
   },
+  bracers_set_2: {
+    id: "bracers_set_2",
+    slot: "gloves",
+    name: "Bracers Set 2",
+    meshName: "Bracers Set 2",
+    file: "bracers_set_2.glb",
+    fileMale: "bracers_set_2_male.glb",
+    rig: "skinned",
+    bones: ["LeftForeArm", "RightForeArm"],
+  },
+
+  boots_set_2: {
+    id: "boots_set_2",
+    slot: "shoes",
+    name: "Boots Set 2",
+    meshName: "Boots Set 2",
+    file: "boots_set_2.glb",
+    rig: "skinned",
+    bones: ["LeftLeg", "LeftFoot", "LeftToeBase", "RightLeg", "RightFoot", "RightToeBase"],
+  },
+
+  shoulder_set_3: {
+    id: "shoulder_set_3",
+    slot: "shoulders",
+    name: "Shoulder Set 3",
+    meshName: "Shoulder set 3",
+    file: "shoulder_set_3.glb",
+    rig: "skinned",
+    bones: ["LeftShoulder", "RightShoulder"],
+  },
+  shoulder_set_4: {
+    id: "shoulder_set_4",
+    slot: "shoulders",
+    name: "Shoulder Set 4",
+    meshName: "Shoulders Set 4",
+    file: "shoulder_set_4.glb",
+    rig: "skinned",
+    bones: ["LeftShoulder", "RightShoulder"],
+  },
+  shoulder_set_5: {
+    id: "shoulder_set_5",
+    slot: "shoulders",
+    name: "Shoulder Set 5",
+    meshName: "Shoulders Set 5",
+    file: "shoulder_set_5.glb",
+    rig: "skinned",
+    bones: ["LeftShoulder", "RightShoulder"],
+  },
+
   belt_set_1: {
     id: "belt_set_1",
     slot: "belt",
-    name: "Sash Belt 1",
+    name: "Belt Set 1",
+    meshName: "Belt set 1",
     file: "belt_set_1.glb",
     bone: "Hips",
-  },
-  head_set_2: {
-    id: "head_set_2",
-    slot: "hat",
-    name: "Head Set 2",
-    meshName: "Head set 2",
-    file: "head_set_2.glb",
-    bone: "Head",
-  },
-  head_set_3: {
-    id: "head_set_3",
-    slot: "hat",
-    name: "Head Set 3",
-    meshName: "Head set 3",
-    file: "head_set_3.glb",
-    bone: "Head",
+    rig: "skinned",
   },
 
 };

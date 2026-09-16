@@ -1,0 +1,1425 @@
+{
+  "version": 1,
+  "id": "pve_infinite_waves_1",
+  "name": "PVE - Infinite Waves - 1",
+  "ground": {
+    "kind": "painted",
+    "sizeX": 250,
+    "sizeZ": 250,
+    "resX": 512,
+    "resZ": 512,
+    "layers": [
+      "dry_earth",
+      "mud_rocks",
+      "grass_path",
+      "sand"
+    ],
+    "splatUrl": "assets/maps/pve_infinite_waves_1.splat.png",
+    "heightScale": 0
+  },
+  "env": {},
+  "props": [
+    {
+      "id": "p001",
+      "prop": "kingdom/PP_Destroyed_House_Preset_01",
+      "x": -28,
+      "y": 1.312,
+      "z": -8.5,
+      "yaw": 6.021385919380436,
+      "pivotX": 3.763,
+      "pivotZ": 3.753,
+      "scale": 1,
+      "collider": {
+        "mode": "box",
+        "halfX": 4.184,
+        "halfZ": 4.184,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p002",
+      "prop": "kingdom/PP_Destroyed_House_Preset_02",
+      "x": -17.25,
+      "y": 1.686999999999993,
+      "z": 15,
+      "yaw": 5.759586531581287,
+      "pivotX": 3.753,
+      "pivotZ": 2.5,
+      "scale": 1,
+      "collider": {
+        "mode": "box",
+        "halfX": 4.179,
+        "halfZ": 2.932,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "p003",
+      "prop": "cemetery/PP_Tree_Spooky_05",
+      "x": 20.75,
+      "y": 0.13,
+      "z": 3.75,
+      "yaw": 2.0943951023931953,
+      "pivotX": -0.127,
+      "pivotZ": -0.085,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 0.957,
+        "offsetX": 0.127
+      }
+    },
+    {
+      "id": "p004",
+      "prop": "cemetery/PP_Tree_Spooky_08",
+      "x": 15.5,
+      "y": -0.0020000000000071055,
+      "z": -3.25,
+      "yaw": 2.8797932657906435,
+      "pivotX": -0.274,
+      "pivotZ": 0.219,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 0.591,
+        "offsetX": 0.192,
+        "offsetZ": -0.167
+      }
+    },
+    {
+      "id": "p005",
+      "prop": "cemetery/PP_Tree_Spooky_09",
+      "x": 19,
+      "y": -0.002,
+      "z": -13.75,
+      "yaw": 6.021385919380436,
+      "pivotX": 1.182,
+      "pivotZ": 0.602,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 0.693,
+        "offsetX": -1.088,
+        "offsetZ": -0.687
+      }
+    },
+    {
+      "id": "p006",
+      "prop": "cemetery/PP_Tree_Spooky_10",
+      "x": 26.5,
+      "y": -0.0020000000000071055,
+      "z": -9,
+      "yaw": 0.5235987755982988,
+      "pivotX": 0.286,
+      "pivotZ": -0.466,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 0.735,
+        "offsetX": -0.268,
+        "offsetZ": 0.56
+      }
+    },
+    {
+      "id": "p007",
+      "prop": "cemetery/PP_Tree_Spooky_11",
+      "x": 33.75,
+      "y": 0,
+      "z": -0.25,
+      "yaw": 4.1887902047863905,
+      "pivotX": -0.65,
+      "pivotZ": -0.632,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 1.286,
+        "offsetX": 0.891,
+        "offsetZ": 0.5
+      }
+    },
+    {
+      "id": "p008",
+      "prop": "cemetery/PP_Tree_Spooky_12",
+      "x": 32,
+      "y": -0.002,
+      "z": -21,
+      "yaw": 3.141592653589793,
+      "pivotX": 0.344,
+      "pivotZ": -0.164,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 0.5,
+        "offsetX": -0.384,
+        "offsetZ": 0.185
+      }
+    },
+    {
+      "id": "p009",
+      "prop": "cemetery/PP_Tree_Spooky_14",
+      "x": 38.25,
+      "y": 0.051,
+      "z": -27.75,
+      "yaw": 5.235987755982988,
+      "pivotX": 0.387,
+      "pivotZ": 0.205,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 0.744,
+        "offsetX": -0.372,
+        "offsetZ": -0.344
+      }
+    },
+    {
+      "id": "p010",
+      "prop": "cemetery/PP_Cemetery_Grass_03",
+      "x": 15.5,
+      "y": -0.0019999999999964473,
+      "z": 0.5,
+      "yaw": 3.665191429188092,
+      "pivotX": 0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p011",
+      "prop": "cemetery/PP_Cemetery_Grass_04",
+      "x": 19,
+      "y": -0.002,
+      "z": -5.5,
+      "yaw": 0.2617993877991494,
+      "pivotX": 0.024,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p012",
+      "prop": "cemetery/PP_Cemetery_Grass_05",
+      "x": 18.25,
+      "y": -0.002,
+      "z": 1.5,
+      "yaw": 2.356194490192345,
+      "pivotX": 0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p013",
+      "prop": "cemetery/PP_Cemetery_Grass_06",
+      "x": 15,
+      "y": -0.0019999999999964473,
+      "z": 5,
+      "yaw": 4.1887902047863905,
+      "pivotZ": -0.029,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p014",
+      "prop": "cemetery/PP_Cemetery_Grass_07",
+      "x": 22.25,
+      "y": -0.002,
+      "z": 7.5,
+      "yaw": 3.665191429188092,
+      "pivotZ": 0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p015",
+      "prop": "cemetery/PP_Cemetery_Grass_08",
+      "x": 28.5,
+      "y": -0.002,
+      "z": 5,
+      "yaw": 3.926990816987241,
+      "pivotZ": 0.01,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p016",
+      "prop": "cemetery/PP_Cemetery_Grass_09",
+      "x": 29.75,
+      "y": -0.002,
+      "z": -2.25,
+      "yaw": 5.497787143782138,
+      "pivotX": -0.015,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p017",
+      "prop": "cemetery/PP_Cemetery_Grass_10",
+      "x": 19.5,
+      "y": -0.002,
+      "z": -10,
+      "yaw": 6.021385919380436,
+      "pivotX": 0.031,
+      "pivotZ": -0.016,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p018",
+      "prop": "cemetery/PP_Cemetery_Grass_Single_01",
+      "x": 10.5,
+      "y": -0.002,
+      "z": -9.5,
+      "yaw": 1.5707963267948966,
+      "pivotX": -0.05,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p019",
+      "prop": "cemetery/PP_Cemetery_Grass_Single_02",
+      "x": 8,
+      "y": -0.002,
+      "z": -5.25,
+      "yaw": 2.617993877991494,
+      "pivotX": -0.074,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p020",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_01",
+      "x": 15.5,
+      "y": -0.0019999999999964473,
+      "z": 1.25,
+      "yaw": 1.832595714594046,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p021",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_02",
+      "x": 19,
+      "y": -0.002,
+      "z": 6.75,
+      "yaw": 0.5235987755982988,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p022",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_03",
+      "x": 24.5,
+      "y": 0.003,
+      "z": 4.5,
+      "yaw": 0.2617993877991494,
+      "pivotX": 0.011,
+      "pivotZ": -0.013,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p023",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_04",
+      "x": 33.25,
+      "y": 0.003,
+      "z": 5,
+      "yaw": 3.4033920413889422,
+      "pivotX": -0.026,
+      "pivotZ": 0.027,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p024",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_05",
+      "x": 38.25,
+      "y": -0.0019999999999964473,
+      "z": 2.25,
+      "yaw": 5.759586531581287,
+      "pivotX": -0.013,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p025",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_06",
+      "x": 36.75,
+      "y": -0.0019999999999964473,
+      "z": 8.75,
+      "yaw": 5.497787143782138,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p026",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_06",
+      "x": 17.75,
+      "y": -0.002,
+      "z": -9.75,
+      "yaw": 3.4033920413889422,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p027",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_07",
+      "x": 21.25,
+      "y": 0.002,
+      "z": -13,
+      "yaw": 3.926990816987241,
+      "pivotX": 0.02,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p028",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_08",
+      "x": 28,
+      "y": -0.002,
+      "z": -6,
+      "yaw": 5.759586531581287,
+      "pivotX": -0.01,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p029",
+      "prop": "cemetery/PP_Mushroom_Fly_Agaric_Spooky_09",
+      "x": 11.75,
+      "y": 0.0020000000000035528,
+      "z": -3.75,
+      "yaw": 3.141592653589793,
+      "pivotX": 0.018,
+      "pivotZ": 0.014,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p030",
+      "prop": "cemetery/PP_Mushroom_Spooky_01",
+      "x": 12,
+      "y": 0.005,
+      "z": 1.5,
+      "yaw": 6.021385919380436,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p031",
+      "prop": "cemetery/PP_Mushroom_Spooky_02",
+      "x": 17.75,
+      "y": -0.0019999999999964473,
+      "z": -0.25,
+      "yaw": 4.45058959258554,
+      "pivotX": -0.01,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p032",
+      "prop": "cemetery/PP_Mushroom_Spooky_03",
+      "x": 12,
+      "y": -0.002,
+      "z": -8.75,
+      "yaw": 2.8797932657906435,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p033",
+      "prop": "cemetery/PP_Mushroom_Spooky_04",
+      "x": 15,
+      "y": -0.002,
+      "z": -13.25,
+      "yaw": 0.5235987755982988,
+      "pivotX": -0.069,
+      "pivotZ": -0.017,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p034",
+      "prop": "cemetery/PP_Mushroom_Spooky_05",
+      "x": 15.25,
+      "y": 0.003,
+      "z": -19.75,
+      "yaw": 0.2617993877991494,
+      "pivotX": -0.023,
+      "pivotZ": -0.016,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p035",
+      "prop": "cemetery/PP_Mushroom_Spooky_06",
+      "x": 19,
+      "y": 0.003,
+      "z": -23.75,
+      "yaw": 6.021385919380436,
+      "pivotX": -0.014,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p036",
+      "prop": "cemetery/PP_Mushroom_Spooky_07",
+      "x": 25.5,
+      "y": -0.002,
+      "z": -26.25,
+      "yaw": 0.2617993877991494,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p037",
+      "prop": "cemetery/PP_Mushroom_Spooky_08",
+      "x": 29.25,
+      "y": -0.0019999999999964473,
+      "z": -30.25,
+      "yaw": 5.235987755982988,
+      "pivotX": -0.012,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p038",
+      "prop": "cemetery/PP_Mushroom_Spooky_09",
+      "x": 35.5,
+      "y": 0.01,
+      "z": -27.5,
+      "yaw": 2.0943951023931953,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p039",
+      "prop": "cemetery/PP_Mushroom_Spooky_10",
+      "x": 40.5,
+      "y": 0.003,
+      "z": -20.5,
+      "yaw": 0.2617993877991494,
+      "pivotX": 0.019,
+      "pivotZ": 0.01,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p040",
+      "prop": "cemetery/PP_Pumpkin_01",
+      "x": 33,
+      "y": -0.002,
+      "z": -21,
+      "yaw": 1.5707963267948966,
+      "pivotX": -0.013,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p041",
+      "prop": "cemetery/PP_Pumpkin_03",
+      "x": 27.5,
+      "y": -0.002,
+      "z": -8.25,
+      "yaw": 2.8797932657906435,
+      "pivotZ": -0.014,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p042",
+      "prop": "cemetery/PP_Pumpkin_04",
+      "x": 20.75,
+      "y": -0.002,
+      "z": 4.5,
+      "yaw": 6.283185307179586,
+      "pivotZ": -0.01,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p043",
+      "prop": "cemetery/PP_Cemetery_Pebbles_01",
+      "x": 25.5,
+      "y": -0.002,
+      "z": 11.75,
+      "yaw": 0.7853981633974483,
+      "pivotZ": 0.025,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p044",
+      "prop": "cemetery/PP_Cemetery_Pebbles_01",
+      "x": 15,
+      "y": -0.002,
+      "z": 13.25,
+      "yaw": 2.0943951023931953,
+      "pivotZ": 0.025,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p045",
+      "prop": "cemetery/PP_Cemetery_Pebbles_01",
+      "x": 8.25,
+      "y": -0.002,
+      "z": 4.25,
+      "yaw": 0.5235987755982988,
+      "pivotZ": 0.025,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p046",
+      "prop": "cemetery/PP_Cemetery_Pebbles_01",
+      "x": -2.75,
+      "y": -0.002,
+      "z": -5.5,
+      "yaw": 5.759586531581287,
+      "pivotZ": 0.025,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p047",
+      "prop": "cemetery/PP_Cemetery_Pebbles_02",
+      "x": -9.25,
+      "y": -0.002,
+      "z": -2.25,
+      "yaw": 4.974188368183839,
+      "pivotX": 0.015,
+      "pivotZ": -0.02,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p048",
+      "prop": "cemetery/PP_Cemetery_Pebbles_02",
+      "x": -5.5,
+      "y": -0.002,
+      "z": 3.25,
+      "yaw": 2.0943951023931953,
+      "pivotX": 0.015,
+      "pivotZ": -0.02,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p049",
+      "prop": "cemetery/PP_Cemetery_Pebbles_03",
+      "x": -21,
+      "y": -0.002,
+      "z": 2.5,
+      "yaw": 5.497787143782138,
+      "pivotX": -0.013,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p050",
+      "prop": "cemetery/PP_Cemetery_Pebbles_03",
+      "x": -26,
+      "y": -0.002,
+      "z": -1.75,
+      "yaw": 0.5235987755982988,
+      "pivotX": -0.013,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p051",
+      "prop": "cemetery/PP_Cemetery_Pebbles_04",
+      "x": -20.5,
+      "y": -0.002,
+      "z": 9.25,
+      "yaw": 6.021385919380436,
+      "pivotZ": -0.02,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p052",
+      "prop": "cemetery/PP_Cemetery_Pebbles_05",
+      "x": -11,
+      "y": -0.002,
+      "z": 14.5,
+      "yaw": 0.7853981633974483,
+      "pivotX": -0.042,
+      "pivotZ": 0.01,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p053",
+      "prop": "cemetery/PP_Cemetery_Pebbles_06",
+      "x": -14,
+      "y": -0.002,
+      "z": 20.75,
+      "yaw": 1.832595714594046,
+      "pivotX": -0.035,
+      "pivotZ": 0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p054",
+      "prop": "cemetery/PP_Cemetery_Pebbles_07",
+      "x": -20.5,
+      "y": -0.002,
+      "z": 19.25,
+      "yaw": 1.308996938995747,
+      "pivotX": 0.013,
+      "pivotZ": 0.014,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p055",
+      "prop": "cemetery/PP_Cemetery_Pebbles_07",
+      "x": -8.5,
+      "y": -0.002,
+      "z": 29.25,
+      "yaw": 1.5707963267948966,
+      "pivotX": 0.013,
+      "pivotZ": 0.014,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p056",
+      "prop": "cemetery/PP_Cemetery_Pebbles_08",
+      "x": -4,
+      "y": -0.002,
+      "z": 21.75,
+      "yaw": 1.832595714594046,
+      "pivotX": 0.017,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p057",
+      "prop": "cemetery/PP_Cemetery_Pebbles_09",
+      "x": 4.5,
+      "y": -0.002,
+      "z": 15.25,
+      "yaw": 3.141592653589793,
+      "pivotX": -0.021,
+      "pivotZ": 0.025,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p058",
+      "prop": "cemetery/PP_Cemetery_Pebbles_10",
+      "x": 11.5,
+      "y": -0.002,
+      "z": 17.25,
+      "yaw": 4.974188368183839,
+      "pivotZ": -0.017,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p059",
+      "prop": "cemetery/PP_Cemetery_Stone_03",
+      "x": 17.75,
+      "y": -0.0020000000000017764,
+      "z": 16,
+      "yaw": 3.926990816987241,
+      "pivotX": -0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p060",
+      "prop": "cemetery/PP_Cemetery_Stone_03",
+      "x": 10.5,
+      "y": -0.002,
+      "z": 9,
+      "yaw": 1.0471975511965976,
+      "pivotX": -0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p061",
+      "prop": "cemetery/PP_Cemetery_Stone_03",
+      "x": 18.75,
+      "y": -0.0020000000000017764,
+      "z": 4.75,
+      "yaw": 6.021385919380436,
+      "pivotX": -0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p062",
+      "prop": "cemetery/PP_Cemetery_Stone_04",
+      "x": 19.5,
+      "y": -0.0020000000000017764,
+      "z": 2.5,
+      "yaw": 5.497787143782138,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p063",
+      "prop": "cemetery/PP_Cemetery_Stone_04",
+      "x": 15.75,
+      "y": -0.002,
+      "z": -2.5,
+      "yaw": 4.71238898038469,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p064",
+      "prop": "cemetery/PP_Cemetery_Stone_05",
+      "x": 22,
+      "y": -0.0019999999999982237,
+      "z": -8.25,
+      "yaw": 4.45058959258554,
+      "pivotZ": -0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p065",
+      "prop": "cemetery/PP_Cemetery_Stone_05",
+      "x": 30,
+      "y": -0.0020000000000017764,
+      "z": -1,
+      "yaw": 0.5235987755982988,
+      "pivotZ": -0.011,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p066",
+      "prop": "cemetery/PP_Cemetery_Stone_06",
+      "x": 35.25,
+      "y": -0.002,
+      "z": 3.5,
+      "yaw": 0.2617993877991494,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p067",
+      "prop": "cemetery/PP_Cemetery_Stone_06",
+      "x": 38,
+      "y": -0.002,
+      "z": -26.25,
+      "yaw": 2.617993877991494,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p068",
+      "prop": "cemetery/PP_Cemetery_Stone_10",
+      "x": 32,
+      "y": -0.002,
+      "z": -20.25,
+      "yaw": 0.2617993877991494,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p069",
+      "prop": "cemetery/PP_Cemetery_Stone_10",
+      "x": 29.5,
+      "y": -0.0020000000000017764,
+      "z": -20,
+      "yaw": 4.1887902047863905,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p070",
+      "prop": "cemetery/PP_Cemetery_Stone_12",
+      "x": 26.75,
+      "y": -0.002,
+      "z": -13.75,
+      "yaw": 6.283185307179586,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p071",
+      "prop": "cemetery/PP_Cemetery_Stone_12",
+      "x": 2,
+      "y": -0.002,
+      "z": 12,
+      "yaw": 4.45058959258554,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p072",
+      "prop": "cemetery/PP_Cemetery_Stone_12",
+      "x": -1.25,
+      "y": -0.002,
+      "z": 16.25,
+      "yaw": 6.283185307179586,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p073",
+      "prop": "cemetery/PP_Cemetery_Stone_12",
+      "x": -13.25,
+      "y": -0.002,
+      "z": 11,
+      "yaw": 4.71238898038469,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p074",
+      "prop": "cemetery/PP_Cemetery_Stone_12",
+      "x": -28.75,
+      "y": -0.002,
+      "z": 3.25,
+      "yaw": 4.1887902047863905,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p075",
+      "prop": "cemetery/PP_Cemetery_Stone_12",
+      "x": -37.25,
+      "y": -0.002,
+      "z": 1,
+      "yaw": 6.283185307179586,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p076",
+      "prop": "cemetery/PP_Cemetery_Stone_12",
+      "x": -43,
+      "y": -0.002,
+      "z": 3.25,
+      "yaw": 1.308996938995747,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p077",
+      "prop": "cemetery/PP_Cemetery_Stone_13",
+      "x": -15.75,
+      "y": -0.002,
+      "z": 23.25,
+      "yaw": 4.45058959258554,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p078",
+      "prop": "cemetery/PP_Grave_Plateau_01",
+      "x": -5,
+      "y": -0.0019999999999928946,
+      "z": 37.5,
+      "yaw": 2.0943951023931953,
+      "pivotX": 0.025,
+      "pivotZ": 0.112,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "p079",
+      "prop": "cemetery/PP_Rock_Pile_Cemetery_01",
+      "x": -5.75,
+      "y": 0.127,
+      "z": 37.25,
+      "yaw": 0.7853981633974483,
+      "pivotZ": -0.112,
+      "scale": 1,
+      "collider": {
+        "mode": "none"
+      }
+    }
+  ],
+  "walls": [
+    {
+      "id": "w001",
+      "closed": true,
+      "points": [
+        [
+          -110,
+          -110.75
+        ],
+        [
+          -100,
+          110
+        ],
+        [
+          109.5,
+          109.75
+        ],
+        [
+          110.5,
+          -111.5
+        ]
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "id": "e001",
+      "type": "player_spawn",
+      "x": 0,
+      "z": 0,
+      "yaw": 0,
+      "y": -0.0020000000000035528,
+      "params": {
+        "team": "a"
+      }
+    },
+    {
+      "id": "e002",
+      "type": "player_spawn",
+      "x": -70,
+      "z": -60,
+      "yaw": 0.7086262721276703,
+      "y": -0.002,
+      "params": {
+        "team": "a"
+      }
+    },
+    {
+      "id": "e003",
+      "type": "player_spawn",
+      "x": 69.75,
+      "z": -60.25,
+      "yaw": 2.429141745800858,
+      "y": -0.002,
+      "params": {
+        "team": "a"
+      }
+    },
+    {
+      "id": "e005",
+      "type": "player_spawn",
+      "x": -70.25,
+      "z": 80.25,
+      "yaw": -0.8517458200103631,
+      "y": -0.002000000000014211,
+      "params": {
+        "team": "a"
+      }
+    },
+    {
+      "id": "e006",
+      "type": "player_spawn",
+      "x": 70,
+      "z": 80,
+      "yaw": -2.289626326416521,
+      "y": -0.002,
+      "params": {
+        "team": "a"
+      }
+    },
+    {
+      "id": "e004",
+      "type": "entity_spawn",
+      "x": -113,
+      "y": -0.002,
+      "z": 0,
+      "yaw": 0,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e007",
+      "type": "entity_spawn",
+      "x": -112.5,
+      "y": -0.002,
+      "z": 41.75,
+      "yaw": -0.35535688202018045,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e008",
+      "type": "entity_spawn",
+      "x": -108.5,
+      "y": -0.002,
+      "z": 90,
+      "yaw": -0.6924676170655305,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e009",
+      "type": "entity_spawn",
+      "x": -72,
+      "y": -0.002,
+      "z": 116,
+      "yaw": -1.015302591529353,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e010",
+      "type": "entity_spawn",
+      "x": -22.25,
+      "y": -0.002,
+      "z": 115.5,
+      "yaw": -1.3804869342873938,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e011",
+      "type": "entity_spawn",
+      "x": 26.25,
+      "y": -0.002,
+      "z": 116.5,
+      "yaw": -1.7924171260388988,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e012",
+      "type": "entity_spawn",
+      "x": 88.5,
+      "y": -0.002,
+      "z": 116.75,
+      "yaw": -2.21941684478887,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e013",
+      "type": "entity_spawn",
+      "x": 114.75,
+      "y": -0.001999999999985789,
+      "z": 94.25,
+      "yaw": -2.4539678594754832,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e014",
+      "type": "entity_spawn",
+      "x": 116.25,
+      "y": -0.002,
+      "z": 55.25,
+      "yaw": -2.697925009309191,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e015",
+      "type": "entity_spawn",
+      "x": 117,
+      "y": -0.002,
+      "z": 19.75,
+      "yaw": -2.974365697213784,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e016",
+      "type": "entity_spawn",
+      "x": 117,
+      "y": -0.002000000000014211,
+      "z": -16.75,
+      "yaw": 2.999396466478847,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e017",
+      "type": "entity_spawn",
+      "x": 116.75,
+      "y": -0.002000000000014211,
+      "z": -57.75,
+      "yaw": 2.6822368637309983,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e018",
+      "type": "entity_spawn",
+      "x": 118.25,
+      "y": -0.002000000000014211,
+      "z": -93.75,
+      "yaw": 2.471250130608674,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e019",
+      "type": "entity_spawn",
+      "x": 93.25,
+      "y": -0.002,
+      "z": -119.75,
+      "yaw": 2.232417363249565,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e020",
+      "type": "entity_spawn",
+      "x": 35,
+      "y": -0.002,
+      "z": -118.5,
+      "yaw": 1.8579895812153677,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e021",
+      "type": "entity_spawn",
+      "x": -26,
+      "y": -0.002,
+      "z": -118.5,
+      "yaw": 1.354809538101133,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e022",
+      "type": "entity_spawn",
+      "x": -78.75,
+      "y": -0.002000000000014211,
+      "z": -118.25,
+      "yaw": 0.9832817661563602,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e023",
+      "type": "entity_spawn",
+      "x": -117.5,
+      "y": -0.002,
+      "z": -97,
+      "yaw": 0.6901164603666377,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    },
+    {
+      "id": "e024",
+      "type": "entity_spawn",
+      "x": -114.25,
+      "y": -0.0019999999999715783,
+      "z": -40.25,
+      "yaw": 0.3387202046711126,
+      "params": {
+        "entity": "zombie",
+        "behaviour": "fixed",
+        "aggroRadius": 10,
+        "roamRadius": 0
+      }
+    }
+  ]
+}

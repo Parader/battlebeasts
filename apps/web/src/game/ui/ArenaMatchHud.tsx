@@ -153,7 +153,7 @@ export function ArenaMatchHud({ hud }: Props) {
             <div className="bb-meta mt-1 space-y-0.5">
               {flags.map((row) => (
                 <p key={row.id}>
-                  {row.team === "a" ? "A" : "B"} flag — {flagStatus(row)}
+                  {row.team === "a" ? "Red" : "Blue"} flag — {flagStatus(row)}
                 </p>
               ))}
             </div>

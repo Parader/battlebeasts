@@ -122,15 +122,27 @@ function PickupOrbMesh({
   const group = useRef<THREE.Group>(null);
   const coreRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
+  const smokeRef = useRef<THREE.Points>(null);
   const shadowRef = useRef<THREE.Mesh>(null);
   const pickup = room.state?.pickups?.get(id) as PickupNet | undefined;
   const currentScale = useRef(pickup?.available !== false ? 1 : 0);
   const hoverTime = useRef(Math.random() * 10);
   const wasAvailable = useRef(pickup?.available !== false);
   const playedFumes = useRef(pickup?.available === false);
+  const appliedEffect = useRef("");
 
-  const effect = pickup?.effect ?? "energy";
+  const effect = pickup?.effect && pickup.effect !== "random" ? pickup.effect : "energy";
   const mats = matsForEffect(effect);
+
+  const applyTheme = (nextEffect: string) => {
+    const themeId = THEMES[nextEffect] ? nextEffect : "energy";
+    if (themeId === appliedEffect.current) return;
+    appliedEffect.current = themeId;
+    const nextMats = matsForEffect(themeId);
+    if (coreRef.current) coreRef.current.material = nextMats.core;
+    if (glowRef.current) glowRef.current.material = nextMats.glow;
+    if (smokeRef.current) smokeRef.current.material = nextMats.smoke;
+  };
 
   const smokePos = useMemo(() => new Float32Array(SMOKE_COUNT * 3), []);
   const smokeSize = useMemo(() => new Float32Array(SMOKE_COUNT), []);
@@ -153,6 +165,7 @@ function PickupOrbMesh({
     }
 
     const available = p.available !== false;
+    if (p.effect) applyTheme(p.effect);
     if (available && !wasAvailable.current) {
       playedFumes.current = false;
       currentScale.current = 0;
@@ -237,7 +250,7 @@ function PickupOrbMesh({
     <group ref={group}>
       <mesh ref={coreRef} geometry={GEO_CORE} material={mats.core} renderOrder={24} />
       <mesh ref={glowRef} geometry={GEO_GLOW} material={mats.glow} renderOrder={23} />
-      <points geometry={smokeGeo} material={mats.smoke} frustumCulled={false} renderOrder={25} />
+      <points ref={smokeRef} geometry={smokeGeo} material={mats.smoke} frustumCulled={false} renderOrder={25} />
       <mesh
         ref={shadowRef}
         geometry={GEO_SHADOW}

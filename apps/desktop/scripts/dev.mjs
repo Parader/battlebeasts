@@ -38,7 +38,7 @@ waitForVite()
       cwd: desktop,
       env: {
         BB_VITE_URL: process.env.BB_VITE_URL ?? "http://127.0.0.1:5173",
-        BB_GAME_SERVER_URL: process.env.BB_GAME_SERVER_URL ?? "ws://localhost:2567",
+        BB_GAME_SERVER_URL: process.env.BB_GAME_SERVER_URL ?? "ws://127.0.0.1:2568",
         BB_OPEN_DEVTOOLS: process.env.BB_OPEN_DEVTOOLS ?? "",
       },
     });

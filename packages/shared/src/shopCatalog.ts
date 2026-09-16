@@ -165,17 +165,21 @@ for (const aura of COSMETIC_AURAS) {
   };
 }
 
-for (const item of Object.values(COSMETIC_CATALOG)) {
-  const id = `gear_${item.id}`;
-  SHOP_ITEMS[id] = {
-    id,
-    name: item.name,
-    category: "cosmetics",
-    cost: coins(280),
-    grant: { kind: "cosmetic", itemId: item.id },
-    description: COSMETIC_SLOT_LABELS[item.slot],
-  };
+function syncCosmeticShopItems(): void {
+  for (const item of Object.values(COSMETIC_CATALOG)) {
+    const id = `gear_${item.id}`;
+    SHOP_ITEMS[id] = {
+      id,
+      name: item.name,
+      category: "cosmetics",
+      cost: coins(280),
+      grant: { kind: "cosmetic", itemId: item.id },
+      description: COSMETIC_SLOT_LABELS[item.slot],
+    };
+  }
 }
+
+syncCosmeticShopItems();
 
 /** Non-starter emotes — 20 silver (was 2s before economy scale). */
 const EMOTE_SHOP_COPPER = 2000;
@@ -210,12 +214,14 @@ export const SHOP_CATEGORY_LABELS: Record<ShopCategory, string> = {
 };
 
 export function shopItemsForCategory(category: ShopCategory): ShopItemDef[] {
+  syncCosmeticShopItems();
   return Object.values(SHOP_ITEMS).filter(
     (item) => item.category === category && !item.premium,
   );
 }
 
 export function getShopItem(id: string): ShopItemDef | undefined {
+  syncCosmeticShopItems();
   return SHOP_ITEMS[id];
 }
 

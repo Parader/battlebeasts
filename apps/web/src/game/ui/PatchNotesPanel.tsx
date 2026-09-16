@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { markPatchNotesSeen, PATCH_NOTES } from "../patchNotes";
+import { markPatchNotesSeen, PATCH_NOTES, patchNoteLines, type PatchNote } from "../patchNotes";
 import { GamePanelShell } from "./GamePanelShell";
 
 type Props = {
@@ -16,6 +16,43 @@ function formatDate(iso: string): string {
     day: "numeric",
     timeZone: "UTC",
   });
+}
+
+function LineList({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul className="list-disc space-y-1.5 pl-4">
+      {items.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
+function PatchNoteSections({ note }: { note: PatchNote }) {
+  const sections: [string, string[]][] = [
+    ["Balance", patchNoteLines(note, "balance")],
+    ["Bug fixes", patchNoteLines(note, "fixes")],
+    ["New content", patchNoteLines(note, "content")],
+    ["Updates", patchNoteLines(note, "highlights")],
+  ].filter(([, items]) => items.length > 0) as [string, string[]][];
+
+  if (sections.length === 0) return null;
+
+  return (
+    <>
+      {sections.map(([label, items]) => (
+        <li key={label}>
+          {sections.length > 1 ? (
+            <p className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-[var(--bb-brass)]">
+              {label}
+            </p>
+          ) : null}
+          <LineList items={items} />
+        </li>
+      ))}
+    </>
+  );
 }
 
 export function PatchNotesPanel({ open, onClose }: Props) {
@@ -46,10 +83,8 @@ export function PatchNotesPanel({ open, onClose }: Props) {
               </h3>
               <time className="bb-meta shrink-0 tabular-nums">{formatDate(note.date)}</time>
             </div>
-            <ul className="bb-muted mt-2 list-disc space-y-1.5 pl-4">
-              {note.highlights.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
+            <ul className="bb-muted mt-2 space-y-3">
+              <PatchNoteSections note={note} />
             </ul>
             {i < PATCH_NOTES.length - 1 ? (
               <div className="mt-5 border-t border-[var(--bb-panel-line)]" />

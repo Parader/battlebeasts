@@ -3,15 +3,38 @@ import { propUrlForKey } from "@battlebeasts/shared";
 import * as THREE from "three";
 import { assetUrl } from "../assetUrl";
 
-/** Village gallery cloth — vertical banner, paired with a pole. */
+/** Village gallery cloth — vertical banner, paired with a pole (KoTH / domination). */
 export const BG_FLAG_CLOTH_PROP = "kingdom/PP_Flag_11";
 export const BG_FLAG_POLE_PROP = "kingdom/PP_Flag_Pole_01";
 
 export const BG_FLAG_CLOTH_URL = assetUrl(propUrlForKey(BG_FLAG_CLOTH_PROP).replace(/^\//, ""));
 export const BG_FLAG_POLE_URL = assetUrl(propUrlForKey(BG_FLAG_POLE_PROP).replace(/^\//, ""));
 
+/** Authored CTF props — flag1 is blue cloth, flag2 is red. */
+export const BG_FLAG_BLUE_PROP = "flag1";
+export const BG_FLAG_RED_PROP = "flag2";
+
+export const BG_FLAG_BLUE_URL = assetUrl(propUrlForKey(BG_FLAG_BLUE_PROP).replace(/^\//, ""));
+export const BG_FLAG_RED_URL = assetUrl(propUrlForKey(BG_FLAG_RED_PROP).replace(/^\//, ""));
+
 export const BG_FLAG_STAND_HEIGHT = 2.45;
-export const BG_FLAG_CARRY_HEIGHT = 1.55;
+export const BG_FLAG_CARRY_HEIGHT = 1.22;
+
+/** Team A carries the red flag; team B the blue one. */
+export const FLAG_TEAM_A_HEX = "#e11d48";
+export const FLAG_TEAM_A_HOT = "#fb7185";
+export const FLAG_TEAM_B_HEX = "#2563eb";
+export const FLAG_TEAM_B_HOT = "#93c5fd";
+
+export function flagUrlForTeam(team: string | undefined): string {
+  return team === "a" ? BG_FLAG_RED_URL : BG_FLAG_BLUE_URL;
+}
+
+export function flagTrailHex(team: string | undefined): { color: string; hot: string } {
+  return team === "a"
+    ? { color: FLAG_TEAM_A_HEX, hot: FLAG_TEAM_A_HOT }
+    : { color: FLAG_TEAM_B_HEX, hot: FLAG_TEAM_B_HOT };
+}
 
 useGLTF.preload(BG_FLAG_CLOTH_URL);
 useGLTF.preload(BG_FLAG_POLE_URL);
@@ -97,6 +120,15 @@ export function applyFlagTint(mats: readonly THREE.MeshStandardMaterial[], tint:
     const base = (mat.userData.baseColor as THREE.Color | undefined) ?? mat.color;
     mat.color.copy(base).lerp(tint, amount);
   }
+}
+
+export function disposeClonedFlag(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const mat of mats) mat.dispose();
+  });
 }
 
 export type AssembledFlag = {

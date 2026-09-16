@@ -68,25 +68,51 @@ export const GROUND_MATERIALS: readonly GroundMaterialDef[] = [
   // Natural
   polyHaven("grass", "Grass", "aerial_grass_rock", 8, "Natural"),
   polyHaven("grass_leafy", "Grass, leafy", "leafy_grass", 6, "Natural"),
+  polyHaven("grass_woodland", "Grass, woodland", "forrest_ground_01", 6, "Natural"),
+  polyHaven("grass_path", "Grass path", "grass_path_3", 6, "Natural"),
+  polyHaven("pine_needles", "Pine needles", "forrest_ground_03", 6, "Natural"),
   polyHaven("dirt", "Dirt", "brown_mud_leaves_01", 6, "Natural"),
+  polyHaven("dirt_woodland", "Dirt, woodland", "dirt_floor", 6, "Natural"),
   polyHaven("mud", "Mud, wet", "brown_mud_03", 6, "Natural"),
+  polyHaven("mud_rocks", "Mud and rocks", "brown_mud_rocks_01", 6, "Natural"),
   polyHaven("forest_floor", "Forest floor", "forest_ground_04", 7, "Natural"),
   polyHaven("leaves", "Fallen leaves", "dry_decay_leaves", 5, "Natural"),
+  polyHaven("leaves_mossy", "Mossy leaves", "forest_leaves_02", 5, "Natural"),
+  polyHaven("wood_chips", "Wood chips", "wood_chips", 5, "Natural"),
+  polyHaven("pebbles", "Pebbles", "pebble_ground_01", 5, "Natural"),
+  polyHaven("gravel", "Gravel", "gravel_ground_01", 5, "Natural"),
   polyHaven("rock", "Rock", "rocky_terrain_02", 7, "Natural"),
   polyHaven("rock_aerial", "Rock, broken", "aerial_rocks_02", 9, "Natural"),
+  polyHaven("rock_mossy", "Rock, mossy", "mossy_rock", 7, "Natural"),
+  polyHaven("rocky_trail", "Rocky trail", "rocky_trail", 6, "Natural"),
 
   // Arid
   polyHaven("sand_beach", "Sand, beach", "coast_sand_01", 7, "Arid"),
+  polyHaven("sand_pebbly", "Sand, pebbly", "coast_sand_04", 7, "Arid"),
+  polyHaven("sand_red", "Sand, red", "red_sand", 7, "Arid"),
+  polyHaven("sand_gravelly", "Sand, gravelly", "gravelly_sand", 7, "Arid"),
   polyHaven("dry_earth", "Dry earth", "dry_ground_01", 7, "Arid"),
+  polyHaven("cracked_earth", "Cracked earth", "cracked_red_ground", 7, "Arid"),
+  polyHaven("dry_mud", "Dry mud, cracked", "mud_cracked_dry_03", 7, "Arid"),
+  polyHaven("red_mud", "Red mud", "red_mud_stones", 7, "Arid"),
   polyHaven("burned", "Scorched earth", "burned_ground_01", 7, "Arid"),
 
   // Cold
   polyHaven("snow", "Snow", "snow_02", 8, "Cold"),
+  polyHaven("snow_tracked", "Snow, tracked", "snow_01", 8, "Cold"),
+  polyHaven("snow_muddy", "Snow, muddy", "snow_03", 8, "Cold"),
 
   // Built
   polyHaven("cobblestone", "Cobblestone", "cobblestone_floor_08", 5, "Built"),
+  polyHaven("cobblestone_large", "Cobblestone, large", "cobblestone_large_01", 6, "Built"),
+  polyHaven("cobblestone_mossy", "Cobblestone, mossy", "mossy_cobblestone", 5, "Built"),
+  polyHaven("brick_pavement", "Brick pavement", "brick_pavement", 5, "Built"),
   polyHaven("stone_path", "Stone path", "grey_stone_path", 5, "Built"),
+  polyHaven("stone_tiles", "Stone tiles", "stone_tiles_03", 5, "Built"),
   polyHaven("dirt_path", "Dirt path", "stony_dirt_path", 5, "Built"),
+  polyHaven("hex_pavement", "Hex pavement", "hexagonal_concrete_paving", 5, "Built"),
+  polyHaven("concrete", "Concrete", "concrete_pavement", 6, "Built"),
+  polyHaven("asphalt", "Asphalt", "asphalt_02", 8, "Built"),
 
   // Pre-existing set, also what the hub and baked arenas use.
   {

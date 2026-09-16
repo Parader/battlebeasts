@@ -11,6 +11,7 @@ Rig: One bone vs Skinned.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,7 +21,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import blender_export_skin as skin  # noqa: E402
-from skin_manifest import BIND, SKINS  # noqa: E402
+from skin_manifest import BIND, SKINS, bones_for_slot, find_skin, slot_from_id  # noqa: E402
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -80,13 +81,19 @@ def jobs_from_blender() -> list[dict]:
         body = getattr(head, "body", None) or "any"
         rig = head.rig
         meshes = [obj.name for obj in objs]
+        slot = slot_from_id(cid) or head.slot
         if rig == "rigid":
             bones = []
+            missing_bone = False
             for obj in objs:
                 bone = obj.bb_skin.bone
                 if not bone or bone == "NONE":
-                    raise RuntimeError(f"{cid}: {obj.name} needs a Bone (set Rig to One bone)")
+                    missing_bone = True
+                    break
                 bones.append(bone)
+            if missing_bone:
+                rig = "skinned"
+                bones = bones_for_slot(slot, None)
         else:
             bones = []
             seen: set[str] = set()
@@ -95,12 +102,13 @@ def jobs_from_blender() -> list[dict]:
                 if bone and bone != "NONE" and bone not in seen:
                     seen.add(bone)
                     bones.append(bone)
+            bones = bones_for_slot(slot, bones)
         prep = head.prep if head.prep and head.prep != "none" else None
         keep_weights = any(obj.bb_skin.keep_weights for obj in objs)
         jobs.append(
             {
                 "id": cid,
-                "slot": head.slot,
+                "slot": slot,
                 "name": title_from_id(cid),
                 "file": default_skin_file(cid, body, head.file),
                 "meshes": meshes,
@@ -132,6 +140,14 @@ def collect_jobs(only: str, body: str | None = None) -> list[dict]:
     for job in blender_jobs:
         by_key[job_key(job)] = job
     jobs = list(by_key.values())
+    for job in jobs:
+        man = find_skin(job["id"])
+        # Every shipped piece remounts on the live Mixamo skeleton.
+        job["rig"] = "skinned"
+        if man and man.get("bones"):
+            job["bones"] = list(man["bones"])
+        if job.get("prep") in ("split_lr_forearms", "split_lr"):
+            job["prep"] = None
     if only.strip():
         want = {s.strip() for s in only.split(",") if s.strip()}
         jobs = [job for job in jobs if job["id"] in want]
@@ -274,7 +290,7 @@ def _catalog_entry(
         lines.append(f'    fileMale: "{file_male}",')
     if rig == "skinned":
         lines.append('    rig: "skinned",')
-        listed = ", ".join(f'"{b}"' for b in bones) if bones else '"Spine", "Spine1", "Spine2"'
+        listed = ", ".join(f'"{b}"' for b in bones) if bones else '"Head"'
         lines.append(f"    bones: [{listed}],")
     elif len(bones) == 1:
         lines.append(f'    bone: "{bones[0]}",')
@@ -313,7 +329,7 @@ def sync_repo_catalog(jobs: list[dict]) -> list[str]:
         row = by_id.setdefault(
             cid,
             {
-                "slot": job.get("slot") or "chest",
+                "slot": slot_from_id(job.get("id") or "") or job.get("slot") or "chest",
                 "name": title_from_id(cid),
                 "file": f"{cid}.glb",
                 "fileMale": None,
@@ -331,7 +347,7 @@ def sync_repo_catalog(jobs: list[dict]) -> list[str]:
                     row["meshes"] = [female]
         else:
             row["file"] = job.get("file") or f"{cid}.glb"
-            row["slot"] = job.get("slot") or row["slot"]
+            row["slot"] = slot_from_id(cid) or job.get("slot") or row["slot"]
             row["rig"] = job.get("rig") or row["rig"]
             if job.get("bones"):
                 row["bones"] = list(job["bones"])
@@ -348,7 +364,8 @@ def sync_repo_catalog(jobs: list[dict]) -> list[str]:
 
     for cid, row in by_id.items():
         mesh = row["meshes"][0] if row["meshes"] else title_from_id(cid)
-        bones = row["bones"]
+        bones = bones_for_slot(row["slot"], row["bones"])
+        row["bones"] = bones
         entry = _catalog_entry(
             cid,
             row["slot"],
@@ -395,7 +412,7 @@ def sync_repo_catalog(jobs: list[dict]) -> list[str]:
                 row["name"],
                 row["file"],
                 row["meshes"] or [mesh],
-                bones or ["Spine", "Spine1", "Spine2"],
+                bones,
                 row["rig"],
             )
             prefix = re.sub(r"_\d+$", "", cid)
@@ -417,9 +434,17 @@ def sync_repo_catalog(jobs: list[dict]) -> list[str]:
 
     if catalog_changed and catalog_path.is_file():
         catalog_path.write_text(catalog, encoding="utf-8")
+        notes.append("hard-refresh the game client so Merchant / Customization pick up new gear")
     if manifest_changed and manifest_path.is_file():
         manifest_path.write_text(manifest, encoding="utf-8")
     return notes
+
+
+def bump_client_reload() -> None:
+    """Nudge Vite / tsx so a rewritten GLB is not stuck behind a 404 preload cache."""
+    index_path = TOOLS.parent / "packages" / "shared" / "src" / "index.ts"
+    if index_path.is_file():
+        os.utime(index_path, None)
 
 
 def run_jobs(jobs: list[dict], out_dir: Path) -> list[str]:
@@ -451,13 +476,17 @@ def run_jobs(jobs: list[dict], out_dir: Path) -> list[str]:
     for line in sync_repo_catalog(succeeded):
         print(f"[skins] {line}")
     if succeeded:
+        bump_client_reload()
         import bpy
 
         if bpy.app.background:
             print("[skins] save the .blend so Export new & changed can skip unchanged gear")
         else:
-            bpy.ops.wm.save_mainfile()
-            print("[skins] saved workbench (export fingerprints)")
+            try:
+                bpy.ops.wm.save_mainfile()
+                print("[skins] saved workbench (export fingerprints)")
+            except Exception as exc:
+                print(f"[skins] workbench not saved ({exc}); File → Save hero_bind.blend yourself")
     return failed
 
 
@@ -474,36 +503,62 @@ def ensure_skin_rna() -> None:
         print(f"[skins] skin panel RNA not registered ({exc})")
 
 
-def export_split_forearms(mesh_name: str, bones: list[str], out: Path) -> None:
+def lr_bone_pair(bones: list[str]) -> tuple[str, str] | None:
+    left = next((b for b in bones if skin.bone_short_name(b).lower().startswith("left")), None)
+    right = next((b for b in bones if skin.bone_short_name(b).lower().startswith("right")), None)
+    if left and right:
+        return (left, right)
+    return None
+
+
+def export_split_lr(mesh_name: str, bones: list[str], out: Path, arm=None) -> None:
     import blender_migrate_cosmetics as mig
     import bpy
 
-    src = skin.find_mesh(mesh_name)
-    snap = skin.snapshot_evaluated(src, "Bracers_split")
-    parts = mig.separate_loose(snap)
-    if len(parts) < 2:
-        leftover = parts[0] if parts else snap
-        parts = mig.split_by_world_x(leftover)
-    else:
-        for extra in parts[2:]:
-            bpy.data.objects.remove(extra, do_unlink=True)
-        parts = parts[:2]
+    pair = lr_bone_pair(bones) or (
+        bones[0] if bones else "LeftForeArm",
+        bones[1] if len(bones) > 1 else "RightForeArm",
+    )
+    arm = arm or skin.find_armature()
 
-    arm = skin.find_armature()
-    assigned = []
-    pair = tuple(bones[:2]) if len(bones) >= 2 else ("LeftForeArm", "RightForeArm")
-    for part in parts:
-        assigned.append((part, mig.nearest_bone(arm, mig.centroid_world(part), pair)))
-    if len({b for _, b in assigned}) < 2:
-        assigned.sort(key=lambda item: mig.centroid_world(item[0]).x, reverse=True)
-        assigned = [(assigned[0][0], pair[0]), (assigned[1][0], pair[1])]
+    def _run() -> None:
+        src = skin.find_mesh(mesh_name)
+        snap = skin.snapshot_evaluated(src, "split_lr")
+        parts = mig.separate_loose(snap)
+        if len(parts) < 2:
+            leftover = parts[0] if parts else snap
+            parts = mig.split_by_world_x(leftover)
+        else:
+            for extra in parts[2:]:
+                bpy.data.objects.remove(extra, do_unlink=True)
+            parts = parts[:2]
 
-    skin.export_set(assigned, out)
-    for part, _bone in assigned:
-        try:
-            bpy.data.objects.remove(part, do_unlink=True)
-        except ReferenceError:
-            pass
+        assigned = []
+        for part in parts:
+            assigned.append((part, mig.nearest_bone(arm, mig.centroid_world(part), pair)))
+        if len({b for _, b in assigned}) < 2:
+            assigned.sort(key=lambda item: mig.centroid_world(item[0]).x, reverse=True)
+            assigned = [(assigned[0][0], pair[0]), (assigned[1][0], pair[1])]
+
+        skin.export_set(assigned, out, arm=arm)
+        for part, _bone in assigned:
+            try:
+                bpy.data.objects.remove(part, do_unlink=True)
+            except ReferenceError:
+                pass
+
+    skin.with_rest_pose(arm, _run)
+
+
+def export_split_forearms(mesh_name: str, bones: list[str], out: Path) -> None:
+    export_split_lr(mesh_name, bones, out)
+
+
+def expected_rigid_bones(spec: dict) -> list[str]:
+    man = find_skin(spec["id"])
+    if man and man.get("rig") != "skinned" and man.get("bones"):
+        return list(man["bones"])
+    return list(spec.get("bones") or [])
 
 
 def export_job(spec: dict, out_dir: Path) -> bool:
@@ -520,11 +575,12 @@ def export_job(spec: dict, out_dir: Path) -> bool:
 
     body = spec.get("body") or "any"
     arm = skin.find_armature("male" if body == "male" else None)
+    expected = expected_rigid_bones(spec)
 
-    if prep == "split_lr_forearms":
+    if prep == "split_lr_forearms" or prep == "split_lr":
         if rig != "rigid":
-            raise RuntimeError(f"{item_id}: split_lr_forearms is rigid-only")
-        export_split_forearms(meshes[0], bones, out)
+            raise RuntimeError(f"{item_id}: split_lr is rigid-only")
+        export_split_lr(meshes[0], expected, out)
         return True
 
     missing = [name for name in meshes if bpy.data.objects.get(name) is None]
@@ -535,13 +591,29 @@ def export_job(spec: dict, out_dir: Path) -> bool:
         raise RuntimeError(f"{item_id}: mesh not in workbench: {', '.join(missing)}")
 
     if rig == "skinned":
+        slot = spec.get("slot") or ""
+        follow = skin.SLOT_FOLLOW_SUFFIXES.get(slot)
+        keep = bool(spec.get("keep_weights"))
+        mesh_objs = [skin.find_mesh(name) for name in meshes]
+        # Bind file is source of truth: hats keep whatever groups the
+        # workbench Armature modifier already deforms with.
+        if slot == "hat":
+            follow = None
+            if mesh_objs and all(skin.weighted_vert_count(m) > 0 for m in mesh_objs):
+                keep = True
+                print("[skins] hat: keeping workbench vertex groups")
         skin.export_skinned_glb(
-            [skin.find_mesh(name) for name in meshes],
+            mesh_objs,
             out,
             arm=arm,
-            keep_weights=bool(spec.get("keep_weights")),
+            keep_weights=keep,
             body=body,
+            keep_weight_suffixes=follow,
         )
+        return True
+
+    if len(meshes) == 1 and lr_bone_pair(expected) and len(expected) >= 2:
+        export_split_lr(meshes[0], expected, out)
         return True
 
     if len(meshes) != len(bones):
@@ -551,7 +623,7 @@ def export_job(spec: dict, out_dir: Path) -> bool:
         )
     items = [(skin.find_mesh(m), b) for m, b in zip(meshes, bones)]
     if len(items) == 1:
-        snap = skin.snapshot_evaluated(items[0][0])
+        snap = skin.snapshot_in_rest(items[0][0], arm)
         skin.export_rigid_glb(snap, items[0][1], out, arm=arm)
         return True
     skin.export_set(items, out, arm=arm)
@@ -567,6 +639,7 @@ def main() -> None:
     if not blend.is_file():
         raise SystemExit(f"Workbench missing: {blend}")
     bpy.ops.wm.open_mainfile(filepath=str(blend))
+    skin.assert_female_dummy_on_rig()
 
     jobs = collect_jobs(args.only)
     if args.list:

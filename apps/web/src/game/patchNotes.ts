@@ -1,3 +1,5 @@
+import data from "./patchNotesData.json";
+
 export type PatchNote = {
   /** Stable id — newest first in PATCH_NOTES. */
   id: string;
@@ -5,156 +7,28 @@ export type PatchNote = {
   title: string;
   /** ISO date (YYYY-MM-DD). */
   date: string;
-  highlights: string[];
+  /** Mixed leftover lines (older notes). Prefer balance / fixes / content. */
+  highlights?: string[];
+  balance?: string[];
+  fixes?: string[];
+  content?: string[];
 };
 
 /**
  * Player-facing updates. Newest entries first.
- * Add a new object at the top when shipping a batch players should notice.
+ * Edit patchNotesData.json — the launcher pack reads that same file.
  */
-export const PATCH_NOTES: readonly PatchNote[] = [
-  {
-    id: "2026-09-09-first-build",
-    title: "Choose your first build",
-    date: "2026-09-09",
-    highlights: [
-      "New hunters start with an empty bar — pick a spell for every key at the House (first pick per family is free)",
-      "Queue unlocks once all seven keys are slotted; flex slots are essence buys and stay optional",
-      "Finish the first kit to earn a tutorial chest (essence for talent points — talents are bought, not gifted)",
-      "All characters have been reset to this first-build slate",
-    ],
-  },
-  {
-    id: "2026-09-05-f-ultimates",
-    title: "New F Ultimates & Divine Beam Rework",
-    date: "2026-09-05",
-    highlights: [
-      "Cyclone Kick: devastating spinning kick dealing massive melee damage in a 2.35m radius",
-      "World Tree: summon a persistent magical tree that intelligently heals the lowest-health nearby ally with flying seeds",
-      "Phantom Rush: rush rapidly through up to 4 nearby enemies, dealing 100 damage per strike",
-      "Ascendant Form: grow to 1.5x scale, gaining 22% damage reduction, +15% melee radius, and a 2.5m damage aura",
-      "Dread Aura: surround yourself with a terrifying reactive aura — enemies who begin casting inside are feared away",
-      "Divine Beam: reworked Heal Beam with ramping channel healing and cascading overflow to nearby injured allies",
-    ],
-  },
-  {
-    id: "2026-09-04-q-utility",
-    title: "Five new Q utility spells",
-    date: "2026-09-04",
-    highlights: [
-      "Purge Pulse: cleanse one debuff from nearby allies and strip one buff from nearby enemies",
-      "Rock Wall: raise a temporary stone barrier that blocks movement and projectiles",
-      "Hex Anchor: mark an enemy — their next movement ability roots them on arrival",
-      "Iron Guard: brief brace with damage reduction and displacement immunity (at a heavy slow)",
-      "Spellbreaker: shatter nearby hostile projectiles and bank cast-speed charges for your next hit",
-    ],
-  },
-  {
-    id: "2026-09-04-space-spells",
-    title: "Five new Space spells",
-    date: "2026-09-04",
-    highlights: [
-      "Verdant Leap: leap to an ally or dummy — heal both (80), share +20% move, green trail; out-of-range ring like Soul Relay",
-      "Bulwark Charge: 6m sprint that resists knockbacks/CC, blocks frontal damage, and shoulders enemies aside, then a 120 shield",
-      "Predator Step: brief Cloaked + Predator Rush haste (no dash)",
-      "Rebound: wider frontal wind blast + self recoil (Gust-style smoke)",
-      "Teleport Slam: larger slam radius, shorter stun; windup starts later in the clip for a snappier preload",
-    ],
-  },
-  {
-    id: "2026-09-04-new-spells-blooming",
-    title: "Blooming Path & new spell wave",
-    date: "2026-09-04",
-    highlights: [
-      "Blooming Path (E): slow ground vine — stand in the corridor to heal yourself and allies (20 every 0.5s) while it grows and lingers",
-      "New kit spells: Soul Mark, Void Disc, Runic Shard, Orbiting Wisp, Astral Chain, Underground Pulse, Slipstream, Soul Relay, Crushing Sigil",
-      "E-slot additions: Gravity Well, Prism Lance, Soul Sever, Arc Blade",
-      "Cast bar HUD, status ornaments, and spell VFX/icon polish across the new set",
-    ],
-  },
-  {
-    id: "2026-08-03-wave-assault",
-    title: "Wave Assault (PvE)",
-    date: "2026-08-03",
-    highlights: [
-      "PvE portal: Wave Assault — cemetery map with escalating zombie waves",
-      "Seeking melee fodder, wave HUD, pause / leave mid-run",
-      "Solo for now — coop and boss encounters come later",
-    ],
-  },
-  {
-    id: "2026-08-01-smoke-ranked-polish",
-    title: "Smoke Bomb, ranked LP & combat polish",
-    date: "2026-08-01",
-    highlights: [
-      "Smoke Bomb (Q): grey smoke at your feet — Weakened (−20% defense) on enemies; stay cloaked while you remain in the cloud",
-      "Spell armory autosaves on equip (Save loadout removed); hotbar updates immediately",
-      "Ranked: placement matches removed — league points apply from the first ranked finish",
-      "Protection Bubble: more transparent dome; shield cap raised to 300",
-      "Fireball projectile hitbox scales with charge size; cast plays slightly faster",
-      "Balance: Frost Ball CD 7s; Decoy 14s; Counter/Revenge 12s; Gust stays 10s; Bolt damage up; spell unlock costs ×10; starter wallet + 1 talent point",
-      "Talent UI: Points shows spendable only; spent/budget sits beside Trees",
-      "Hub portals: torus “donuts” removed (interact pads remain)",
-      "Ice Lance, admin no-cooldowns toggle, emote shop dances, and assorted VFX/UI fixes",
-    ],
-  },
-  {
-    id: "2026-07-29-spirit-shield-rewards",
-    title: "Spirit Form, Hand Shield & rewards",
-    date: "2026-07-29",
-    highlights: [
-      "Hand Shield (RMB): channel a blue disc that shatters enemy projectiles — cancel anytime; blocks through the drop animation",
-      "Spirit Form (Space): leave a husk, rush forward with haste; the husk↔spirit link stuns enemies that cross it; recast or wait to snap back",
-      "Revenge (Q): red Counter stance — deny the next direct hit, vanish, and blink behind the attacker",
-      "Stun cancels in-progress casts (players and practice dummies)",
-      "Projectiles that hit walls fizzle with a downward spray",
-      "Spore Shrooms, Magma Orbs, Volcano, and Protection Bubble combat + VFX",
-      "Quests, chests, friend codes, and match reward payouts (see recap when activity-scaled)",
-      "Friends / party invites stacked in one prompt UI; hub roster and talent stand polish",
-    ],
-  },
-  {
-    id: "2026-07-26-spells-counter-dart",
-    title: "Counter, Poison Dart & combat polish",
-    date: "2026-07-26",
-    highlights: [
-      "Counter (Q): rooted gold-glow stance — deny the next melee/projectile hit, then +20% damage, +20% move, and 40% resistance for 3s (cuts other casts; cancel anytime)",
-      "Poison Dart (RMB): right-hook throw with stacking poison (up to 3) and a poison icon on health bars",
-      "Firewall (E/Q/F): lava-crack ground + vertical flame wall that ignites mid-cast (cancel before), draws center→edges, burns with a flame icon on health bars",
-      "Barrier: self absorb bubble that charges through the cast",
-      "Heal Beam: channelled ally heal line",
-      "Critical hits: 5% chance for 1.5× damage or healing",
-      "Ability bar cooldown sweep uses a lighter overlay so it stays readable",
-    ],
-  },
-  {
-    id: "2026-07-25-audio-loading",
-    title: "Hub music, settings & loading",
-    date: "2026-07-25",
-    highlights: [
-      "Village looping soundtrack on the hub",
-      "Settings: master, music, and effects volume (effects ready for future SFX)",
-      "Loading gate preloads hub/arena assets before the HUD appears",
-      "Shop and PvE portal show only “In development” while locked",
-      "Updates / patch notes on the home screen and in play (Settings too)",
-    ],
-  },
-  {
-    id: "2026-07-25-talents",
-    title: "Talent trees & spell tags",
-    date: "2026-07-25",
-    highlights: [
-      "WoW-style talent trees at the talent stand (catalog preview; combat wiring later)",
-      "Abilities carry spell tags and effect kinds for future talent hooks",
-      "Crescent damage raised; merchant UI locked for development",
-    ],
-  },
-] as const;
+export const PATCH_NOTES: readonly PatchNote[] = data;
 
 const SEEN_KEY = "bb.patchNotes.seenId";
 
 export function latestPatchNote(): PatchNote | undefined {
   return PATCH_NOTES[0];
+}
+
+export function patchNoteLines(note: PatchNote, key: "balance" | "fixes" | "content" | "highlights"): string[] {
+  const list = note[key];
+  return Array.isArray(list) ? list.filter((line) => typeof line === "string") : [];
 }
 
 export function getSeenPatchNoteId(): string | null {

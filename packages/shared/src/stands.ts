@@ -444,11 +444,11 @@ export const COSMETIC_AURA_TINTS: Record<CosmeticAuraId, string> = {
 
 export const COSMETIC_AURAS: readonly CosmeticAuraDef[] = [
   { id: "plain", name: "Bound", description: "Vessel only — joints, no aura." },
-  { id: "ember", name: "Ember", description: "Glowing eyes. Sparks rise from the hands and feet. Ink is the color." },
-  { id: "frost", name: "Frost", description: "Glowing eyes. Flakes fall and drift. Ink is the color." },
-  { id: "venom", name: "Venom", description: "Glowing eyes. A slow helix at the limbs. Ink is the color." },
-  { id: "void", name: "Void", description: "Glowing eyes. Motes collapse inward. Ink is the color." },
-  { id: "gold", name: "Gold", description: "Glowing eyes. Glints burst and hang. Ink is the color." },
+  { id: "ember", name: "Ember", description: "Chakra wrap. Heat rises off the body. Ink is the color." },
+  { id: "frost", name: "Frost", description: "Chakra wrap. Cold mist falls and drifts. Ink is the color." },
+  { id: "venom", name: "Venom", description: "Chakra wrap. A slow helix around the limbs. Ink is the color." },
+  { id: "void", name: "Void", description: "Chakra wrap. Motes collapse inward. Ink is the color." },
+  { id: "gold", name: "Gold", description: "Chakra wrap. Warm light breathes and hangs. Ink is the color." },
 ] as const;
 
 /** @deprecated Use COSMETIC_AURAS. */

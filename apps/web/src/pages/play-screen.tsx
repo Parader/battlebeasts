@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { Navigate } from "react-router";
 import { GameCanvas } from "@/game/GameCanvas";
+import { ThirdPersonLookOverlay } from "@/game/ui/ThirdPersonLookOverlay";
 import { useBaseCityRoom } from "@/game/useBaseCityRoom";
 import { useAssetPreload } from "@/game/useAssetPreload";
 import { useVfxGpuReady } from "@/game/useVfxGpuReady";
 import { usePropShaderReady } from "@/game/usePropShaderReady";
-import { clearVfxGpuReady } from "@/game/vfx/vfxGpuReady";
-import { resetPropShaderReady } from "@/game/propShaderReady";
+import { clearVfxGpuReady, markVfxGpuReady } from "@/game/vfx/vfxGpuReady";
+import { markPropShaderReady, resetPropShaderReady } from "@/game/propShaderReady";
 import { useGameMusic } from "@/game/useGameMusic";
 import { useGameAmbiance } from "@/game/useGameAmbiance";
 import { EnergyPips } from "@/ui/EnergyPips";
@@ -58,7 +59,7 @@ import { clearPreferredHub, loadPreferredHub, savePreferredHub } from "@/game/co
 const WS_URL =
     (typeof window !== "undefined" && window.battlebeasts?.gameServerUrl) ||
     import.meta.env.VITE_GAME_SERVER_URL ||
-    "ws://localhost:2567";
+    "ws://127.0.0.1:2568";
 
 function PauseCountdown({ until }: { until: number }) {
     const [left, setLeft] = useState(() => Math.max(0, Math.ceil((until - Date.now()) / 1000)));
@@ -231,6 +232,8 @@ export const PlayScreen = () => {
         waveHud,
         pvePaused,
         setPvePaused,
+        pveFriendlyFire,
+        setPveFriendlyFireEnabled,
         waveRunRecap,
         matchRecap,
         voteRematch,
@@ -241,6 +244,7 @@ export const PlayScreen = () => {
         partyInvite,
         inviteFriendToParty,
         setPartySeat,
+        setPartyLayout,
         lockParty,
         cancelParty,
         leaveParty,
@@ -292,6 +296,15 @@ export const PlayScreen = () => {
     useLayoutEffect(() => {
         setLoadingGate(!playReady);
     }, [playReady]);
+
+    useEffect(() => {
+        if (playReady || !assetsReady) return;
+        const id = window.setTimeout(() => {
+            markVfxGpuReady();
+            markPropShaderReady();
+        }, 10000);
+        return () => window.clearTimeout(id);
+    }, [playReady, assetsReady, inContent]);
 
     useEffect(() => {
         return subscribeHubIntro(() => {
@@ -428,6 +441,22 @@ export const PlayScreen = () => {
                 suspended={suspendGameGl}
                 spectateTargetId={deathSpectate ? spectateTargetId : null}
             />
+            {playReady && isAdmin ? (
+                <ThirdPersonLookOverlay
+                    predictedRef={predictedRef}
+                    locked={
+                        Boolean(activeUi) ||
+                        adminOpen ||
+                        friendsOpen ||
+                        questsOpen ||
+                        rankOpen ||
+                        settingsOpen ||
+                        updatesOpen ||
+                        introPlaying ||
+                        suspendGameGl
+                    }
+                />
+            ) : null}
 
             {!playReady ? (
                 <GameLoadingOverlay
@@ -510,6 +539,10 @@ export const PlayScreen = () => {
                     paused={pvePaused}
                     onTogglePause={() => setPvePaused(!pvePaused)}
                     onReturnHub={returnToHub}
+                    room={room}
+                    localSessionId={room?.sessionId ?? null}
+                    friendlyFire={pveFriendlyFire}
+                    onToggleFriendlyFire={() => setPveFriendlyFireEnabled(!pveFriendlyFire)}
                 />
             )}
 
@@ -522,6 +555,8 @@ export const PlayScreen = () => {
                     retryReady={waveRunRecap.retryReady}
                     onRetry={voteRematch}
                     onReturnHub={returnToHub}
+                    rows={waveRunRecap.rows}
+                    localSessionId={room?.sessionId ?? null}
                 />
             )}
 
@@ -725,6 +760,8 @@ export const PlayScreen = () => {
                     wallet={inContent ? undefined : economy}
                     talentIds={economy.talents}
                     talentBuild={economy.talentBuild}
+                    room={room}
+                    sessionId={room?.sessionId ?? null}
                 />
             )}
 
@@ -872,6 +909,7 @@ export const PlayScreen = () => {
                         }
                     }}
                     onSetSeat={setPartySeat}
+                    onSetLayout={setPartyLayout}
                     onKick={kickFromParty}
                     loadoutReady={isLoadoutReady(economy.loadout)}
                     onLock={lockParty}

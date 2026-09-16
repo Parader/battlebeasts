@@ -1,10 +1,26 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
+import { useAdminThirdPerson } from "./adminThirdPerson";
+
+/** Behind-the-character rig used by the admin 3rd-person toggle. */
+const THIRD_PERSON = {
+    pitchDeg: 18,
+    distance: 6.4,
+    minDistance: 2.8,
+    maxDistance: 12,
+    lookHeight: 1.35,
+    /** Nudge right of facing so the body doesn't eat the aim point. */
+    shoulder: 0.55,
+    yawLambda: 8,
+    followLambda: 10,
+} as const;
 
 type Props = {
     /** Live player ground position. */
     target: MutableRefObject<THREE.Vector3>;
+    /** Character facing (Mixamo +Z). Used only in 3rd-person mode. */
+    yawRef?: MutableRefObject<number>;
     pitchDeg: number;
     /** Default / max follow distance. */
     distance: number;
@@ -18,15 +34,25 @@ type Props = {
     enabled?: boolean;
 };
 
+function lerpAngle(from: number, to: number, t: number): number {
+    let d = to - from;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return from + d * t;
+}
+
 /**
  * Battlerite-style camera:
  * - Fixed world yaw/pitch (never spins with the mouse)
  * - Soft-follows the player so quick back/forth barely shakes the view
  * - Cursor pulls the look-at so the character can sit up to ~cursorInfluence of half-screen opposite the cursor
  * - Scroll wheel zooms between minDistance and distance
+ *
+ * Admin 3rd-person swaps to a behind-yaw follow (see `adminThirdPerson`).
  */
 export function FixedFollowCamera({
     target,
+    yawRef,
     pitchDeg,
     distance,
     minDistance,
@@ -36,16 +62,22 @@ export function FixedFollowCamera({
     cursorInfluence,
     enabled = true,
 }: Props) {
+    const thirdPerson = useAdminThirdPerson();
     const { gl } = useThree();
     const softPlayer = useRef(new THREE.Vector3());
     const softCursor = useRef(new THREE.Vector2(0, 0));
+    const softYaw = useRef(0);
     const focus = useRef(new THREE.Vector3());
     const desiredCam = useRef(new THREE.Vector3());
     const seeded = useRef(false);
     const liveDist = useRef(distance);
-    const zoomMin = minDistance ?? distance * 0.55;
-    const zoomMax = distance;
     const wasEnabled = useRef(enabled);
+    const wasThirdPerson = useRef(thirdPerson);
+
+    const isoZoomMin = minDistance ?? distance * 0.55;
+    const zoomMin = thirdPerson ? THIRD_PERSON.minDistance : isoZoomMin;
+    const zoomMax = thirdPerson ? THIRD_PERSON.maxDistance : distance;
+    const defaultDist = thirdPerson ? THIRD_PERSON.distance : distance;
 
     useEffect(() => {
         liveDist.current = THREE.MathUtils.clamp(liveDist.current, zoomMin, zoomMax);
@@ -69,15 +101,22 @@ export function FixedFollowCamera({
     }, [gl, zoomMin, zoomMax, enabled]);
 
     useFrame((state, dt) => {
+        if (thirdPerson !== wasThirdPerson.current) {
+            wasThirdPerson.current = thirdPerson;
+            liveDist.current = defaultDist;
+            seeded.current = false;
+        }
+
         // Re-seed soft state when re-enabled after cinematic so we don't snap-jump.
         if (enabled && !wasEnabled.current) {
             const t = target.current;
             if (t) {
                 softPlayer.current.set(t.x, t.y, t.z);
                 softCursor.current.set(0, 0);
+                softYaw.current = yawRef?.current ?? 0;
                 seeded.current = true;
                 // Match intro handoff end distance so first frame stays put.
-                liveDist.current = distance;
+                liveDist.current = defaultDist;
             } else {
                 seeded.current = false;
             }
@@ -94,26 +133,56 @@ export function FixedFollowCamera({
         const py = typeof pointer?.y === "number" ? pointer.y : 0;
         const safeDt = Math.min(0.05, Math.max(0, dt));
         const dist = liveDist.current;
+        const yawTarget = yawRef?.current ?? 0;
 
         if (!seeded.current) {
             softPlayer.current.set(t.x, t.y, t.z);
             softCursor.current.set(px, py);
+            softYaw.current = yawTarget;
             seeded.current = true;
         }
 
-        // Heavy damping on player → rapid strafe barely moves the frame
-        const followA = 1 - Math.exp(-followLambda * safeDt);
+        const followRate = thirdPerson ? THIRD_PERSON.followLambda : followLambda;
+        const followA = 1 - Math.exp(-followRate * safeDt);
         softPlayer.current.x += (t.x - softPlayer.current.x) * followA;
         softPlayer.current.y += (t.y - softPlayer.current.y) * followA;
         softPlayer.current.z += (t.z - softPlayer.current.z) * followA;
 
-        // Cursor look-ahead a bit snappier than player follow
         const cursorA = 1 - Math.exp(-cursorLambda * safeDt);
         softCursor.current.x += (px - softCursor.current.x) * cursorA;
         softCursor.current.y += (py - softCursor.current.y) * cursorA;
 
         const cx = THREE.MathUtils.clamp(softCursor.current.x, -1, 1);
         const cy = THREE.MathUtils.clamp(softCursor.current.y, -1, 1);
+
+        if (thirdPerson) {
+            const yawA = 1 - Math.exp(-THIRD_PERSON.yawLambda * safeDt);
+            softYaw.current = lerpAngle(softYaw.current, yawTarget, yawA);
+            const yaw = softYaw.current;
+            const facingX = Math.sin(yaw);
+            const facingZ = Math.cos(yaw);
+            const rightX = Math.cos(yaw);
+            const rightZ = -Math.sin(yaw);
+            const pitch = THREE.MathUtils.degToRad(THIRD_PERSON.pitchDeg);
+            const horiz = Math.cos(pitch) * dist;
+            const lookY = THIRD_PERSON.lookHeight;
+            const shoulder = THIRD_PERSON.shoulder + cx * 0.35;
+            const lookAhead = cy * 0.8;
+
+            focus.current.set(
+                softPlayer.current.x + facingX * lookAhead,
+                softPlayer.current.y,
+                softPlayer.current.z + facingZ * lookAhead,
+            );
+            desiredCam.current.set(
+                focus.current.x - facingX * horiz + rightX * shoulder,
+                focus.current.y + Math.sin(pitch) * dist,
+                focus.current.z - facingZ * horiz + rightZ * shoulder,
+            );
+            camera.position.copy(desiredCam.current);
+            camera.lookAt(focus.current.x, focus.current.y + lookY, focus.current.z);
+            return;
+        }
 
         const aspect = size.width / Math.max(1, size.height);
         const vFov =

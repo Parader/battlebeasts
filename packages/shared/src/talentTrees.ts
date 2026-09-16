@@ -5,13 +5,13 @@ import {
 } from "./talentCatalog";
 
 /**
- * Match spend caps — raised above the workbook's 20 so a deep single-tree path
- * (tiers 1→4 + multi-rank foundations) is reachable. Power still soft-caps here;
- * essence buys *owned* points up to this budget (veterans unlock options, not infinite match power).
+ * Match spend cap — enough to finish one tree end (T5 needs 10 in-tree) and
+ * push well into a second path, but not three ends. Essence buys *owned*
+ * points up to this budget (veterans unlock options, not infinite match power).
  *
  * Full reference: docs/talents-and-progression.md
  */
-export const TALENT_POINT_BUDGET = 31;
+export const TALENT_POINT_BUDGET = 21;
 /** Enough for keystone (needs 12) + path + multi-rank foundations. */
 export const TALENT_TREE_CAP = 18;
 

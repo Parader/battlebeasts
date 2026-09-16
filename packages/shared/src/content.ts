@@ -313,9 +313,9 @@ export const PVE_CONTENTS: readonly {
     id: "dungeon",
     label: "Wave Assault",
     room: ROOM.DUNGEON,
-    description: "Cemetery waves — survive escalating zombies",
+    description: "Infinite waves — survive escalating enemies",
     enabled: true,
-    mapId: "cemetery",
+    mapId: "pve_infinite_waves_1",
   },
   {
     id: "boss",

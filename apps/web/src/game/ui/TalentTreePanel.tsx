@@ -399,7 +399,7 @@ export function TalentTreePanel({
   const [build, setBuild] = useState<TalentBuild>(() => normalizeTalentBuild(talentBuild));
   const [dirty, setDirty] = useState(false);
   const [hoverTip, setHoverTip] = useState<TipState | null>(null);
-  const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmReset, setConfirmReset] = useState<"all" | "tree" | null>(null);
   const [confirmSaveRespec, setConfirmSaveRespec] = useState(false);
   const [confirmBuyPoints, setConfirmBuyPoints] = useState(false);
   const [buyPointQty, setBuyPointQty] = useState(1);
@@ -421,9 +421,11 @@ export function TalentTreePanel({
   const spent = totalPointsSpent(build);
   const savedBuild = normalizeTalentBuild(talentBuild);
   const savedTreeSpent = treePointsSpent(savedBuild, focusTree);
+  const savedAllSpent = totalPointsSpent(savedBuild);
   const respecPoints = talentPointsRemoved(savedBuild, build);
   const respecCost = talentRefundEssenceCost(respecPoints);
   const resetTreeCost = talentRefundEssenceCost(savedTreeSpent);
+  const resetAllCost = talentRefundEssenceCost(savedAllSpent);
   const owned = talentPoints;
   const spendable = Math.max(0, owned - spent);
   const atPointCap = owned >= TALENT_POINT_BUDGET;
@@ -434,6 +436,7 @@ export function TalentTreePanel({
   const buyCost = buyPointQty * ESSENCE_PER_TALENT_POINT;
   const canSave = dirty && (respecCost <= 0 || essence >= respecCost);
   const canResetTree = savedTreeSpent > 0 && essence >= resetTreeCost;
+  const canResetAll = savedAllSpent > 0 && essence >= resetAllCost;
 
   useEffect(() => {
     if (!confirmBuyPoints) return;
@@ -466,9 +469,13 @@ export function TalentTreePanel({
   };
 
   const commitResetTree = () => {
-    room?.send("reset_talent_tree", { tree: focusTree });
+    if (confirmReset === "tree") {
+      room?.send("reset_talent_tree", { tree: focusTree });
+    } else {
+      room?.send("reset_talent_tree", {});
+    }
     setDirty(false);
-    setConfirmReset(false);
+    setConfirmReset(null);
   };
 
   const selectTree = (tree: TalentTreeId, center = true) => {
@@ -533,19 +540,30 @@ export function TalentTreePanel({
         onCancel={() => setConfirmBuyPoints(false)}
       />
       <ConfirmDialog
-        open={confirmReset}
-        title={`Reset ${focusTree}?`}
+        open={confirmReset !== null}
+        title={confirmReset === "tree" ? `Reset ${focusTree}?` : "Reset all trees?"}
         message={
-          <>
-            Respeccing this tree removes <strong>{savedTreeSpent}</strong> talent point
-            {savedTreeSpent === 1 ? "" : "s"} and costs{" "}
-            <strong>{resetTreeCost} essence</strong> ({ESSENCE_PER_TALENT_REFUND} per point).
-            Owned points are kept; you can reinvest after.
-          </>
+          confirmReset === "tree" ? (
+            <>
+              Respeccing this tree removes <strong>{savedTreeSpent}</strong> talent point
+              {savedTreeSpent === 1 ? "" : "s"} and costs{" "}
+              <strong>{resetTreeCost} essence</strong> ({ESSENCE_PER_TALENT_REFUND} per point).
+              Owned points are kept; you can reinvest after.
+            </>
+          ) : (
+            <>
+              Respeccing every tree removes <strong>{savedAllSpent}</strong> talent point
+              {savedAllSpent === 1 ? "" : "s"} and costs{" "}
+              <strong>{resetAllCost} essence</strong> ({ESSENCE_PER_TALENT_REFUND} per point).
+              Owned points are kept; you can reinvest after.
+            </>
+          )
         }
-        confirmLabel={`Reset (−${resetTreeCost})`}
+        confirmLabel={
+          confirmReset === "tree" ? `Reset (−${resetTreeCost})` : `Reset all (−${resetAllCost})`
+        }
         onConfirm={commitResetTree}
-        onCancel={() => setConfirmReset(false)}
+        onCancel={() => setConfirmReset(null)}
       />
       <ConfirmDialog
         open={confirmSaveRespec}
@@ -930,13 +948,27 @@ export function TalentTreePanel({
             <button
               type="button"
               className="bb-btn-ink disabled:opacity-40"
+              disabled={!canResetAll}
+              title={
+                savedAllSpent <= 0
+                  ? "Nothing invested"
+                  : `Refund all trees for ${resetAllCost} essence`
+              }
+              onClick={() => setConfirmReset("all")}
+            >
+              Refund all
+              {savedAllSpent > 0 ? ` (−${resetAllCost})` : ""}
+            </button>
+            <button
+              type="button"
+              className="bb-btn-ink disabled:opacity-40"
               disabled={!canResetTree}
               title={
                 savedTreeSpent <= 0
                   ? `Nothing invested in ${focusTree}`
                   : `Refund ${focusTree} for ${resetTreeCost} essence`
               }
-              onClick={() => setConfirmReset(true)}
+              onClick={() => setConfirmReset("tree")}
             >
               Refund {focusTree}
               {savedTreeSpent > 0 ? ` (−${resetTreeCost})` : ""}

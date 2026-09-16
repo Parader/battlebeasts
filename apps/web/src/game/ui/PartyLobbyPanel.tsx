@@ -34,6 +34,7 @@ type Props = {
   /** Hub invite + mark pending party join (remote friends). */
   onInviteFriend: (friendUserId: string) => void;
   onSetSeat: (sessionId: string, seat: PvpSeat) => void;
+  onSetLayout: (layout: { splitSides?: boolean; teamCOpen?: boolean }) => void;
   onKick: (sessionId: string) => void;
   onLock: (matchKind?: "ranked" | "unranked" | "coop_pve") => void;
   onCancel: () => void;
@@ -141,6 +142,7 @@ export function PartyLobbyPanel({
   friends,
   onInviteFriend,
   onSetSeat,
+  onSetLayout,
   onKick,
   onLock,
   onCancel,
@@ -170,8 +172,8 @@ export function PartyLobbyPanel({
   const teamBCount = party.members.filter((m) => m.seat === "teamB").length;
   const teamCCount = party.members.filter((m) => m.seat === "teamC").length;
   const isSkirmish = meta.family === "skirmish";
-  const [splitSides, setSplitSides] = useState(() => teamBCount > 0 || teamCCount > 0);
-  const [showTeamC, setShowTeamC] = useState(() => teamCCount > 0);
+  const splitSides = party.splitSides !== false;
+  const showTeamC = Boolean(party.teamCOpen) || teamCCount > 0;
   const teamSize = meta.maxSide;
   const maxSpectators = meta.maxSpectators;
   const fullPremade =
@@ -499,7 +501,7 @@ export function PartyLobbyPanel({
                           for (const m of party.members) {
                             if (m.seat === "teamC") onSetSeat(m.sessionId, "teamA");
                           }
-                          setShowTeamC(false);
+                          onSetLayout({ teamCOpen: false });
                         }}
                       >
                         −
@@ -540,7 +542,7 @@ export function PartyLobbyPanel({
                 <button
                   type="button"
                   className="bb-lobby-team bb-lobby-team--add"
-                  onClick={() => setShowTeamC(true)}
+                  onClick={() => onSetLayout({ teamCOpen: true })}
                 >
                   <span className="bb-lobby-team--add__plus">+</span>
                   <span>Add team</span>
@@ -563,9 +565,10 @@ export function PartyLobbyPanel({
                       onSetSeat(m.sessionId, "teamA");
                     }
                   }
-                  setShowTeamC(false);
+                  onSetLayout({ splitSides: false, teamCOpen: false });
+                } else {
+                  onSetLayout({ splitSides: true });
                 }
-                setSplitSides((v) => !v);
               }}
             >
               {splitSides ? "Queue as one group" : "Split sides (custom match)"}

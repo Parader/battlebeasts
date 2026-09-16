@@ -3,7 +3,7 @@ import * as THREE from "three";
 const envByRenderer = new WeakMap<THREE.WebGLRenderer, THREE.Texture>();
 
 /** Specular only — a white RoomEnvironment was lighting the albedo like a fill. */
-const GEAR_ENV_INTENSITY = 0.32;
+const GEAR_ENV_INTENSITY = 0.85;
 
 /**
  * Dim grey-box probe for equipped metal. Not added to the game scene.
@@ -33,29 +33,60 @@ export function getGearEnvMap(gl: THREE.WebGLRenderer): THREE.Texture {
   return tex;
 }
 
-function isMetallicGear(std: THREE.MeshStandardMaterial): boolean {
-  return Boolean(std.metalnessMap) || (std.metalness ?? 0) > 0.12;
+/** Real chrome — high factor, no packed MR leftover from cloth exports. */
+function isAuthoredMetal(std: THREE.MeshStandardMaterial): boolean {
+  return !std.metalnessMap && (std.metalness ?? 0) > 0.35;
 }
 
-/** glTF metal/rough maps multiply the scalar factors — keep those at 1. */
+/**
+ * glTF packs roughness in G / metalness in B and defaults metallicFactor to 1.
+ * Almost every Blender cloth export therefore looks like dark chrome in-game
+ * (albedo is multiplied by 1 − metalness, then lit by a dim grey probe).
+ */
 export function prepareGearMaterial(mat: THREE.Material, envMap: THREE.Texture | null): void {
   const std = mat as THREE.MeshStandardMaterial;
   if (!std.isMeshStandardMaterial) return;
-  if (std.metalnessMap) {
-    std.metalnessMap.colorSpace = THREE.NoColorSpace;
-    std.metalness = 1;
-  }
+
+  if (std.map) std.map.colorSpace = THREE.SRGBColorSpace;
+  if (std.emissiveMap) std.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+  if (std.normalMap) std.normalMap.colorSpace = THREE.NoColorSpace;
+  if (std.aoMap) std.aoMap.colorSpace = THREE.NoColorSpace;
+
   if (std.roughnessMap) {
     std.roughnessMap.colorSpace = THREE.NoColorSpace;
     std.roughness = 1;
   }
-  if (std.normalMap) std.normalMap.colorSpace = THREE.NoColorSpace;
-  if (envMap && isMetallicGear(std)) {
+
+  const authoredMetal = isAuthoredMetal(std);
+  if (std.metalnessMap) {
+    // Same texture still drives roughness via G; drop B so cloth keeps color.
+    std.metalnessMap = null;
+    std.metalness = 0;
+  } else if (!authoredMetal) {
+    std.metalness = Math.min(std.metalness ?? 0, 0.05);
+  }
+
+  if (envMap && authoredMetal) {
     std.envMap = envMap;
     std.envMapIntensity = GEAR_ENV_INTENSITY;
   } else {
     std.envMap = null;
-    if ("envMapIntensity" in std) std.envMapIntensity = 0;
+    std.envMapIntensity = 0;
   }
+
+  // Body hide tint is fog-off; night hub fog was muddying gear albedo next to it.
+  std.fog = false;
+  // Blender solid shows both sides of a thin hat shell. FrontSide leaves the
+  // inner cone / visor lining un-drawn, so Mixamo fills that volume.
+  std.side = THREE.DoubleSide;
+  std.transparent = false;
+  std.opacity = 1;
+  std.depthWrite = true;
+  // Pull gear in front of Mixamo where the meshes occupy the same pixels.
+  // Factor (slope) is 0 so a grazing visor does not gain extra bias when you
+  // zoom in; units is a constant window-Z push at every distance.
+  std.polygonOffset = true;
+  std.polygonOffsetFactor = 0;
+  std.polygonOffsetUnits = -4;
   std.needsUpdate = true;
 }

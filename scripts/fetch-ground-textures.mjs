@@ -16,18 +16,48 @@ const RES = "1k";
 
 /** Slugs to keep locally. Labels and tiling live in the shared catalog. */
 const SLUGS = [
-  "coast_sand_01",
-  "snow_02",
-  "forest_ground_04",
-  "cobblestone_floor_08",
-  "dry_ground_01",
+  "aerial_grass_rock",
   "aerial_rocks_02",
+  "asphalt_02",
+  "brick_pavement",
   "brown_mud_03",
-  "dry_decay_leaves",
-  "leafy_grass",
-  "stony_dirt_path",
-  "grey_stone_path",
+  "brown_mud_leaves_01",
+  "brown_mud_rocks_01",
   "burned_ground_01",
+  "coast_sand_01",
+  "coast_sand_04",
+  "cobblestone_floor_08",
+  "cobblestone_large_01",
+  "concrete_pavement",
+  "cracked_red_ground",
+  "dirt_floor",
+  "dry_decay_leaves",
+  "dry_ground_01",
+  "forest_ground_04",
+  "forest_leaves_02",
+  "forrest_ground_01",
+  "forrest_ground_03",
+  "grass_path_3",
+  "gravel_ground_01",
+  "gravelly_sand",
+  "grey_stone_path",
+  "hexagonal_concrete_paving",
+  "leafy_grass",
+  "mossy_cobblestone",
+  "mossy_rock",
+  "mud_cracked_dry_03",
+  "pebble_ground_01",
+  "red_mud_stones",
+  "red_sand",
+  "rocky_terrain_02",
+  "rocky_trail",
+  "sandy_gravel_02",
+  "snow_01",
+  "snow_02",
+  "snow_03",
+  "stone_tiles_03",
+  "stony_dirt_path",
+  "wood_chips",
 ];
 
 /** The two maps we use, and the Poly Haven keys they live under. */
@@ -46,9 +76,19 @@ async function exists(path) {
 }
 
 async function download(url, dest) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
-  await writeFile(dest, Buffer.from(await res.arrayBuffer()));
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      await writeFile(dest, Buffer.from(await res.arrayBuffer()));
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 3) console.warn(`  retry ${attempt} ${dest}: ${err.message}`);
+    }
+  }
+  throw lastErr;
 }
 
 await mkdir(OUT, { recursive: true });

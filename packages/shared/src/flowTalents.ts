@@ -48,8 +48,19 @@ export const FLOW_MOVEMENT_IDS = new Set([
   "tripleBlink",
 ]);
 
-/** Dash + Teleport only. Triple Blink is never repeatable. */
-export const REPEATABLE_FLOW_MOVEMENT_IDS = new Set(["dash", "portal"]);
+/**
+ * Space movement Double Step may recast. Spells with their own recast
+ * (Spirit Form snap-back, Rift second plant, Triple Blink hops) stay out.
+ */
+export const FLOW_OWN_RECAST_IDS = new Set([
+  "spiritForm",
+  "riftFissure",
+  "tripleBlink",
+]);
+
+export const REPEATABLE_FLOW_MOVEMENT_IDS = new Set(
+  [...FLOW_MOVEMENT_IDS].filter((id) => !FLOW_OWN_RECAST_IDS.has(id)),
+);
 
 /** Travel-distance talents (Extended Reach, Motion Echo, Double Step). */
 export const FLOW_TRAVEL_IDS = new Set([

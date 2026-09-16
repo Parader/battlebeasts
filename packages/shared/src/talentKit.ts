@@ -1,4 +1,10 @@
-import { ABILITIES, abilityHasTags, type AbilityDef, type SpellTag } from "./abilities";
+import {
+  ABILITIES,
+  abilityBaseCooldownMs,
+  abilityHasTags,
+  type AbilityDef,
+  type SpellTag,
+} from "./abilities";
 import { COMBAT } from "./combat";
 import { PLAYER_BASE_MAX_HP } from "./combatMagnitude";
 import { TALENTS, type TalentDef } from "./stands";
@@ -896,8 +902,10 @@ export function kitCooldownMs(
   abilityId: string,
   baseMs: number,
 ): number {
+  const def = ABILITIES[abilityId];
+  const authored = def ? abilityBaseCooldownMs(def) : baseMs;
   const mul = kit?.cooldownMulByAbility.get(abilityId) ?? 1;
-  return Math.max(0, Math.round(baseMs * mul));
+  return Math.max(0, Math.round(authored * mul));
 }
 
 /** Radius multiplier for elemental AoE (1 = unchanged). */

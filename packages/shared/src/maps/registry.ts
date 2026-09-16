@@ -20,6 +20,7 @@ import {
   desertObjectives,
 } from "../arenaDesert";
 import {
+  CEMETERY_ENEMY_SPAWN_RING,
   CEMETERY_SCENE_SCALE,
   CEMETERY_SCENE_URL,
   cemeteryPlayerSpawn,
@@ -31,6 +32,9 @@ import {
   mapObjectives,
   mapPickups,
   mapPlayerSpawns,
+  mapDocPveIngressPoints,
+  mapDocPvePlayerSpawn,
+  mapDocPveStartPads,
   mapSpawnForSlot,
   mapStaticColliders,
   type MapDoc,
@@ -206,4 +210,49 @@ export function mapSpawnsFor(id: MapId, team: MapTeam): SpawnPose[] {
     return [];
   }
   return mapPlayerSpawns(source.doc, team).map((el) => ({ x: el.x, z: el.z, yaw: el.yaw }));
+}
+
+/**
+ * Wave Assault hunter pad. The whole party clusters on one rolled start pad
+ * (`holdoutIndex`); slot only staggers them so they do not stack.
+ */
+export function mapPvePlayerSpawn(id: MapId, slot: number, holdoutIndex = 0): SpawnPose {
+  const source = registry.get(id);
+  if (!source) return { x: 0, z: 0, yaw: 0 };
+  if (source.kind === "baked") {
+    const home = source.spawn({ team: "a", slot: 0, ffa: false }) ?? { x: 0, z: 0, yaw: 0 };
+    if (slot <= 0) return home;
+    const angle = ((slot - 1) / 3) * Math.PI * 2;
+    const r = 1.75;
+    return {
+      x: home.x + Math.sin(angle) * r,
+      z: home.z + Math.cos(angle) * r,
+      yaw: home.yaw,
+    };
+  }
+  return mapDocPvePlayerSpawn(source.doc, slot, holdoutIndex);
+}
+
+/** Player pads a Wave Assault run can roll as the shared start. */
+export function mapPveStartPads(id: MapId): SpawnPose[] {
+  const source = registry.get(id);
+  if (!source) return [{ x: 0, z: 0, yaw: 0 }];
+  if (source.kind === "baked") {
+    const home = source.spawn({ team: "a", slot: 0, ffa: false });
+    return home ? [home] : [{ x: 0, z: 0, yaw: 0 }];
+  }
+  const pads = mapDocPveStartPads(source.doc);
+  return pads.length ? pads : [{ x: 0, z: 0, yaw: 0 }];
+}
+
+/**
+ * Authored directions enemies rush from. WaveDirector places mobs on those
+ * rays, close to the living party — not on the distant pads themselves.
+ */
+export function mapPveIngressPoints(id: MapId): Array<{ x: number; z: number }> {
+  const source = registry.get(id);
+  if (!source || source.kind === "baked") {
+    return CEMETERY_ENEMY_SPAWN_RING.map((s) => ({ x: s.x, z: s.z }));
+  }
+  return mapDocPveIngressPoints(source.doc);
 }

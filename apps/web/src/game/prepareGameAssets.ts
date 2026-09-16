@@ -18,7 +18,12 @@ import { preloadArenaAmbiance, preloadVillageAmbiance } from "./gameAmbiance";
 import { preloadCombatSfx } from "./gameSfx";
 import { collectSpellVfxAssets } from "./vfx/spellVfxAssets";
 import { preloadSpellVfxTextures } from "./vfx/primeSpellTextures";
-import { BG_FLAG_CLOTH_URL, BG_FLAG_POLE_URL } from "./vfx/flagAsset";
+import {
+  BG_FLAG_BLUE_URL,
+  BG_FLAG_CLOTH_URL,
+  BG_FLAG_POLE_URL,
+  BG_FLAG_RED_URL,
+} from "./vfx/flagAsset";
 
 export type AssetBundle = "hub" | "arena";
 
@@ -154,6 +159,8 @@ export async function preloadArenaAssets(
       () => preloadGltf(ZOMBIE_URL),
       () => preloadGltf(BG_FLAG_CLOTH_URL),
       () => preloadGltf(BG_FLAG_POLE_URL),
+      () => preloadGltf(BG_FLAG_RED_URL),
+      () => preloadGltf(BG_FLAG_BLUE_URL),
       () => preloadSpellGlbs(),
       () => preloadSpellVfxTextures(),
       () => preloadCombatSfx(),

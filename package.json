@@ -9,6 +9,10 @@
     "dev:editor": "pnpm --filter @battlebeasts/editor dev",
     "dev:desktop": "pnpm --filter @battlebeasts/desktop dev",
     "dist:desktop": "pnpm --filter @battlebeasts/desktop dist",
+    "prod:up": "docker compose --env-file compose.env up -d",
+    "prod:down": "docker compose --env-file compose.env down",
+    "publish:game": "node ./apps/desktop/scripts/publish-content.mjs",
+    "release": "docker compose --env-file compose.env up -d --build && node ./apps/desktop/scripts/publish-content.mjs",
     "deploy:game": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy-game-server.ps1",
     "build": "pnpm -r run build",
     "build:shared": "pnpm --filter @battlebeasts/shared build",
@@ -17,7 +21,8 @@
     "gen:maps": "node scripts/gen-map-index.mjs",
     "export:skins": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/export-skins.ps1",
     "export:skins:install": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/export-skins.ps1 -Install",
-    "workbench:ybot": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/add-ybot-to-bind.ps1"
+    "workbench:ybot": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/add-ybot-to-bind.ps1",
+    "workbench:idle": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/bind-idle.ps1"
   },
   "engines": {
     "node": ">=20"

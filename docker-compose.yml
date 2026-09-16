@@ -1,0 +1,20 @@
+# Stable prod game-server on this PC (port 2567).
+# Local `pnpm dev:server` uses 2568 so it never collides with this container.
+#
+# Bind-mount .env instead of Compose `env_file` — Supabase keys contain `$`
+# and Compose would interpolate them away.
+services:
+  game-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile.game-server
+    image: mage-trials-prod:latest
+    container_name: mage-trials-prod
+    ports:
+      - "2567:2567"
+    volumes:
+      - ./apps/game-server/.env:/app/apps/game-server/.env:ro
+    environment:
+      NODE_ENV: production
+      PORT: "2567"
+    restart: unless-stopped

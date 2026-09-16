@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 function readGameServerUrl() {
   const arg = process.argv.find((a) => a.startsWith("--bb-game-server="));
   if (arg) return arg.slice("--bb-game-server=".length);
-  return "ws://localhost:2567";
+  return "ws://127.0.0.1:2568";
 }
 
 contextBridge.exposeInMainWorld("battlebeasts", {
@@ -27,3 +27,19 @@ contextBridge.exposeInMainWorld("battlebeasts", {
     return () => ipcRenderer.removeListener("auth-callback", handler);
   },
 });
+
+function listen(channel, cb) {
+  const handler = (_event, payload) => cb(payload);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
+contextBridge.exposeInMainWorld("launcher", {
+  play: () => ipcRenderer.invoke("launcher-play"),
+  retry: () => ipcRenderer.invoke("updater-retry"),
+  onStatus: (cb) => listen("updater:status", cb),
+  onProgress: (cb) => listen("updater:progress", cb),
+  onNotes: (cb) => listen("updater:notes", cb),
+  onReady: (cb) => listen("updater:ready", cb),
+});
+

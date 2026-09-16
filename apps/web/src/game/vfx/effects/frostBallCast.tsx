@@ -10,6 +10,7 @@ import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { GroundDecal } from "../components/GroundDecal";
 import { groundPresets } from "../presets/ground";
 import { useSpellLight } from "../spellLights";
+import { getCombatOwnerPose } from "../../characterRoots";
 
 /** Forward offset / height — matches projectile spawn (`FROST_BALL_CAST`). */
 export const FROST_HAND_FORWARD = FROST_BALL_CAST.spawnOffset;
@@ -169,9 +170,7 @@ export function FrostBallCastEffect({
         pose.current.x = local.x + Math.sin(local.yaw) * offset;
         pose.current.z = local.z + Math.cos(local.yaw) * offset;
       } else {
-        const pl = follow.room?.state?.players?.get(shot.followOwnerId) as
-          | { x?: number; z?: number; yaw?: number }
-          | undefined;
+        const pl = getCombatOwnerPose(follow.room, shot.followOwnerId);
         if (pl) {
           const yaw = pl.yaw ?? pose.current.yaw;
           pose.current.yaw = yaw;

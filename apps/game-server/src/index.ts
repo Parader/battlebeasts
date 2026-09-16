@@ -12,7 +12,11 @@ import { ContentRoom } from "./rooms/ContentRoom.js";
 // the registry, so authored documents must already be in it.
 registerAuthoredMaps();
 
-const PORT = Number(process.env.PORT ?? 2567);
+const isProd = process.env.NODE_ENV === "production";
+// Prod / Docker: PORT from env (2567). Local `pnpm dev:server`: 2568 on loopback
+// so a dirty working tree never binds the live player port.
+const PORT = Number(isProd ? (process.env.PORT ?? 2567) : 2568);
+const HOST = isProd ? "0.0.0.0" : "127.0.0.1";
 
 const app = express();
 app.use(cors());
@@ -33,6 +37,6 @@ gameServer.define(ROOM.DUNGEON, ContentRoom).filterBy(["matchId"]);
 gameServer.define(ROOM.BOSS, ContentRoom).filterBy(["matchId"]);
 
 
-httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`[game-server] listening on 0.0.0.0:${PORT}`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`[game-server] listening on ${HOST}:${PORT}`);
 });

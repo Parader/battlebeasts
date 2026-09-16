@@ -9,7 +9,7 @@ import {
 import { markPropShaderReady } from "./propShaderReady";
 
 /** Safety only — real warm waits for live InstancedProps then compileAsync. */
-const FAIL_OPEN_MS = 20_000;
+const FAIL_OPEN_MS = 8_000;
 
 function frames(n: number): Promise<void> {
   return new Promise((resolve) => {
@@ -75,10 +75,15 @@ export function HubPropShaderWarmup({ mapId }: { mapId: string }) {
     const unsub = subscribeMapPropMounts(() => {
       void tryWarm();
     });
+    void tryWarm();
+    const retry = window.setInterval(() => {
+      void tryWarm();
+    }, 250);
 
     return () => {
       cancelled = true;
       window.clearTimeout(failOpen);
+      window.clearInterval(retry);
       unsub();
     };
   }, [gl, scene, camera, expected, mapId]);

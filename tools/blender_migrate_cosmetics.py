@@ -182,8 +182,9 @@ def make_belt(arm, surface, mat_src):
 
 
 def export_one(label: str, mesh_obj, bone: str, out: Path) -> None:
-    snap = skin.snapshot_evaluated(mesh_obj)
-    short = skin.export_rigid_glb(snap, bone, out)
+    arm = skin.find_armature()
+    snap = skin.snapshot_in_rest(mesh_obj, arm)
+    short = skin.export_rigid_glb(snap, bone, out, arm=arm)
     size_kb = out.stat().st_size / 1024
     print(f"[migrate] {label}: {out.name} → {short} ({size_kb:.1f} KB)")
 
@@ -245,7 +246,7 @@ def main() -> None:
     )
 
     bracers = skin.find_mesh("Bracers set 1")
-    snap = skin.snapshot_evaluated(bracers, "Bracers_split")
+    snap = skin.snapshot_in_rest(bracers, arm, "Bracers_split")
     parts = separate_loose(snap)
     if len(parts) < 2:
         print(f"[migrate] bracers loose parts={len(parts)}; splitting on X")

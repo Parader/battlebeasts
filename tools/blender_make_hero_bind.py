@@ -21,6 +21,12 @@ import argparse
 import sys
 from pathlib import Path
 
+TOOLS = Path(__file__).resolve().parent
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
+
+import blender_export_skin as skin  # noqa: E402
+
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     if "--" in argv:
@@ -201,6 +207,9 @@ def main() -> None:
     print(f"[bind] gear: {[o.name for o in cosmetics]}")
 
     rest_pose(arm)
+    restored = skin.restore_body_inherits_armature(arm)
+    if restored:
+        print(f"[bind] dummy now inherits armature: {restored}")
 
     for obj in list(bpy.data.objects):
         clear_animation(obj)

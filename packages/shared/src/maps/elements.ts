@@ -131,10 +131,6 @@ export const PICKUP_EFFECT_IDS = Object.keys(PICKUP_EFFECTS) as readonly string[
 export const RANDOM_PICKUP_POOL = [
   "heal",
   "energy",
-  "absorb",
-  "speed",
-  "power",
-  "haste",
 ] as const;
 
 export const PICKUP_PREVIEW_COLOR: Record<string, string> = {
@@ -154,7 +150,6 @@ export type ResolvedPickupRoll = {
 };
 
 const RANDOM_BUFF_DURATION_MS = 6000;
-const RANDOM_ABSORB_DURATION_MS = 8000;
 
 /**
  * Resolve an authored pickup into a concrete orb.
@@ -175,9 +170,7 @@ export function resolvePickupRoll(
   const id = RANDOM_PICKUP_POOL[Math.floor(rng() * RANDOM_PICKUP_POOL.length)]!;
   const def = PICKUP_EFFECTS[id]!;
   let durationMs = 0;
-  if (id === "absorb") {
-    durationMs = spec.durationMs > 0 ? spec.durationMs : RANDOM_ABSORB_DURATION_MS;
-  } else if (def.kind === "buff") {
+  if (def.kind === "buff") {
     durationMs = spec.durationMs > 0 ? spec.durationMs : RANDOM_BUFF_DURATION_MS;
   }
   return { effect: id, magnitude: def.defaultMagnitude, durationMs };

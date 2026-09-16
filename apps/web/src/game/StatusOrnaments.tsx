@@ -11,6 +11,7 @@ import { SpellbreakerOrbOrnament } from "./SpellbreakerOrbOrnament";
 import { SoulMarkOrnament } from "./SoulMarkOrnament";
 import { SoulRelayOrnament } from "./SoulRelayOrnament";
 import { BloodPactOrnament } from "./BloodPactOrnament";
+import { STATUSES } from "@battlebeasts/shared";
 import { type StatusRowLite } from "./statusBadgeUtils";
 
 type Props = {
@@ -1191,6 +1192,81 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
           return max;
         }}
       />
+      <BuffAppearBurst getStatuses={getStatuses} y={headY * 0.55} />
     </group>
+  );
+}
+
+/** Expanding ring when a buff status first lands — draws the eye to a new talent/spell buff. */
+function BuffAppearBurst({
+  getStatuses,
+  y,
+}: {
+  getStatuses: () => StatusRowLite[];
+  y: number;
+}) {
+  const ring = useRef<THREE.Mesh>(null);
+  const mat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#fde68a",
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
+  const seen = useRef(new Set<string>());
+  const seeded = useRef(false);
+  const age = useRef(-1);
+
+  useFrame((_, dt) => {
+    const rows = getStatuses();
+    const buffIds: string[] = [];
+    for (const row of rows) {
+      const def = STATUSES[row.statusId];
+      if (def?.polarity === "buff") buffIds.push(row.statusId);
+    }
+
+    if (!seeded.current) {
+      for (const id of buffIds) seen.current.add(id);
+      seeded.current = true;
+    } else {
+      for (const id of buffIds) {
+        if (!seen.current.has(id)) {
+          seen.current.add(id);
+          age.current = 0;
+          const color = STATUSES[id]?.color;
+          if (color) mat.color.set(color);
+        }
+      }
+      for (const id of [...seen.current]) {
+        if (!buffIds.includes(id)) seen.current.delete(id);
+      }
+    }
+
+    const mesh = ring.current;
+    if (!mesh) return;
+    if (age.current < 0) {
+      mesh.visible = false;
+      return;
+    }
+    age.current += Math.min(0.05, Math.max(0, dt));
+    const u = Math.min(1, age.current / 0.42);
+    mesh.visible = u < 1;
+    const s = 0.4 + u * 1.55;
+    mesh.scale.set(s, s, s);
+    mat.opacity = (1 - u) * (1 - u) * 0.9;
+    if (u >= 1) age.current = -1;
+  });
+
+  return (
+    <mesh ref={ring} position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+      <ringGeometry args={[0.38, 0.56, 28]} />
+      <primitive object={mat} attach="material" />
+    </mesh>
   );
 }

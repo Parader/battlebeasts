@@ -6,6 +6,7 @@ import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import {
   COSMETIC_SLOTS,
   cosmeticFilePath,
+  cosmeticInflateMeters,
   cosmeticSkinBones,
   getCosmeticItem,
   isBoneSkin,
@@ -16,9 +17,9 @@ import {
   type CosmeticsEquipped,
 } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
-import { hideRevealedEmbeddedSkinnedMeshes, revealEmbeddedSkinnedMeshes, setCharacterOpacity } from "./characterVisual";
+import { hideRevealedEmbeddedSkinnedMeshes, revealEmbeddedSkinnedMeshes, setCharacterOpacity, warmCharacterOpacityVariants } from "./characterVisual";
 import { useResolvedCosmeticFit } from "./cosmeticFitStore";
-import { mountSkinnedCosmetic } from "./cosmeticSkinBind";
+import { inflateSkinnedGeometry, mountSkinnedCosmetic, sealSkinnedSeams } from "./cosmeticSkinBind";
 import { getGearEnvMap, prepareGearMaterial } from "./gearEnvMap";
 import { attachToBoneKeepLocal, findMixamoBone } from "./vfx/attach";
 
@@ -35,6 +36,8 @@ type Item = {
   bone?: string;
   bones: string[];
   skinned: boolean;
+  inflate: number;
+  slot: (typeof COSMETIC_SLOTS)[number];
 };
 
 type SkinBase = {
@@ -45,6 +48,14 @@ type SkinBase = {
 
 const _fitEuler = new THREE.Euler();
 const _fitQuat = new THREE.Quaternion();
+
+/** Mixamo T-Pose vs Rest (1.55 cm). Hat −Z is nape. */
+const MIXAMO_TPOSE_SHIFT_M = 0.01554;
+
+function slotTposeShiftZ(slot: Item["slot"]): number {
+  if (slot === "hat") return -MIXAMO_TPOSE_SHIFT_M;
+  return 0;
+}
 
 function captureSkinBase(obj: THREE.Object3D): SkinBase {
   return {
@@ -91,10 +102,12 @@ function equippedSkinItems(
     if (!rel) continue;
     out.push({
       catalogId: def.id,
-      url: assetUrl(rel),
+      url: `${assetUrl(rel)}${isSkinnedCosmetic(def) ? (def.slot === "hat" ? "?bind=workbench" : "?bind=mixamo") : ""}`,
       bone: def.bone,
       bones: cosmeticSkinBones(def),
       skinned: isSkinnedCosmetic(def),
+      inflate: isSkinnedCosmetic(def) ? cosmeticInflateMeters(def) : 0,
+      slot: def.slot,
     });
   }
   return out;
@@ -121,6 +134,33 @@ function ancestorIsBoneNode(
   return false;
 }
 
+function isIdentityTransform(obj: THREE.Object3D): boolean {
+  return (
+    obj.position.lengthSq() < 1e-12 &&
+    obj.quaternion.x * obj.quaternion.x +
+      obj.quaternion.y * obj.quaternion.y +
+      obj.quaternion.z * obj.quaternion.z <
+      1e-10 &&
+    Math.abs(Math.abs(obj.quaternion.w) - 1) < 1e-5 &&
+    Math.abs(obj.scale.x - 1) < 1e-5 &&
+    Math.abs(obj.scale.y - 1) < 1e-5 &&
+    Math.abs(obj.scale.z - 1) < 1e-5
+  );
+}
+
+/** Walk identity Scene/Group wrappers so we parent the baked mesh, not glTF root. */
+function collapseIdentityRoot(root: THREE.Object3D): THREE.Object3D {
+  let cur = root;
+  for (let i = 0; i < 8; i++) {
+    const mesh = cur as THREE.Mesh;
+    if (mesh.isMesh) break;
+    const kids = cur.children.filter((c) => c.type !== "Light" && c.type !== "Camera");
+    if (kids.length !== 1 || !isIdentityTransform(cur)) break;
+    cur = kids[0]!;
+  }
+  return cur;
+}
+
 /** Nodes in a set GLB that should each parent to a Mixamo bone. */
 function skinBindings(
   clone: THREE.Object3D,
@@ -136,10 +176,11 @@ function skinBindings(
     if (ancestorIsBoneNode(obj, clone, characterRoot)) return;
     named.push({ node: obj, bone: name });
   });
-  if (named.length > 1) return named;
-  if (named.length === 1 && !fallbackBone) return named;
+  if (named.length > 0) return named;
 
-  if (fallbackBone) return [{ node: clone, bone: fallbackBone }];
+  if (fallbackBone) {
+    return [{ node: collapseIdentityRoot(clone), bone: fallbackBone }];
+  }
 
   const kids = clone.children.filter((c) => c.type !== "Light" && c.type !== "Camera");
   if (listedBones.length > 0 && kids.length === listedBones.length) {
@@ -158,7 +199,7 @@ function BoneSkinItem({
   opacity: number;
 }) {
   const gltf = useGLTF(item.url);
-  const { gl } = useThree();
+  const { gl, scene, camera } = useThree();
   const envMap = useMemo(() => getGearEnvMap(gl), [gl]);
   const fit = useResolvedCosmeticFit(item.catalogId);
   const fitKey = [
@@ -178,6 +219,21 @@ function BoneSkinItem({
       : gltf.scene.clone(true);
     cloned.name = `cosmetic_${item.catalogId}`;
     cloned.userData.bbBoneSkin = true;
+    cloned.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh && mesh.geometry) mesh.geometry = mesh.geometry.clone();
+    });
+    if (item.skinned) {
+      if (item.slot !== "hat") sealSkinnedSeams(cloned);
+      if (item.inflate > 0) inflateSkinnedGeometry(cloned, item.inflate);
+      const tposeZ = slotTposeShiftZ(item.slot);
+      if (tposeZ !== 0) {
+        cloned.traverse((obj) => {
+          const mesh = obj as THREE.Mesh;
+          if (mesh.isMesh && mesh.geometry) mesh.geometry.translate(0, 0, tposeZ);
+        });
+      }
+    }
     const skinnedMeshes: THREE.SkinnedMesh[] = [];
     cloned.traverse((obj) => {
       obj.userData.bbBoneSkin = true;
@@ -192,9 +248,10 @@ function BoneSkinItem({
       const mats = Array.isArray(asMesh.material) ? asMesh.material : [asMesh.material];
       for (const m of mats) prepareGearMaterial(m, envMap);
       asMesh.castShadow = true;
+      asMesh.renderOrder = 1;
     });
     return { root: cloned, skinnedMeshes };
-  }, [gltf.scene, item.catalogId, item.skinned, item.url, envMap]);
+  }, [gltf.scene, item.catalogId, item.skinned, item.url, item.inflate, item.slot, envMap]);
 
   const bonesKey = item.bones.join(",");
   const boundRef = useRef<THREE.Object3D[]>([]);
@@ -249,6 +306,13 @@ function BoneSkinItem({
   }, [root, skinnedMeshes, characterRoot, item.catalogId, item.skinned, item.bone, bonesKey]);
 
   useEffect(() => {
+    const id = requestAnimationFrame(() =>
+      warmCharacterOpacityVariants(gl, scene, camera, characterRoot, `skin:${item.catalogId}`),
+    );
+    return () => cancelAnimationFrame(id);
+  }, [gl, scene, camera, characterRoot, item.catalogId, root]);
+
+  useEffect(() => {
     for (const node of boundRef.current) {
       const base = node.userData.bbSkinBase as SkinBase | undefined;
       if (base) applyCosmeticFit(node, base, fit);
@@ -276,7 +340,7 @@ function BoneSkinItem({
 /**
  * Load one GLB per catalog item.
  * Rigid: meshes named after Mixamo bones parent to those bones.
- * Skinned (`rig: "skinned"`): rebind to the live Mixamo skeleton (chest, later pants).
+ * Skinned (`rig: "skinned"`): rebind to the live Mixamo skeleton.
  */
 export function BoneSkins({ characterRoot, equipped, opacity = 1, body }: Props) {
   const items = equippedSkinItems(equipped, body);

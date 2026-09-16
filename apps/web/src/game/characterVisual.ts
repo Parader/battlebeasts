@@ -119,8 +119,31 @@ export function prepareCharacterScene(
   }
 
   root.updateMatrixWorld(true);
+  captureCharacterBindPose(root);
 
   return root;
+}
+
+type BindBoneSnap = {
+  bone: THREE.Bone;
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  scale: THREE.Vector3;
+};
+
+function captureCharacterBindPose(root: THREE.Object3D): void {
+  const snaps: BindBoneSnap[] = [];
+  root.traverse((obj) => {
+    const bone = obj as THREE.Bone;
+    if (!bone.isBone) return;
+    snaps.push({
+      bone,
+      position: bone.position.clone(),
+      quaternion: bone.quaternion.clone(),
+      scale: bone.scale.clone(),
+    });
+  });
+  root.userData.bbBindPose = snaps;
 }
 
 /** True if this object (or its mesh name) is catalog / cosmetic gear. */
@@ -141,11 +164,28 @@ function isCosmeticMeshOrDescendant(obj: THREE.Object3D): boolean {
   return false;
 }
 
+function mixamoSurfaceVertCount(mesh: THREE.Mesh): number {
+  return mesh.geometry?.getAttribute("position")?.count ?? 0;
+}
+
+/**
+ * hero.glb shipped a second `Beta_Surface*.001` (jaw-height flesh ring, ~0.57m
+ * radius) that is not in hero_bind. Drawing it as hide-tint made Mixamo poke
+ * through every helm. Keep the largest surface; hide the rest.
+ */
+function pickPrimaryMixamoSurface(meshes: THREE.Mesh[]): THREE.Mesh | null {
+  if (meshes.length === 0) return null;
+  return meshes.reduce((best, mesh) =>
+    mixamoSurfaceVertCount(mesh) > mixamoSurfaceVertCount(best) ? mesh : best,
+  );
+}
+
 /** Keep one outfit mesh visible; hide the rest (multi-pack SM_Chr_* / Beta). */
 export function selectCharacterMesh(root: THREE.Object3D, meshName: string): void {
   const wanted = meshName.toLowerCase();
   let hasOutfitPack = false;
   let matched = false;
+  const mixamoSurfaces: THREE.Mesh[] = [];
 
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
@@ -160,8 +200,7 @@ export function selectCharacterMesh(root: THREE.Object3D, meshName: string): voi
       return;
     }
     if (lower.includes("beta_surface")) {
-      mesh.visible = true;
-      matched = matched || wanted.includes("beta_surface") || wanted === "beta_surface";
+      mixamoSurfaces.push(mesh);
       return;
     }
 
@@ -172,6 +211,16 @@ export function selectCharacterMesh(root: THREE.Object3D, meshName: string): voi
     mesh.visible = show;
     if (show) matched = true;
   });
+
+  const primary = pickPrimaryMixamoSurface(mixamoSurfaces);
+  for (const mesh of mixamoSurfaces) {
+    const show = mesh === primary;
+    mesh.visible = show;
+    mesh.userData.bbHeroSurface = show;
+  }
+  if (primary) {
+    matched = matched || wanted.includes("beta_surface") || wanted === "beta_surface";
+  }
 
   if (hasOutfitPack && !matched) {
     console.warn(`[characterVisual] mesh "${meshName}" not found — showing first SM_Chr_*`);
@@ -207,10 +256,34 @@ export function setHeroSurfaceVisible(root: THREE.Object3D, visible: boolean): v
       mesh.visible = false;
       return;
     }
+    if (obj.userData.bbHeroSurface === false) {
+      mesh.visible = false;
+      return;
+    }
     if (lower.includes("surface") || mesh.name.startsWith("SM_Chr_")) {
       mesh.visible = visible;
     }
   });
+}
+
+/** Mixamo rest / T-pose from the GLB bind locals (not skeleton.pose — hats share bones). */
+export function poseCharacterBind(root: THREE.Object3D): void {
+  const snaps = root.userData.bbBindPose as BindBoneSnap[] | undefined;
+  if (snaps?.length) {
+    for (const snap of snaps) {
+      snap.bone.position.copy(snap.position);
+      snap.bone.quaternion.copy(snap.quaternion);
+      snap.bone.scale.copy(snap.scale);
+    }
+    root.updateMatrixWorld(true);
+    return;
+  }
+  root.traverse((obj) => {
+    if (obj.userData.bbBoneSkin || obj.userData.bbVesselBody) return;
+    const mesh = obj as THREE.SkinnedMesh;
+    if (mesh.isSkinnedMesh && mesh.skeleton) mesh.skeleton.pose();
+  });
+  root.updateMatrixWorld(true);
 }
 
 /** True when hero.glb already has this item (legacy Boot1/Boot2, Chest Set 1, etc.). */
@@ -616,7 +689,17 @@ export function setCharacterOpacity(scene: THREE.Object3D, opacity: number): voi
     const name = mesh.name.toLowerCase();
     const isHeroOutfit = mesh.name.startsWith("SM_Chr_");
     const isMixamoSurface = name.includes("surface");
-    const isGear = isCosmeticMeshOrDescendant(mesh);
+    let isGear = isCosmeticMeshOrDescendant(mesh);
+    if (!isGear) {
+      let cur: THREE.Object3D | null = mesh;
+      while (cur) {
+        if (cur.userData.bbBoneSkin || cur.userData.bbVesselBody) {
+          isGear = true;
+          break;
+        }
+        cur = cur.parent;
+      }
+    }
     if (!isHeroOutfit && !isMixamoSurface && !isGear) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
@@ -677,11 +760,11 @@ export function warmCharacterOpacityVariants(
   });
 
   // Matches the VFX warmup: bind a target so the key carries the composer's
-  // linear output space rather than the canvas's sRGB.
+  // linear output space rather than the canvas's sRGB. Cloak uses 0.32.
   const probe = new THREE.WebGLRenderTarget(1, 1);
   const previousTarget = gl.getRenderTarget();
   try {
-    setCharacterOpacity(characterRoot, 0.42);
+    setCharacterOpacity(characterRoot, 0.32);
     gl.setRenderTarget(probe);
     gl.compile(scene, camera);
   } catch {

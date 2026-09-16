@@ -10,6 +10,7 @@ import {
   resolveCastMoveMul,
   resolveComboContinueMoveMul,
   sampleTravel,
+  dashTravelYaw,
   sweepTravel,
   travelDistance,
   travelDurationMs,
@@ -210,22 +211,23 @@ export class LocalPredictor {
     return Boolean(this.comboGapAbilityId && performance.now() < this.comboGapUntil);
   }
 
-  beginTravelFromCast(abilityId: string, yaw: number) {
+  beginTravelFromCast(abilityId: string, yaw: number, moveX = 0, moveZ = 0) {
     const def = ABILITIES[abilityId];
     if (!def) return;
     const travel = resolveTravel(def);
     // Hold-to-confirm blinks wait for confirmCast — don't snap on impact enter.
     if (def.confirmOnRelease) return;
+    const travelYaw = abilityId === "dash" ? dashTravelYaw(yaw, moveX, moveZ) : yaw;
     if (travel.mode === "instant") {
       const dist = travelDistance(def);
-      const ideal = sampleTravel(this.state, yaw, dist, 1);
+      const ideal = sampleTravel(this.state, travelYaw, dist, 1);
       const clamped = sweepTravel(
         this.state,
         ideal,
         COLLISION.playerRadius,
         this.staticColliders,
       );
-      this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw };
+      this.state = { ...this.state, x: clamped.x, z: clamped.z, yaw: travelYaw };
       this.travel = null;
       return;
     }
@@ -233,7 +235,7 @@ export class LocalPredictor {
     const dist = travelDistance(def);
     const dur = travelDurationMs(def);
     const from = { x: this.state.x, z: this.state.z };
-    const ideal = sampleTravel(from, yaw, dist, 1);
+    const ideal = sampleTravel(from, travelYaw, dist, 1);
     const clamped = sweepTravel(from, ideal, COLLISION.playerRadius, this.staticColliders);
     const actualDist = length2(clamped.x - from.x, clamped.z - from.z);
     const scale = dist > 1e-6 ? Math.min(1, actualDist / dist) : 0;
@@ -241,7 +243,7 @@ export class LocalPredictor {
       abilityId,
       fromX: from.x,
       fromZ: from.z,
-      yaw,
+      yaw: travelYaw,
       distance: dist * scale,
       startMs: performance.now() + travelTakeoffDelayMs(def),
       durationMs: Math.max(16, dur * Math.max(0.05, scale)),

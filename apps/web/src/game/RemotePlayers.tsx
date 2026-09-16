@@ -163,6 +163,9 @@ function RemotePlayerAvatar({
       heroAnimationConfig,
     );
     controllerRef.current = controller;
+    controller.setCrouchLoco(true, { moving: true, speed01: 0.4 });
+    controller.update(1 / 60);
+    controller.setCrouchLoco(false);
     return () => {
       controller.dispose();
       controllerRef.current = null;

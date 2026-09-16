@@ -143,6 +143,8 @@ export class WorldTargetState extends Schema {
    * from the prop's collider so a barn is not as hard to hit as a fencepost.
    */
   @type("number") radius = 0;
+  /** Signature / currently-cast ability for elites (empty on fodder). */
+  @type("string") abilityId = "";
   /** Mirror of player cast fields for attack anim sync. */
   @type("string") castAbilityId = "";
   @type("string") castPhase = "";
@@ -389,6 +391,8 @@ export class PickupState extends Schema {
 export class BaseCityState extends Schema {
   @type("number") tick = 0;
   @type("boolean") paused = false;
+  /** Wave Assault: hunters can damage each other when true. Default off. */
+  @type("boolean") pveFriendlyFire = false;
   /** "pvp_reconnect" | "pve_reconnect" | "resume_grace" | "" */
   @type("string") pauseReason = "";
   /** Server epoch ms when reconnect grace ends (0 if not paused). */

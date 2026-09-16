@@ -24,12 +24,12 @@ export const ENERGY_MAX_PIPS = 8;
  *
  * Taken is cheaper than dealt on purpose: it hands the losing player some
  * comeback pressure. Player HP is 2000, so a round where the winner deals
- * 2000 and takes 1200 generates about 16 pips, or two bars.
+ * 2000 and takes 1200 generates about 10 pips, a bit over one bar.
  */
 export const ENERGY_PER_PIP = {
-  damageDealt: 220,
-  damageTaken: 180,
-  healingDone: 220,
+  damageDealt: 340,
+  damageTaken: 280,
+  healingDone: 340,
 } as const;
 
 export type EnergySource = keyof typeof ENERGY_PER_PIP;
@@ -43,11 +43,11 @@ export type EnergySource = keyof typeof ENERGY_PER_PIP;
  * focused player from farming a full bar off two attackers -- both of which
  * would still pay out, just late, if the excess were banked.
  *
- * At 0.4 the ceiling is one full bar per 20s of uninterrupted output, so it
+ * At 0.25 the ceiling is one full bar per 32s of uninterrupted output, so it
  * does not bind during normal trading -- the per-pip rates above govern that
  * -- and only bites when someone is standing still hitting one target.
  */
-export const ENERGY_MAX_PIPS_PER_SEC = 0.4;
+export const ENERGY_MAX_PIPS_PER_SEC = 0.25;
 
 /**
  * How much may be earned in a single instant, in pips.

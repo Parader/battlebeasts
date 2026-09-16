@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mage Trials</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
+    <link rel="stylesheet" href="./launcher.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <div>
+          <p class="kicker">Mage Trials</p>
+          <h1 id="title">Launcher</h1>
+          <p id="status" class="status">Checking for updates…</p>
+        </div>
+        <div class="actions">
+          <div id="progressWrap" class="progress-wrap hidden">
+            <div id="progressBar" class="progress-bar"></div>
+            <span id="progressLabel">0%</span>
+          </div>
+          <button id="retry" class="btn ghost hidden" type="button">Retry</button>
+          <button id="play" class="btn" type="button" disabled>Play</button>
+        </div>
+      </header>
+      <main id="notes" class="notes">
+        <p class="placeholder">Patch notes appear here when the update feed loads.</p>
+      </main>
+    </div>
+    <script src="./launcher.js"></script>
+  </body>
+</html>

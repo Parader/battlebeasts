@@ -19,11 +19,13 @@ packages/shared/dist
 # Electron: ship source + scripts only — never commit packaged builds or local overrides
 apps/desktop/release/
 apps/desktop/release-*/
-apps/desktop/renderer/
+apps/desktop/dist-content/
 apps/desktop/config.json
 apps/desktop/node_modules/
+apps/desktop/renderer/
 apps/bb.zip
 .cursor/
 .idea
 .vscode/*
 !.vscode/extensions.json
+**/__pycache__/

@@ -6,7 +6,7 @@ import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope } from "../easing";
 import { findBone } from "../attach";
-import { getCharacterRoot } from "../../characterRoots";
+import { getCharacterRoot, getCombatOwnerPose } from "../../characterRoots";
 import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { GEO_SPHERE_LO, GEO_SPHERE_MD } from "../sharedGeo";
@@ -66,9 +66,7 @@ export function PoisonDartCastEffect({
         pose.current.z = local.z + Math.cos(local.yaw) * offset;
         pose.current.y = shot.y || POISON_DART_CAST.handY;
       } else {
-        const p = follow.room?.state?.players?.get(shot.followOwnerId) as
-          | { x?: number; z?: number; yaw?: number }
-          | undefined;
+        const p = getCombatOwnerPose(follow.room, shot.followOwnerId);
         if (p) {
           const yaw = p.yaw ?? pose.current.yaw;
           pose.current.yaw = yaw;

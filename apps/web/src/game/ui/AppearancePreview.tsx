@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
@@ -7,6 +7,7 @@ import { emoteAnimationClips, heroAnimationConfig } from "../animation";
 import {
   CHARACTER_URL,
   YBOT_URL,
+  poseCharacterBind,
   prepareCharacterScene,
   tintCharacterSurface,
   disposeCharacterMaterials,
@@ -26,6 +27,8 @@ type PreviewProps = {
   cosmeticsEquipped?: CosmeticsEquipped;
   /** When set, loop this emote clip instead of idle. */
   previewEmoteId?: string | null;
+  /** Rest / T-pose — no idle clip. For checking bind-file skin placement. */
+  bindPose?: boolean;
   className?: string;
 };
 
@@ -45,6 +48,7 @@ function PreviewAvatar({
   body = "female",
   cosmeticsEquipped,
   previewEmoteId,
+  bindPose = false,
   yawRef,
 }: PreviewProps & { yawRef: MutableRefObject<number> }) {
   const spinRef = useRef<THREE.Group>(null);
@@ -76,8 +80,19 @@ function PreviewAvatar({
   }, [gltf.scene, idleClip]);
 
   useEffect(() => {
-    const clip = emoteClip ?? idleClip;
-    if (!clip) return;
+    return () => {
+      disposeCharacterMaterials(scene);
+    };
+  }, [scene]);
+
+  useEffect(() => {
+    const clip = emoteClip ?? (bindPose ? null : idleClip);
+    if (!clip) {
+      mixerRef.current?.stopAllAction();
+      mixerRef.current = null;
+      poseCharacterBind(scene);
+      return;
+    }
     const mixer = new THREE.AnimationMixer(scene);
     const action = mixer.clipAction(clip);
     action.enabled = true;
@@ -92,14 +107,13 @@ function PreviewAvatar({
       mixer.stopAllAction();
       mixer.uncacheRoot(scene);
       mixerRef.current = null;
-      disposeCharacterMaterials(scene);
     };
-  }, [scene, idleClip, emoteClip]);
+  }, [scene, idleClip, emoteClip, bindPose]);
 
   // Frame once per model / viewport — never on cosmetic swaps (that drifted the avatar).
   useLayoutEffect(() => {
     framedRef.current = false;
-  }, [scene, viewSize.width, viewSize.height]);
+  }, [scene, viewSize.width, viewSize.height, bindPose]);
 
   useEffect(() => {
     const el = gl.domElement.parentElement ?? gl.domElement;
@@ -200,7 +214,20 @@ function PreviewAvatar({
       <group ref={spinRef}>
         <primitive object={scene} />
         <VesselBody characterRoot={scene} body={body} color={color} />
-        <EquippedCosmetics characterRoot={scene} equipped={cosmeticsEquipped} body={body} />
+        <EquippedCosmetics
+          key={`${body}:${[
+            cosmeticsEquipped?.hat,
+            cosmeticsEquipped?.shoulders,
+            cosmeticsEquipped?.chest,
+            cosmeticsEquipped?.gloves,
+            cosmeticsEquipped?.belt,
+            cosmeticsEquipped?.legs,
+            cosmeticsEquipped?.shoes,
+          ].join("|")}`}
+          characterRoot={scene}
+          equipped={cosmeticsEquipped}
+          body={body}
+        />
         <SpiritVesselFx
           characterRoot={scene}
           getColor={() => color}
@@ -224,6 +251,9 @@ export function AppearancePreview({
   className,
 }: PreviewProps) {
   const yawRef = useRef(0);
+  const [bindPose, setBindPose] = useState(false);
+  const poseLocked = Boolean(previewEmoteId);
+  const usingBind = bindPose && !poseLocked;
   return (
     <div
       className={[
@@ -251,13 +281,32 @@ export function AppearancePreview({
             patternColor={patternColor}
             cosmeticsEquipped={cosmeticsEquipped}
             previewEmoteId={previewEmoteId}
+            bindPose={usingBind}
             body={body}
             yawRef={yawRef}
           />
         </Suspense>
       </Canvas>
+      <button
+        type="button"
+        className={[
+          "bb-appearance-preview__pose",
+          usingBind ? "bb-appearance-preview__pose--on" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        disabled={poseLocked}
+        aria-pressed={usingBind}
+        onClick={() => setBindPose((on) => !on)}
+      >
+        {usingBind ? "Bind pose" : "Idle"}
+      </button>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent px-2 py-1.5 text-[10px] text-white/80">
-        {previewEmoteId ? "Emote preview — drag to rotate" : "Drag to rotate"}
+        {previewEmoteId
+          ? "Emote preview — drag to rotate"
+          : usingBind
+            ? "T-pose rest — drag to rotate"
+            : "Drag to rotate"}
       </div>
     </div>
   );

@@ -1004,9 +1004,11 @@ export class CharacterAnimationController {
       action.paused = false;
       action.timeScale = 0.7 + speed01 * 0.55;
     } else {
-      action.paused = true;
+      // timeScale 0 still writes the crouched pose each mixer tick; `paused`
+      // skips writes and cloak head-look then accumulates into a spin.
+      action.paused = false;
       action.time = 0;
-      action.timeScale = 1;
+      action.timeScale = 0;
     }
     action.setEffectiveWeight(1);
     this.overrideActive = true;

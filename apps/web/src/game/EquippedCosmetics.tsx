@@ -25,7 +25,7 @@ export function EquippedCosmetics({ characterRoot, equipped, opacity = 1, body }
     } catch (err) {
       console.warn("[EquippedCosmetics] sync failed:", err);
     }
-  }, [characterRoot, equipped, opacity]);
+  }, [characterRoot, equipped, opacity, vessel]);
 
   return (
     <BoneSkins

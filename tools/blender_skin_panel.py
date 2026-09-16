@@ -2,8 +2,8 @@
 Battle Beasts skin tags — View3D → Sidebar (N) → Character → Skins.
 
 Mark a mesh:
-  Rig = One bone  → parent to that Mixamo bone (hat, pads)
-  Rig = Skinned   → deform with the live armature (chest, boots)
+  Rig = Skinned   → Mixamo weights, remounted on the live hero skeleton
+  Rig = One bone  → leftover bake (export still ships skinned)
 
 Export from this panel (all tagged, or only new/changed), or `pnpm export:skins`.
 """
@@ -20,7 +20,7 @@ from bpy.types import Operator, Panel, PropertyGroup
 bl_info = {
     "name": "Battle Beasts Skins",
     "author": "Battle Beasts",
-    "version": (1, 3, 0),
+    "version": (1, 6, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Character > Skins",
     "category": "Character",
@@ -82,20 +82,33 @@ def _set_collection_visible(name: str, visible: bool) -> None:
     walk(bpy.context.view_layer.layer_collection)
 
 
-def apply_body_preview(mode: str) -> None:
-    if mode == "male":
-        _set_collection_visible(COL_FEMALE, False)
-        _set_collection_visible(COL_MALE, True)
-    elif mode == "both":
-        _set_collection_visible(COL_FEMALE, True)
-        _set_collection_visible(COL_MALE, True)
-    else:
-        _set_collection_visible(COL_FEMALE, True)
-        _set_collection_visible(COL_MALE, False)
-
-
 def _on_body_preview(self, context):
-    apply_body_preview(self.body_preview)
+    try:
+        _ensure_tools_path()
+        import importlib
+        import blender_export_skin as skin
+
+        importlib.reload(skin)
+        skin.reveal_bind_dummies()
+        skin.align_male_armature_to_host()
+        skin.apply_body_preview(self.body_preview)
+    except Exception as exc:
+        print(f"[skins] body preview failed: {exc}")
+
+
+def _on_pose_preview(self, context):
+    try:
+        _ensure_tools_path()
+        import importlib
+        import blender_bind_idle as idle
+        import blender_export_skin as skin
+
+        importlib.reload(skin)
+        importlib.reload(idle)
+        idle.apply_pose_preview(self.pose_preview)
+        skin.apply_body_preview(self.body_preview)
+    except Exception as exc:
+        print(f"[skins] pose preview failed: {exc}")
 
 
 class BB_SceneSettings(PropertyGroup):
@@ -109,6 +122,17 @@ class BB_SceneSettings(PropertyGroup):
         ),
         default="female",
         update=_on_body_preview,
+    )
+    pose_preview: EnumProperty(
+        name="Pose",
+        description="Rest = export. T-Pose = hero.blend Mixamo clip. Idle = game. Does not change Female/Male.",
+        items=(
+            ("rest", "Rest", "Armature bind — what export bakes"),
+            ("tpose", "T-Pose", "hero.blend Mixamo T-Pose (1.55cm vs Rest)"),
+            ("idle", "Idle", "hero.glb idle — how hats sit in game"),
+        ),
+        default="tpose",
+        update=_on_pose_preview,
     )
 
 
@@ -131,6 +155,37 @@ def _bone_items(self, context):
     return items
 
 
+SKINNED_SLOTS = frozenset({"hat", "shoulders", "chest", "gloves", "belt", "legs", "shoes"})
+
+
+def _on_catalog_id(self, context):
+    try:
+        _ensure_tools_path()
+        from skin_manifest import slot_from_id
+
+        slot = slot_from_id(self.catalog_id)
+    except Exception:
+        return
+    if not slot:
+        return
+    obj = getattr(self, "id_data", None)
+
+    def apply():
+        try:
+            settings = obj.bb_skin if obj is not None else self
+            settings.slot = slot
+            if slot in SKINNED_SLOTS:
+                settings.rig = "skinned"
+        except Exception:
+            pass
+        return None
+
+    try:
+        bpy.app.timers.register(apply, first_interval=0.0)
+    except Exception:
+        apply()
+
+
 class BB_SkinSettings(PropertyGroup):
     export: BoolProperty(
         name="Export this mesh",
@@ -141,6 +196,7 @@ class BB_SkinSettings(PropertyGroup):
         name="Catalog ID",
         description="Must match cosmetics.ts (shoes_set_1). Same ID on L/R meshes = one GLB",
         default="",
+        update=_on_catalog_id,
     )
     body: EnumProperty(
         name="Body",
@@ -153,21 +209,21 @@ class BB_SkinSettings(PropertyGroup):
         name="Rig",
         items=(
             (
-                "rigid",
-                "One bone",
-                "Parent the whole mesh to one Mixamo bone (hat, shoulder pad, belt)",
-            ),
-            (
                 "skinned",
                 "Skinned",
-                "Copy Mixamo weights so it bends (chest, boots, pants)",
+                "Copy Mixamo weights and remount on the live hero skeleton",
+            ),
+            (
+                "rigid",
+                "One bone",
+                "Leftover bake — export still ships skinned",
             ),
         ),
-        default="rigid",
+        default="skinned",
     )
     keep_weights: BoolProperty(
         name="Keep painted weights",
-        description="Skip copying the body. Uses this mesh's vertex groups (Weight Paint)",
+        description="Skip copying the body. Use this for baggy cloth — body-copied weights hug the dummy and clip",
         default=False,
     )
     bone: EnumProperty(
@@ -209,7 +265,7 @@ def _stamp_object(obj, spec: dict, bone: str) -> None:
     s.export = True
     s.catalog_id = spec["id"]
     s.slot = spec.get("slot", "hat")
-    s.rig = spec.get("rig", "rigid")
+    s.rig = spec.get("rig", "skinned")
     s.file = spec.get("file", f"{spec['id']}.glb")
     s.prep = spec.get("prep") or "none"
     s.keep_weights = keep or bool(spec.get("keep_weights"))
@@ -222,6 +278,31 @@ def _stamp_object(obj, spec: dict, bone: str) -> None:
             s.bone = bone
         except TypeError:
             pass
+
+
+class BB_OT_bind_game_rig(Operator):
+    bl_idname = "bb.bind_game_rig"
+    bl_label = "Follow bones (game rig)"
+    bl_description = "Bone-parent rigid skins and copy Mixamo weights onto skinned skins so Idle deforms like the game"
+
+    def execute(self, context):
+        try:
+            _ensure_tools_path()
+            import importlib
+            import blender_bind_idle as idle
+            import blender_export_skin as skin
+
+            importlib.reload(skin)
+            importlib.reload(idle)
+            notes = idle.bind_skins_for_game_preview(force=True)
+            idle.apply_pose_preview(getattr(context.scene.bb_skins, "pose_preview", "idle") or "idle")
+            skin.apply_body_preview(getattr(context.scene.bb_skins, "body_preview", "female") or "female")
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            print(f"[skins] follow bones failed: {exc}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Rigged {len(notes)} mesh(es) like the game")
+        return {"FINISHED"}
 
 
 class BB_OT_stamp_known_skins(Operator):
@@ -257,6 +338,17 @@ class BB_OT_export_skins(Operator):
     only_stale: BoolProperty(default=False)
 
     def execute(self, context):
+        try:
+            return self._export(context)
+        except Exception as exc:
+            import traceback
+
+            traceback.print_exc()
+            self.report({"ERROR"}, str(exc))
+            print(f"[skins] export failed: {exc}")
+            return {"CANCELLED"}
+
+    def _export(self, context):
         _ensure_tools_path()
         import importlib
         import blender_export_skin as skin
@@ -303,6 +395,10 @@ class BB_PT_skins(Panel):
         if hasattr(scene, "bb_skins"):
             row = layout.row(align=True)
             row.prop(scene.bb_skins, "body_preview", expand=True)
+            row = layout.row(align=True)
+            row.prop(scene.bb_skins, "pose_preview", expand=True)
+            layout.label(text="Rest = place. Idle = game (planted hips). Gender stays put.")
+            layout.operator("bb.bind_game_rig", icon="ARMATURE_DATA")
 
         box = layout.box()
         col = box.column(align=True)
@@ -338,7 +434,7 @@ class BB_PT_skins(Panel):
             layout.prop(s, "keep_weights")
             if not s.keep_weights:
                 src = "YBot_Surface" if getattr(s, "body", "any") == "male" else "Beta_Surface"
-                layout.label(text=f"Otherwise copies {src}")
+                layout.label(text=f"Otherwise copies {src} weights (weld UV seams)")
         layout.prop(s, "file")
         if s.slot == "gloves":
             layout.prop(s, "prep")
@@ -349,6 +445,7 @@ classes = (
     BB_SceneSettings,
     BB_SkinSettings,
     BB_OT_stamp_known_skins,
+    BB_OT_bind_game_rig,
     BB_OT_export_skins,
     BB_PT_skins,
 )

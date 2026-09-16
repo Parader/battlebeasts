@@ -14,25 +14,26 @@ import {
 import { getActiveEmote } from "./emoteRuntime";
 import {
   CHARACTER_URL,
+  poseCharacterBind,
   prepareCharacterScene,
   setCharacterOpacity,
   tintCharacterSurface,
   warmCharacterOpacityVariants,
   disposeCharacterMaterials,
 } from "./characterVisual";
+import { getAdminBindPose } from "./adminBindPose";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
 import { VesselBody } from "./VesselBody";
 import { usePlayerVessel } from "./usePlayerVessel";
 import { syncPlayerCast } from "./syncPlayerCast";
-import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS, shortestAngleDelta } from "./visualYaw";
+import { dampYawClamped, VISUAL_YAW_RESPONSIVENESS } from "./visualYaw";
 import { AimIndicator, AIM_RELATION_COLORS } from "./AimIndicator";
 import { smashHopOffsetY } from "./smashHop";
 import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments } from "./StatusOrnaments";
 import { SpiritVesselFx } from "./SpiritVesselFx";
 import { collectStatusRows, hasStatusId } from "./statusBadgeUtils";
-import { findBone } from "./vfx/attach";
 import { registerCharacterRoot } from "./characterRoots";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
@@ -48,8 +49,6 @@ import { getTeleportSlamOpacity, hasTeleportSlamFade } from "./teleportSlamFadeR
 
 useGLTF.preload(CHARACTER_URL);
 
-/** Max head yaw toward cursor while crouch-walking (rad). */
-const CLOAK_HEAD_LOOK_MAX = 0.9;
 const CLOAK_MOVE_SPEED_EPS = 0.35;
 
 type Props = {
@@ -66,7 +65,7 @@ type Props = {
  * Gameplay owns root transform; animations never apply horizontal root motion.
  * Visual yaw follows aim (Mixamo 5-way needs aim-forward root).
  * Aim ring / Spine1 follow gameplay cursor yaw.
- * While cloaked: crouch-walk aligned to move; head only looks at cursor.
+ * While cloaked: crouch-walk aligned to move; idle faces the cursor.
  */
 export function CharacterAvatar({
   predictedRef,
@@ -79,7 +78,6 @@ export function CharacterAvatar({
   const bodyRef = useRef<THREE.Group>(null);
   const aimRef = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
-  const headBoneRef = useRef<THREE.Object3D | null>(null);
   const prevPos = useRef(new THREE.Vector3());
   const velocity = useRef(new THREE.Vector3());
   const lastCastId = useRef("");
@@ -175,9 +173,10 @@ export function CharacterAvatar({
       heroAnimationConfig,
     );
     controllerRef.current = controller;
-    headBoneRef.current =
-      findBone(scene, "mixamorig:Head", { partial: true }) ??
-      findBone(scene, "head", { partial: true });
+    // Prime cloak crouch on the live mixer so the first invis doesn't hitch.
+    controller.setCrouchLoco(true, { moving: true, speed01: 0.4 });
+    controller.update(1 / 60);
+    controller.setCrouchLoco(false);
 
     if (debug) {
       debugPrintAnimationAssets(scene, animations, "[hero.glb]");
@@ -188,7 +187,6 @@ export function CharacterAvatar({
     return () => {
       controller.dispose();
       controllerRef.current = null;
-      headBoneRef.current = null;
     };
   }, [scene, animations, debug]);
 
@@ -273,6 +271,14 @@ export function CharacterAvatar({
       prevPos.current.set(p.x, 0, p.z);
       visualYaw.current = p.yaw;
       seededMove.current = true;
+    }
+
+    if (getAdminBindPose()) {
+      visualYaw.current = p.yaw;
+      body.rotation.y = visualYaw.current;
+      if (aim) aim.rotation.y = p.yaw;
+      poseCharacterBind(scene);
+      return;
     }
 
     const dead = typeof me?.hp === "number" && me.hp <= 0;
@@ -396,7 +402,9 @@ export function CharacterAvatar({
     if (jumpAim || portalAim || bloodRushAim || handShieldAim || emoteAim) {
       visualYaw.current = p.yaw;
     } else if (moveBodyAim) {
-      // Cloak / Groove: body faces travel; head tracks cursor separately.
+      // Cloak / Groove: body faces travel while moving; idle faces the cursor.
+      // Don't twist the Head bone — Mixamo local Y is not world yaw, and a helm
+      // skinned to Head spins if that offset accumulates.
       if (movingForBody) {
         const moveYaw = Math.atan2(velocity.current.x, velocity.current.z);
         visualYaw.current = dampYawClamped(
@@ -405,6 +413,8 @@ export function CharacterAvatar({
           VISUAL_YAW_RESPONSIVENESS * 1.15,
           safeDt,
         );
+      } else {
+        visualYaw.current = p.yaw;
       }
     } else if (!yawLocked.current) {
       // Mixamo 5-way loco is authored for aim-forward. Root must face aim or
@@ -431,7 +441,7 @@ export function CharacterAvatar({
         ? 0.32
         : getTeleportSlamOpacity(localSessionId);
     const slamFading = !cloaked && !revengeVanished && hasTeleportSlamFade(localSessionId);
-    if (slamFading || ghostOpacity !== ghostOpacityRef.current) {
+    if (ghosted || slamFading || ghostOpacity !== ghostOpacityRef.current) {
       ghostOpacityRef.current = ghostOpacity;
       setCharacterOpacity(scene, ghostOpacity);
       setCloakOpacity(ghostOpacity);
@@ -462,14 +472,6 @@ export function CharacterAvatar({
       baseMoveSpeed: MOVE_SPEED,
     });
     controller.update(safeDt);
-
-    // Head toward cursor while cloaked or Grooving (after mixer writes bones).
-    const head = headBoneRef.current;
-    if (head && moveBodyAim) {
-      const deltaYaw = shortestAngleDelta(visualYaw.current, p.yaw);
-      const look = Math.max(-CLOAK_HEAD_LOOK_MAX, Math.min(CLOAK_HEAD_LOOK_MAX, deltaYaw));
-      head.rotation.y += look;
-    }
   });
 
   return (

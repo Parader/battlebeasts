@@ -19,7 +19,7 @@ import {
   MAX_TALENTS,
   PLAYER_BASE_MAX_HP,
   QUEST_CATALOG,
-  SHOP_ITEMS,
+  getShopItem,
   SPELL_SLOTS,
   STARTER_COLORS,
   STARTER_TALENT_POINTS,
@@ -701,18 +701,22 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
   protected async handleResetTalentTree(client: Client, tree: TalentTreeId | undefined) {
     const player = this.state.players.get(client.sessionId);
-    if (!player || !tree || !(TALENT_TREE_IDS as readonly string[]).includes(tree)) return;
+    if (!player) return;
+    if (tree && !(TALENT_TREE_IDS as readonly string[]).includes(tree)) return;
     const current = this.talentBuildBySession.get(client.sessionId) ?? {};
-    const removed = treePointsSpent(current, tree);
+    const removed = tree ? treePointsSpent(current, tree) : totalPointsSpent(current);
     if (removed <= 0) {
-      client.send("toast", { message: `No points invested in ${tree}` });
+      client.send("toast", {
+        message: tree ? `No points invested in ${tree}` : "No points invested",
+      });
       return;
     }
-    const next = clearTree(current, tree);
+    const next = tree ? clearTree(current, tree) : {};
     const cost = talentRefundEssenceCost(removed);
+    const label = tree ?? "all trees";
     if (player.essence < cost) {
       client.send("toast", {
-        message: `Need ${cost} essence to reset ${tree} (${removed} pt × ${ESSENCE_PER_TALENT_REFUND})`,
+        message: `Need ${cost} essence to reset ${label} (${removed} pt × ${ESSENCE_PER_TALENT_REFUND})`,
       });
       return;
     }
@@ -723,7 +727,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     await this.persistActiveLoadoutPreset(client, abilityIds, next);
     this.applyCombatKit(client.sessionId, player);
     this.sendInventory(client, player);
-    client.send("toast", { message: `Reset ${tree} (−${cost} essence, ${removed} pt)` });
+    client.send("toast", { message: `Reset ${label} (−${cost} essence, ${removed} pt)` });
   }
 
   protected async handleSetTalents(client: Client, talentIds: string[]) {
@@ -901,7 +905,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
   protected async handleShopBuy(client: Client, itemId: string) {
     const player = this.state.players.get(client.sessionId);
-    const item = SHOP_ITEMS[itemId];
+    const item = getShopItem(itemId);
     if (!player || !item) {
       client.send("toast", { message: "Unknown item" });
       return;

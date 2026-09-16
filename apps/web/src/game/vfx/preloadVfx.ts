@@ -22,6 +22,7 @@ import { createRiftArmRingMaterial } from "./effects/riftArmRing";
 import { createCooldownRingMaterial } from "./SpiritHusks";
 import { getSharedFireMaterial } from "./components/FireParticleField";
 import { warmAuraWispMaterials } from "./auraWispTextures";
+import { createChakraVeilMaterial } from "./auraChakraVeil";
 import { createAuraEyeMaterial } from "./auraEyesTexture";
 import { createLavaStripMaterial, getLavaTexture } from "./components/LavaGroundStrip";
 import { getChainTexture } from "./materials/chainTexture";
@@ -241,6 +242,9 @@ export function warmSpellMaterials(
   const auraEyeMat = createAuraEyeMaterial();
   skipDispose.add(auraEyeMat);
   group.add(new THREE.Mesh(plane, auraEyeMat));
+  const chakraVeilMat = createChakraVeilMaterial();
+  skipDispose.add(chakraVeilMat);
+  group.add(new THREE.Mesh(plane, chakraVeilMat));
 
   /*
    * Programs reached by hits, buffs and status rings rather than by casting.

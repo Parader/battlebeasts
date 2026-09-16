@@ -728,6 +728,12 @@ export function dashOffset(yaw: number, distance: number): Vec2 {
   return { x: f.x * distance, z: f.z * distance };
 }
 
+/** Dash: WASD world stick if moving, otherwise cursor/aim yaw. */
+export function dashTravelYaw(aimYaw: number, moveX: number, moveZ: number): number {
+  if (Math.hypot(moveX, moveZ) > 0.12) return Math.atan2(moveX, moveZ);
+  return aimYaw;
+}
+
 /**
  * Portal channel: distance from elapsed wall ms (0 at channel start → max at channelChargeMs).
  */

@@ -1,8 +1,26 @@
-# Hosted Mage Trials game-server (Fly.io)
+# Mage Trials game-server
 
-Gameplay traffic only — Electron/web clients keep GLBs local.
+## Prod on this PC (current)
 
-## One-time setup
+Docker Desktop, port **2567**. Friends / the packaged launcher use `ws://74.59.153.60:2567`.
+
+Local development uses port **2568** so you can keep coding while prod stays up. See [apps/desktop/README.md](../desktop/README.md).
+
+```powershell
+pnpm prod:up
+pnpm prod:down
+pnpm release   # rebuild Docker prod, then publish the client pack to GitHub
+```
+
+`pnpm release` recreates the container and **drops anyone in a match**.
+
+Needs `apps/game-server/.env` (`SUPABASE_URL`, `SUPABASE_SECRET_KEY`). Do not commit it. Compose is started with `--env-file compose.env` so `$` in those keys is not interpolated.
+
+## Fly.io (later)
+
+Gameplay traffic only — Electron/web clients keep GLBs local. Not required while prod runs on this PC.
+
+### One-time setup
 
 1. Install Fly CLI: https://fly.io/docs/hands-on/install-flyctl/
 2. `fly auth login`
@@ -18,11 +36,11 @@ If the app name `battlebeasts-game` is taken, edit `app = "..."` in `fly.toml`.
 
 ```powershell
 fly secrets set ALLOW_GUESTS=true SUPABASE_URL="..." SUPABASE_SECRET_KEY="..."
+```
 
 Ranked LP/tier writes require **SUPABASE_SECRET_KEY** (service role). If only the
 anon/publishable key is set, RLS blocks `player_ratings` upserts and everyone
 stays Bronze · 0 LP in the Ranked menu.
-```
 
 5. Deploy:
 
@@ -30,29 +48,15 @@ stays Bronze · 0 LP in the Ranked menu.
 fly deploy --config fly.toml --dockerfile Dockerfile.game-server
 ```
 
-6. Your WebSocket URL is:
+6. WebSocket URL:
 
 ```text
 wss://battlebeasts-game.fly.dev
 ```
 
-(replace with your app name)
+Then put that URL in the next GitHub `latest.json` `gameServerUrl` (and `apps/desktop/config.example.json`) so launchers pick it up without a new EXE.
 
-## Point Electron / web at it
-
-`apps/desktop/config.json`:
-
-```json
-{ "gameServerUrl": "wss://battlebeasts-game.fly.dev" }
-```
-
-Or for local Vite:
-
-```env
-VITE_GAME_SERVER_URL=wss://battlebeasts-game.fly.dev
-```
-
-## Smoke test
+### Smoke test
 
 ```powershell
 curl https://battlebeasts-game.fly.dev/health

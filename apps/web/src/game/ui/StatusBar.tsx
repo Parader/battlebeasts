@@ -228,7 +228,7 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
     parts.push("First direct hit refunds movement cooldown");
   }
   if (row.statusId === "movementRepeatReady") {
-    parts.push("Recast the same Dash or Teleport");
+    parts.push("Recast the same Space movement");
   }
   if (row.statusId === "tripleBlinkReady") {
     parts.push(`Recast Space (${row.stacks} hop${row.stacks === 1 ? "" : "s"} left)`);
@@ -388,7 +388,9 @@ export function StatusBar({ room, sessionId }: { room: Room | null; sessionId: s
           return (
             <div
               key={row.key}
-              className="pointer-events-auto relative flex h-9 w-9 cursor-default flex-col items-center justify-center overflow-visible"
+              className={`pointer-events-auto relative flex h-9 w-9 cursor-default flex-col items-center justify-center overflow-visible ${
+                def.polarity === "buff" ? "bb-status-buff-appear" : "bb-status-icon-appear"
+              }`}
               style={{
                 backgroundColor: `${def.color}44`,
                 border: hovered

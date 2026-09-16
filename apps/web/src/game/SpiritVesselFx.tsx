@@ -11,6 +11,7 @@ import {
   type CosmeticAuraId,
 } from "@battlebeasts/shared";
 import { CHARACTER_TARGET_HEIGHT } from "./characterVisual";
+import { createChakraVeilGeometry, createChakraVeilMaterial } from "./vfx/auraChakraVeil";
 import { createAuraEyeMaterial, getAuraEyesTexture } from "./vfx/auraEyesTexture";
 import { getAuraWispMaterial, setAuraWispProjection } from "./vfx/auraWispTextures";
 import { findHandBone, findMixamoBone } from "./vfx/attach";
@@ -19,6 +20,7 @@ const OVERLAY_NAME = "bbSpiritVessel";
 const ORB_NAME = "bbSpiritJoint";
 const MOTE_NAME = "bbSpiritAuraMotes";
 const EYE_NAME = "bbSpiritAuraEyes";
+const VEIL_NAME = "bbSpiritChakraVeil";
 /** Strip height vs character height (width comes from the wrap arc). */
 const EYE_HEIGHT_FRAC = 0.038;
 /** Head → HeadTop_End local Y. Eyes sit below the crown. */
@@ -27,22 +29,26 @@ const EYE_UP_ALONG_CROWN = 0.4;
 const EYE_RADIUS_ALONG_CROWN = 0.54;
 /** Face wrap in radians, centered on Head +Z. */
 const EYE_ARC = 1.08;
-const BASE_OPACITY = 0.13;
+const BASE_OPACITY = 0.11;
 const PULSE_OPACITY = 0.035;
-const SHELL_SCALE = 1.028;
-const ORB_OPACITY = 0.26;
+const AURA_SHELL_BOOST = 0.08;
+const ORB_OPACITY = 0.28;
 const ORB_WHITE = new THREE.Color("#ffffff");
-const CLUSTER_COUNT = 6;
-const MAX_WISPS = 36;
+const CLUSTER_COUNT = 8;
+const MAX_WISPS = 48;
 /** Authored `maxSize` center — sprite diameter as a fraction of character height. */
-const WISP_SIZE_REF = 0.078;
-const WISP_HEIGHT_FRAC = 0.13;
-/** Travel envelope vs a 1.7 m body. Keep this low so plumes read as smoke, not sparks. */
-const WISP_SPREAD = 2.5;
-const WISP_SPEED = 1.42;
+const WISP_SIZE_REF = 0.1;
+const WISP_HEIGHT_FRAC = 0.155;
+/** Travel envelope vs a 1.7 m body. */
+const WISP_SPREAD = 2.0;
+const WISP_SPEED = 0.95;
+/** Push body-cluster wisps outside armor, in meters at 1.7 m height. */
+const BODY_OUTSET = 0.1;
 const _world = new THREE.Vector3();
 const _palm = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
+const _hips = new THREE.Vector3();
+const _sole = new THREE.Vector3();
 /** Wrist (Hand) → middle-knuckle blend so plumes sit in the palm, not the wrist. */
 const HAND_PALM_BLEND = 0.62;
 /** Neck → shoulder so the collar plume wraps outside hats, chest, and pads. */
@@ -99,15 +105,15 @@ const EYE_NOD = -0.05;
 function auraStyle(id: CosmeticAuraId): AuraStyle | null {
   switch (id) {
     case "ember":
-      return { motion: "rise", rise: 0.32, swirl: 0.4, spread: 0.028, maxLife: 0.34, maxSize: 0.078, rate: 36 };
+      return { motion: "rise", rise: 0.2, swirl: 0.48, spread: 0.042, maxLife: 0.62, maxSize: 0.1, rate: 18 };
     case "frost":
-      return { motion: "fall", rise: 0.18, swirl: 0.2, spread: 0.03, maxLife: 0.38, maxSize: 0.082, rate: 28 };
+      return { motion: "fall", rise: 0.11, swirl: 0.25, spread: 0.044, maxLife: 0.66, maxSize: 0.102, rate: 16 };
     case "venom":
-      return { motion: "orbit", rise: 0.16, swirl: 2.4, spread: 0.032, maxLife: 0.36, maxSize: 0.074, rate: 32 };
+      return { motion: "orbit", rise: 0.09, swirl: 1.4, spread: 0.046, maxLife: 0.64, maxSize: 0.098, rate: 17 };
     case "void":
-      return { motion: "inward", rise: 0.1, swirl: -1.2, spread: 0.04, maxLife: 0.34, maxSize: 0.076, rate: 30 };
+      return { motion: "inward", rise: 0.07, swirl: -0.78, spread: 0.05, maxLife: 0.6, maxSize: 0.1, rate: 17 };
     case "gold":
-      return { motion: "sparkle", rise: 0.22, swirl: 0.55, spread: 0.024, maxLife: 0.26, maxSize: 0.07, rate: 40 };
+      return { motion: "sparkle", rise: 0.14, swirl: 0.6, spread: 0.04, maxLife: 0.5, maxSize: 0.094, rate: 20 };
     default:
       return null;
   }
@@ -130,13 +136,13 @@ type Wisp = {
 };
 
 function wispAlpha(t: number): number {
-  if (t < 0.08) return t / 0.08;
-  if (t < 0.32) return 1;
-  return Math.max(0, 1 - (t - 0.32) / 0.68);
+  if (t < 0.12) return t / 0.12;
+  if (t < 0.55) return 1;
+  return Math.max(0, 1 - (t - 0.55) / 0.45);
 }
 
 function wispSize(t: number): number {
-  return 0.78 + 0.28 * Math.min(1, t);
+  return 0.82 + 0.45 * Math.min(1, t * 1.15);
 }
 
 type StatusRow = { statusId: string };
@@ -153,7 +159,7 @@ type EyeBinding = {
   headTop: THREE.Object3D | null;
 };
 
-type ClusterKind = "hand" | "foot" | "neck";
+type ClusterKind = "hand" | "foot" | "neck" | "body";
 
 type ClusterAnchor = {
   bone: THREE.Object3D;
@@ -161,6 +167,12 @@ type ClusterAnchor = {
   /** Hand: middle knuckle. Neck: Left/RightShoulder for a collar wrap. */
   palm: THREE.Object3D | null;
 };
+
+function isAuraHost(mesh: THREE.Mesh): boolean {
+  if (mesh.name.startsWith("bb")) return false;
+  const name = mesh.name.toLowerCase();
+  return mesh.name.startsWith("SM_Chr_") || name.includes("surface");
+}
 
 type Props = {
   characterRoot?: THREE.Object3D | null;
@@ -174,10 +186,36 @@ type Props = {
   stage?: "world" | "preview";
 };
 
-function isVesselSurface(mesh: THREE.Mesh): boolean {
-  if (mesh.name.startsWith("bb")) return false;
-  const name = mesh.name.toLowerCase();
-  return mesh.name.startsWith("SM_Chr_") || name.includes("surface");
+function collectAuraHosts(root: THREE.Object3D): THREE.SkinnedMesh[] {
+  const hosts: THREE.SkinnedMesh[] = [];
+  root.traverse((obj) => {
+    const mesh = obj as THREE.SkinnedMesh;
+    if (!mesh.isSkinnedMesh || !mesh.visible || !mesh.skeleton) return;
+    if (!isAuraHost(mesh)) return;
+    hosts.push(mesh);
+  });
+  return hosts;
+}
+
+function attachAuraOverlay(
+  mesh: THREE.SkinnedMesh,
+  mat: THREE.Material,
+): THREE.SkinnedMesh {
+  const overlay = new THREE.SkinnedMesh(mesh.geometry, mat);
+  overlay.name = OVERLAY_NAME;
+  overlay.userData.bbAuraHost = mesh;
+  overlay.bind(mesh.skeleton, mesh.bindMatrix);
+  overlay.frustumCulled = false;
+  overlay.renderOrder = 2;
+  overlay.position.copy(mesh.position);
+  overlay.quaternion.copy(mesh.quaternion);
+  overlay.scale.copy(mesh.scale);
+  mesh.parent?.add(overlay);
+  return overlay;
+}
+
+function hostKey(hosts: THREE.SkinnedMesh[]): string {
+  return hosts.map((m) => m.uuid).join(",");
 }
 
 function combatGlowActive(rows: StatusRow[]): boolean {
@@ -187,6 +225,13 @@ function combatGlowActive(rows: StatusRow[]): boolean {
       r.statusId === "revengeArmed" ||
       r.statusId === "spiritFormed",
   );
+}
+
+/** Cosmetic aura yields to spell status so those FX stay readable. */
+function auraStatusMul(rows: StatusRow[] | undefined): number {
+  if (!rows?.length) return 1;
+  if (combatGlowActive(rows)) return 0.12;
+  return 0.5;
 }
 
 function characterWorldHeight(root: THREE.Object3D, scratch: THREE.Vector3): number {
@@ -279,9 +324,9 @@ function paintWispStops(fx: THREE.Color, hot: THREE.Color, mid: THREE.Color, coo
 }
 
 /**
- * Bound-spirit vessel: hide-color rim + joint beads.
- * Equipped aura is a short flame/smoke plume at the hands, feet, and neck,
- * plus glowing eyes on the face; ink dyes both.
+ * Bound-spirit vessel: hide-color rim on body and gear, joint beads,
+ * a chakra veil outside the silhouette, and organic plumes at the limbs
+ * and torso. Equipped aura dyes the field; ink is the color.
  */
 export function SpiritVesselFx({
   characterRoot,
@@ -294,10 +339,17 @@ export function SpiritVesselFx({
   stage = "world",
 }: Props) {
   const overlays = useRef<THREE.SkinnedMesh[]>([]);
+  const overlayKey = useRef("");
   const bindings = useRef<OrbBinding[]>([]);
   const eyeBinding = useRef<EyeBinding | null>(null);
   const wisps = useRef<Wisp[]>(makeWispPool());
   const motePoints = useRef<THREE.Points | null>(null);
+  const veilMesh = useRef<THREE.Mesh | null>(null);
+  const hipsBone = useRef<THREE.Object3D | null>(null);
+  const footBones = useRef<{ left: THREE.Object3D | null; right: THREE.Object3D | null }>({
+    left: null,
+    right: null,
+  });
   const clusterBones = useRef<Array<ClusterAnchor | null>>([]);
   const emitAcc = useRef(0);
   const emitLimb = useRef(0);
@@ -318,6 +370,7 @@ export function SpiritVesselFx({
       transparent: true,
       opacity: 0,
       depthWrite: false,
+      depthTest: true,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
       side: THREE.FrontSide,
@@ -355,6 +408,9 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
     };
     return mat;
   }, []);
+
+  const veilMat = useMemo(() => createChakraVeilMaterial(), []);
+  const veilGeo = useMemo(() => createChakraVeilGeometry(), []);
 
   const orbMat = useMemo(
     () =>
@@ -408,23 +464,12 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
     motePoints.current = null;
 
     root.updateMatrixWorld(true);
-
-    root.traverse((obj) => {
-      const mesh = obj as THREE.SkinnedMesh;
-      if (!mesh.isSkinnedMesh || !mesh.visible || !mesh.skeleton) return;
-      if (!isVesselSurface(mesh)) return;
-
-      const overlay = new THREE.SkinnedMesh(mesh.geometry, skinMat);
-      overlay.name = OVERLAY_NAME;
-      overlay.bind(mesh.skeleton, mesh.bindMatrix);
-      overlay.frustumCulled = false;
-      overlay.renderOrder = 2;
-      overlay.position.copy(mesh.position);
-      overlay.quaternion.copy(mesh.quaternion);
-      overlay.scale.copy(mesh.scale).multiplyScalar(SHELL_SCALE);
-      mesh.parent?.add(overlay);
-      overlays.current.push(overlay);
-    });
+    overlayKey.current = "";
+    const hosts = collectAuraHosts(root);
+    overlayKey.current = hostKey(hosts);
+    for (const mesh of hosts) {
+      overlays.current.push(attachAuraOverlay(mesh, skinMat));
+    }
 
     const next: OrbBinding[] = [];
     for (const spec of JOINT_ORBS) {
@@ -464,12 +509,12 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
     const rightHand = findHandBone(root, "right");
     const leftFoot = findMixamoBone(root, "LeftToeBase") ?? findMixamoBone(root, "LeftFoot");
     const rightFoot = findMixamoBone(root, "RightToeBase") ?? findMixamoBone(root, "RightFoot");
-    const neck =
-      findMixamoBone(root, "Neck") ??
-      findMixamoBone(root, "Head") ??
-      findMixamoBone(root, "Spine2");
     const leftShoulder = findMixamoBone(root, "LeftShoulder");
     const rightShoulder = findMixamoBone(root, "RightShoulder");
+    const spine = findMixamoBone(root, "Spine1") ?? findMixamoBone(root, "Spine");
+    const hips = findMixamoBone(root, "Hips");
+    hipsBone.current = hips;
+    footBones.current = { left: leftFoot, right: rightFoot };
     clusterBones.current = [
       leftHand
         ? { bone: leftHand, kind: "hand", palm: findMixamoBone(root, "LeftHandMiddle1") }
@@ -479,29 +524,44 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
         : null,
       leftFoot ? { bone: leftFoot, kind: "foot", palm: null } : null,
       rightFoot ? { bone: rightFoot, kind: "foot", palm: null } : null,
-      neck ? { bone: neck, kind: "neck", palm: leftShoulder } : null,
-      neck ? { bone: neck, kind: "neck", palm: rightShoulder } : null,
+      leftShoulder ? { bone: leftShoulder, kind: "body", palm: null } : null,
+      rightShoulder ? { bone: rightShoulder, kind: "body", palm: null } : null,
+      spine ? { bone: spine, kind: "body", palm: null } : null,
+      hips ? { bone: hips, kind: "body", palm: null } : null,
     ];
 
     const pts = new THREE.Points(wispGeo, getAuraWispMaterial("ember"));
     pts.name = MOTE_NAME;
     pts.frustumCulled = false;
-    pts.renderOrder = 4;
+    pts.renderOrder = 2;
     pts.visible = false;
     root.add(pts);
     motePoints.current = pts;
 
+    const veil = new THREE.Mesh(veilGeo, veilMat);
+    veil.name = VEIL_NAME;
+    veil.frustumCulled = false;
+    veil.renderOrder = 1;
+    veil.visible = false;
+    root.add(veil);
+    veilMesh.current = veil;
+
     return () => {
       for (const m of overlays.current) m.parent?.remove(m);
       overlays.current = [];
+      overlayKey.current = "";
       for (const b of bindings.current) b.mesh.parent?.remove(b.mesh);
       bindings.current = [];
       if (eyeBinding.current) eyeBinding.current.mesh.parent?.remove(eyeBinding.current.mesh);
       eyeBinding.current = null;
       pts.parent?.remove(pts);
       motePoints.current = null;
+      veil.parent?.remove(veil);
+      veilMesh.current = null;
+      hipsBone.current = null;
+      footBones.current = { left: null, right: null };
     };
-  }, [characterRoot, skinMat, orbMat, orbGeo, eyeGeo, eyeMat, wispGeo]);
+  }, [characterRoot, skinMat, orbMat, orbGeo, eyeGeo, eyeMat, wispGeo, veilGeo, veilMat]);
 
   useEffect(() => {
     return () => {
@@ -511,8 +571,10 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
       eyeMat.dispose();
       eyeGeo.dispose();
       wispGeo.dispose();
+      veilMat.dispose();
+      veilGeo.dispose();
     };
-  }, [skinMat, orbMat, orbGeo, eyeMat, eyeGeo, wispGeo]);
+  }, [skinMat, orbMat, orbGeo, eyeMat, eyeGeo, wispGeo, veilMat, veilGeo]);
 
   useFrame(({ clock, camera, gl }, dt) => {
     const hex = getColor();
@@ -534,34 +596,96 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
 
     const styled = auraId !== "plain";
     skinMat.color.copy(colorRef.current);
+    if (styled) skinMat.color.lerp(fxColor.current, 0.58);
     orbTint.current.copy(colorRef.current);
-    if (styled) orbTint.current.lerp(fxColor.current, 0.55);
+    if (styled) orbTint.current.lerp(fxColor.current, 0.58);
     else orbTint.current.lerp(ORB_WHITE, 0.08);
     orbMat.color.copy(orbTint.current);
 
     const vis = Math.max(0, getOpacity ? getOpacity() : opacity);
-    const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * (styled ? 1.05 : 1.35));
-    const statusMul = getStatuses && combatGlowActive(getStatuses()) ? 0.28 : 1;
-    const rimBoost = styled ? 0.03 : 0;
+    const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * (styled ? 0.85 : 1.35));
+    const statusMul = auraStatusMul(getStatuses?.());
+    const rimBoost = styled ? AURA_SHELL_BOOST : 0;
     const next =
       vis *
-      (BASE_OPACITY + rimBoost + PULSE_OPACITY * pulse + burst.current * 0.08) *
+      (BASE_OPACITY + rimBoost + PULSE_OPACITY * pulse + burst.current * 0.1) *
       gain *
       statusMul;
     skinMat.opacity = next;
-    orbMat.opacity = vis * (ORB_OPACITY + 0.1 * pulse) * gain * statusMul;
+    orbMat.opacity = vis * (ORB_OPACITY + (styled ? 0.12 : 0.08) * pulse) * gain * statusMul;
+
     const show = next > 0.008;
-    for (const m of overlays.current) m.visible = show;
-    const showOrbs = orbMat.opacity > 0.02;
     const scratch = worldScale.current;
     const root = characterRoot;
-    const heightM = root ? characterWorldHeight(root, scratch) : CHARACTER_TARGET_HEIGHT;
-    const bodyMul = heightM / CHARACTER_TARGET_HEIGHT;
+    if (root) {
+      const hosts = collectAuraHosts(root);
+      const key = hostKey(hosts);
+      if (key !== overlayKey.current) {
+        overlayKey.current = key;
+        const keep = new Set(hosts);
+        overlays.current = overlays.current.filter((o) => {
+          const host = o.userData.bbAuraHost as THREE.SkinnedMesh | undefined;
+          if (host && keep.has(host) && host.parent) return true;
+          o.parent?.remove(o);
+          return false;
+        });
+        const bound = new Set(
+          overlays.current.map((o) => o.userData.bbAuraHost as THREE.SkinnedMesh),
+        );
+        for (const mesh of hosts) {
+          if (bound.has(mesh)) continue;
+          overlays.current.push(attachAuraOverlay(mesh, skinMat));
+        }
+      }
+    }
+    for (const m of overlays.current) m.visible = show;
+    const showOrbs = orbMat.opacity > 0.02;
+    const heightM = root
+      ? THREE.MathUtils.clamp(characterWorldHeight(root, scratch), 1.2, 2.4)
+      : CHARACTER_TARGET_HEIGHT;
+    const bodyMul = THREE.MathUtils.clamp(heightM / CHARACTER_TARGET_HEIGHT, 0.7, 1.45);
     const spreadMul = bodyMul * WISP_SPREAD;
     const speedMul = bodyMul * WISP_SPEED;
+    const orbMul = bodyMul * (styled ? 1.22 : 1);
     for (const b of bindings.current) {
       b.mesh.visible = showOrbs;
-      if (showOrbs) fitOrbToWorld(b.mesh, b.bone, b.radius, scratch, bodyMul);
+      if (showOrbs) fitOrbToWorld(b.mesh, b.bone, b.radius, scratch, orbMul);
+    }
+
+    const veil = veilMesh.current;
+    if (veil && root) {
+      const showVeil = styled && vis > 0.05 && statusMul > 0.4;
+      veil.visible = showVeil;
+      if (showVeil) {
+        const hips = hipsBone.current;
+        const { left: leftFoot, right: rightFoot } = footBones.current;
+        if (hips) {
+          hips.getWorldPosition(_hips);
+          root.worldToLocal(_hips);
+        } else {
+          _hips.set(0, 0, 0);
+        }
+        let soleY = Number.POSITIVE_INFINITY;
+        for (const foot of [leftFoot, rightFoot]) {
+          if (!foot) continue;
+          foot.getWorldPosition(_sole);
+          root.worldToLocal(_sole);
+          if (_sole.y < soleY) soleY = _sole.y;
+        }
+        root.getWorldScale(scratch);
+        const sy = Math.max(Math.abs(scratch.y), 1e-8);
+        const sx = Math.max(Math.abs(scratch.x), 1e-8);
+        if (!Number.isFinite(soleY)) soleY = _hips.y - (0.52 * heightM) / sy;
+        soleY -= 0.035 / sy;
+        const halfH = THREE.MathUtils.clamp((heightM * 0.24) / sy, 0.01, 80);
+        const radius = THREE.MathUtils.clamp((0.26 * bodyMul) / sx, 0.008, 40);
+        veil.position.set(_hips.x, soleY + halfH, _hips.z);
+        veil.scale.set(radius, halfH, radius);
+        veilMat.uniforms.uColor.value.copy(fxColor.current);
+        veilMat.uniforms.uOpacity.value =
+          vis * (0.11 + 0.03 * pulse + burst.current * 0.04) * statusMul;
+        veilMat.uniforms.uTime.value = clock.elapsedTime;
+      }
     }
 
     const eyes = eyeBinding.current;
@@ -601,9 +725,9 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
     setAuraWispProjection(mat, camera, gl);
 
     const safeDt = Math.min(0.05, dt);
-    const burstScale = 1 + burst.current * 0.2;
-    const opacityMul = vis * 1.15 * (0.9 + 0.08 * pulse + burst.current * 0.12) * statusMul;
-    const rate = style.rate * 1.08 * Math.max(0.35, opacityMul);
+    const burstScale = 1 + burst.current * 0.18;
+    const opacityMul = vis * 1.12 * (0.92 + 0.1 * pulse + burst.current * 0.12) * statusMul;
+    const rate = style.rate * Math.max(0.4, opacityMul);
 
     paintWispStops(fxColor.current, _hot, _mid, _cool);
 
@@ -626,43 +750,44 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
         const anchor = clusterBones.current[cluster];
         if (!anchor) continue;
         const p = wisps.current[slot]!;
-        const life = (0.7 + Math.random() * 0.3) * style.maxLife * 1.15;
+        const life = (0.75 + Math.random() * 0.35) * style.maxLife;
         const ang = Math.random() * Math.PI * 2;
-        const ring =
-          anchor.kind === "neck" ? 0.55 + Math.random() * 0.45 : Math.random();
-        const rad = ring * style.spread * spreadMul * (anchor.kind === "neck" ? 1.35 : 1);
+        const bodyish = anchor.kind === "body" || anchor.kind === "neck";
+        const ring = bodyish ? 0.45 + Math.random() * 0.55 : Math.random();
+        const rad = ring * style.spread * spreadMul * (bodyish ? 1.45 : 1);
         p.alive = true;
         p.cluster = cluster;
         p.ox = Math.cos(ang) * rad;
-        p.oy = (anchor.kind === "foot" || anchor.kind === "neck" ? 0.015 : 0) * spreadMul;
+        p.oy = (anchor.kind === "foot" ? 0.02 : bodyish ? 0.01 : 0) * spreadMul;
         p.oz = Math.sin(ang) * rad;
-        const sway = (0.04 + Math.random() * 0.05) * speedMul;
+        const sway = (0.03 + Math.random() * 0.05) * speedMul;
         if (style.motion === "fall") {
-          p.vx = Math.cos(ang) * sway * 0.25;
-          p.vy = -style.rise * speedMul * (0.7 + Math.random() * 0.35);
-          p.vz = Math.sin(ang) * sway * 0.25;
+          p.vx = Math.cos(ang) * sway * 0.28;
+          p.vy = -style.rise * speedMul * (0.65 + Math.random() * 0.4);
+          p.vz = Math.sin(ang) * sway * 0.28;
         } else if (style.motion === "inward") {
-          p.vx = Math.cos(ang) * (0.05 + Math.random() * 0.04) * speedMul;
-          p.vy = style.rise * speedMul * (0.45 + Math.random() * 0.3);
-          p.vz = Math.sin(ang) * (0.05 + Math.random() * 0.04) * speedMul;
+          p.vx = Math.cos(ang) * (0.04 + Math.random() * 0.04) * speedMul;
+          p.vy = style.rise * speedMul * (0.4 + Math.random() * 0.35);
+          p.vz = Math.sin(ang) * (0.04 + Math.random() * 0.04) * speedMul;
         } else if (style.motion === "orbit") {
           p.vx = 0;
-          p.vy = style.rise * speedMul * (0.55 + Math.random() * 0.3);
+          p.vy = style.rise * speedMul * (0.5 + Math.random() * 0.35);
           p.vz = 0;
         } else {
-          p.vx = Math.cos(ang) * sway * 0.35;
-          p.vy = style.rise * speedMul * (0.75 + Math.random() * 0.3);
-          p.vz = Math.sin(ang) * sway * 0.35;
+          p.vx = Math.cos(ang) * sway * 0.32;
+          p.vy = style.rise * speedMul * (0.7 + Math.random() * 0.35);
+          p.vz = Math.sin(ang) * sway * 0.32;
         }
         p.life = life;
         p.maxLife = life;
-        p.size = (0.72 + Math.random() * 0.28) * style.maxSize * burstScale;
+        p.size = (0.7 + Math.random() * 0.4) * style.maxSize * burstScale;
         p.rotation = Math.random() * Math.PI * 2;
-        p.rotationRate = (Math.random() - 0.5) * 2.6;
+        p.rotationRate = (Math.random() - 0.5) * 1.8;
         living.current++;
       }
     }
 
+    const hips = hipsBone.current;
     let write = 0;
     let aliveCount = 0;
     for (let i = 0; i < MAX_WISPS; i++) {
@@ -680,22 +805,23 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
       }
       aliveCount++;
       p.rotation += p.rotationRate * safeDt;
+      const curl = Math.sin(p.life * 3.4 + p.rotation) * 0.022 * speedMul * safeDt;
       if (style.motion === "inward") {
-        p.ox *= 1 - 2.2 * safeDt;
-        p.oz *= 1 - 2.2 * safeDt;
+        p.ox *= 1 - 1.6 * safeDt;
+        p.oz *= 1 - 1.6 * safeDt;
       } else if (style.motion === "orbit") {
-        const spin = style.swirl * 0.72 * safeDt;
+        const spin = style.swirl * 0.55 * safeDt;
         const nx = p.ox * Math.cos(spin) - p.oz * Math.sin(spin);
         const nz = p.ox * Math.sin(spin) + p.oz * Math.cos(spin);
         p.ox = nx;
         p.oz = nz;
       } else {
-        p.ox += p.vx * safeDt;
+        p.ox += p.vx * safeDt + curl;
         p.oz += p.vz * safeDt;
       }
       p.oy += p.vy * safeDt;
-      p.vx *= 1 - 1.8 * safeDt;
-      p.vz *= 1 - 1.8 * safeDt;
+      p.vx *= 1 - 1.35 * safeDt;
+      p.vz *= 1 - 1.35 * safeDt;
 
       anchor.bone.getWorldPosition(_world);
       if (anchor.palm) {
@@ -710,6 +836,18 @@ gl_FragColor.a *= mix(0.07, 1.0, fres);`,
         _world.addScaledVector(_fwd, NECK_UP_M);
         _fwd.set(0, 0, 1).transformDirection(anchor.bone.matrixWorld).normalize();
         _world.addScaledVector(_fwd, NECK_FORWARD_M);
+      } else if (anchor.kind === "body" && hips) {
+        hips.getWorldPosition(_hips);
+        _fwd.copy(_world).sub(_hips);
+        _fwd.y *= 0.15;
+        const xz = Math.hypot(_fwd.x, _fwd.z);
+        if (xz < 1e-4) {
+          _fwd.set(_world.x - _hips.x + 0.04, 0, _world.z - _hips.z);
+        }
+        const push = BODY_OUTSET * bodyMul;
+        const scale = (xz + push) / Math.max(xz, 1e-4);
+        _world.x = _hips.x + _fwd.x * scale;
+        _world.z = _hips.z + _fwd.z * scale;
       }
       root.worldToLocal(_world);
 

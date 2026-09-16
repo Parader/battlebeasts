@@ -1,11 +1,11 @@
 """
 Export a skin from the bind-pose workbench as a GLB.
 
-Rigid (default): bake each mesh into bone-local space. A set (L/R shoulders)
-goes in one file, objects named after Mixamo bones.
+Skinned (default): Mixamo weights + armature, remounted on the live hero
+skeleton. Hats keep the workbench vertex groups; other slots copy the body
+(or painted groups).
 
-Skinned (`--rig skinned`): keep Mixamo weights and export the armature so the
-piece bends on Spine / legs at runtime.
+Rigid (`--rig rigid`): bake each mesh into bone-local space. Leftover path.
 
     blender hero_bind.blend --background --python tools/blender_export_skin.py -- `
         --mesh "Chest Set 1" --rig skinned --id chest_set_1 --slot chest
@@ -20,7 +20,7 @@ Usage (from the repo root, Blender 5):
 Drops the GLB in apps/web/public/cosmetics/ and prints a COSMETIC_CATALOG snippet.
 
 Batch export (preferred): `pnpm export:skins` — jobs live in tools/skin_manifest.py
-(`rig: "rigid"` = one bone per mesh, `rig: "skinned"` = Mixamo weights).
+(`rig: "skinned"` = Mixamo weights on the live skeleton).
 
 Albedo maps live in the workbench `player/textures/` folder (packed into
 the GLB on export). Source pack: `fantasykingdom/character/gear`. If Blender
@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 REPO_PUBLIC = Path(r"C:\solo\battlebeasts2\apps\web\public\cosmetics")
@@ -44,6 +45,46 @@ TEXTURE_SEARCH_DIRS = (
     Path(r"C:\Users\deric\OneDrive\Documents\mage_trials\fantasykingdom\character\gear"),
     Path(r"C:\Users\deric\Downloads\assets\textures"),
 )
+
+@contextmanager
+def view3d_override():
+    """Panel operators often lack a 3D View poll context; background mode is fine."""
+    import bpy
+
+    ctx = bpy.context
+    win = ctx.window
+    if win is None and getattr(ctx.window_manager, "windows", None):
+        windows = ctx.window_manager.windows
+        win = windows[0] if windows else None
+    area = ctx.area if getattr(ctx.area, "type", None) == "VIEW_3D" else None
+    region = ctx.region if getattr(ctx.region, "type", None) == "WINDOW" else None
+    if win is not None and area is None:
+        screen = win.screen
+        if screen:
+            area = next((a for a in screen.areas if a.type == "VIEW_3D"), None)
+            if area is None and screen.areas:
+                area = screen.areas[0]
+    if area is not None and region is None:
+        region = next((r for r in area.regions if r.type == "WINDOW"), None)
+    if win is None:
+        yield
+        return
+    kw = {"window": win}
+    if area is not None:
+        kw["area"] = area
+    if region is not None:
+        kw["region"] = region
+    with ctx.temp_override(**kw):
+        yield
+
+
+def object_ops(name: str, **kwargs):
+    import bpy
+
+    op = getattr(bpy.ops.object, name)
+    with view3d_override():
+        return op(**kwargs)
+
 
 SLOT_FROM_BONE = (
     (("head", "headtop"), "hat"),
@@ -76,8 +117,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--rig",
         choices=("rigid", "skinned"),
-        default="rigid",
-        help="rigid = bone-parented meshes; skinned = live Mixamo weights (chest, pants)",
+        default="skinned",
+        help="skinned = live Mixamo weights; rigid = leftover one-bone bake",
     )
     p.add_argument(
         "--keep-weights",
@@ -211,12 +252,9 @@ def ensure_image_on_disk(img, hint: str = "") -> bool:
 
     out = tex_dir / f"{_safe_texture_stem(img, hint)}.png"
     try:
+        img.filepath_raw = str(out)
         img.file_format = "PNG"
-        try:
-            img.save(filepath=str(out))
-        except TypeError:
-            img.filepath_raw = str(out)
-            img.save()
+        img.save()
         img.source = "FILE"
         img.filepath = bpy.path.relpath(str(out))
         if tuple(img.size)[0] <= 0:
@@ -280,13 +318,17 @@ def relink_all_missing_images(*, force: bool = False) -> None:
 
 
 def apply_visual_transform(obj) -> None:
-    import bpy
+    from mathutils import Matrix
 
-    ensure_object_mode()
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    mesh = getattr(obj, "data", None)
+    if getattr(obj, "type", None) != "MESH" or mesh is None:
+        return
+    mw = obj.matrix_world.copy()
+    mesh.transform(mw)
+    if mw.determinant() < 0:
+        mesh.flip_normals()
+    obj.matrix_world = Matrix.Identity(4)
+    mesh.update()
 
 
 def glb_skin_count(path: Path) -> int:
@@ -297,6 +339,37 @@ def glb_skin_count(path: Path) -> int:
     chunk_len, _chunk_type = struct.unpack_from("<I4s", data, 12)
     js = data[20 : 20 + chunk_len].rstrip(b"\x00").decode("utf-8")
     return len(json.loads(js).get("skins") or [])
+
+
+def glb_json(path: Path) -> dict:
+    import json
+    import struct
+
+    data = Path(path).read_bytes()
+    chunk_len, _chunk_type = struct.unpack_from("<I4s", data, 12)
+    return json.loads(data[20 : 20 + chunk_len].rstrip(b"\x00").decode("utf-8"))
+
+
+def glb_bb_bones(path: Path) -> list[str]:
+    bones: list[str] = []
+    for node in glb_json(path).get("nodes") or []:
+        extra = (node.get("extras") or {}).get("bb_bone")
+        if isinstance(extra, str) and extra.strip():
+            bones.append(bone_short_name(extra.strip()))
+            continue
+        if node.get("mesh") is None:
+            continue
+        name = (node.get("name") or "").strip()
+        if name:
+            bones.append(bone_short_name(name))
+    return bones
+
+
+def assert_rigid_glb_bones(path: Path, expected: list[str]) -> None:
+    got = [bone_short_name(b) for b in glb_bb_bones(path)]
+    want = [bone_short_name(b) for b in expected]
+    if sorted(x.lower() for x in got) != sorted(x.lower() for x in want):
+        raise RuntimeError(f"{path.name}: rigid bones {got} != {want}")
 
 
 def gltf_export(
@@ -342,7 +415,8 @@ def gltf_export(
         export_kw["export_all_influences"] = True
     while True:
         try:
-            bpy.ops.export_scene.gltf(**export_kw)
+            with view3d_override():
+                bpy.ops.export_scene.gltf(**export_kw)
             return
         except TypeError as exc:
             dropped = False
@@ -367,6 +441,11 @@ def with_rest_pose(arm, fn):
     finally:
         arm.data.pose_position = prev
         bpy.context.view_layer.update()
+
+
+def snapshot_in_rest(obj, arm, name: str | None = None):
+    """Evaluated mesh snapshot while the armature is in REST."""
+    return with_rest_pose(arm, lambda: snapshot_evaluated(obj, name))
 
 
 def bone_suffix(name: str) -> str:
@@ -394,6 +473,12 @@ def slug(text: str) -> str:
     return s or "skin"
 
 
+FEMALE_BODY_MESHES = ("Beta_Surface", "Beta_Core", "Beta_Joints")
+MALE_BODY_MESHES = ("YBot_Surface",)
+COL_FEMALE = "Body Female"
+COL_MALE = "Body Male"
+
+
 def find_armature(body: str | None = None):
     import bpy
 
@@ -411,6 +496,238 @@ def find_armature(body: str | None = None):
     if not arms:
         raise RuntimeError("No armature in this file")
     return arms[0]
+
+
+def body_world_matches_armature(obj, arm, *, tol: float = 2e-4) -> bool:
+    """True when the dummy inherits Mixamo's 0.01 scale + 90° tilt (hero.blend)."""
+    if obj.parent != arm or obj.parent_type != "OBJECT":
+        return False
+    a = arm.matrix_world.to_scale()
+    s = obj.matrix_world.to_scale()
+    return all(abs(s[i] - a[i]) < tol for i in range(3))
+
+
+def restore_body_inherits_armature(arm, names: tuple[str, ...] = FEMALE_BODY_MESHES) -> list[str]:
+    """Parent female Mixamo meshes so they follow the armature object, like hero.blend / hero.glb."""
+    import bpy
+    from mathutils import Matrix
+
+    ident = Matrix.Identity(4)
+    target = arm.matrix_world.copy()
+    fixed: list[str] = []
+    for name in names:
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != "MESH":
+            continue
+        if body_world_matches_armature(obj, arm):
+            continue
+        obj.parent = None
+        obj.parent_type = "OBJECT"
+        obj.parent_bone = ""
+        obj.matrix_parent_inverse = ident.copy()
+        bpy.context.view_layer.update()
+        obj.matrix_world = target.copy()
+        bpy.context.view_layer.update()
+        obj.parent = arm
+        obj.parent_type = "OBJECT"
+        obj.parent_bone = ""
+        # world = parent @ inverse @ local. Force local identity on the Mixamo object.
+        obj.matrix_parent_inverse = ident.copy()
+        obj.matrix_basis = ident.copy()
+        bpy.context.view_layer.update()
+        if not body_world_matches_armature(obj, arm):
+            # Last resort: keep the armature world even if local isn't identity.
+            obj.matrix_world = target.copy()
+            bpy.context.view_layer.update()
+        if not body_world_matches_armature(obj, arm):
+            raise RuntimeError(
+                f"{name} still off-rig after restore "
+                f"world_scale={tuple(round(x, 5) for x in obj.matrix_world.to_scale())} "
+                f"parent_scale={tuple(round(x, 5) for x in arm.matrix_world.to_scale())}"
+            )
+        fixed.append(name)
+    return fixed
+
+
+def set_collection_visible(name: str, visible: bool) -> None:
+    import bpy
+
+    col = bpy.data.collections.get(name)
+    if col is None:
+        return
+    col.hide_viewport = not visible
+    col.hide_render = not visible
+
+    def walk(lc) -> bool:
+        if lc.collection == col:
+            lc.hide_viewport = not visible
+            lc.exclude = False
+            return True
+        for child in lc.children:
+            if walk(child):
+                return True
+        return False
+
+    walk(bpy.context.view_layer.layer_collection)
+
+
+def scene_body_preview() -> str:
+    """Female / male / both — from the Skins panel, else from collection vis."""
+    import bpy
+
+    bb = getattr(bpy.context.scene, "bb_skins", None)
+    if bb is not None:
+        mode = getattr(bb, "body_preview", "") or ""
+        if mode in ("female", "male", "both"):
+            return mode
+    male = bpy.data.collections.get(COL_MALE)
+    female = bpy.data.collections.get(COL_FEMALE)
+    male_on = male is not None and not male.hide_viewport
+    female_on = female is None or not female.hide_viewport
+    if male_on and female_on:
+        return "both"
+    if male_on:
+        return "male"
+    return "female"
+
+
+def apply_body_preview(mode: str) -> None:
+    if mode == "male":
+        set_collection_visible(COL_FEMALE, False)
+        set_collection_visible(COL_MALE, True)
+    elif mode == "both":
+        set_collection_visible(COL_FEMALE, True)
+        set_collection_visible(COL_MALE, True)
+    else:
+        set_collection_visible(COL_FEMALE, True)
+        set_collection_visible(COL_MALE, False)
+
+
+def reveal_bind_dummies() -> None:
+    """Unhide both bodies so matrix_world is current (hidden collections go stale)."""
+    import bpy
+
+    set_collection_visible(COL_FEMALE, True)
+    set_collection_visible(COL_MALE, True)
+    bpy.context.view_layer.update()
+
+
+def align_male_armature_to_host() -> list[str]:
+    """Game remounts Y Bot on the hero skeleton. Same world transform here."""
+    import bpy
+
+    male = bpy.data.objects.get("Armature_Male")
+    if male is None or male.type != "ARMATURE":
+        return []
+    host = find_armature(None)
+    male.matrix_world = host.matrix_world.copy()
+    bpy.context.view_layer.update()
+    notes = ["Armature_Male → Armature world"]
+    notes.extend(restore_body_inherits_armature(male, MALE_BODY_MESHES))
+    return notes
+
+
+def sync_workbench_bodies() -> list[str]:
+    """Keep dummies on-rig and overlapping without changing Female/Male."""
+    import bpy
+
+    preview = scene_body_preview()
+    reveal_bind_dummies()
+    notes: list[str] = []
+    try:
+        host = find_armature(None)
+        notes.extend(restore_body_inherits_armature(host))
+        notes.extend(align_male_armature_to_host())
+    finally:
+        apply_body_preview(preview)
+        bpy.context.view_layer.update()
+    return notes
+
+
+def show_female_dummy() -> None:
+    """Unhide the female Mixamo dummy. Does not hide Y Bot."""
+    import bpy
+
+    set_collection_visible(COL_FEMALE, True)
+    bpy.context.view_layer.update()
+
+
+def assert_female_dummy_on_rig(arm=None) -> None:
+    """Refuse to export skins if the bind dummy is off the Mixamo armature."""
+    import bpy
+
+    preview = scene_body_preview()
+    reveal_bind_dummies()
+    try:
+        arm = arm or find_armature()
+        body = bpy.data.objects.get("Beta_Surface")
+        if body is None:
+            return
+        if not body_world_matches_armature(body, arm):
+            scl = tuple(round(x, 5) for x in body.matrix_world.to_scale())
+            raise RuntimeError(
+                f"Beta_Surface world scale {scl} is not the Mixamo armature's "
+                f"{tuple(round(x, 5) for x in arm.matrix_world.to_scale())}. "
+                "The bind dummy is off the rig — hats fitted to it will not "
+                "match hero.glb. Snap the dummy first:\n"
+                "  blender hero_bind.blend --background --python tools/blender_fix_bind_body.py\n"
+                "Then place hats on that dummy and re-export."
+            )
+        restore_body_inherits_armature(arm)
+        align_male_armature_to_host()
+    finally:
+        apply_body_preview(preview)
+        bpy.context.view_layer.update()
+
+
+def parent_keep_world_to_object(obj, arm) -> None:
+    """Object-parent to the armature without moving — same as Beta_Surface.
+
+    Bone-parent + Armature modifier applies Head twice in pose (Idle helm
+    sits forward of Rest/export). Skinned hats must object-parent only.
+    """
+    from mathutils import Matrix
+
+    import bpy
+    from mathutils import Matrix
+
+    mw = obj.matrix_world.copy()
+    obj.parent = arm
+    obj.parent_type = "OBJECT"
+    obj.parent_bone = ""
+    obj.matrix_parent_inverse = Matrix.Identity(4)
+    bpy.context.view_layer.update()
+    obj.matrix_world = mw
+    bpy.context.view_layer.update()
+
+
+def ensure_armature_modifier(obj, arm) -> None:
+    import bpy
+
+    mod = next((m for m in obj.modifiers if m.type == "ARMATURE"), None)
+    if mod is None:
+        mod = obj.modifiers.new("Armature", "ARMATURE")
+    mod.object = arm
+    mod.use_vertex_groups = True
+    mod.show_viewport = True
+    mod.show_render = True
+    bpy.context.view_layer.update()
+
+
+def parent_keep_world_to_bone(obj, arm, bone_name: str) -> None:
+    """Bone-parent a mesh without moving it — export reads this Head-local transform."""
+    import bpy
+    from mathutils import Matrix
+
+    bone = find_bone(arm, bone_name)
+    mw = obj.matrix_world.copy()
+    obj.parent = arm
+    obj.parent_type = "BONE"
+    obj.parent_bone = bone.name
+    obj.matrix_parent_inverse = Matrix.Identity(4)
+    bpy.context.view_layer.update()
+    obj.matrix_world = mw
+    bpy.context.view_layer.update()
 
 
 def find_bone(arm, needle: str):
@@ -458,8 +775,10 @@ def ensure_object_mode() -> None:
     import bpy
 
     try:
-        if bpy.context.object and bpy.context.object.mode != "OBJECT":
-            bpy.ops.object.mode_set(mode="OBJECT")
+        with view3d_override():
+            ob = bpy.context.object
+            if ob is not None and ob.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
     except RuntimeError:
         pass
 
@@ -506,11 +825,15 @@ def bake_to_bone_local(mesh_obj, bone_name: str, arm=None) -> str:
         mesh_obj.vertex_groups.remove(mesh_obj.vertex_groups[0])
     mesh_obj.matrix_world = local
 
-    bpy.ops.object.select_all(action="DESELECT")
-    mesh_obj.select_set(True)
-    bpy.context.view_layer.objects.active = mesh_obj
+    loc, rot, scl = local.decompose()
+    print(
+        f"[skin] bake {mesh_obj.name!r} -> {short}  "
+        f"head-local loc=({loc.x:.5f},{loc.y:.5f},{loc.z:.5f}) "
+        f"scale=({scl.x:.5f},{scl.y:.5f},{scl.z:.5f})"
+    )
+
     ensure_object_mode()
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    apply_visual_transform(mesh_obj)
 
     mesh_obj.name = short
     mesh_obj["bb_bone"] = short
@@ -527,7 +850,7 @@ def export_objects_glb(objects: list, out_path: Path) -> None:
 
     relink_and_pack_images(objects)
     ensure_object_mode()
-    bpy.ops.object.select_all(action="DESELECT")
+    object_ops("select_all", action="DESELECT")
     for obj in objects:
         obj.select_set(True)
     bpy.context.view_layer.objects.active = objects[0]
@@ -548,7 +871,9 @@ def export_rigid_glb(mesh_obj, bone_name: str, out_path: Path, arm=None) -> str:
         bpy.data.objects.remove(mesh_obj, do_unlink=True)
         return short
 
-    return with_rest_pose(arm, _run)
+    short = with_rest_pose(arm, _run)
+    assert_rigid_glb_bones(out_path, [short])
+    return short
 
 
 def find_surface(body: str | None = None):
@@ -692,43 +1017,125 @@ def _assign_fallback_bone(dest, src) -> int:
     return len(leftover)
 
 
-def transfer_weights_from_body(dest, src) -> int:
-    """Copy Mixamo vertex groups from the body onto dest. Returns weighted vert count."""
+def _apply_data_transfer(dest, src, mapping: str) -> None:
+    dest.modifiers.clear()
+    mod = dest.modifiers.new("WeightTransfer", "DATA_TRANSFER")
+    mod.object = src
+    mod.use_vert_data = True
+    mod.data_types_verts = {"VGROUP_WEIGHTS"}
+    mod.vert_mapping = mapping
+    mod.layers_vgroup_select_src = "ALL"
+    mod.layers_vgroup_select_dst = "NAME"
+    if hasattr(mod, "mix_mode"):
+        mod.mix_mode = "REPLACE"
+    if hasattr(mod, "use_max_distance"):
+        mod.use_max_distance = False
+    if hasattr(mod, "use_object_transform"):
+        mod.use_object_transform = True
+    object_ops("select_all", action="DESELECT")
+    dest.select_set(True)
     import bpy
 
+    bpy.context.view_layer.objects.active = dest
+    try:
+        object_ops("modifier_apply", modifier=mod.name)
+    except RuntimeError as exc:
+        print(f"[skin] weight modifier {mapping} apply failed ({exc})")
+        if dest.modifiers.get(mod.name):
+            dest.modifiers.remove(dest.modifiers[mod.name])
+
+
+def _weld_coincident_vgroups(obj, eps: float = 1e-4) -> int:
+    """Same rest position → same weights so UV islands don't tear in pose."""
+    me = obj.data
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+    for v in me.vertices:
+        key = (
+            round(v.co.x / eps),
+            round(v.co.y / eps),
+            round(v.co.z / eps),
+        )
+        buckets.setdefault(key, []).append(v.index)
+    vg_by_index = {vg.index: vg for vg in obj.vertex_groups}
+    welded = 0
+    for ids in buckets.values():
+        if len(ids) < 2:
+            continue
+        acc: dict[int, float] = {}
+        for i in ids:
+            for g in me.vertices[i].groups:
+                acc[g.group] = acc.get(g.group, 0.0) + g.weight
+        n = float(len(ids))
+        ranked = sorted(acc.items(), key=lambda kv: kv[1], reverse=True)[:4]
+        total = sum(w for _gi, w in ranked)
+        if total <= 1e-8:
+            continue
+        for i in ids:
+            for g in list(me.vertices[i].groups):
+                vg = vg_by_index.get(g.group)
+                if vg is not None:
+                    vg.remove([i])
+        for gi, w in ranked:
+            vg = vg_by_index.get(gi)
+            if vg is None:
+                continue
+            vg.add(ids, min(1.0, w / total), "REPLACE")
+        welded += 1
+    return welded
+
+
+def _smooth_vgroups(obj, steps: int = 5, factor: float = 0.55) -> None:
+    """Laplacian-smooth vertex groups so body-copied weights don't candy-wrap."""
+    me = obj.data
+    n = len(me.vertices)
+    if n == 0 or not obj.vertex_groups:
+        return
+    nbrs: list[list[int]] = [[] for _ in range(n)]
+    for edge in me.edges:
+        a, b = edge.vertices
+        nbrs[a].append(b)
+        nbrs[b].append(a)
+    for vg in obj.vertex_groups:
+        weights = [0.0] * n
+        for i in range(n):
+            try:
+                weights[i] = vg.weight(i)
+            except RuntimeError:
+                weights[i] = 0.0
+        cur = weights
+        for _ in range(steps):
+            nxt = cur[:]
+            for i, adj in enumerate(nbrs):
+                if not adj:
+                    continue
+                avg = sum(cur[j] for j in adj) / len(adj)
+                nxt[i] = cur[i] * (1.0 - factor) + avg * factor
+            cur = nxt
+        for i, w in enumerate(cur):
+            if w > 1e-4:
+                vg.add([i], min(1.0, w), "REPLACE")
+            elif weights[i] > 0:
+                vg.remove([i])
+
+
+def transfer_weights_from_body(dest, src) -> int:
+    """Copy Mixamo vertex groups from the body onto dest. Returns weighted vert count."""
     ensure_object_mode()
     vis = _eval_visibility_state(src)
     try:
         _reveal_for_eval(src, vis)
-        # object.data_transfer often finishes with 0 weights; the modifier does the job.
-        dest.modifiers.clear()
-        mod = dest.modifiers.new("WeightTransfer", "DATA_TRANSFER")
-        mod.object = src
-        mod.use_vert_data = True
-        mod.data_types_verts = {"VGROUP_WEIGHTS"}
-        mod.vert_mapping = "NEAREST"
-        mod.layers_vgroup_select_src = "ALL"
-        mod.layers_vgroup_select_dst = "NAME"
-        if hasattr(mod, "mix_mode"):
-            mod.mix_mode = "REPLACE"
-        if hasattr(mod, "use_max_distance"):
-            mod.use_max_distance = False
-        if hasattr(mod, "use_object_transform"):
-            mod.use_object_transform = True
-
-        bpy.ops.object.select_all(action="DESELECT")
-        dest.select_set(True)
-        bpy.context.view_layer.objects.active = dest
-        try:
-            bpy.ops.object.modifier_apply(modifier=mod.name)
-        except RuntimeError as exc:
-            print(f"[skin] weight modifier apply failed ({exc}); filling from nearest verts")
-            if dest.modifiers.get(mod.name):
-                dest.modifiers.remove(dest.modifiers[mod.name])
-
+        for mapping in ("POLYINTERP_NEAREST", "NEAREST"):
+            _apply_data_transfer(dest, src, mapping)
+            if weighted_vert_count(dest) > 0:
+                print(f"[skin] data transfer {mapping} weighted {weighted_vert_count(dest)} verts")
+                break
         filled = _fill_unweighted_from_source(dest, src)
         if filled:
             print(f"[skin] filled {filled} leftover verts from nearest {src.name}")
+        _smooth_vgroups(dest)
+        welded = _weld_coincident_vgroups(dest)
+        if welded:
+            print(f"[skin] welded weights on {welded} coincident UV-seam clusters")
         leftover = _assign_fallback_bone(dest, src)
         if leftover:
             print(f"[skin] assigned {leftover} isolated verts to a spine/hips group")
@@ -736,6 +1143,79 @@ def transfer_weights_from_body(dest, src) -> int:
         return weighted_vert_count(dest)
     finally:
         _restore_eval_visibility(src, vis)
+
+
+# Accessories follow a small Mixamo subset so they sit like the workbench
+# bone-parent, without stretching from unrelated limbs. Hats omit a row and
+# keep the workbench groups (bind-file Armature modifier). Garments (chest /
+# legs / shoes) also keep the full body copy.
+SLOT_FOLLOW_SUFFIXES: dict[str, set[str]] = {
+    "shoulders": {
+        "leftshoulder",
+        "rightshoulder",
+        "leftarm",
+        "rightarm",
+        "spine1",
+        "spine2",
+    },
+    "gloves": {
+        "leftforearm",
+        "rightforearm",
+        "lefthand",
+        "righthand",
+        "leftarm",
+        "rightarm",
+    },
+    "belt": {"hips", "spine"},
+}
+
+
+def prune_vgroups_to_suffixes(obj, suffixes: set[str], fallback: str | None = None) -> int:
+    """Keep only Mixamo groups whose suffix is in `suffixes`. Unweighted verts
+    land on `fallback` (or the first kept group) — never invent Head for pads."""
+    if not suffixes:
+        return 0
+    fallback_key = bone_suffix(fallback) if fallback else next(iter(sorted(suffixes)))
+    keep_idx = {vg.index for vg in obj.vertex_groups if bone_suffix(vg.name) in suffixes}
+    drop = [vg.name for vg in obj.vertex_groups if vg.index not in keep_idx]
+    fallback_vg = next(
+        (vg for vg in obj.vertex_groups if bone_suffix(vg.name) == fallback_key),
+        None,
+    )
+
+    def ensure_fallback():
+        nonlocal fallback_vg
+        if fallback_vg is not None:
+            return fallback_vg
+        if keep_idx:
+            fallback_vg = next(vg for vg in obj.vertex_groups if vg.index in keep_idx)
+            return fallback_vg
+        fallback_vg = obj.vertex_groups.new(name=f"mixamorig:{fallback_key[:1].upper()}{fallback_key[1:]}")
+        keep_idx.add(fallback_vg.index)
+        return fallback_vg
+
+    reassigned = 0
+    for v in obj.data.vertices:
+        kept = [(g.group, g.weight) for g in v.groups if g.group in keep_idx and g.weight > 1e-4]
+        for g in list(v.groups):
+            if g.group not in keep_idx:
+                obj.vertex_groups[g.group].remove([v.index])
+        if not kept:
+            ensure_fallback().add([v.index], 1.0, "REPLACE")
+            reassigned += 1
+            continue
+        total = sum(w for _, w in kept)
+        if total <= 1e-6:
+            ensure_fallback().add([v.index], 1.0, "REPLACE")
+            reassigned += 1
+            continue
+        for gi, w in kept:
+            obj.vertex_groups[gi].add([v.index], w / total, "REPLACE")
+    for name in drop:
+        vg = obj.vertex_groups.get(name)
+        if vg:
+            obj.vertex_groups.remove(vg)
+    return reassigned
 
 
 def weighted_vert_count(obj) -> int:
@@ -767,6 +1247,7 @@ def export_skinned_glb(
     *,
     keep_weights: bool = False,
     body: str = "any",
+    keep_weight_suffixes: set[str] | None = None,
 ) -> list[str]:
     """Export mesh(es) + Mixamo armature with weights. Does not freeze to one bone."""
     import bpy
@@ -791,13 +1272,11 @@ def export_skinned_glb(
         # Own armature object (same bones) so the glTF tree is just clothing + rig.
         # Selecting the live Armature pulls in Beta_Surface/boots and Khronos
         # drops skins ("Armature must be the parent of skinned mesh").
-        # Duplicate data — sharing Armature_Male while it sits in a hidden
-        # collection made Khronos write scale 1 and the shop preview shrank
-        # the mesh to a speck. Match the female Mixamo object transform (0.01)
-        # so runtime rebind onto hero.glb stays in the same space as ybot.glb.
+        # Always use the female Mixamo rest + 0.01 world (hero.glb skeleton).
+        # Male pieces still sample weights from YBot_Surface.
         host_arm = find_armature(None)
-        export_arm = arm.copy()
-        export_arm.data = arm.data.copy()
+        export_arm = host_arm.copy()
+        export_arm.data = host_arm.data.copy()
         export_arm.name = "Armature_export"
         export_col.objects.link(export_arm)
         export_arm.matrix_world = host_arm.matrix_world.copy()
@@ -819,10 +1298,10 @@ def export_skinned_glb(
             snap.parent_bone = ""
             snap.matrix_world = mw
             bpy.context.view_layer.update()
+            for mod in list(snap.modifiers):
+                snap.modifiers.remove(mod)
             nverts = len(snap.data.vertices)
             if keep_weights:
-                for mod in list(snap.modifiers):
-                    snap.modifiers.remove(mod)
                 weighted = weighted_vert_count(snap)
                 print(f"[skin] {mesh.name!r} kept painted weights on {weighted}/{nverts} verts")
                 if weighted == 0:
@@ -834,9 +1313,16 @@ def export_skinned_glb(
                 weighted = transfer_weights_from_body(snap, surface)
                 print(f"[skin] {mesh.name!r} transferred weights onto {weighted}/{nverts} verts")
                 if weighted < nverts:
-                    raise RuntimeError(
-                        f"{mesh.name!r} weight transfer incomplete ({weighted}/{nverts})"
+                    print(
+                        f"[skin] WARNING {mesh.name!r} weight transfer "
+                        f"incomplete ({weighted}/{nverts}); exporting anyway"
                     )
+            if keep_weight_suffixes:
+                moved = prune_vgroups_to_suffixes(snap, keep_weight_suffixes)
+                print(
+                    f"[skin] {mesh.name!r} kept {list(keep_weight_suffixes)} groups "
+                    f"(reassigned {moved} verts)"
+                )
             # Bake object scale/placement into verts so Mixamo 0.01 isn't lost.
             apply_visual_transform(snap)
             world = snap.matrix_world.copy()
@@ -856,7 +1342,7 @@ def export_skinned_glb(
         relink_and_pack_images(snaps)
         ensure_object_mode()
         _activate_collection(export_col)
-        bpy.ops.object.select_all(action="DESELECT")
+        object_ops("select_all", action="DESELECT")
         export_arm.select_set(True)
         for snap in snaps:
             vgs = [vg.name for vg in snap.vertex_groups]
@@ -911,7 +1397,9 @@ def export_set(items: list, out_path: Path, arm=None) -> list[str]:
             bpy.data.objects.remove(obj, do_unlink=True)
         return shorts
 
-    return with_rest_pose(arm, _run)
+    shorts = with_rest_pose(arm, _run)
+    assert_rigid_glb_bones(out_path, shorts)
+    return shorts
 
 
 def export_named_mesh(mesh_name: str, bone_name: str, out_path: Path, allow_skinned: bool = False) -> str:
@@ -921,7 +1409,7 @@ def export_named_mesh(mesh_name: str, bone_name: str, out_path: Path, allow_skin
             f"{mesh.name!r} is skinned (Armature parent/modifier). "
             "Re-run with --allow-skinned to freeze rest pose, or parent to a bone."
         )
-    snap = snapshot_evaluated(mesh)
+    snap = snapshot_in_rest(mesh, find_armature(), None)
     return export_rigid_glb(snap, bone_name, out_path)
 
 
@@ -1000,8 +1488,23 @@ def main() -> None:
 
     if args.rig == "skinned":
         meshes = [find_mesh(m) for m in mesh_names]
-        export_skinned_glb(meshes, out, keep_weights=args.keep_weights, body=body)
-        slot = args.slot or "chest"
+        slot = args.slot
+        if not slot:
+            try:
+                from skin_manifest import slot_from_id as _slot_from_id
+
+                slot = _slot_from_id(item_id) or ""
+            except Exception:
+                slot = ""
+        if not slot:
+            slot = guess_slot(bone_names[0] if bone_names else "") or "chest"
+        export_skinned_glb(
+            meshes,
+            out,
+            keep_weights=args.keep_weights,
+            body=body,
+            keep_weight_suffixes=SLOT_FOLLOW_SUFFIXES.get(slot),
+        )
         size_kb = out.stat().st_size / 1024
         print(f"\n[skin] wrote skinned {out} ({size_kb:.1f} KB)")
         print_catalog_snippet(
@@ -1041,7 +1544,7 @@ def main() -> None:
             f"{mesh.name!r} is skinned (Armature parent/modifier). "
             "Re-run with --allow-skinned to freeze rest pose, or parent to a bone."
         )
-    snap = snapshot_evaluated(mesh)
+    snap = snapshot_in_rest(mesh, arm)
     short = export_rigid_glb(snap, bone_name, out, arm=arm)
     size_kb = out.stat().st_size / 1024
     print(f"\n[skin] wrote {out} ({size_kb:.1f} KB)")

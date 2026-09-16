@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Room } from "colyseus.js";
 import {
   ABILITIES,
   SPELL_SLOTS,
@@ -24,6 +25,11 @@ import { SpellIcon } from "./SpellIcon";
 import { abilityHudRuntime } from "../abilityHudRuntime";
 import { abilityHoverRuntime } from "../abilityHoverRuntime";
 import { WalletDisplay } from "./CoinDisplay";
+import {
+  resolveAbilitySlotGlow,
+  statusIdsNeedSlotTick,
+  type AbilitySlotGlow,
+} from "./abilitySlotGlow";
 
 type Props = {
   loadout: string[];
@@ -35,7 +41,44 @@ type Props = {
   wallet?: Pick<Wallet, "copper" | "silver" | "gold" | "essence" | "rubies">;
   talentIds?: string[];
   talentBuild?: TalentBuild;
+  room?: Room | null;
+  sessionId?: string | null;
 };
+
+function readStatusIds(room: Room | null | undefined, sessionId: string | null | undefined): Set<string> {
+  const ids = new Set<string>();
+  if (!room || !sessionId) return ids;
+  const me = room.state?.players?.get(sessionId) as
+    | { statuses?: { forEach: (cb: (row: { statusId?: string }) => void) => void } }
+    | undefined;
+  me?.statuses?.forEach((row) => {
+    if (row?.statusId) ids.add(row.statusId);
+  });
+  return ids;
+}
+
+function riftSecondPlantReady(
+  room: Room | null | undefined,
+  sessionId: string | null | undefined,
+  now: number,
+): boolean {
+  const portals = room?.state?.riftPortals as
+    | {
+        forEach: (
+          cb: (raw: { ownerSessionId?: string; phase?: string; armEndsAt?: number; index?: number }) => void,
+        ) => void;
+      }
+    | undefined;
+  if (!portals || !sessionId) return false;
+  let arming = false;
+  portals.forEach((raw) => {
+    if (raw.ownerSessionId !== sessionId) return;
+    if (raw.phase !== "arming") return;
+    if ((raw.index ?? 0) !== 0) return;
+    if ((raw.armEndsAt ?? 0) > now) arming = true;
+  });
+  return arming;
+}
 
 function useNow(tick: boolean) {
   const [now, setNow] = useState(() => Date.now());
@@ -61,7 +104,9 @@ function SlotIcon({
   abilityId,
   slot,
   remainingMs,
+  cooldownTotalMs,
   flash,
+  glow,
   statsLine,
   modLines,
   onHover,
@@ -70,14 +115,15 @@ function SlotIcon({
   abilityId: string | undefined;
   slot: SpellSlot;
   remainingMs: number;
+  cooldownTotalMs: number;
   flash: boolean;
+  glow: AbilitySlotGlow | null;
   statsLine: string;
   modLines: string[];
   onHover: (id: string | null) => void;
 }) {
   const cooling = remainingMs > 0;
-  const frac =
-    ability && ability.cooldownMs > 0 ? Math.min(1, remainingMs / ability.cooldownMs) : 0;
+  const frac = cooldownTotalMs > 0 ? Math.min(1, remainingMs / cooldownTotalMs) : 0;
 
   return (
     <div
@@ -90,9 +136,18 @@ function SlotIcon({
           "bb-ability-slot",
           ability ? "bb-ability-slot--icon" : "",
           flash ? "bb-ability-slot--flash" : "",
+          glow === "recast" ? "bb-ability-slot--recast" : "",
+          glow === "boost" ? "bb-ability-slot--boost" : "",
         ]
           .filter(Boolean)
           .join(" ")}
+        aria-label={
+          glow === "recast"
+            ? `${ability?.name ?? "Spell"} ready to recast`
+            : glow === "boost"
+              ? `${ability?.name ?? "Spell"} boosted`
+              : undefined
+        }
       >
         {ability ? (
           <SpellIcon
@@ -118,6 +173,15 @@ function SlotIcon({
             </span>
           </>
         )}
+        {glow === "recast" ? (
+          <span className="bb-ability-slot__proc" aria-hidden>
+            Recast
+          </span>
+        ) : glow === "boost" ? (
+          <span className="bb-ability-slot__proc bb-ability-slot__proc--boost" aria-hidden>
+            Boost
+          </span>
+        ) : null}
         <span className="bb-ability-slot__glyph">
           <SpellSlotGlyph slot={slot} size={slot.input === "space" ? 18 : 20} />
         </span>
@@ -160,7 +224,9 @@ function FlexSlotIcon({
   ability,
   index,
   remainingMs,
+  cooldownTotalMs,
   flash,
+  glow,
   affordable,
   cost,
   statsLine,
@@ -171,7 +237,9 @@ function FlexSlotIcon({
   ability: AbilityDef | undefined;
   index: number;
   remainingMs: number;
+  cooldownTotalMs: number;
   flash: boolean;
+  glow: AbilitySlotGlow | null;
   affordable: boolean;
   cost: number;
   statsLine: string;
@@ -180,8 +248,7 @@ function FlexSlotIcon({
   onHover: (id: string | null) => void;
 }) {
   const cooling = remainingMs > 0;
-  const frac =
-    ability && ability.cooldownMs > 0 ? Math.min(1, remainingMs / ability.cooldownMs) : 0;
+  const frac = cooldownTotalMs > 0 ? Math.min(1, remainingMs / cooldownTotalMs) : 0;
 
   return (
     <div
@@ -199,6 +266,8 @@ function FlexSlotIcon({
           // one slot says nothing about which gate is the one blocking you.
           ability && !affordable && !cooling ? "bb-flex-slot--poor" : "",
           flash ? "bb-flex-slot--flash" : "",
+          glow === "recast" ? "bb-flex-slot--recast" : "",
+          glow === "boost" ? "bb-flex-slot--boost" : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -230,6 +299,15 @@ function FlexSlotIcon({
         {ability ? (
           <span className="bb-flex-slot__cost" aria-label={`${cost} energy`}>
             {cost}
+          </span>
+        ) : null}
+        {glow === "recast" ? (
+          <span className="bb-ability-slot__proc" aria-hidden>
+            Recast
+          </span>
+        ) : glow === "boost" ? (
+          <span className="bb-ability-slot__proc bb-ability-slot__proc--boost" aria-hidden>
+            Boost
           </span>
         ) : null}
         {locked ? null : (
@@ -284,6 +362,8 @@ export function AbilityBar({
   wallet,
   talentIds = [],
   talentBuild,
+  room = null,
+  sessionId = null,
 }: Props) {
   const slots = normalizeLoadout(loadout);
   const flex = useMemo(
@@ -295,6 +375,7 @@ export function AbilityBar({
   const wholePips = Math.floor(energy);
   const [cooldownUntil, setCooldownUntil] = useState(() => abilityHudRuntime.cooldownUntil);
   const [flashId, setFlashId] = useState(() => abilityHudRuntime.flashId);
+  const [lastFlowMoveId, setLastFlowMoveId] = useState(() => abilityHudRuntime.lastFlowMoveId);
 
   const kit = useMemo(
     () => resolveKit(slots.filter(Boolean).join(","), talentIds, talentBuild),
@@ -305,6 +386,7 @@ export function AbilityBar({
     return abilityHudRuntime.subscribe(() => {
       setCooldownUntil(abilityHudRuntime.cooldownUntil);
       setFlashId(abilityHudRuntime.flashId);
+      setLastFlowMoveId(abilityHudRuntime.lastFlowMoveId);
     });
   }, []);
 
@@ -312,7 +394,12 @@ export function AbilityBar({
     return () => abilityHoverRuntime.clear();
   }, []);
 
-  const needsTick = Object.values(cooldownUntil).some((t) => t > Date.now() - 50);
+  const statusIds = readStatusIds(room, sessionId);
+  const riftArming = riftSecondPlantReady(room, sessionId, Date.now());
+  const needsTick =
+    Object.values(cooldownUntil).some((t) => t > Date.now() - 50) ||
+    statusIdsNeedSlotTick(statusIds) ||
+    riftArming;
   const now = useNow(needsTick);
 
   return (
@@ -346,7 +433,9 @@ export function AbilityBar({
               ability={ability}
               index={i}
               remainingMs={Math.max(0, until - now)}
+              cooldownTotalMs={adjustedCd}
               flash={Boolean(id && flashId === id)}
+              glow={resolveAbilitySlotGlow(id ?? undefined, statusIds, lastFlowMoveId, riftArming)}
               affordable={wholePips >= cost}
               cost={cost}
               statsLine={statsLine}
@@ -378,7 +467,9 @@ export function AbilityBar({
               abilityId={id}
               slot={slot}
               remainingMs={Math.max(0, until - now)}
+              cooldownTotalMs={adjustedCd}
               flash={Boolean(id && flashId === id)}
+              glow={resolveAbilitySlotGlow(id, statusIds, lastFlowMoveId, riftArming)}
               statsLine={statsLine}
               modLines={ability ? talentModLines(ability, kit) : []}
               onHover={(hid) => abilityHoverRuntime.setHoveredAbilityId(hid)}

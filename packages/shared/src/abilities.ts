@@ -321,6 +321,26 @@ export type OrbitingWispConfig = {
   redistributeMs?: number;
 };
 
+/**
+ * Non-LMB cooldowns felt too short in PvE spam. M1 keeps its poke / flurry cadence.
+ * Applied in `abilityBaseCooldownMs` / `kitCooldownMs` so HUD and server stay in sync.
+ */
+export const NON_M1_COOLDOWN_MUL = 1.3;
+
+/** True for LMB-only primaries (Bolt, Soul Mark, Void Disc, …). */
+export function isLmbAbility(def: AbilityDef | undefined | null): boolean {
+  if (!def) return false;
+  if (def.defaultSlot === "m1") return true;
+  return def.allowedSlots.length > 0 && def.allowedSlots.every((s) => s === "m1");
+}
+
+/** Authored cooldown after the global non-M1 stretch (before talent CDR). */
+export function abilityBaseCooldownMs(def: AbilityDef): number {
+  const base = def.cooldownMs;
+  if (!(base > 0) || isLmbAbility(def)) return base;
+  return Math.round(base * NON_M1_COOLDOWN_MUL);
+}
+
 export interface AbilityDef {
   id: string;
   name: string;
@@ -1002,6 +1022,8 @@ export const GRAVITY_WELL_CAST = {
   pull: 2.85,
   pullMs: 280,
   pullStopDistance: 0.65,
+  /** Root applied to enemies yanked by the collapse pulse. */
+  pullRootMs: 1000,
   /** Client VFX: seed charge + collapse residue after fuse. */
   vfxLifeMs: 300 + 400,
 } as const;
@@ -1255,7 +1277,7 @@ export const HEX_ANCHOR_CAST = {
   markDurationMs: 3000,
   triggerRootMs: 850,
   /** Damage dealt when the mark triggers on a spell cast. */
-  triggerDamage: combatMag(40),
+  triggerDamage: combatMag(20),
 } as const;
 
 /**
@@ -1346,7 +1368,7 @@ export const CHAIN_LIGHTNING_CAST = {
   maxTargets: 5,
   bounceRadius: 4.0,
   bounceDelayMs: 110,
-  enemyDamage: combatMag(8),
+  enemyDamage: combatMag(13),
   allyMoveSpeedMul: 1.15,
   /** Cast phase duration mul — 1/1.12 ≈ 12% faster casts. */
   allyCastDurationMul: 1 / 1.12,
@@ -1375,7 +1397,7 @@ export const CYCLONE_KICK_CAST = {
   totalTicks: 16,
   tickIntervalMs: 250,
   radius: 2.75,
-  damagePerTick: combatMag(3), // 30 per tick -> 480 total over 4s
+  damagePerTick: combatMag(5), // 50 per tick -> 800 total over 4s
   pullRadius: 4.25,
   pullForce: 2.2,
 } as const;
@@ -1433,7 +1455,7 @@ export const DREAD_AURA_CAST = {
   cooldownMs: 28000,
   durationMs: 2600,
   radius: 4.25,
-  fearDurationMs: 1250,
+  fearDurationMs: 2500,
   maxTriggersPerEnemy: 1,
 } as const;
 
@@ -1831,8 +1853,8 @@ export const POISON_CLOUD_CAST = {
   clipDurationSec: 2.3,
   playbackRate: 1.35,
   zoneDurationMs: 5500,
-  /** Stack pace — ~3 poison stacks if you stay for most of the zone. */
-  tickMs: 1600,
+  /** Stack pace — 2 stacks in ~2.5s; 3 only if you camp almost the whole zone. */
+  tickMs: 2500,
   radius: 3,
   range: 6.5,
   /** Soft settle after the vial lands. */
@@ -4217,7 +4239,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "gravityWell",
     name: "Gravity Well",
     description:
-      "Create a compact gravity singularity that pulls nearby enemies toward its center and deals light damage.",
+      "Create a compact gravity singularity that pulls nearby enemies toward its center, roots them for 1s, and deals light damage.",
     allowedSlots: ["e"],
     defaultSlot: "e",
     unlockCostEssence: GRAVITY_WELL_CAST.unlockCostEssence,
@@ -4239,6 +4261,9 @@ export const ABILITIES: Record<string, AbilityDef> = {
     pull: GRAVITY_WELL_CAST.pull,
     pullMs: GRAVITY_WELL_CAST.pullMs,
     pullStopDistance: GRAVITY_WELL_CAST.pullStopDistance,
+    applyOnHit: [
+      { statusId: "rooted", durationMs: GRAVITY_WELL_CAST.pullRootMs, chance: 1 },
+    ],
     interruptible: true,
     timing: {
       anticipationMs: 85,
@@ -5214,7 +5239,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "dreadAura",
     name: "Dread Aura",
     description:
-      "Surround yourself with a terrifying sigil. Enemies who cast inside or approach are feared away from you.",
+      "Surround yourself with a terrifying sigil. Enemies who cast or channel inside are feared away from you.",
     allowedSlots: ["f"],
     defaultSlot: "f",
     unlockCostEssence: DREAD_AURA_CAST.unlockCostEssence,
@@ -5628,7 +5653,7 @@ export function abilityStructureDamage(def: AbilityDef | undefined): number {
 /**
  * Hits that can trigger an armed Counter.
  * Melee (crescent) and contact projectiles yes; Jump Slam yes; Frost Mist cone ticks yes;
- * other ground AoE / aura ticks no.
+ * orbiting wisps yes; other ground AoE / aura ticks no.
  */
 export function abilityTriggersCounter(
   def: AbilityDef | undefined,
@@ -5640,14 +5665,17 @@ export function abilityTriggersCounter(
   if (
     abilityId === "magmaOrbs" ||
     abilityId === "shrooms" ||
-    abilityId === "frostMist"
+    abilityId === "frostMist" ||
+    abilityId === "orbitingWisp"
   ) {
     return true;
   }
   if (
     def?.id === "magmaOrbs" ||
     def?.id === "shrooms" ||
-    def?.id === "frostMist"
+    def?.id === "frostMist" ||
+    def?.id === "orbitingWisp" ||
+    def?.effectKind === "orbitingWisp"
   ) {
     return true;
   }
@@ -5739,7 +5767,7 @@ function formatStatusApp(app: StatusApplication): string | null {
  * so numbers stay in sync with combat.
  */
 export function formatAbilityArmoryStats(def: AbilityDef): string {
-  const parts: string[] = [`CD ${formatSeconds(def.cooldownMs)}`];
+  const parts: string[] = [`CD ${formatSeconds(abilityBaseCooldownMs(def))}`];
 
   if (def.aura && def.damage > 0 && def.tickMs) {
     parts.push(`${def.damage} dmg / ${formatSeconds(def.tickMs)}`);

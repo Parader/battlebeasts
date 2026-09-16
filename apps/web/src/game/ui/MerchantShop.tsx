@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Room } from "colyseus.js";
 import {
+  COSMETIC_CATALOG,
   COSMETIC_SLOTS,
   COSMETIC_SLOT_LABELS,
   DEFAULT_COSMETIC_BODY,
@@ -132,7 +133,6 @@ export function appearanceFromPlayer(me: {
 function previewLooksFromBase(
   base: AppearanceLooks,
   item: ShopItemDef | null,
-  owned = false,
 ): AppearanceLooks {
   if (!item) return base;
   const cosmeticsEquipped = { ...normalizeCosmeticsEquipped(base.cosmeticsEquipped) };
@@ -149,8 +149,7 @@ function previewLooksFromBase(
   }
   if (grant.kind === "cosmetic") {
     const def = getCosmeticItem(grant.itemId);
-    // Owned gear follows Equip/Unequip. Try-on only for pieces you don't own yet.
-    if (def && !owned) cosmeticsEquipped[def.slot] = def.id;
+    if (def) cosmeticsEquipped[def.slot] = def.id;
     return { ...base, cosmeticsEquipped };
   }
   return { ...base, cosmeticsEquipped };
@@ -324,7 +323,8 @@ export function MerchantPanel({
     clearHoldBuy();
   };
 
-  const topItems = useMemo(() => shopItemsForCategory(category), [category]);
+  const catalogCount = Object.keys(COSMETIC_CATALOG).length;
+  const topItems = shopItemsForCategory(category);
 
   const browseItems = useMemo(() => {
     let items: ShopItemDef[];
@@ -336,7 +336,7 @@ export function MerchantPanel({
     }
     if (hideOwned) items = items.filter((item) => !ownsShopItem(unlocks, item, beachBallCount));
     return items;
-  }, [category, cosmeticSub, topItems, hideOwned, unlocks, beachBallCount]);
+  }, [category, cosmeticSub, topItems, hideOwned, unlocks, beachBallCount, catalogCount]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -368,19 +368,17 @@ export function MerchantPanel({
       if (def) slots.add(def.slot);
     }
     return COSMETIC_SLOTS.filter((s) => slots.has(s));
-  }, []);
+  }, [topItems]);
 
   const selectedItem = useMemo(
     () => (selectedId ? browseItems.find((i) => i.id === selectedId) ?? null : null),
     [browseItems, selectedId],
   );
 
-  const previewLooks = useMemo(() => {
-    const owned = selectedItem
-      ? ownsShopItem(unlocks, selectedItem, beachBallCount)
-      : false;
-    return previewLooksFromBase(liveLooks, selectedItem, owned);
-  }, [liveLooks, selectedItem, unlocks, beachBallCount]);
+  const previewLooks = useMemo(
+    () => previewLooksFromBase(liveLooks, selectedItem),
+    [liveLooks, selectedItem],
+  );
   const previewEmoteId =
     selectedItem?.grant.kind === "emote" ? selectedItem.grant.emoteId : null;
 
@@ -736,7 +734,7 @@ export function MerchantPanel({
                             {!owned && buyable ? (
                               <p className="bb-shop__card__hold-hint">Hold to buy</p>
                             ) : owned && canEquipShopItem(item, liveLooks) && !equipped ? (
-                              <p className="bb-shop__card__hold-hint">Select to equip</p>
+                              <p className="bb-shop__card__hold-hint">Previewing — Equip to wear</p>
                             ) : null}
                           </div>
                         </button>

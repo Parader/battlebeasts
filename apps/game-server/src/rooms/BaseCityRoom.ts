@@ -290,6 +290,13 @@ export class BaseCityRoom extends ServicedRoom {
       },
     );
 
+    this.onMessage(
+      "party_set_layout",
+      (client, message: { splitSides?: boolean; teamCOpen?: boolean }) => {
+        this.handlePartySetLayout(client, message);
+      },
+    );
+
     this.onMessage("party_set_modes", (client, message: { modes?: string[] }) => {
       this.handlePartySetModes(client, message?.modes ?? []);
     });
@@ -418,6 +425,7 @@ export class BaseCityRoom extends ServicedRoom {
     // Catch soft-leave ghosts that survived eviction (collision without a model).
     this.purgeDuplicateUserSeats(client.sessionId);
     this.tryJoinPendingParty(client);
+    this.tryJoinOpenHubParty(client);
   }
 
   async onLeave(client: Client, consented: boolean) {
@@ -922,10 +930,7 @@ export class BaseCityRoom extends ServicedRoom {
   }
 
   private broadcastPartyUpdate(party: HubParty) {
-    const snapshot = toPartySnapshot(party);
-    for (const sessionId of party.members.keys()) {
-      this.sendToSession(sessionId, "party_update", { party: snapshot });
-    }
+    this.broadcast("party_update", { party: toPartySnapshot(party) });
   }
 
   private broadcastToParty(party: HubParty, type: string, payload: unknown) {
@@ -950,8 +955,8 @@ export class BaseCityRoom extends ServicedRoom {
     const sessionIds = [...party.members.keys()];
     if (party.queued) dequeuePvpParty(party.partyId);
     this.parties.dissolve(party);
+    this.broadcast("party_update", { party: null });
     for (const sessionId of sessionIds) {
-      this.sendToSession(sessionId, "party_update", { party: null });
       this.sendToSession(sessionId, "queue_status", { queued: false });
       if (reason) this.sendToSession(sessionId, "toast", { message: reason });
     }
@@ -1133,10 +1138,10 @@ export class BaseCityRoom extends ServicedRoom {
         defaultSeatFor(party),
       );
       this.broadcastPartyUpdate(party);
-      this.sendToSession(sessionId, "ui", { ui: "party_lobby" });
       this.broadcastToParty(party, "toast", {
         message: `${memberId.displayName} joined the party`,
       });
+      this.broadcastToParty(party, "ui", { ui: "party_lobby" });
       return;
     }
 
@@ -1177,6 +1182,33 @@ export class BaseCityRoom extends ServicedRoom {
     this.broadcastToParty(party, "toast", {
       message: `${identity.displayName} joined the party`,
     });
+    this.broadcastToParty(party, "ui", { ui: "party_lobby" });
+  }
+
+  /** Anyone walking into a hub with an open lobby is pulled onto the same PvP/coop UI. */
+  private tryJoinOpenHubParty(client: Client) {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity) return;
+    if (this.parties.hasAnyParty(client.sessionId)) return;
+
+    const party = this.parties.findOpen();
+    if (!party || party.queued) return;
+    if (party.kind === "coop_pve" && party.members.size >= COOP_PVE_MAX_PLAYERS) return;
+
+    this.parties.addMember(
+      party,
+      {
+        sessionId: client.sessionId,
+        userId: identity.userId,
+        displayName: identity.displayName,
+      },
+      defaultSeatFor(party),
+    );
+    this.broadcastPartyUpdate(party);
+    this.broadcastToParty(party, "toast", {
+      message: `${identity.displayName} joined the party`,
+    });
+    this.broadcastToParty(party, "ui", { ui: "party_lobby" });
   }
 
   private handlePartyInvite(client: Client, targetSessionId: string | undefined) {
@@ -1254,6 +1286,7 @@ export class BaseCityRoom extends ServicedRoom {
     );
     this.broadcastPartyUpdate(party);
     this.broadcastToParty(party, "toast", { message: `${identity.displayName} joined the party` });
+    this.broadcastToParty(party, "ui", { ui: "party_lobby" });
   }
 
   private handlePartyKick(client: Client, targetSessionId: string | undefined) {
@@ -1267,9 +1300,9 @@ export class BaseCityRoom extends ServicedRoom {
 
     this.unqueueParty(party, "Party changed — re-lock to queue again");
     this.parties.removeMember(party, targetSessionId);
+    this.broadcastPartyUpdate(party);
     this.sendToSession(targetSessionId, "party_update", { party: null });
     this.sendToSession(targetSessionId, "toast", { message: "Removed from party" });
-    this.broadcastPartyUpdate(party);
   }
 
   private handlePartySetSeat(client: Client, message: { sessionId?: string; seat?: PvpSeat }) {
@@ -1300,7 +1333,43 @@ export class BaseCityRoom extends ServicedRoom {
     }
 
     member.seat = seat;
+    if (seat === "teamB" || seat === "teamC") party.splitSides = true;
+    if (seat === "teamC") party.teamCOpen = true;
     this.broadcastPartyUpdate(party);
+  }
+
+  private handlePartySetLayout(
+    client: Client,
+    message: { splitSides?: boolean; teamCOpen?: boolean },
+  ) {
+    const party = this.parties.getBySession(client.sessionId);
+    if (!party || party.leaderSessionId !== client.sessionId) {
+      client.send("toast", { message: "Only the party leader can change lobby layout" });
+      return;
+    }
+    if (party.kind === "coop_pve") return;
+    if (party.queued) {
+      client.send("toast", { message: "Party is queued — cancel to change teams" });
+      return;
+    }
+
+    if (typeof message.splitSides === "boolean") party.splitSides = message.splitSides;
+    if (typeof message.teamCOpen === "boolean") party.teamCOpen = message.teamCOpen;
+    if (party.teamCOpen && partyFamily(party) !== "skirmish") party.teamCOpen = false;
+
+    if (!party.splitSides) {
+      party.teamCOpen = false;
+      for (const member of party.members.values()) {
+        if (member.seat === "teamB" || member.seat === "teamC") member.seat = "teamA";
+      }
+    } else if (!party.teamCOpen) {
+      for (const member of party.members.values()) {
+        if (member.seat === "teamC") member.seat = "teamA";
+      }
+    }
+
+    this.broadcastPartyUpdate(party);
+    this.broadcastToParty(party, "ui", { ui: "party_lobby" });
   }
 
   private handlePartySetModes(client: Client, modes: string[]) {
@@ -1546,8 +1615,8 @@ export class BaseCityRoom extends ServicedRoom {
     const name = this.identities.get(client.sessionId)?.displayName ?? "A hunter";
     this.unqueueParty(party, "Party changed — re-lock to queue again");
     this.parties.removeMember(party, client.sessionId);
-    this.sendToSession(client.sessionId, "party_update", { party: null });
     this.broadcastPartyUpdate(party);
+    this.sendToSession(client.sessionId, "party_update", { party: null });
     this.broadcastToParty(party, "toast", { message: `${name} left the party` });
   }
 

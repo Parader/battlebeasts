@@ -5,7 +5,7 @@ import { ICE_LANCE_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { findHandBone } from "../attach";
-import { getCharacterRoot } from "../../characterRoots";
+import { getCharacterRoot, getCombatOwnerPose } from "../../characterRoots";
 import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { hasStatusId } from "../../statusBadgeUtils";
@@ -282,9 +282,7 @@ export function IceLanceCastEffect({
         x = local.x + Math.sin(yaw) * ICE_LANCE_CAST.spawnOffset;
         z = local.z + Math.cos(yaw) * ICE_LANCE_CAST.spawnOffset;
       } else {
-        const pl = follow.room?.state?.players?.get(shot.followOwnerId) as
-          | { x?: number; z?: number; yaw?: number }
-          | undefined;
+        const pl = getCombatOwnerPose(follow.room, shot.followOwnerId);
         if (pl) {
           yaw = pl.yaw ?? yaw;
           x = (pl.x ?? x) + Math.sin(yaw) * ICE_LANCE_CAST.spawnOffset;

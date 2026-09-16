@@ -18,7 +18,7 @@ void main() {
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
   float psz = aSize * uPxPerWorld / max(-mv.z, 0.2);
-  gl_PointSize = clamp(psz, 4.0, 256.0);
+  gl_PointSize = clamp(psz, 4.0, 220.0);
   vAngle = vec2(cos(aAngle), sin(aAngle));
   vColor = aColor;
 }
@@ -81,18 +81,18 @@ function paintFrost(ctx: CanvasRenderingContext2D): void {
   softBlob(ctx, 64, 64, 22, 22);
   ctx.save();
   ctx.translate(64, 64);
-  ctx.strokeStyle = "rgba(255,255,255,0.85)";
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = 5;
   ctx.lineCap = "round";
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.lineTo(Math.cos(a) * 46, Math.sin(a) * 46);
+    ctx.lineTo(Math.cos(a) * 48, Math.sin(a) * 48);
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(Math.cos(a) * 22, Math.sin(a) * 22);
-    ctx.lineTo(Math.cos(a + 0.45) * 32, Math.sin(a + 0.45) * 32);
+    ctx.lineTo(Math.cos(a + 0.45) * 34, Math.sin(a + 0.45) * 34);
     ctx.stroke();
   }
   ctx.restore();

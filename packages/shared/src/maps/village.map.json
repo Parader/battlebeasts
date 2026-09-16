@@ -2672,9 +2672,9 @@
       "y": 0.23100000000000356,
       "z": 21.75,
       "yaw": 0.7853981633974483,
+      "scale": 1.4086063368386093,
       "pivotX": -0.178,
       "pivotZ": 0.024,
-      "scale": 1.4086063368386093,
       "collider": {
         "mode": "circle",
         "radius": 0.351,
@@ -2907,7 +2907,7 @@
       },
       "params": {
         "effect": "heal",
-        "magnitude": 2,
+        "magnitude": 1000,
         "durationMs": 0,
         "respawnMs": 30000,
         "firstSpawnMs": 0

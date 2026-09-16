@@ -32,7 +32,9 @@ export function VesselBody({ characterRoot, body, color }: Props) {
     }
 
     const clone = cloneSkinned(gltf.scene) as THREE.Object3D;
-    const meshes = mountSkinnedCosmetic(clone, characterRoot);
+    const meshes = mountSkinnedCosmetic(clone, characterRoot, undefined, {
+      hostBindInverses: false,
+    });
     if (!meshes) {
       setHeroSurfaceVisible(characterRoot, true);
       return;

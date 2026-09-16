@@ -15,3 +15,20 @@ export function getCharacterRoot(sessionId: string | null | undefined): THREE.Ob
   if (!sessionId) return null;
   return roots.get(sessionId) ?? null;
 }
+
+type PoseMap = { get: (id: string) => unknown };
+
+/** Player first, then world target (elites / dummies). */
+export function getCombatOwnerPose(
+  room: { state?: { players?: PoseMap; targets?: PoseMap } } | null | undefined,
+  ownerId: string | null | undefined,
+): { x?: number; z?: number; yaw?: number } | undefined {
+  if (!ownerId || !room?.state) return undefined;
+  const player = room.state.players?.get(ownerId) as
+    | { x?: number; z?: number; yaw?: number }
+    | undefined;
+  if (player) return player;
+  return room.state.targets?.get(ownerId) as
+    | { x?: number; z?: number; yaw?: number }
+    | undefined;
+}

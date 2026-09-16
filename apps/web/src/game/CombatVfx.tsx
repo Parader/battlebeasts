@@ -8,8 +8,12 @@ import {
   MOVE_SPEED,
   PLAYER_BASE_MAX_HP,
   PROP_TARGET_KIND,
+  PVE_ELITE_KIND,
+  PVE_ELITE_SCALE,
+  PVE_ZOMBIE_BASE_SPEED,
   PVE_ZOMBIE_KIND,
   STARTER_COLORS,
+  pveEliteTint,
   totalShieldAbsorb,
   type CosmeticsEquipped,
 } from "@battlebeasts/shared";
@@ -40,6 +44,7 @@ import { SpiritVesselFx } from "./SpiritVesselFx";
 import { VesselBody } from "./VesselBody";
 import { CharacterAnimationController, heroAnimationConfig } from "./animation";
 import { ZOMBIE_URL, zombieAnimationConfig } from "./zombieAsset";
+import { registerCharacterRoot } from "./characterRoots";
 import { StatusOrnaments } from "./StatusOrnaments";
 import { SoulMarkOrnament } from "./SoulMarkOrnament";
 import { StatusHpBadgeStack } from "./StatusHpBadgeStack";
@@ -428,9 +433,17 @@ export function WorldTargets({ room }: { room: Room | null }) {
     <>
       {ids.map((id) => {
         const kind =
-          (room?.state?.targets?.get(id) as { kind?: string } | undefined)?.kind ?? "dummy";
+          (room?.state?.targets?.get(id) as { kind?: string } | undefined)?.kind ??
+          (id.startsWith("zombie_")
+            ? PVE_ZOMBIE_KIND
+            : id.startsWith("elite_")
+              ? PVE_ELITE_KIND
+              : "dummy");
         if (kind === PVE_ZOMBIE_KIND) {
           return <ZombieAvatar key={id} room={room} targetId={id} />;
+        }
+        if (kind === PVE_ELITE_KIND) {
+          return <PracticeDummyAvatar key={id} room={room} targetId={id} elite />;
         }
         if (kind === PROP_TARGET_KIND) {
           return <PropTargetBar key={id} room={room} targetId={id} />;
@@ -493,37 +506,17 @@ function PropTargetBar({ room, targetId }: { room: Room | null; targetId: string
     );
 }
 
-function ZombieHpBar({ frac, y = 2.05 }: { frac: number; y?: number }) {
-  const f = Math.max(0, Math.min(1, frac));
-  return (
-    <Billboard position={[0, y, 0]} follow lockX={false} lockY={false} lockZ={false}>
-      <mesh position={[0, 0, 0.01]} renderOrder={40}>
-        <planeGeometry args={[0.9, 0.1]} />
-        <meshBasicMaterial
-          color="#1f2937"
-          depthTest={false}
-          depthWrite={false}
-          transparent
-          opacity={0.85}
-        />
-      </mesh>
-      <mesh position={[-(0.88 * (1 - f)) / 2, 0, 0.02]} renderOrder={41}>
-        <planeGeometry args={[Math.max(0.001, 0.88 * f), 0.06]} />
-        <meshBasicMaterial color="#86efac" depthTest={false} depthWrite={false} toneMapped={false} />
-      </mesh>
-    </Billboard>
-  );
-}
-
 function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string }) {
   const root = useRef<THREE.Group>(null);
   const body = useRef<THREE.Group>(null);
   const controllerRef = useRef<CharacterAnimationController | null>(null);
-  const lastXZ = useRef({ x: 0, z: 0 });
+  const renderPos = useRef(new THREE.Vector3());
+  const vel = useRef(new THREE.Vector3());
+  const lastServer = useRef({ x: 0, z: 0, t: 0 });
+  const renderYaw = useRef(0);
   const seeded = useRef(false);
   const lastAttackKey = useRef("");
-  const hpFrac = useRef(1);
-  const [barFrac, setBarFrac] = useState(1);
+  const movingRef = useRef(false);
   const gltf = useGLTF(ZOMBIE_URL);
   const scene = useMemo(() => {
     const idle =
@@ -548,6 +541,10 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
       gltf.animations,
       zombieAnimationConfig,
     );
+    controller.spineCursorAim = false;
+    _zombieVel.set(0, 0, 0);
+    controller.setMovementFromYaw(_zombieVel, 0, PVE_ZOMBIE_BASE_SPEED);
+    controller.update(1 / 60);
     controllerRef.current = controller;
     return () => {
       controller.dispose();
@@ -575,29 +572,79 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
       return;
     }
     g.visible = true;
-    g.position.set(t.x, 0, t.z);
+    const now = performance.now();
+    const safeDt = Math.min(0.05, Math.max(0, dt));
     const yaw = t.yaw ?? 0;
-    if (body.current) body.current.rotation.y = yaw;
 
-    // Match paused: hold pose + animation clock (server also freezes AI).
+    if (!seeded.current) {
+      renderPos.current.set(t.x, 0, t.z);
+      lastServer.current = { x: t.x, z: t.z, t: now };
+      renderYaw.current = yaw;
+      seeded.current = true;
+    }
+
+    const serverMoved = t.x !== lastServer.current.x || t.z !== lastServer.current.z;
+    if (serverMoved) {
+      const elapsed = Math.max(0.016, (now - lastServer.current.t) / 1000);
+      vel.current.set(
+        (t.x - lastServer.current.x) / elapsed,
+        0,
+        (t.z - lastServer.current.z) / elapsed,
+      );
+      lastServer.current = { x: t.x, z: t.z, t: now };
+    } else {
+      const decay = Math.exp(-8 * safeDt);
+      vel.current.x *= decay;
+      vel.current.z *= decay;
+      if (Math.hypot(vel.current.x, vel.current.z) < 0.05) {
+        vel.current.set(0, 0, 0);
+      }
+    }
+
     if (paused) {
-      const nextFrac = t.maxHp > 0 ? t.hp / t.maxHp : 1;
-      if (Math.abs(nextFrac - hpFrac.current) > 0.01) {
-        hpFrac.current = nextFrac;
-        setBarFrac(nextFrac);
+      renderPos.current.set(t.x, 0, t.z);
+      vel.current.set(0, 0, 0);
+      movingRef.current = false;
+      renderYaw.current = yaw;
+      g.position.set(t.x, 0, t.z);
+      if (body.current) body.current.rotation.y = renderYaw.current;
+      const controller = controllerRef.current;
+      if (controller) {
+        if (lastAttackKey.current) {
+          controller.cancelFullBodyAction();
+          lastAttackKey.current = "";
+        }
+        _zombieVel.set(0, 0, 0);
+        controller.setMovementFromYaw(_zombieVel, yaw, PVE_ZOMBIE_BASE_SPEED);
+        controller.update(0);
       }
       return;
     }
 
-    let moving = false;
-    if (!seeded.current) {
-      lastXZ.current = { x: t.x, z: t.z };
-      seeded.current = true;
-    } else {
-      const dx = t.x - lastXZ.current.x;
-      const dz = t.z - lastXZ.current.z;
-      moving = dx * dx + dz * dz > 0.00005;
-      lastXZ.current = { x: t.x, z: t.z };
+    renderPos.current.x += vel.current.x * safeDt;
+    renderPos.current.z += vel.current.z * safeDt;
+    const blend = 1 - Math.exp(-18 * safeDt);
+    renderPos.current.x = THREE.MathUtils.lerp(renderPos.current.x, t.x, blend * 0.85);
+    renderPos.current.z = THREE.MathUtils.lerp(renderPos.current.z, t.z, blend * 0.85);
+    const err = Math.hypot(renderPos.current.x - t.x, renderPos.current.z - t.z);
+    if (err > 2.5) {
+      renderPos.current.set(t.x, 0, t.z);
+      vel.current.set(0, 0, 0);
+    }
+
+    let dyaw = yaw - renderYaw.current;
+    while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+    while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    renderYaw.current += dyaw * (1 - Math.exp(-12 * safeDt));
+
+    g.position.set(renderPos.current.x, 0, renderPos.current.z);
+    if (body.current) body.current.rotation.y = renderYaw.current;
+
+    const speed = vel.current.length();
+    if (movingRef.current) {
+      if (speed < 0.28) movingRef.current = false;
+    } else if (speed > 0.55) {
+      movingRef.current = true;
     }
 
     const controller = controllerRef.current;
@@ -608,31 +655,27 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
         lastAttackKey.current = attackKey;
         // Full-body Mixamo attack — upper-body mask is for the hero skeleton.
         const played =
-          controller.playFullBodyAction("attack", { fadeIn: 0.1 }) ||
+          controller.playFullBodyAction("attack", { fadeIn: 0.1, desiredDuration: 0.65 }) ||
           controller.playUpperBodyAction("castMelee", { fadeIn: 0.1 });
         if (!played) {
-          controller.playFullBodyAction("castMelee", { fadeIn: 0.1 });
+          controller.playFullBodyAction("castMelee", { fadeIn: 0.1, desiredDuration: 0.65 });
         }
       } else if (!attacking) {
+        if (lastAttackKey.current) {
+          controller.cancelFullBodyAction();
+        }
         lastAttackKey.current = "";
       }
 
       if (!attacking) {
-        if (moving) {
-          _zombieVel.set(Math.sin(yaw), 0, Math.cos(yaw));
-          controller.setMovementFromYaw(_zombieVel, yaw, MOVE_SPEED);
+        if (movingRef.current) {
+          controller.setMovementFromYaw(vel.current, yaw, PVE_ZOMBIE_BASE_SPEED);
         } else {
           _zombieVel.set(0, 0, 0);
-          controller.setMovementFromYaw(_zombieVel, yaw, MOVE_SPEED);
+          controller.setMovementFromYaw(_zombieVel, yaw, PVE_ZOMBIE_BASE_SPEED);
         }
       }
-      controller.update(Math.min(0.05, Math.max(0, dt)));
-    }
-
-    const nextFrac = t.maxHp > 0 ? t.hp / t.maxHp : 1;
-    if (Math.abs(nextFrac - hpFrac.current) > 0.01) {
-      hpFrac.current = nextFrac;
-      setBarFrac(nextFrac);
+      controller.update(safeDt);
     }
   });
 
@@ -651,7 +694,7 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
           }}
         />
       </group>
-      <ZombieHpBar frac={barFrac} />
+      <HpBillboard room={room} targetId={targetId} y={2.05} />
     </group>
   );
 }
@@ -871,15 +914,18 @@ const _zeroVel = new THREE.Vector3();
 function PracticeDummyAvatar({
     room,
     targetId,
+    elite = false,
 }: {
     room: Room | null;
     targetId: string;
+    elite?: boolean;
 }) {
     const root = useRef<THREE.Group>(null);
     const body = useRef<THREE.Group>(null);
     const aimRef = useRef<THREE.Group>(null);
     const controllerRef = useRef<CharacterAnimationController | null>(null);
     const lastCastId = useRef("");
+    const tintedFor = useRef("");
     const gltf = useGLTF(CHARACTER_URL);
     const scene = useMemo(() => {
         const idle =
@@ -894,9 +940,9 @@ function PracticeDummyAvatar({
                 ? mesh.material.map((m) => m.clone())
                 : mesh.material.clone();
         });
-        tintCharacterSurface(rootScene, DUMMY_COLOR);
+        tintCharacterSurface(rootScene, elite ? pveEliteTint(undefined) : DUMMY_COLOR);
         return rootScene;
-    }, [gltf.scene, gltf.animations]);
+    }, [gltf.scene, gltf.animations, elite]);
 
     useEffect(() => {
         const controller = new CharacterAnimationController(
@@ -905,13 +951,16 @@ function PracticeDummyAvatar({
             heroAnimationConfig,
         );
         controller.setMovementFromYaw(_zeroVel, 0, MOVE_SPEED);
+        controller.update(1 / 60);
         controllerRef.current = controller;
+        registerCharacterRoot(targetId, scene);
         return () => {
+            registerCharacterRoot(targetId, null);
             controller.dispose();
             controllerRef.current = null;
             disposeCharacterMaterials(scene);
         };
-    }, [scene, gltf.animations]);
+    }, [scene, gltf.animations, targetId]);
 
     const prevPos = useRef({ x: 0, z: 0, initialized: false });
     const dummyVel = useRef(new THREE.Vector3());
@@ -927,12 +976,17 @@ function PracticeDummyAvatar({
                   yaw?: number;
                   hp: number;
                   maxHp: number;
+                  abilityId?: string;
                   castAbilityId?: string;
                   castPhase?: string;
                   castLockUntil?: number;
                   statuses?: Parameters<typeof hasStatusId>[0];
               }
             | undefined;
+        if (elite && t?.abilityId && tintedFor.current !== t.abilityId) {
+            tintedFor.current = t.abilityId;
+            tintCharacterSurface(scene, pveEliteTint(t.abilityId));
+        }
         if (controller && t) {
             const yaw = t?.yaw ?? 0;
             controller.setStunned(hasStatusId(t?.statuses, "stunned"));
@@ -949,11 +1003,12 @@ function PracticeDummyAvatar({
             prevPos.current.z = t.z;
 
             const speed = Math.hypot(vx, vz);
-            if (speed > 0.2) {
+            const maxSpeed = elite ? PVE_ZOMBIE_BASE_SPEED * 0.78 : MOVE_SPEED;
+            if (speed > 0.28) {
                 dummyVel.current.set(vx, 0, vz);
-                controller.setMovementFromYaw(dummyVel.current, yaw, MOVE_SPEED);
+                controller.setMovementFromYaw(dummyVel.current, yaw, maxSpeed);
             } else {
-                controller.setMovementFromYaw(_zeroVel, yaw, MOVE_SPEED);
+                controller.setMovementFromYaw(_zeroVel, yaw, maxSpeed);
             }
 
             syncAbilityCast(controller, t, lastCastId);
@@ -977,11 +1032,30 @@ function PracticeDummyAvatar({
         g.position.set(t.x, targetY, t.z);
     });
 
+    const eliteTint = elite
+        ? pveEliteTint(
+              (room?.state?.targets?.get(targetId) as { abilityId?: string } | undefined)?.abilityId,
+          )
+        : DUMMY_COLOR;
+
     return (
-        <group ref={root} userData={{ bbSkipGround: true }}>
+        <group
+            ref={root}
+            userData={{ bbSkipGround: true }}
+            scale={elite ? PVE_ELITE_SCALE : 1}
+        >
             <group ref={body}>
                 <primitive object={scene} />
-                <SpiritVesselFx characterRoot={scene} getColor={() => DUMMY_COLOR} />
+                <SpiritVesselFx
+                    characterRoot={scene}
+                    getColor={() => {
+                        if (!elite) return DUMMY_COLOR;
+                        const id = (
+                            room?.state?.targets?.get(targetId) as { abilityId?: string } | undefined
+                        )?.abilityId;
+                        return pveEliteTint(id);
+                    }}
+                />
                 <StatusOrnaments
                     characterRoot={scene}
                     headY={2.2}
@@ -994,9 +1068,12 @@ function PracticeDummyAvatar({
                 />
             </group>
             <group ref={aimRef}>
-                <AimIndicator color={AIM_RELATION_COLORS.neutral} />
+                <AimIndicator
+                    color={elite ? eliteTint : AIM_RELATION_COLORS.neutral}
+                    radius={elite ? 0.7 : 0.55}
+                />
             </group>
-            <HpBillboard room={room} targetId={targetId} y={2.05} />
+            <HpBillboard room={room} targetId={targetId} y={elite ? 2.28 : 2.05} />
         </group>
     );
 }
@@ -1233,7 +1310,7 @@ function HpBillboard({
         );
     });
     return (
-        <group position={[0, y, 0]}>
+        <Billboard position={[0, y, 0]} follow lockX={false} lockY={false} lockZ={false}>
             <mesh>
                 <planeGeometry args={[1, 0.12]} />
                 <meshBasicMaterial color="#111827" />
@@ -1285,6 +1362,6 @@ function HpBillboard({
                 spellbreakerStacksRef={spellbreakerStacksEl}
                 spellbreakerRingRef={spellbreakerRing}
             />
-        </group>
+        </Billboard>
     );
 }

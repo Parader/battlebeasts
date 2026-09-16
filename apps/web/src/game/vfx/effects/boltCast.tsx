@@ -7,6 +7,7 @@ import type { VfxFollowContext } from "../catalog";
 import { softEnvelope } from "../easing";
 import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { GroundMagicCircle } from "../components/GroundMagicCircle";
+import { getCombatOwnerPose } from "../../characterRoots";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { GEO_SPHERE_HI, GEO_SPHERE_MD } from "../sharedGeo";
 import { useSpellLight } from "../spellLights";
@@ -43,9 +44,7 @@ export function BoltCastEffect({
         pose.current.x = local.x + Math.sin(local.yaw) * offset;
         pose.current.z = local.z + Math.cos(local.yaw) * offset;
       } else {
-        const p = follow.room?.state?.players?.get(shot.followOwnerId) as
-          | { x?: number; z?: number; yaw?: number }
-          | undefined;
+        const p = getCombatOwnerPose(follow.room, shot.followOwnerId);
         if (p) {
           const yaw = p.yaw ?? pose.current.yaw;
           pose.current.yaw = yaw;

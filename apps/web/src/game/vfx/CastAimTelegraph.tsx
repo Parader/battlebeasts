@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { CAST_AIM_COLOR, CAST_AIM_HOT, castAimRuntime } from "../castAimRuntime";
 import { getGroundAim } from "../groundAimRuntime";
+import { getDashStick } from "../dashStickRuntime";
 import { getWorldStaticColliders } from "../worldCollidersRuntime";
 import { AoeRimMarker } from "./components/AoeRimMarker";
 import { CastAimReticle } from "./components/CastAimReticle";
@@ -282,6 +283,7 @@ export function CastAimTelegraph({
         }
       });
     }
+    const stick = getDashStick();
     const preview = resolveCastPreview({
       abilityId: id,
       color: CAST_AIM_COLOR,
@@ -289,6 +291,8 @@ export function CastAimTelegraph({
       aim: getGroundAim(),
       statics: getWorldStaticColliders(),
       healables,
+      moveX: stick.x,
+      moveZ: stick.z,
     });
     previewRef.current = preview;
 

@@ -62,7 +62,7 @@ function LocalMesh({
   );
 }
 
-/** Content room scene — desert for PvP arenas, cemetery for Wave Assault. */
+/** Content room scene — map resolved from the room's mode. */
 export function ContentScene({
   room,
   localSessionId,
@@ -75,6 +75,7 @@ export function ContentScene({
   // back to the desert for unknown modes, which is what shipped before.
   const mapId = mapIdForMode(modeLabel) ?? "desert";
   const localPos = useRef(new THREE.Vector3(0, 0, 0));
+  const cameraYaw = useRef(0);
   const aimNdc = useRef(new THREE.Vector2(0, 0));
   const aimReady = useRef(false);
   const { camera, gl } = useThree();
@@ -107,14 +108,16 @@ export function ContentScene({
   useFrame(() => {
     if (spectateTargetId && room) {
       const target = room.state?.players?.get(spectateTargetId) as
-        | { x?: number; z?: number; hp?: number }
+        | { x?: number; z?: number; yaw?: number; hp?: number }
         | undefined;
       if (target && typeof target.x === "number" && typeof target.z === "number") {
         localPos.current.set(target.x, 0, target.z);
+        if (typeof target.yaw === "number") cameraYaw.current = target.yaw;
       }
     } else {
       const p = predictedRef.current;
       localPos.current.set(p.x, 0, p.z);
+      cameraYaw.current = p.yaw;
     }
     // Keep ground aim + facing fresh even when the cursor is still (cast clicks need it).
     // Death spectate: camera-only — don't rewrite corpse yaw from cursor.
@@ -208,6 +211,7 @@ export function ContentScene({
       <CollisionDebugOverlay />
       <FixedFollowCamera
         target={localPos}
+        yawRef={cameraYaw}
         pitchDeg={CAMERA.pitchDeg}
         distance={CAMERA.distance}
         minDistance={CAMERA.minDistance}

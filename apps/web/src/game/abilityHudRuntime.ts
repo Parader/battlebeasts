@@ -1,12 +1,14 @@
 type Listener = () => void;
 
 /**
- * Ability-bar HUD bus (cooldowns + cast flash).
+ * Ability-bar HUD bus (cooldowns + cast flash + last Flow move).
  * Updates stay off the PlayScreen / Canvas React tree.
  */
 class AbilityHudRuntime {
   cooldownUntil: Record<string, number> = {};
   flashId: string | null = null;
+  /** Last Flow-movement the local player committed (Double Step / Motion Echo). */
+  lastFlowMoveId: string | null = null;
   private listeners = new Set<Listener>();
   private emitRaf = 0;
 
@@ -25,9 +27,16 @@ class AbilityHudRuntime {
     this.scheduleEmit();
   }
 
+  setLastFlowMoveId(id: string | null): void {
+    if (this.lastFlowMoveId === id) return;
+    this.lastFlowMoveId = id;
+    this.scheduleEmit();
+  }
+
   clear(): void {
     this.cooldownUntil = {};
     this.flashId = null;
+    this.lastFlowMoveId = null;
     this.scheduleEmit();
   }
 

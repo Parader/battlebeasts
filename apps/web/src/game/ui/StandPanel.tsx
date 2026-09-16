@@ -172,10 +172,6 @@ function AppearanceEditor({
   }, [unlocks.emoteSlots, unlocks.emotes]);
 
   const allSlotPool = useMemo(() => cosmeticsForSlot(gearSlot, body), [gearSlot, body]);
-  const ownedSlotPool = useMemo(
-    () => allSlotPool.filter((item) => ownsCosmetic(unlocks.cosmetics, item.id)),
-    [allSlotPool, unlocks.cosmetics],
-  );
   const ownedColors = useMemo(
     () => COSMETIC_COLORS.filter((c) => ownsColor(unlocks.colors, c)),
     [unlocks.colors],
@@ -424,31 +420,37 @@ function AppearanceEditor({
                   <div>
                     <h3 className="bb-loadout__pool-title">{COSMETIC_SLOT_LABELS[gearSlot]}</h3>
                     <p className="bb-meta mt-1">
-                      {ownedSlotPool.length
+                      {allSlotPool.some((item) => ownsCosmetic(unlocks.cosmetics, item.id))
                         ? "Click to equip · click equipped to clear"
-                        : "No owned gear in this slot — buy more at the Merchant"}
+                        : allSlotPool.length
+                          ? "Buy unowned pieces at the Merchant"
+                          : "No gear registered for this slot yet"}
                     </p>
                   </div>
                 </header>
-                {ownedSlotPool.length === 0 ? (
+                {allSlotPool.length === 0 ? (
                   <p className="bb-muted px-1 py-6 text-center">
-                    {allSlotPool.length === 0
-                      ? "No gear registered for this slot yet."
-                      : "Visit the Merchant to unlock gear for this slot."}
+                    No gear registered for this slot yet.
                   </p>
                 ) : (
                   <ul className="bb-loadout__pool-list">
-                    {ownedSlotPool.map((item) => {
+                    {allSlotPool.map((item) => {
+                      const owned = ownsCosmetic(unlocks.cosmetics, item.id);
                       const on = equipped[gearSlot] === item.id;
                       return (
                         <li key={item.id}>
                           <button
                             type="button"
+                            disabled={!owned}
                             className={[
                               "bb-loadout-card",
                               on ? "bb-loadout-card--on" : "",
+                              !owned ? "bb-loadout-card--locked" : "",
                             ].join(" ")}
-                            onClick={() => setCosmetic(gearSlot, on ? null : item.id)}
+                            onClick={() => {
+                              if (!owned) return;
+                              setCosmetic(gearSlot, on ? null : item.id);
+                            }}
                           >
                             <div className="bb-loadout-card__main">
                               <div className="bb-loadout-card__top">
@@ -459,7 +461,7 @@ function AppearanceEditor({
                               </div>
                             </div>
                             <span className="bb-loadout-card__action">
-                              {on ? "Equipped" : "Equip"}
+                              {!owned ? "Merchant" : on ? "Equipped" : "Equip"}
                             </span>
                           </button>
                         </li>

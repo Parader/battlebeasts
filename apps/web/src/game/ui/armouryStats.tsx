@@ -1,4 +1,4 @@
-import type { AbilityDef, SpellTag } from "@battlebeasts/shared";
+import { abilityBaseCooldownMs, type AbilityDef, type SpellTag } from "@battlebeasts/shared";
 import { GameIcon } from "./GameIcon";
 import type { GameIconId } from "./gameIcons";
 
@@ -25,7 +25,7 @@ function formatSeconds(ms: number): string {
 /** Up to three highlight stats for armoury cards (icon + value). */
 export function getArmouryHighlightStats(def: AbilityDef): ArmouryStat[] {
   const stats: ArmouryStat[] = [
-    { kind: "cd", value: formatSeconds(def.cooldownMs), title: "Cooldown" },
+    { kind: "cd", value: formatSeconds(abilityBaseCooldownMs(def)), title: "Cooldown" },
   ];
 
   let power: string | null = null;

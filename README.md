@@ -16,8 +16,11 @@ pnpm dev
 ```
 
 - Web: http://localhost:5173
-- Game server: ws://localhost:2567
+- Dev game server: ws://127.0.0.1:2568 (`pnpm dev`)
+- Prod game server on this PC: ws://127.0.0.1:2567 (`pnpm prod:up`, Docker)
 - Map editor: `pnpm dev:editor` → http://localhost:5183
+
+Launcher / shipping a patch: see [apps/desktop/README.md](apps/desktop/README.md).
 
 ## Auth (Google via Supabase)
 

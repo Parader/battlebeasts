@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { listMaps, normalizeCosmeticBody, type CosmeticBodyId } from "@battlebeasts/shared";
+import { setAdminThirdPerson, useAdminThirdPerson } from "../adminThirdPerson";
+import { setAdminBindPose, useAdminBindPose } from "../adminBindPose";
 import { GamePanelShell } from "./GamePanelShell";
 import { VesselPicker } from "./VesselPicker";
 
@@ -45,6 +47,8 @@ export function AdminPanel({
   // Registration happens once at startup, so the list never changes at runtime.
   const maps = useMemo(() => listMaps().sort((a, b) => a.name.localeCompare(b.name)), []);
   const [mapId, setMapId] = useState(() => maps[0]?.id ?? "");
+  const thirdPerson = useAdminThirdPerson();
+  const bindPose = useAdminBindPose();
 
   if (!open) return null;
 
@@ -100,6 +104,20 @@ export function AdminPanel({
               {adminNoCooldown ? "Cooldowns OFF" : "Disable cooldowns"}
             </button>
           ) : null}
+          <button
+            type="button"
+            className={bindPose ? "bb-btn-brass" : "bb-btn-ink"}
+            onClick={() => setAdminBindPose(!bindPose)}
+          >
+            {bindPose ? "T-pose ON" : "Force T-pose"}
+          </button>
+          <button
+            type="button"
+            className={thirdPerson ? "bb-btn-brass" : "bb-btn-ink"}
+            onClick={() => setAdminThirdPerson(!thirdPerson)}
+          >
+            {thirdPerson ? "3rd person ON" : "3rd person view"}
+          </button>
           {onReplayIntro ? (
             <button type="button" className="bb-btn-ink" onClick={onReplayIntro}>
               Replay intro

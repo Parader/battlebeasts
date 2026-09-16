@@ -2,13 +2,15 @@
   "name": "@battlebeasts/desktop",
   "version": "0.0.1",
   "private": true,
-  "description": "Mage Trials desktop client (Electron) — assets ship locally",
+  "description": "Mage Trials desktop launcher (Electron) — game files download on first run",
   "main": "main.cjs",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
     "build:renderer": "pnpm --filter @battlebeasts/web run build:electron && node ./scripts/copy-renderer.mjs",
-    "pack": "pnpm run build:renderer && electron-builder --dir",
-    "dist": "pnpm run build:renderer && electron-builder"
+    "pack:content": "node ./scripts/pack-content.mjs",
+    "publish:content": "node ./scripts/publish-content.mjs",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
   "devDependencies": {
     "electron": "^37.2.0",
@@ -23,15 +25,10 @@
     "files": [
       "main.cjs",
       "preload.cjs",
-      "renderer/**/*"
+      "updater.cjs",
+      "launcher/**/*"
     ],
     "asar": false,
-    "extraFiles": [
-      {
-        "from": "config.example.json",
-        "to": "config.json"
-      }
-    ],
     "win": {
       "target": [
         {
@@ -41,7 +38,7 @@
       ]
     },
     "portable": {
-      "artifactName": "MageTrials-${version}-portable.exe"
+      "artifactName": "MageTrials-Launcher-${version}.exe"
     },
     "protocols": {
       "name": "Mage Trials",

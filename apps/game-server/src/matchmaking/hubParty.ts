@@ -31,6 +31,10 @@ export type HubParty = {
   pendingInvites: Set<string>;
   pendingFriendInvites: Set<string>;
   queued: boolean;
+  /** PvP custom sides — everyone sees Team 1 / Team 2. */
+  splitSides: boolean;
+  /** PvP skirmish third column. */
+  teamCOpen: boolean;
 };
 
 export function partyFamily(party: HubParty): PvpFamily {
@@ -137,6 +141,8 @@ export function toPartySnapshot(party: HubParty): PartySnapshot {
     pendingInvites: [...party.pendingInvites],
     pendingFriendInvites: [...party.pendingFriendInvites],
     queued: party.queued,
+    splitSides: party.splitSides,
+    teamCOpen: party.teamCOpen,
   };
 }
 
@@ -173,6 +179,8 @@ export class HubPartyRegistry {
       pendingInvites: new Set(),
       pendingFriendInvites: new Set(),
       queued: false,
+      splitSides: kind === "pvp",
+      teamCOpen: false,
     };
     party.members.set(leader.sessionId, { ...leader, seat: "teamA" });
     this.parties.set(party.partyId, party);
@@ -196,6 +204,14 @@ export class HubPartyRegistry {
   findByPendingFriend(userId: string): HubParty | undefined {
     for (const party of this.parties.values()) {
       if (party.pendingFriendInvites.has(userId)) return party;
+    }
+    return undefined;
+  }
+
+  /** First non-queued hub party (typically the open lobby everyone should join). */
+  findOpen(): HubParty | undefined {
+    for (const party of this.parties.values()) {
+      if (!party.queued) return party;
     }
     return undefined;
   }

@@ -35,6 +35,7 @@ import {
   IRON_GUARD_CAST,
   SPELLBREAKER_CAST,
   GRAVITY_FIELD_CAST,
+  GRAVITY_WELL_CAST,
   TIME_FREEZE_CAST,
   BLOOD_PACT_CAST,
   CHAIN_LIGHTNING_CAST,
@@ -88,6 +89,7 @@ import {
   abilityComboHitDamage,
   clampGroundAim,
   clampTargetBeforeWalls,
+  lastFreeTBeforeWalls,
   projectileBlockers,
   COMBAT_ENGAGE_LINGER_MS,
   OPENING_SALVO_COOLDOWN_MS,
@@ -103,6 +105,7 @@ import {
   lerpOrbitPhase,
   constrainAstralTetherDesired,
   dashOffset,
+  dashTravelYaw,
   isComboAbility,
   isElementalAbility,
   isElementalStatusId,
@@ -908,6 +911,8 @@ export class CombatSystem {
   /** Control talent ICDs — key `talent:caster:target` → readyAt. */
   private controlIcdReadyAt = new Map<string, number>();
   private controlProcGuard = 0;
+  /** Prevents DES_17 fire burst from re-entering applyDamage forever. */
+  private elementalConvergenceGuard = 0;
   /** Flow talent ICDs — `secondWind:id` / `phaseShield:id`. */
   private flowIcdReadyAt = new Map<string, number>();
   /** Skip starting CD on this session's current movement recast. */
@@ -974,6 +979,10 @@ export class CombatSystem {
   /** Caster → current Rebirth blessing target. */
   private rebirthBlessingByCaster = new Map<string, string>();
   readonly statuses: StatusSystem;
+
+  setCanHurtPlayers(value: boolean) {
+    this.hooks.canHurtPlayers = value;
+  }
 
   constructor(
     private room: RoomLike,
@@ -1502,7 +1511,7 @@ export class CombatSystem {
     id: string,
     x: number,
     z: number,
-    opts: { kind: string; hp: number; yaw?: number },
+    opts: { kind: string; hp: number; yaw?: number; abilityId?: string },
   ) {
     if (this.room.state.targets.has(id)) return;
     this.targetSpawns.set(id, { x, z });
@@ -1514,7 +1523,21 @@ export class CombatSystem {
     t.yaw = opts.yaw ?? 0;
     t.hp = opts.hp;
     t.maxHp = opts.hp;
+    t.abilityId = opts.abilityId ?? "";
     this.room.state.targets.set(t.id, t);
+  }
+
+  /** True when a projectile-sized ray from `from` to `to` is not blocked by map solids. */
+  hasWorldLos(from: Vec2, to: Vec2, radius = COMBAT.projectileHitRadius): boolean {
+    const t = lastFreeTBeforeWalls(
+      from,
+      to,
+      radius,
+      this.wallColliders,
+      this.circleColliders,
+      this.boxColliders,
+    );
+    return t == null || t >= 0.97;
   }
 
   /** Move a world target with the same collision stack as players. */
@@ -1872,6 +1895,7 @@ export class CombatSystem {
     ownerId: string,
     body: CombatBody,
     abilityId: string,
+    opts?: { damage?: number },
   ): boolean {
     const def = ABILITIES[abilityId];
     if (!def || def.shape !== "projectile") return false;
@@ -1881,6 +1905,9 @@ export class CombatSystem {
     if (!sim) return false;
     // Owner id on the sim is body.id from createProjectile — force the dummy id.
     sim.ownerId = ownerId;
+    if (opts?.damage != null && Number.isFinite(opts.damage) && opts.damage >= 0) {
+      sim.damage = opts.damage;
+    }
     this.applyTalentProjectileRadii(ownerId, sim);
     this.stampProjectileBubblePass(sim, Date.now());
     this.sims.set(id, sim);
@@ -2955,6 +2982,7 @@ export class CombatSystem {
     }
 
     this.revealCloak(sessionId);
+    this.flowRepeatActive.delete(sessionId);
     let cooldownMs = this.endComboEarly(sessionId, def.id, cast.effectFired, now);
     // Hold channels stamp CD on release / cancel once the drain has started.
     if (def.holdChannel && cast.effectFired) {
@@ -3014,13 +3042,14 @@ export class CombatSystem {
 
     const dist = channelChargeDistance(def, elapsed);
     const repeating = this.flowRepeatActive.has(sessionId);
-    const cooldownMs = this.onEffectResolved(sessionId, def, now);
     const fromX = player.x;
     const fromZ = player.z;
-    this.applyInstantBlink(sessionId, player, def, now, dist, cooldownMs);
+    // Blink while Double Step is still flagged so travel scale (75%) applies.
+    this.applyInstantBlink(sessionId, player, def, now, dist);
     if (isFlowMovementAbility(def) && !repeating) {
       this.onFlowMovementUsed(sessionId, def, now, fromX, fromZ, player.x, player.z);
     }
+    const cooldownMs = this.onEffectResolved(sessionId, def, now);
     cast.effectFired = true;
 
     this.enterPhase(sessionId, player, def, "recovery", now, cast.castStartedAt, {
@@ -4242,7 +4271,15 @@ export class CombatSystem {
 
     // Travel can attach to any shape (dash default; leap slam, charges, etc.)
     let travelLanding: Vec2 | null = null;
-    if (travel.mode !== "none" || abilityHasTags(def, "Movement")) {
+    let travelYaw = player.yaw;
+    if (def.id === "dash") {
+      const live = this.casts.get(sessionId);
+      travelYaw = dashTravelYaw(player.yaw, live?.moveX ?? 0, live?.moveZ ?? 0);
+      player.yaw = travelYaw;
+    }
+    // Impact Catalyst / Frontline: real relocation or Flow movement — not the
+    // generic Movement tag (Void Disc, Slipstream, Cloak, etc.).
+    if (isFlowMovementAbility(def) || travel.mode !== "none") {
       if (this.kits.get(sessionId)?.hasImpactCatalyst) {
         this.statuses.apply(sessionId, "impactCatalyst", sessionId, now);
       }
@@ -4250,7 +4287,7 @@ export class CombatSystem {
     }
     if (travel.mode === "instant") {
       const dist = this.scaleFlowTravelDistance(sessionId, travelDistance(def), def);
-      const off = dashOffset(player.yaw, dist);
+      const off = dashOffset(travelYaw, dist);
       const from = { x: player.x, z: player.z };
       const clamped = this.sweepPlayerPos(sessionId, from, {
         x: player.x + off.x,
@@ -4264,7 +4301,7 @@ export class CombatSystem {
       const dist = this.scaleFlowTravelDistance(sessionId, travelDistance(def), def);
       const dur = travelDurationMs(def);
       const from = { x: player.x, z: player.z };
-      const ideal = sampleTravel(from, player.yaw, dist, 1);
+      const ideal = sampleTravel(from, travelYaw, dist, 1);
       const clamped = this.sweepPlayerPos(sessionId, from, ideal);
       const actualDist = length2(clamped.x - from.x, clamped.z - from.z);
       // Shorten range (and duration) when a wall/solid cuts the path.
@@ -4277,7 +4314,7 @@ export class CombatSystem {
         abilityId: def.id,
         fromX: player.x,
         fromZ: player.z,
-        yaw: player.yaw,
+        yaw: travelYaw,
         distance: travelDist,
         startAt: now + takeoffDelay,
         endAt: now + takeoffDelay + travelDur,
@@ -4292,7 +4329,7 @@ export class CombatSystem {
           abilityId: def.id,
           x: player.x,
           z: player.z,
-          yaw: player.yaw,
+          yaw: travelYaw,
           ownerId: sessionId,
         });
       }
@@ -5873,7 +5910,6 @@ export class CombatSystem {
     const range = def.range || PHANTOM_RUSH_CAST.range;
     const pick = this.findPlayerAimTarget(sessionId, player, range, aim);
     if (!pick || !pick.inRange || !this.canHurt(sessionId, pick.id)) {
-      this.lastFireCommitted = false;
       return;
     }
 
@@ -6162,6 +6198,25 @@ export class CombatSystem {
     return this.statuses.getFearSource(targetId);
   }
 
+  /** True while winding up, in impact, or holding a channel (Life Leech). */
+  private hasActiveCastOrChannel(sessionId: string, player: PlayerState): boolean {
+    const cast = this.casts.get(sessionId);
+    if (cast && cast.phase !== "recovery") return true;
+    if (
+      player.castAbilityId &&
+      player.castPhase &&
+      player.castPhase !== "recovery" &&
+      player.castPhase !== "idle"
+    ) {
+      return true;
+    }
+    return (
+      this.pendingLifeLeech.some((b) => b.ownerId === sessionId) ||
+      this.pendingHealBeam.some((b) => b.ownerId === sessionId) ||
+      this.pendingFrostMist.some((b) => b.ownerId === sessionId)
+    );
+  }
+
   private advancePendingDreadAuras(now: number) {
     if (this.pendingDreadAuras.length === 0) return;
     this.pendingDreadAuras = this.pendingDreadAuras.filter((a) => {
@@ -6194,6 +6249,19 @@ export class CombatSystem {
             targetId,
             variant: 1,
           });
+        }
+      });
+
+      // Players already channeling (Life Leech hold, Divine Beam, windup, …)
+      // — tryBeginCast only fears a *new* cast, so walk-in / aura-drop
+      // would otherwise miss an in-progress channel.
+      this.room.state.players.forEach((player: PlayerState, sessionId: string) => {
+        if (sessionId === a.ownerId) return;
+        if (player.disconnected || player.hp <= 0) return;
+        if (a.triggeredIds.has(sessionId)) return;
+        if (!this.hasActiveCastOrChannel(sessionId, player)) return;
+        if (this.checkDreadAuraTriggerTarget(sessionId, player.x, player.z, now)) {
+          this.interruptCast(sessionId);
         }
       });
 
@@ -7317,27 +7385,39 @@ export class CombatSystem {
         for (const body of bodies) {
           if (orb.pathHitIds.has(body.id)) continue;
           if (!this.canHurt(orb.ownerId, body.id)) continue;
-          const hit =
-            (leftAlive &&
-              circlesOverlap(
-                left.x,
-                left.z,
-                orb.flightHitRadius,
-                body.x,
-                body.z,
-                hitRadiusOf(body),
-              )) ||
-            (rightAlive &&
-              circlesOverlap(
-                right.x,
-                right.z,
-                orb.flightHitRadius,
-                body.x,
-                body.z,
-                hitRadiusOf(body),
-              ));
-          if (!hit) continue;
+          const leftHit =
+            leftAlive &&
+            circlesOverlap(
+              left.x,
+              left.z,
+              orb.flightHitRadius,
+              body.x,
+              body.z,
+              hitRadiusOf(body),
+            );
+          const rightHit =
+            rightAlive &&
+            circlesOverlap(
+              right.x,
+              right.z,
+              orb.flightHitRadius,
+              body.x,
+              body.z,
+              hitRadiusOf(body),
+            );
+          if (!leftHit && !rightHit) continue;
           orb.pathHitIds.add(body.id);
+          // Clip an orb that strikes a body mid-flight so the meet blast
+          // is half. Do not clip near the collide point or a dummy standing
+          // on the meet would eat both orbs and cancel the explosion.
+          if (leftHit && t < 0.85) {
+            orb.leftMaxT = Math.min(orb.leftMaxT, t);
+            leftAlive = false;
+          }
+          if (rightHit && t < 0.85) {
+            orb.rightMaxT = Math.min(orb.rightMaxT, t);
+            rightAlive = false;
+          }
           if (burn?.length) {
             this.applyOutgoingStatusApps(body.id, burn, orb.ownerId, now, {
               abilityId: orb.abilityId,
@@ -8761,12 +8841,13 @@ export class CombatSystem {
   }
 
   /**
-   * Allies (same team / hub) and practice dummies — never enemies.
-   * Hub unteamed players remain healable.
+   * Allies (same team / hub) and hub practice dummies — never enemies.
+   * Wave mobs and attackable props are not healable. Hub unteamed players remain healable.
    */
   private canHealTarget(casterId: string, targetId: string, opts?: { allowSelf?: boolean }): boolean {
     if (casterId === targetId) return Boolean(opts?.allowSelf);
-    if (this.room.state.targets.has(targetId)) return true;
+    const worldTarget = this.room.state.targets.get(targetId);
+    if (worldTarget) return worldTarget.kind === "dummy";
     const player = this.room.state.players.get(targetId);
     if (!player || player.disconnected || player.hp <= 0) return false;
     if (player.role === "spectator" || player.roundDead) return false;
@@ -9139,8 +9220,24 @@ export class CombatSystem {
     abilityId: string,
     now: number,
   ) {
+    if (this.elementalConvergenceGuard > 0) return;
     const def = ABILITIES[abilityId];
     if (!def) return;
+    this.elementalConvergenceGuard += 1;
+    try {
+      this.runElementalConvergence(attackerSessionId, targetId, def, abilityId, now);
+    } finally {
+      this.elementalConvergenceGuard -= 1;
+    }
+  }
+
+  private runElementalConvergence(
+    attackerSessionId: string,
+    targetId: string,
+    def: AbilityDef,
+    abilityId: string,
+    now: number,
+  ) {
     const targetPos = this.bodyPos(targetId);
     if (!targetPos) return;
 
@@ -10429,28 +10526,49 @@ export class CombatSystem {
       const halfAngle =
         mist.halfAngleStart + (mist.halfAngleEnd - mist.halfAngleStart) * t;
 
-      this.fx({
-        kind: "aoe",
-        abilityId: mist.abilityId,
-        x: owner.x,
-        z: owner.z,
-        radius: length,
-        yaw: owner.yaw,
-        ownerId: mist.ownerId,
-        /** 1 = channel start (client spawns the continuous cone once). */
-        comboHit: mist.tickIndex + 1,
-      });
+      // Client ignores comboHit !== 1; skip later broadcasts (PVE packs spam this).
+      if (mist.tickIndex === 0) {
+        this.fx({
+          kind: "aoe",
+          abilityId: mist.abilityId,
+          x: owner.x,
+          z: owner.z,
+          radius: length,
+          yaw: owner.yaw,
+          ownerId: mist.ownerId,
+          /** 1 = channel start (client spawns the continuous cone once). */
+          comboHit: 1,
+        });
+      }
 
+      // One facing-ray wall clip, then cone vs bodies. Per-target wall rays
+      // plus body occlude was O(targets × walls) every 250ms.
+      const origin = { x: owner.x, z: owner.z };
+      let coneLen = length;
+      if (
+        this.wallColliders.length > 0 ||
+        this.circleColliders.length > 0 ||
+        this.boxColliders.length > 0
+      ) {
+        coneLen = coneRayMaxLength(
+          origin,
+          owner.yaw,
+          length,
+          this.wallColliders,
+          [],
+          mist.ownerId,
+          { circles: this.circleColliders, boxes: this.boxColliders },
+        );
+      }
       const hits = resolveConeHits(
-        { x: owner.x, z: owner.z },
+        origin,
         owner.yaw,
-        length,
+        coneLen,
         halfAngle,
         mist.damage,
         mist.ownerId,
         this.collectBodies(),
         (o, tid) => this.canHurt(o, tid),
-        { walls: this.wallColliders, circles: this.circleColliders, boxes: this.boxColliders, softOcclude: true },
       );
       for (const hit of hits) {
         // Mist is multi-tick — Counter/Revenge stay armed for the window so every tick denies.
@@ -10525,6 +10643,11 @@ export class CombatSystem {
           def?.pullStopDistance,
           ownerId,
         );
+        if (abilityId === "gravityWell") {
+          this.statuses.apply(hit.targetId, "rooted", ownerId, now, {
+            durationMs: GRAVITY_WELL_CAST.pullRootMs,
+          });
+        }
       }
     }
     this.damageRockWallsAt(
@@ -13878,6 +14001,7 @@ export class CombatSystem {
     }
     if (this.flowRepeatActive.has(sessionId)) {
       this.flowRepeatActive.delete(sessionId);
+      this.statuses.remove(sessionId, "movementRepeatReady");
       const until = this.cds.get(sessionId)?.get(def.id) ?? 0;
       return until > now ? until - now : undefined;
     }

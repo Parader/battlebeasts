@@ -99,6 +99,7 @@ export type ClientMessage =
   | { type: "party_respond"; accept: boolean; partyId: string }
   | { type: "party_kick"; sessionId: string }
   | { type: "party_set_seat"; sessionId: string; seat: "teamA" | "teamB" | "teamC" | "spectator" }
+  | { type: "party_set_layout"; splitSides?: boolean; teamCOpen?: boolean }
   | { type: "party_set_modes"; modes: string[]; family?: "skirmish" | "battleground" }
   | { type: "party_lock"; matchKind?: "ranked" | "unranked" }
   | { type: "party_leave" }
@@ -130,6 +131,10 @@ export type PartySnapshot = {
   pendingFriendInvites?: string[];
   /** True once the party has been locked into matchmaking. */
   queued?: boolean;
+  /** PvP: show Team 1 / Team 2 so everyone can pick a side. Default true. */
+  splitSides?: boolean;
+  /** PvP skirmish: show an empty Team 3 column. */
+  teamCOpen?: boolean;
 };
 
 export type MatchRecapRewards = {

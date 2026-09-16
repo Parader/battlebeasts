@@ -177,7 +177,9 @@ def main() -> None:
         if obj.type in {"CAMERA", "LIGHT", "EMPTY"}:
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    # Same Mixamo 0.01 scale as the female Armature — do not height-match.
+    # Same Mixamo world as the female host — game remounts Y Bot on that skeleton.
+    male_arm.matrix_world = host.matrix_world.copy()
+    bpy.context.view_layer.update()
     sc = male_arm.scale
     print(
         f"[ybot] {MALE_ARM} scale=({sc.x:.4f},{sc.y:.4f},{sc.z:.4f}) "
@@ -193,6 +195,13 @@ def main() -> None:
             move_to_collection(obj, female_col)
     move_to_collection(male_arm, male_col)
     move_to_collection(surface, male_col)
+
+    tools = Path(__file__).resolve().parent
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    import blender_export_skin as skin
+
+    skin.restore_body_inherits_armature(male_arm, (MALE_SURFACE,))
 
     set_collection_visible(COL_FEMALE, True)
     set_collection_visible(COL_MALE, False)
