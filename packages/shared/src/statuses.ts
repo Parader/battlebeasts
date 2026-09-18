@@ -104,6 +104,8 @@ export interface StatusDef {
   color: string;
   /** Short label for icon placeholder. */
   tag: string;
+  /** Player-facing what-this-does line for the buff bar tooltip. */
+  description?: string;
   /**
    * Never expires from the status tick; cleared only by explicit remove.
    * Used for talent trackers (e.g. Fifth Cadence stacks above the spellbar).
@@ -1132,11 +1134,13 @@ export const STATUSES: Record<string, StatusDef> = {
     name: "Guardian's Presence",
     polarity: "buff",
     mechanic: "resist",
-    durationMs: 1000,
+    durationMs: 0,
+    isAura: true,
     maxStacks: 1,
-    stackRule: "refresh",
+    stackRule: "ignore",
     color: "#34d399",
     tag: "GPR",
+    description: "5% damage reduction while near an ally",
   },
   /** Guardian GUA_14: Guardian's Blessing — active talent spell shield (20% max HP). */
   guardiansBlessing: {
@@ -1164,7 +1168,7 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#fbbf24",
     tag: "AGS",
   },
-  /** Guardian GUA_16: Fortified Resolve — anti-burst reduction against hit >= 10% max HP. */
+  /** Guardian GUA_16: Fortified Resolve — next attack deals 50% damage. */
   fortifiedResolve: {
     id: "fortifiedResolve",
     name: "Fortified Resolve",
@@ -1175,6 +1179,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#f43f5e",
     tag: "RES",
+    description: "Next attack deals 50% less damage",
   },
   /** Guardian GUA_19: Bastion — team damage reduction after directly shielding an ally (12%). */
   bastion: {
@@ -1194,7 +1199,7 @@ export const STATUSES: Record<string, StatusDef> = {
     name: "Perfect Defense",
     polarity: "buff",
     mechanic: "buff",
-    durationMs: 2000,
+    durationMs: 4000,
     maxStacks: 1,
     stackRule: "ignore",
     color: "#38bdf8",
@@ -1346,6 +1351,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#a3e635",
     tag: "FLT",
+    description: "Bonus move speed after a movement ability",
   },
   combatFlow: {
     id: "combatFlow",
@@ -1357,6 +1363,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#84cc16",
     tag: "CFW",
+    description: "Your next damaging spell casts faster",
   },
   followThrough: {
     id: "followThrough",
@@ -1368,6 +1375,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#65a30d",
     tag: "FTH",
+    description: "Your next damaging spell has extra range",
   },
   quickRecovery: {
     id: "quickRecovery",
@@ -1402,6 +1410,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#fde047",
     tag: "RBW",
+    description: "The first direct hit you deal or take refunds movement cooldown",
   },
   movementRepeatReady: {
     id: "movementRepeatReady",
@@ -1613,6 +1622,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#facc15",
     tag: "RPU",
+    description: "+15% move speed after fighting within 3s of a movement",
   },
   momentumEngine: {
     id: "momentumEngine",
@@ -1625,6 +1635,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#f59e0b",
     tag: "MEN",
+    description: "+15% move speed and faster movement cooldown recovery",
   },
   phantomCharge: {
     id: "phantomCharge",
@@ -1647,6 +1658,8 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#d9f99d",
     tag: "FLW",
+    description:
+      "Deal or take damage now to ignite Relentless Pursuit / Momentum Engine haste",
   },
 };
 

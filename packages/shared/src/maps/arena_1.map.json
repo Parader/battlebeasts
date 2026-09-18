@@ -2,7 +2,6 @@
   "version": 1,
   "id": "arena_1",
   "name": "Arena 1",
-  "active": true,
   "ground": {
     "kind": "painted",
     "sizeX": 150,
@@ -3189,6 +3188,33 @@
       "collider": {
         "mode": "none"
       }
+    },
+    {
+      "id": "p226",
+      "prop": "desert/PP_Crumbles_01",
+      "x": -23.25,
+      "y": -0.002,
+      "z": -12,
+      "yaw": 4.1887902047863905,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 1.21
+      }
+    },
+    {
+      "id": "p227",
+      "prop": "desert/PP_Pile_Of_Crates_01",
+      "x": 24,
+      "y": -0.0020000000000035528,
+      "z": -10.75,
+      "yaw": 1.5707963267948963,
+      "scale": 1,
+      "collider": {
+        "mode": "circle",
+        "radius": 1.03,
+        "offsetZ": -0.056
+      }
     }
   ],
   "walls": [
@@ -3398,6 +3424,7 @@
       }
     }
   ],
+  "active": true,
   "modeIds": [
     "arena_1v1",
     "arena_1v1v1",

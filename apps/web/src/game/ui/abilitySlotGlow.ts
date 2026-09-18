@@ -56,6 +56,15 @@ export function statusIdsNeedSlotTick(statusIds: ReadonlySet<string>): boolean {
     statusIds.has("motionEcho") ||
     statusIds.has("combatFlow") ||
     statusIds.has("followThrough") ||
-    statusIds.has("quickRecovery")
+    statusIds.has("quickRecovery") ||
+    statusIds.has("flowEngage") ||
+    statusIds.has("relentlessPursuit") ||
+    statusIds.has("momentumEngine") ||
+    statusIds.has("reboundWindow") ||
+    statusIds.has("impactCatalyst") ||
+    statusIds.has("relentlessAssault") ||
+    statusIds.has("brokenCadence") ||
+    statusIds.has("chainPullReady") ||
+    statusIds.has("bracedAssault")
   );
 }

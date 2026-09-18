@@ -19,7 +19,7 @@ import {
   normalizeFlexLoadout,
   type FlexLoadout,
 } from "@battlebeasts/shared";
-import { talentModLines } from "./abilityTalentMods";
+import { talentModsForSpell, type TalentSpellMod } from "./abilityTalentMods";
 import { KeyGlyph, SpellSlotGlyph } from "./InputGlyph";
 import { SpellIcon } from "./SpellIcon";
 import { abilityHudRuntime } from "../abilityHudRuntime";
@@ -99,6 +99,26 @@ function useNow(tick: boolean) {
   return now;
 }
 
+function TalentModList({ mods }: { mods: TalentSpellMod[] }) {
+  if (mods.length === 0) return null;
+  return (
+    <div className="bb-ability-tooltip__talents">
+      <p className="bb-ability-tooltip__talents-label">Talents</p>
+      <ul className="bb-ability-tooltip__mods">
+        {mods.map((mod) => (
+          <li key={`${mod.talentId}:${mod.effect}`} className={mod.live ? "is-live" : undefined}>
+            <span className="bb-ability-tooltip__mod-name">
+              {mod.name}
+              {mod.live ? " · now" : ""}
+            </span>
+            <span className="bb-ability-tooltip__mod-effect">{mod.effect}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function SlotIcon({
   ability,
   abilityId,
@@ -108,7 +128,7 @@ function SlotIcon({
   flash,
   glow,
   statsLine,
-  modLines,
+  mods,
   onHover,
 }: {
   ability: AbilityDef | undefined;
@@ -119,7 +139,7 @@ function SlotIcon({
   flash: boolean;
   glow: AbilitySlotGlow | null;
   statsLine: string;
-  modLines: string[];
+  mods: TalentSpellMod[];
   onHover: (id: string | null) => void;
 }) {
   const cooling = remainingMs > 0;
@@ -193,13 +213,7 @@ function SlotIcon({
             <p className="bb-ability-tooltip__desc">{ability.description}</p>
           ) : null}
           <p className="bb-ability-tooltip__stats">{statsLine}</p>
-          {modLines.length > 0 ? (
-            <ul className="bb-ability-tooltip__mods">
-              {modLines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          ) : null}
+          <TalentModList mods={mods} />
         </div>
       ) : (
         <div className="bb-ability-tooltip" role="tooltip">
@@ -230,7 +244,7 @@ function FlexSlotIcon({
   affordable,
   cost,
   statsLine,
-  modLines,
+  mods,
   locked,
   onHover,
 }: {
@@ -243,7 +257,7 @@ function FlexSlotIcon({
   affordable: boolean;
   cost: number;
   statsLine: string;
-  modLines: string[];
+  mods: TalentSpellMod[];
   locked: boolean;
   onHover: (id: string | null) => void;
 }) {
@@ -341,13 +355,7 @@ function FlexSlotIcon({
           <p className="bb-ability-tooltip__cost">
             {cost} Energy{affordable ? "" : " — not enough"}
           </p>
-          {modLines.length > 0 ? (
-            <ul className="bb-ability-tooltip__mods">
-              {modLines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          ) : null}
+          <TalentModList mods={mods} />
         </div>
       ) : null}
     </div>
@@ -439,7 +447,7 @@ export function AbilityBar({
               affordable={wholePips >= cost}
               cost={cost}
               statsLine={statsLine}
-              modLines={ability ? talentModLines(ability, kit) : []}
+              mods={ability ? talentModsForSpell(ability, kit, statusIds) : []}
               locked={locked}
               onHover={(hid) => abilityHoverRuntime.setHoveredAbilityId(hid)}
             />
@@ -471,7 +479,7 @@ export function AbilityBar({
               flash={Boolean(id && flashId === id)}
               glow={resolveAbilitySlotGlow(id, statusIds, lastFlowMoveId, riftArming)}
               statsLine={statsLine}
-              modLines={ability ? talentModLines(ability, kit) : []}
+              mods={ability ? talentModsForSpell(ability, kit, statusIds) : []}
               onHover={(hid) => abilityHoverRuntime.setHoveredAbilityId(hid)}
             />
           );

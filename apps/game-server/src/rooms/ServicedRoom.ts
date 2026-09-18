@@ -39,6 +39,7 @@ import {
   cosmeticsEquippedToFields,
   DEFAULT_COSMETIC_BODY,
   emptyPlayerUnlocks,
+  filterOwnedAbilityIds,
   formatCoins,
   formatShopCost,
   getCosmeticItem,
@@ -599,6 +600,29 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     return clampFlexToUnlocked(legal, unlocks.flexSlotCount);
   }
 
+  /** Unequip talent-tree spells the current loadout no longer grants. */
+  protected applyOwnedAbilitiesToBar(
+    sessionId: string,
+    player: PlayerState,
+    talentBuild: TalentBuild,
+  ): string[] {
+    const unlocks = this.unlocksOf(sessionId);
+    const abilityIds = filterOwnedAbilityIds(
+      normalizeLoadout(player.loadout.split(",")),
+      unlocks.abilities,
+      talentBuild,
+    );
+    player.loadout = abilityIds.join(",");
+    const flex = this.resolveFlexForBar(
+      normalizeFlexLoadout(player.flexLoadout.split(",")),
+      abilityIds,
+      unlocks,
+      talentBuild,
+    );
+    player.flexLoadout = flex.map((id) => id ?? "").join(",");
+    return abilityIds;
+  }
+
   /** Persist spells+talents for the active loadout preset. */
   protected async persistActiveLoadoutPreset(
     client: Client,
@@ -606,8 +630,13 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     talentBuild: TalentBuild,
   ) {
     const activeSlot = this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0;
+    const player = this.state.players.get(client.sessionId);
+    const flexAbilityIds = player
+      ? normalizeFlexLoadout(player.flexLoadout.split(","))
+      : undefined;
     const row = this.upsertPresetInSession(client.sessionId, activeSlot, abilityIds, {
       talentBuild,
+      ...(flexAbilityIds ? { flexAbilityIds } : {}),
     });
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
@@ -716,7 +745,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     if (cost > 0) player.essence -= cost;
     this.talentBuildBySession.set(client.sessionId, build);
     if (cost > 0) await this.persistInventory(client.sessionId, player);
-    const abilityIds = normalizeLoadout(player.loadout.split(","));
+    const abilityIds = this.applyOwnedAbilitiesToBar(client.sessionId, player, build);
     await this.persistActiveLoadoutPreset(client, abilityIds, build);
     this.applyCombatKit(client.sessionId, player);
     this.sendInventory(client, player);
@@ -752,7 +781,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     player.essence -= cost;
     this.talentBuildBySession.set(client.sessionId, next);
     await this.persistInventory(client.sessionId, player);
-    const abilityIds = normalizeLoadout(player.loadout.split(","));
+    const abilityIds = this.applyOwnedAbilitiesToBar(client.sessionId, player, next);
     await this.persistActiveLoadoutPreset(client, abilityIds, next);
     this.applyCombatKit(client.sessionId, player);
     this.sendInventory(client, player);
@@ -969,10 +998,15 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
     if (item.grant.kind === "loadout_slot") {
       if (
-        unlocks.loadoutSlotCount >= item.grant.toCount ||
-        item.grant.toCount > MAX_COIN_LOADOUT_SLOTS
+        item.grant.toCount > MAX_COIN_LOADOUT_SLOTS ||
+        unlocks.loadoutSlotCount !== item.grant.toCount - 1
       ) {
-        client.send("toast", { message: "Loadout slot unavailable" });
+        client.send("toast", {
+          message:
+            unlocks.loadoutSlotCount >= item.grant.toCount
+              ? "Already unlocked"
+              : "Unlock the previous loadout slot first",
+        });
         return;
       }
     }
@@ -1469,15 +1503,13 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     const preset = presets.find((p) => p.slotIndex === slotIndex);
     const owned = this.talentPointsBySession.get(client.sessionId) ?? 0;
     const talentBuild = sanitizeTalentBuild(preset?.talentBuild ?? {}, owned);
-    const abilityIds = normalizeLoadout(preset?.abilityIds ?? [...EMPTY_LOADOUT]);
-    for (let i = 0; i < LOADOUT_SIZE; i++) {
-      const id = abilityIds[i]!;
-      if (!id) continue;
-      if (!ownsAbility(unlocks.abilities, id, talentBuild) || !canEquipInSlot(id, SPELL_SLOTS[i]!.id)) {
-        client.send("toast", { message: "Preset has locked abilities" });
-        return;
-      }
-    }
+    const abilityIds = filterOwnedAbilityIds(
+      normalizeLoadout(preset?.abilityIds ?? [...EMPTY_LOADOUT]),
+      unlocks.abilities,
+      talentBuild,
+    ).map((id, i) =>
+      id && canEquipInSlot(id, SPELL_SLOTS[i]!.id) ? id : "",
+    );
 
     this.activeLoadoutSlotBySession.set(client.sessionId, slotIndex);
     player.loadout = abilityIds.join(",");
@@ -1489,6 +1521,11 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     );
     player.flexLoadout = flex.map((id) => id ?? "").join(",");
     this.talentBuildBySession.set(client.sessionId, talentBuild);
+    this.upsertPresetInSession(client.sessionId, slotIndex, abilityIds, {
+      name: preset?.name,
+      talentBuild,
+      flexAbilityIds: flex,
+    });
     this.applyCombatKit(client.sessionId, player);
 
     const identity = this.identities.get(client.sessionId);
@@ -1496,6 +1533,11 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       await saveActiveLoadoutSlot(identity.userId, slotIndex);
       await saveLoadout(identity.userId, abilityIds);
       await saveTalentBuild(identity.userId, talentBuild);
+      await saveLoadoutPreset(identity.userId, slotIndex, abilityIds, {
+        name: preset?.name ?? `Loadout ${slotIndex + 1}`,
+        talentBuild,
+        flexAbilityIds: flex,
+      });
     }
     this.sendInventory(client, player);
     client.send("toast", {

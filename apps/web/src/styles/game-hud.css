@@ -1652,10 +1652,30 @@
 }
 
 .bb-armoury-card__tooltip-mods {
-  margin: 0.35rem 0 0;
-  padding-left: 1rem;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  list-style: none;
   font-size: 0.74rem;
   color: #9fd4c8;
+  line-height: 1.35;
+}
+
+.bb-armoury-card__tooltip-talents-label {
+  margin: 0.4rem 0 0;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bb-brass);
+}
+
+.bb-armoury-card__tooltip-mods li + li {
+  margin-top: 0.28rem;
+}
+
+.bb-armoury-card__tooltip-mods strong {
+  color: #f3e6c0;
+  font-weight: 700;
 }
 
 .bb-spell-icon {
@@ -2369,7 +2389,7 @@
   left: 50%;
   bottom: calc(100% + 0.55rem);
   transform: translateX(-50%);
-  width: min(16rem, 70vw);
+  width: min(20rem, 78vw);
   padding: 0.55rem 0.65rem;
   border-radius: 4px;
   background:
@@ -2409,15 +2429,47 @@
 }
 
 .bb-ability-tooltip__mods {
-  margin: 0.3rem 0 0;
+  margin: 0.2rem 0 0;
   padding: 0;
   list-style: none;
   font-size: 0.66rem;
-  color: #9fd4c0;
+  color: #c5e4d8;
+}
+
+.bb-ability-tooltip__talents {
+  margin: 0.4rem 0 0;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(201, 178, 122, 0.28);
+}
+
+.bb-ability-tooltip__talents-label {
+  margin: 0 0 0.2rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bb-brass, #c9b27a);
 }
 
 .bb-ability-tooltip__mods li + li {
-  margin-top: 0.15rem;
+  margin-top: 0.28rem;
+}
+
+.bb-ability-tooltip__mod-name {
+  display: block;
+  font-weight: 700;
+  color: #f3e6c0;
+}
+
+.bb-ability-tooltip__mods li.is-live .bb-ability-tooltip__mod-name {
+  color: #86efac;
+}
+
+.bb-ability-tooltip__mod-effect {
+  display: block;
+  margin-top: 0.08rem;
+  color: #9fd4c0;
+  line-height: 1.3;
 }
 
 .bb-ability-slot--flash {
@@ -5382,4 +5434,49 @@
 .bb-npc-dialogue__button--primary {
   background: rgba(30, 78, 122, 0.95);
   color: var(--bb-ink);
+}
+
+.bb-pve-draft {
+  animation: bb-pve-draft-veil 0.22s ease-out both;
+}
+
+.bb-pve-draft-card {
+  animation: bb-pve-draft-card-in 0.48s cubic-bezier(0.18, 0.9, 0.32, 1.12) both;
+  animation-delay: var(--bb-draft-delay, 0ms);
+}
+
+.bb-pve-draft-card:disabled {
+  pointer-events: none;
+  cursor: default;
+}
+
+.bb-pve-draft-card--selected {
+  background: color-mix(in srgb, var(--bb-brass) 14%, var(--bb-leather));
+}
+
+@keyframes bb-pve-draft-veil {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes bb-pve-draft-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.88);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-pve-draft,
+  .bb-pve-draft-card {
+    animation: none;
+  }
 }

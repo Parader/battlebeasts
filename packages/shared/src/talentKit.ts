@@ -46,8 +46,6 @@ import {
   criticalFocusCritChancePercent,
   ELEMENTAL_QUICKNESS_TALENT_ID,
   elementalQuicknessCdrPercent,
-  FIFTH_CADENCE_DAMAGE_PERCENT,
-  FIFTH_CADENCE_TALENT_ID,
   isCatalogTalentImplemented,
   OPENING_SALVO_COOLDOWN_MS,
   OPENING_SALVO_TALENT_ID,
@@ -104,8 +102,6 @@ import {
   extendedReachPercent,
   lingeringMotionPercent,
   TALENT_CATALOG,
-  WIDENED_ELEMENTS_AOE_PERCENT,
-  WIDENED_ELEMENTS_TALENT_ID,
   REINFORCED_AID_TALENT_ID,
   BATTLE_HARDENED_TALENT_ID,
   GUARD_DISCIPLINE_TALENT_ID,
@@ -645,20 +641,14 @@ function bakeRankPercent(
   return pctFn(rank) / 100;
 }
 
-function bakeFifthSpellDmgBonus(talentBuild: TalentBuild | undefined): number {
-  const def = TALENT_CATALOG[FIFTH_CADENCE_TALENT_ID];
-  if (!isCatalogTalentImplemented(def)) return 0;
-  const rank = talentRank(talentBuild ?? {}, FIFTH_CADENCE_TALENT_ID);
-  if (rank <= 0) return 0;
-  return FIFTH_CADENCE_DAMAGE_PERCENT / 100;
+function bakeFifthSpellDmgBonus(_talentBuild: TalentBuild | undefined): number {
+  // Retired: DES_09 is Executioner's Rhythm, not Fifth Cadence.
+  return 0;
 }
 
-function bakeElementalAoeRadiusMul(talentBuild: TalentBuild | undefined): number {
-  const def = TALENT_CATALOG[WIDENED_ELEMENTS_TALENT_ID];
-  if (!isCatalogTalentImplemented(def)) return 1;
-  const rank = talentRank(talentBuild ?? {}, WIDENED_ELEMENTS_TALENT_ID);
-  if (rank <= 0) return 1;
-  return 1 + WIDENED_ELEMENTS_AOE_PERCENT / 100;
+function bakeElementalAoeRadiusMul(_talentBuild: TalentBuild | undefined): number {
+  // Retired: DES_12 is Distilled Elements, not Widened Elements.
+  return 1;
 }
 
 function bakeElementalCooldownMuls(

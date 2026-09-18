@@ -1,7 +1,7 @@
 {
   "version": 4,
-  "generatedAt": "2026-09-18T13:29:23.865Z",
-  "sourceHash": "c8e5c2b68b8f",
+  "generatedAt": "2026-09-18T20:45:24.541Z",
+  "sourceHash": "ab6601889d00",
   "props": [
     {
       "key": "beach/PP_Beach_Rocks_01",
@@ -81,6 +81,84 @@
         "radius": 1.747,
         "offsetX": 0.026,
         "offsetZ": -0.128
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Broken_Fireplace_01",
+      "url": "/assets/props/cemetery/PP_Broken_Fireplace_01.glb",
+      "biome": "cemetery",
+      "family": "Broken_Fireplace",
+      "label": "Broken Fireplace",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.82,
+        "hz": 0.777,
+        "height": 1.714,
+        "baseY": 0,
+        "baseHx": 0.82,
+        "baseHz": 0.777,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.799
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Broken_Small_Bridge_01",
+      "url": "/assets/props/cemetery/PP_Broken_Small_Bridge_01.glb",
+      "biome": "cemetery",
+      "family": "Broken_Small_Bridge",
+      "label": "Broken Small Bridge",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.489,
+        "hz": 1.037,
+        "height": 1.951,
+        "baseY": 0,
+        "baseHx": 2.446,
+        "baseHz": 0.863,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.037,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 2.446,
+        "halfZ": 0.863,
+        "yaw": 0,
+        "offsetX": 0.037
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Broken_Stand_01",
+      "url": "/assets/props/cemetery/PP_Broken_Stand_01.glb",
+      "biome": "cemetery",
+      "family": "Broken_Stand",
+      "label": "Broken Stand",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.604,
+        "hz": 1.482,
+        "height": 2.952,
+        "baseY": 0,
+        "baseHx": 1.604,
+        "baseHz": 1.482,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.543
       },
       "hidden": false
     },
@@ -733,6 +811,109 @@
       "hidden": false
     },
     {
+      "key": "cemetery/PP_Crumble_Small_Wooden_House_01",
+      "url": "/assets/props/cemetery/PP_Crumble_Small_Wooden_House_01.glb",
+      "biome": "cemetery",
+      "family": "Crumble_Small_Wooden_House",
+      "label": "Crumble Small Wooden House",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.131,
+        "hz": 2.635,
+        "height": 4.383,
+        "baseY": 0,
+        "baseHx": 2.085,
+        "baseHz": 2.635,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.046,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.36,
+        "offsetX": -0.046
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Dead_Tree_01",
+      "url": "/assets/props/cemetery/PP_Dead_Tree_01.glb",
+      "biome": "cemetery",
+      "family": "Dead_Tree",
+      "label": "Dead Tree",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.765,
+        "hz": 2.329,
+        "height": 6.012,
+        "baseY": 0,
+        "baseHx": 2.472,
+        "baseHz": 2.329,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.267,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.401,
+        "offsetX": -0.267
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Dead_Well_01",
+      "url": "/assets/props/cemetery/PP_Dead_Well_01.glb",
+      "biome": "cemetery",
+      "family": "Dead_Well",
+      "label": "Dead Well",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.003,
+        "hz": 1.089,
+        "height": 2.32,
+        "baseY": 0,
+        "baseHx": 0.964,
+        "baseHz": 1.089,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.038,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.027,
+        "offsetX": 0.038
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Death_Altar_01",
+      "url": "/assets/props/cemetery/PP_Death_Altar_01.glb",
+      "biome": "cemetery",
+      "family": "Death_Altar",
+      "label": "Death Altar",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.419,
+        "hz": 1.247,
+        "height": 2.781,
+        "baseY": 0,
+        "baseHx": 1.419,
+        "baseHz": 1.247,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.333
+      },
+      "hidden": false
+    },
+    {
       "key": "cemetery/PP_Grave_Plateau_01",
       "url": "/assets/props/cemetery/PP_Grave_Plateau_01.glb",
       "biome": "cemetery",
@@ -755,6 +936,61 @@
         "mode": "circle",
         "radius": 3.191,
         "offsetX": 0.012
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Hole_Shovel_01",
+      "url": "/assets/props/cemetery/PP_Hole_Shovel_01.glb",
+      "biome": "cemetery",
+      "family": "Hole_Shovel",
+      "label": "Hole Shovel",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.804,
+        "hz": 1.219,
+        "height": 1.27,
+        "baseY": 0,
+        "baseHx": 0.634,
+        "baseHz": 0.905,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0.315
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 0.634,
+        "halfZ": 0.905,
+        "yaw": 0,
+        "offsetZ": 0.315
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Metal_Fence_01",
+      "url": "/assets/props/cemetery/PP_Metal_Fence_01.glb",
+      "biome": "cemetery",
+      "family": "Metal_Fence",
+      "label": "Metal Fence",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.245,
+        "hz": 0.414,
+        "height": 1.795,
+        "baseY": 0,
+        "baseHx": 1.245,
+        "baseHz": 0.414,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.245,
+        "halfZ": 0.414,
+        "yaw": 0
       },
       "hidden": false
     },
@@ -1311,6 +1547,31 @@
       "hidden": false
     },
     {
+      "key": "cemetery/PP_Rock_Pile_01",
+      "url": "/assets/props/cemetery/PP_Rock_Pile_01.glb",
+      "biome": "cemetery",
+      "family": "Rock_Pile",
+      "label": "Rock Pile",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.961,
+        "hz": 1.059,
+        "height": 1.509,
+        "baseY": 0,
+        "baseHx": 0.957,
+        "baseHz": 1.059,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.008
+      },
+      "hidden": false
+    },
+    {
       "key": "cemetery/PP_Rock_Pile_Cemetery_01",
       "url": "/assets/props/cemetery/PP_Rock_Pile_Cemetery_01.glb",
       "biome": "cemetery",
@@ -1334,6 +1595,344 @@
         "radius": 1.128,
         "offsetX": -0.12,
         "offsetZ": 0.213
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Ruins_01",
+      "url": "/assets/props/cemetery/PP_Ruins_01.glb",
+      "biome": "cemetery",
+      "family": "Ruins",
+      "label": "Ruins",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.722,
+        "hz": 0.881,
+        "height": 2.748,
+        "baseY": 0,
+        "baseHx": 1.722,
+        "baseHz": 0.881,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.722,
+        "halfZ": 0.881,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Ruins_02",
+      "url": "/assets/props/cemetery/PP_Ruins_02.glb",
+      "biome": "cemetery",
+      "family": "Ruins",
+      "label": "Ruins",
+      "variant": 2,
+      "bounds": {
+        "hx": 1.7,
+        "hz": 1.592,
+        "height": 2.692,
+        "baseY": 0,
+        "baseHx": 1.7,
+        "baseHz": 1.592,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.646
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Ruins_03",
+      "url": "/assets/props/cemetery/PP_Ruins_03.glb",
+      "biome": "cemetery",
+      "family": "Ruins",
+      "label": "Ruins",
+      "variant": 3,
+      "bounds": {
+        "hx": 1.702,
+        "hz": 1.605,
+        "height": 2.26,
+        "baseY": 0,
+        "baseHx": 1.702,
+        "baseHz": 1.605,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.653
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Ruins_04",
+      "url": "/assets/props/cemetery/PP_Ruins_04.glb",
+      "biome": "cemetery",
+      "family": "Ruins",
+      "label": "Ruins",
+      "variant": 4,
+      "bounds": {
+        "hx": 1.746,
+        "hz": 1.789,
+        "height": 1.626,
+        "baseY": 0,
+        "baseHx": 1.746,
+        "baseHz": 1.789,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.768
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Ruins_05",
+      "url": "/assets/props/cemetery/PP_Ruins_05.glb",
+      "biome": "cemetery",
+      "family": "Ruins",
+      "label": "Ruins",
+      "variant": 5,
+      "bounds": {
+        "hx": 1.55,
+        "hz": 1.133,
+        "height": 2.979,
+        "baseY": 0,
+        "baseHx": 1.55,
+        "baseHz": 1.133,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.55,
+        "halfZ": 1.133,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Ruins_06",
+      "url": "/assets/props/cemetery/PP_Ruins_06.glb",
+      "biome": "cemetery",
+      "family": "Ruins",
+      "label": "Ruins",
+      "variant": 6,
+      "bounds": {
+        "hx": 2.228,
+        "hz": 0.613,
+        "height": 1.542,
+        "baseY": 0,
+        "baseHx": 2.228,
+        "baseHz": 0.606,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 2.228,
+        "halfZ": 0.606,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Ruins_07",
+      "url": "/assets/props/cemetery/PP_Ruins_07.glb",
+      "biome": "cemetery",
+      "family": "Ruins",
+      "label": "Ruins",
+      "variant": 7,
+      "bounds": {
+        "hx": 1.71,
+        "hz": 0.999,
+        "height": 1.377,
+        "baseY": 0,
+        "baseHx": 1.696,
+        "baseHz": 0.999,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.015,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.696,
+        "halfZ": 0.999,
+        "yaw": 0,
+        "offsetX": -0.015
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Ruins_08",
+      "url": "/assets/props/cemetery/PP_Ruins_08.glb",
+      "biome": "cemetery",
+      "family": "Ruins",
+      "label": "Ruins",
+      "variant": 8,
+      "bounds": {
+        "hx": 1.525,
+        "hz": 1.367,
+        "height": 1.855,
+        "baseY": 0,
+        "baseHx": 1.525,
+        "baseHz": 1.367,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.446
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Tombstone_01",
+      "url": "/assets/props/cemetery/PP_Tombstone_01.glb",
+      "biome": "cemetery",
+      "family": "Tombstone",
+      "label": "Tombstone",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.013,
+        "hz": 1.057,
+        "height": 2.188,
+        "baseY": 0,
+        "baseHx": 1.013,
+        "baseHz": 1.057,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.035
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Tombstone_02",
+      "url": "/assets/props/cemetery/PP_Tombstone_02.glb",
+      "biome": "cemetery",
+      "family": "Tombstone",
+      "label": "Tombstone",
+      "variant": 2,
+      "bounds": {
+        "hx": 0.537,
+        "hz": 0.451,
+        "height": 1.025,
+        "baseY": 0,
+        "baseHx": 0.537,
+        "baseHz": 0.451,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.494
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Tombstone_03",
+      "url": "/assets/props/cemetery/PP_Tombstone_03.glb",
+      "biome": "cemetery",
+      "family": "Tombstone",
+      "label": "Tombstone",
+      "variant": 3,
+      "bounds": {
+        "hx": 0.553,
+        "hz": 0.447,
+        "height": 1.072,
+        "baseY": 0,
+        "baseHx": 0.553,
+        "baseHz": 0.447,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.5
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Tombstone_Sarcophagus_01",
+      "url": "/assets/props/cemetery/PP_Tombstone_Sarcophagus_01.glb",
+      "biome": "cemetery",
+      "family": "Tombstone_Sarcophagus",
+      "label": "Tombstone Sarcophagus",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.459,
+        "hz": 1.053,
+        "height": 1.587,
+        "baseY": 0,
+        "baseHx": 1.459,
+        "baseHz": 1.053,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.459,
+        "halfZ": 1.053,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Trash_Fence_01",
+      "url": "/assets/props/cemetery/PP_Trash_Fence_01.glb",
+      "biome": "cemetery",
+      "family": "Trash_Fence",
+      "label": "Trash Fence",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.028,
+        "hz": 0.544,
+        "height": 1.647,
+        "baseY": 0,
+        "baseHx": 1.028,
+        "baseHz": 0.544,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.028,
+        "halfZ": 0.544,
+        "yaw": 0
       },
       "hidden": false
     },
@@ -1527,6 +2126,831 @@
       "hidden": false
     },
     {
+      "key": "cemetery/PP_Wood_Rock_Pile_01",
+      "url": "/assets/props/cemetery/PP_Wood_Rock_Pile_01.glb",
+      "biome": "cemetery",
+      "family": "Wood_Rock_Pile",
+      "label": "Wood Rock Pile",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.015,
+        "hz": 1.263,
+        "height": 1.126,
+        "baseY": 0,
+        "baseHx": 0.865,
+        "baseHz": 1.105,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.15,
+        "baseCz": 0.158
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.985,
+        "offsetX": 0.15,
+        "offsetZ": 0.158
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Altar_01",
+      "url": "/assets/props/desert/PP_Altar_01.glb",
+      "biome": "desert",
+      "family": "Altar",
+      "label": "Altar",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.023,
+        "hz": 0.901,
+        "height": 3.65,
+        "baseY": 0,
+        "baseHx": 1.02,
+        "baseHz": 0.672,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.197
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.02,
+        "halfZ": 0.672,
+        "yaw": 0,
+        "offsetZ": -0.197
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Altar_02",
+      "url": "/assets/props/desert/PP_Altar_02.glb",
+      "biome": "desert",
+      "family": "Altar",
+      "label": "Altar",
+      "variant": 2,
+      "bounds": {
+        "hx": 1.287,
+        "hz": 1.091,
+        "height": 1.89,
+        "baseY": 0,
+        "baseHx": 1.287,
+        "baseHz": 1.091,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.189
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Angled_Wall_01",
+      "url": "/assets/props/desert/PP_Angled_Wall_01.glb",
+      "biome": "desert",
+      "family": "Angled_Wall",
+      "label": "Angled Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.532,
+        "hz": 3.965,
+        "height": 5.146,
+        "baseY": 0,
+        "baseHx": 3.532,
+        "baseHz": 3.925,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.04
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 3.729,
+        "offsetZ": -0.04
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Bridge_01",
+      "url": "/assets/props/desert/PP_Bridge_01.glb",
+      "biome": "desert",
+      "family": "Bridge",
+      "label": "Bridge",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.434,
+        "hz": 2.268,
+        "height": 3.274,
+        "baseY": 0,
+        "baseHx": 0.944,
+        "baseHz": 2.243,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -2.466,
+        "baseCz": -0.025
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 0.944,
+        "halfZ": 2.243,
+        "yaw": 0,
+        "offsetX": -2.466,
+        "offsetZ": -0.025
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Broken_Wall_01",
+      "url": "/assets/props/desert/PP_Broken_Wall_01.glb",
+      "biome": "desert",
+      "family": "Broken_Wall",
+      "label": "Broken Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.905,
+        "hz": 1.141,
+        "height": 4.837,
+        "baseY": 0,
+        "baseHx": 3.891,
+        "baseHz": 1.141,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.014,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 3.891,
+        "halfZ": 1.141,
+        "yaw": 0,
+        "offsetX": -0.014
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Crubble_Wall_01",
+      "url": "/assets/props/desert/PP_Crubble_Wall_01.glb",
+      "biome": "desert",
+      "family": "Crubble_Wall",
+      "label": "Crubble Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.344,
+        "hz": 1.146,
+        "height": 4.563,
+        "baseY": 0,
+        "baseHx": 2.344,
+        "baseHz": 1.146,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 2.344,
+        "halfZ": 1.146,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Crumble_Door_Wall_01",
+      "url": "/assets/props/desert/PP_Crumble_Door_Wall_01.glb",
+      "biome": "desert",
+      "family": "Crumble_Door_Wall",
+      "label": "Crumble Door Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.308,
+        "hz": 1.19,
+        "height": 5.309,
+        "baseY": 0,
+        "baseHx": 2.188,
+        "baseHz": 1.19,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.121,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 2.188,
+        "halfZ": 1.19,
+        "yaw": 0,
+        "offsetX": -0.121
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Crumbled_Pillar_01",
+      "url": "/assets/props/desert/PP_Crumbled_Pillar_01.glb",
+      "biome": "desert",
+      "family": "Crumbled_Pillar",
+      "label": "Crumbled Pillar",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.969,
+        "hz": 0.57,
+        "height": 2.621,
+        "baseY": 0,
+        "baseHx": 0.969,
+        "baseHz": 0.57,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 0.969,
+        "halfZ": 0.57,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Crumbles_01",
+      "url": "/assets/props/desert/PP_Crumbles_01.glb",
+      "biome": "desert",
+      "family": "Crumbles",
+      "label": "Crumbles",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.214,
+        "hz": 1.406,
+        "height": 1.781,
+        "baseY": 0,
+        "baseHx": 1.214,
+        "baseHz": 1.406,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.31
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Destroyed_Hut_01",
+      "url": "/assets/props/desert/PP_Destroyed_Hut_01.glb",
+      "biome": "desert",
+      "family": "Destroyed_Hut",
+      "label": "Destroyed Hut",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.147,
+        "hz": 2.451,
+        "height": 4.824,
+        "baseY": 0,
+        "baseHx": 3.147,
+        "baseHz": 2.451,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.799
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Destroyed_Tent_01",
+      "url": "/assets/props/desert/PP_Destroyed_Tent_01.glb",
+      "biome": "desert",
+      "family": "Destroyed_Tent",
+      "label": "Destroyed Tent",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.256,
+        "hz": 2.165,
+        "height": 4.304,
+        "baseY": 0,
+        "baseHx": 2.214,
+        "baseHz": 2.165,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.042,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.189,
+        "offsetX": 0.042
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Destroyed_Tent_02",
+      "url": "/assets/props/desert/PP_Destroyed_Tent_02.glb",
+      "biome": "desert",
+      "family": "Destroyed_Tent",
+      "label": "Destroyed Tent",
+      "variant": 2,
+      "bounds": {
+        "hx": 2.935,
+        "hz": 3.224,
+        "height": 4.049,
+        "baseY": 0,
+        "baseHx": 2.574,
+        "baseHz": 3.206,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.361,
+        "baseCz": -0.018
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.89,
+        "offsetX": -0.361,
+        "offsetZ": -0.018
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Door_01",
+      "url": "/assets/props/desert/PP_Door_01.glb",
+      "biome": "desert",
+      "family": "Door",
+      "label": "Door",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.621,
+        "hz": 0.393,
+        "height": 3.961,
+        "baseY": 0,
+        "baseHx": 1.621,
+        "baseHz": 0.339,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0.017
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.621,
+        "halfZ": 0.339,
+        "yaw": 0,
+        "offsetZ": 0.017
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Door_Frame_01",
+      "url": "/assets/props/desert/PP_Door_Frame_01.glb",
+      "biome": "desert",
+      "family": "Door_Frame",
+      "label": "Door Frame",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.615,
+        "hz": 0.479,
+        "height": 4.137,
+        "baseY": 0,
+        "baseHx": 1.615,
+        "baseHz": 0.479,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.615,
+        "halfZ": 0.479,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Door_Way_Entrance_01",
+      "url": "/assets/props/desert/PP_Door_Way_Entrance_01.glb",
+      "biome": "desert",
+      "family": "Door_Way_Entrance",
+      "label": "Door Way Entrance",
+      "variant": 1,
+      "bounds": {
+        "hx": 4.192,
+        "hz": 1.712,
+        "height": 6.809,
+        "baseY": 0,
+        "baseHx": 4.124,
+        "baseHz": 1.137,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.014,
+        "baseCz": -0.52
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 4.124,
+        "halfZ": 1.137,
+        "yaw": 0,
+        "offsetX": -0.014,
+        "offsetZ": -0.52
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Doorway_Passage_01",
+      "url": "/assets/props/desert/PP_Doorway_Passage_01.glb",
+      "biome": "desert",
+      "family": "Doorway_Passage",
+      "label": "Doorway Passage",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.135,
+        "hz": 0.383,
+        "height": 2.801,
+        "baseY": 0,
+        "baseHx": 1.135,
+        "baseHz": 0.383,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.135,
+        "halfZ": 0.383,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Fire_Pot_01",
+      "url": "/assets/props/desert/PP_Fire_Pot_01.glb",
+      "biome": "desert",
+      "family": "Fire_Pot",
+      "label": "Fire Pot",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.097,
+        "hz": 1.158,
+        "height": 2.515,
+        "baseY": 0,
+        "baseHx": 1.097,
+        "baseHz": 1.158,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.127
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Flag_01",
+      "url": "/assets/props/desert/PP_Flag_01.glb",
+      "biome": "desert",
+      "family": "Flag",
+      "label": "Flag",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.331,
+        "hz": 0.274,
+        "height": 4.594,
+        "baseY": 0,
+        "baseHx": 1.304,
+        "baseHz": 0.274,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.027,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.304,
+        "halfZ": 0.274,
+        "yaw": 0,
+        "offsetX": 0.027
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Flag_On_Poles_01",
+      "url": "/assets/props/desert/PP_Flag_On_Poles_01.glb",
+      "biome": "desert",
+      "family": "Flag_On_Poles",
+      "label": "Flag On Poles",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.588,
+        "hz": 0.676,
+        "height": 3.013,
+        "baseY": 0,
+        "baseHx": 2.588,
+        "baseHz": 0.676,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 2.588,
+        "halfZ": 0.676,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Flame_Pillar_01",
+      "url": "/assets/props/desert/PP_Flame_Pillar_01.glb",
+      "biome": "desert",
+      "family": "Flame_Pillar",
+      "label": "Flame Pillar",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.889,
+        "hz": 0.913,
+        "height": 4.096,
+        "baseY": 0,
+        "baseHx": 0.889,
+        "baseHz": 0.913,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.901
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Flame_Post_01",
+      "url": "/assets/props/desert/PP_Flame_Post_01.glb",
+      "biome": "desert",
+      "family": "Flame_Post",
+      "label": "Flame Post",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.586,
+        "hz": 0.542,
+        "height": 3.056,
+        "baseY": 0,
+        "baseHx": 0.586,
+        "baseHz": 0.519,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.023
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.553,
+        "offsetZ": -0.023
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Fountain_01",
+      "url": "/assets/props/desert/PP_Fountain_01.glb",
+      "biome": "desert",
+      "family": "Fountain",
+      "label": "Fountain",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.294,
+        "hz": 0.993,
+        "height": 1.908,
+        "baseY": 0,
+        "baseHx": 1.294,
+        "baseHz": 0.941,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0.035
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.294,
+        "halfZ": 0.941,
+        "yaw": 0,
+        "offsetZ": 0.035
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Ground_Cobbles_01",
+      "url": "/assets/props/desert/PP_Ground_Cobbles_01.glb",
+      "biome": "desert",
+      "family": "Ground_Cobbles",
+      "label": "Ground Cobbles",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.233,
+        "hz": 1.797,
+        "height": 0.363,
+        "baseY": 0,
+        "baseHx": 1.233,
+        "baseHz": 1.355,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0.442
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.294,
+        "offsetZ": 0.442
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Hut_01",
+      "url": "/assets/props/desert/PP_Hut_01.glb",
+      "biome": "desert",
+      "family": "Hut",
+      "label": "Hut",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.358,
+        "hz": 3.482,
+        "height": 5.926,
+        "baseY": 0,
+        "baseHx": 3.358,
+        "baseHz": 3.482,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 3.42
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Lamp_Post_01",
+      "url": "/assets/props/desert/PP_Lamp_Post_01.glb",
+      "biome": "desert",
+      "family": "Lamp_Post",
+      "label": "Lamp Post",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.437,
+        "hz": 0.928,
+        "height": 3.085,
+        "baseY": 0,
+        "baseHx": 0.395,
+        "baseHz": 0.381,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.042,
+        "baseCz": -0.546
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.388,
+        "offsetX": 0.042,
+        "offsetZ": -0.546
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Lamp_Post_02",
+      "url": "/assets/props/desert/PP_Lamp_Post_02.glb",
+      "biome": "desert",
+      "family": "Lamp_Post",
+      "label": "Lamp Post",
+      "variant": 2,
+      "bounds": {
+        "hx": 0.448,
+        "hz": 0.795,
+        "height": 2.504,
+        "baseY": 0,
+        "baseHx": 0.448,
+        "baseHz": 0.425,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.371
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.436,
+        "offsetZ": -0.371
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Merchant_Stand_01",
+      "url": "/assets/props/desert/PP_Merchant_Stand_01.glb",
+      "biome": "desert",
+      "family": "Merchant_Stand",
+      "label": "Merchant Stand",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.914,
+        "hz": 1.645,
+        "height": 3.054,
+        "baseY": 0,
+        "baseHx": 1.914,
+        "baseHz": 1.619,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.026
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.766,
+        "offsetZ": -0.026
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Monolith_01",
+      "url": "/assets/props/desert/PP_Monolith_01.glb",
+      "biome": "desert",
+      "family": "Monolith",
+      "label": "Monolith",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.053,
+        "hz": 0.836,
+        "height": 3.61,
+        "baseY": 0,
+        "baseHx": 1.053,
+        "baseHz": 0.836,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.944
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Pile_Of_Crates_01",
+      "url": "/assets/props/desert/PP_Pile_Of_Crates_01.glb",
+      "biome": "desert",
+      "family": "Pile_Of_Crates",
+      "label": "Pile Of Crates",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.873,
+        "hz": 1.183,
+        "height": 1.896,
+        "baseY": 0,
+        "baseHx": 0.865,
+        "baseHz": 1.096,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.056
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.98,
+        "offsetZ": -0.056
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Pillar_01",
+      "url": "/assets/props/desert/PP_Pillar_01.glb",
+      "biome": "desert",
+      "family": "Pillar",
+      "label": "Pillar",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.084,
+        "hz": 1.205,
+        "height": 5.098,
+        "baseY": 0,
+        "baseHx": 0.987,
+        "baseHz": 1.205,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.097,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.096,
+        "offsetX": -0.097
+      },
+      "hidden": false
+    },
+    {
       "key": "desert/PP_Pyramid_01",
       "url": "/assets/props/desert/PP_Pyramid_01.glb",
       "biome": "desert",
@@ -1547,6 +2971,173 @@
       },
       "defaultCollider": {
         "mode": "none"
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Rag_Socket_01",
+      "url": "/assets/props/desert/PP_Rag_Socket_01.glb",
+      "biome": "desert",
+      "family": "Rag_Socket",
+      "label": "Rag Socket",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.152,
+        "hz": 0.712,
+        "height": 2.178,
+        "baseY": 0,
+        "baseHx": 1.023,
+        "baseHz": 0.627,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.026,
+        "baseCz": -0.085
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.023,
+        "halfZ": 0.627,
+        "yaw": 0,
+        "offsetX": 0.026,
+        "offsetZ": -0.085
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Rugs_01",
+      "url": "/assets/props/desert/PP_Rugs_01.glb",
+      "biome": "desert",
+      "family": "Rugs",
+      "label": "Rugs",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.186,
+        "hz": 1.702,
+        "height": 0.821,
+        "baseY": 0,
+        "baseHx": 1.169,
+        "baseHz": 1.702,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.017,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.169,
+        "halfZ": 1.702,
+        "yaw": 0,
+        "offsetX": -0.017
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Shade_Structure_01",
+      "url": "/assets/props/desert/PP_Shade_Structure_01.glb",
+      "biome": "desert",
+      "family": "Shade_Structure",
+      "label": "Shade Structure",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.517,
+        "hz": 6.027,
+        "height": 4.698,
+        "baseY": 0,
+        "baseHx": 3.486,
+        "baseHz": 6.027,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.031,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 3.486,
+        "halfZ": 6.027,
+        "yaw": 0,
+        "offsetX": 0.031
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Sitting_Place_01",
+      "url": "/assets/props/desert/PP_Sitting_Place_01.glb",
+      "biome": "desert",
+      "family": "Sitting_Place",
+      "label": "Sitting Place",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.482,
+        "hz": 3.257,
+        "height": 5.408,
+        "baseY": 0,
+        "baseHx": 3.421,
+        "baseHz": 3.205,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.061,
+        "baseCz": 0.052
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 3.313,
+        "offsetX": 0.061,
+        "offsetZ": 0.052
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Slanted_Wall_01",
+      "url": "/assets/props/desert/PP_Slanted_Wall_01.glb",
+      "biome": "desert",
+      "family": "Slanted_Wall",
+      "label": "Slanted Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.73,
+        "hz": 3.778,
+        "height": 4.164,
+        "baseY": 0,
+        "baseHx": 1.73,
+        "baseHz": 3.728,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.05
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.73,
+        "halfZ": 3.728,
+        "yaw": 0,
+        "offsetZ": -0.05
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Small_Table_01",
+      "url": "/assets/props/desert/PP_Small_Table_01.glb",
+      "biome": "desert",
+      "family": "Small_Table",
+      "label": "Small Table",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.322,
+        "hz": 1.059,
+        "height": 1.571,
+        "baseY": 0,
+        "baseHx": 1.164,
+        "baseHz": 0.931,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.027,
+        "baseCz": -0.058
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.048,
+        "offsetX": -0.027,
+        "offsetZ": -0.058
       },
       "hidden": false
     },
@@ -1574,6 +3165,458 @@
         "halfX": 3.311,
         "halfZ": 7.268,
         "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Stairs_01",
+      "url": "/assets/props/desert/PP_Stairs_01.glb",
+      "biome": "desert",
+      "family": "Stairs",
+      "label": "Stairs",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.467,
+        "hz": 1.572,
+        "height": 2.733,
+        "baseY": 0,
+        "baseHx": 1.467,
+        "baseHz": 1.498,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0.073
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.483,
+        "offsetZ": 0.073
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Statue_01",
+      "url": "/assets/props/desert/PP_Statue_01.glb",
+      "biome": "desert",
+      "family": "Statue",
+      "label": "Statue",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.852,
+        "hz": 1.402,
+        "height": 4.293,
+        "baseY": 0,
+        "baseHx": 0.852,
+        "baseHz": 1.402,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 0.852,
+        "halfZ": 1.402,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tent_01",
+      "url": "/assets/props/desert/PP_Tent_01.glb",
+      "biome": "desert",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.814,
+        "hz": 2.521,
+        "height": 3.608,
+        "baseY": 0,
+        "baseHx": 2.814,
+        "baseHz": 2.521,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.668
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tent_02",
+      "url": "/assets/props/desert/PP_Tent_02.glb",
+      "biome": "desert",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 2,
+      "bounds": {
+        "hx": 2.841,
+        "hz": 2.899,
+        "height": 3.431,
+        "baseY": 0,
+        "baseHx": 2.777,
+        "baseHz": 2.188,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.064,
+        "baseCz": 0.147
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.483,
+        "offsetX": 0.064,
+        "offsetZ": 0.147
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tent_03",
+      "url": "/assets/props/desert/PP_Tent_03.glb",
+      "biome": "desert",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 3,
+      "bounds": {
+        "hx": 3.167,
+        "hz": 3.089,
+        "height": 4.408,
+        "baseY": 0,
+        "baseHx": 2.989,
+        "baseHz": 3.089,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.178,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 3.039,
+        "offsetX": 0.178
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tent_04",
+      "url": "/assets/props/desert/PP_Tent_04.glb",
+      "biome": "desert",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 4,
+      "bounds": {
+        "hx": 2.634,
+        "hz": 3.286,
+        "height": 4.645,
+        "baseY": 0,
+        "baseHx": 2.634,
+        "baseHz": 3.211,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.075
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.923,
+        "offsetZ": -0.075
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tent_05",
+      "url": "/assets/props/desert/PP_Tent_05.glb",
+      "biome": "desert",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 5,
+      "bounds": {
+        "hx": 2.35,
+        "hz": 2.806,
+        "height": 3.606,
+        "baseY": 0,
+        "baseHx": 2.132,
+        "baseHz": 2.384,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.218,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.258,
+        "offsetX": -0.218
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tent_06",
+      "url": "/assets/props/desert/PP_Tent_06.glb",
+      "biome": "desert",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 6,
+      "bounds": {
+        "hx": 2.366,
+        "hz": 2.821,
+        "height": 3.584,
+        "baseY": 0,
+        "baseHx": 2.297,
+        "baseHz": 2.821,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.068,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.559,
+        "offsetX": -0.068
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tent_07",
+      "url": "/assets/props/desert/PP_Tent_07.glb",
+      "biome": "desert",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 7,
+      "bounds": {
+        "hx": 3.023,
+        "hz": 3.39,
+        "height": 3.87,
+        "baseY": 0,
+        "baseHx": 2.986,
+        "baseHz": 3.138,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.037,
+        "baseCz": -0.252
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 3.062,
+        "offsetX": -0.037,
+        "offsetZ": -0.252
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tent_08",
+      "url": "/assets/props/desert/PP_Tent_08.glb",
+      "biome": "desert",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 8,
+      "bounds": {
+        "hx": 1.722,
+        "hz": 1.533,
+        "height": 2.985,
+        "baseY": 0,
+        "baseHx": 1.722,
+        "baseHz": 1.533,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.627
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tiles_01",
+      "url": "/assets/props/desert/PP_Tiles_01.glb",
+      "biome": "desert",
+      "family": "Tiles",
+      "label": "Tiles",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.423,
+        "hz": 1.34,
+        "height": 0.235,
+        "baseY": 0,
+        "baseHx": 1.423,
+        "baseHz": 1.34,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.382
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tomb_01",
+      "url": "/assets/props/desert/PP_Tomb_01.glb",
+      "biome": "desert",
+      "family": "Tomb",
+      "label": "Tomb",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.518,
+        "hz": 0.842,
+        "height": 1.726,
+        "baseY": 0,
+        "baseHx": 1.505,
+        "baseHz": 0.84,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.013,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.505,
+        "halfZ": 0.84,
+        "yaw": 0,
+        "offsetX": -0.013
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Tower_01",
+      "url": "/assets/props/desert/PP_Tower_01.glb",
+      "biome": "desert",
+      "family": "Tower",
+      "label": "Tower",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.89,
+        "hz": 2.028,
+        "height": 10.393,
+        "baseY": 0,
+        "baseHx": 1.89,
+        "baseHz": 2.014,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": -0.014
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.952,
+        "offsetZ": -0.014
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Vases_01",
+      "url": "/assets/props/desert/PP_Vases_01.glb",
+      "biome": "desert",
+      "family": "Vases",
+      "label": "Vases",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.341,
+        "hz": 1.243,
+        "height": 1.994,
+        "baseY": 0,
+        "baseHx": 1.239,
+        "baseHz": 0.969,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.046,
+        "baseCz": 0.105
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.104,
+        "offsetX": 0.046,
+        "offsetZ": 0.105
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Wall_01",
+      "url": "/assets/props/desert/PP_Wall_01.glb",
+      "biome": "desert",
+      "family": "Wall",
+      "label": "Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.447,
+        "hz": 0.765,
+        "height": 4.991,
+        "baseY": 0,
+        "baseHx": 3.414,
+        "baseHz": 0.748,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.033,
+        "baseCz": -0.017
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 3.414,
+        "halfZ": 0.748,
+        "yaw": 0,
+        "offsetX": 0.033,
+        "offsetZ": -0.017
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Wood_Structure_01",
+      "url": "/assets/props/desert/PP_Wood_Structure_01.glb",
+      "biome": "desert",
+      "family": "Wood_Structure",
+      "label": "Wood Structure",
+      "variant": 1,
+      "bounds": {
+        "hx": 4.56,
+        "hz": 2.744,
+        "height": 2.555,
+        "baseY": 0,
+        "baseHx": 4.56,
+        "baseHz": 2.744,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 4.56,
+        "halfZ": 2.744,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "desert/PP_Wooden_Pole_Structure_01",
+      "url": "/assets/props/desert/PP_Wooden_Pole_Structure_01.glb",
+      "biome": "desert",
+      "family": "Wooden_Pole_Structure",
+      "label": "Wooden Pole Structure",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.57,
+        "hz": 0.802,
+        "height": 4.636,
+        "baseY": 0,
+        "baseHx": 3.326,
+        "baseHz": 0.674,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.124,
+        "baseCz": -0.127
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 3.326,
+        "halfZ": 0.674,
+        "yaw": 0,
+        "offsetX": 0.124,
+        "offsetZ": -0.127
       },
       "hidden": false
     },

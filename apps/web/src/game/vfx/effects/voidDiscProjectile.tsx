@@ -159,7 +159,7 @@ export function VoidDiscProjectileEffect({ room, id }: { room: Room; id: string 
     // Stay flat on XZ — never lookAt travel direction (that flipped the rings).
     g.rotation.set(0, 0, 0);
 
-    const spinRate = returning ? 18 : turning ? 6 : 14;
+    const spinRate = returning ? 18 : 14;
     spin.current += safeDt * spinRate;
     if (discSpin.current) {
       discSpin.current.rotation.y = spin.current;

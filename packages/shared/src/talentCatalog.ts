@@ -928,8 +928,8 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     maxRank: 1,
     affectedTags: ["Defense", "Buff"] as const,
     exactEffect:
-      "Reaching maximum Hardened stacks grants Fortified Resolve. The next hit dealing at least 10% of your max HP has its damage reduced by 25% (6s internal cooldown).",
-    balanceNote: "Anti-burst buff gained at max Hardened stacks. Consumed on large hit.",
+      "Reaching maximum Hardened stacks grants Fortified Resolve. Your next incoming attack deals 50% less damage (6s internal cooldown).",
+    balanceNote: "Consumed on the next attack. DoT ticks do not consume it.",
     status: "catalog",
     implemented: true,
   },
@@ -1011,9 +1011,9 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     maxRank: 1,
     affectedTags: ["Defense", "Buff"] as const,
     exactEffect:
-      "Successfully blocking an attack temporarily grants +25% passive block chance for 2s (6s internal cooldown, cannot refresh while active).",
+      "Successfully blocking an attack temporarily grants +25% passive block chance for 4s (6s internal cooldown, cannot refresh while active).",
     balanceNote:
-      "Triggers on ACTIVE_BLOCK or PASSIVE_BLOCK. +25% block chance for 2s. 6s ICD.",
+      "Triggers on ACTIVE_BLOCK or PASSIVE_BLOCK. +25% block chance for 4s. 6s ICD.",
     status: "catalog",
     implemented: true,
   },

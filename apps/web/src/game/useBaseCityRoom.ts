@@ -13,7 +13,7 @@ import { clearInteractPrompt, setInteractPrompt } from "./interactPromptRuntime"
 import { setTalkingNpc } from "./npcRuntime";
 import type { NpcDialogueData } from "./ui/NpcDialogue";
 import { abilityHudRuntime } from "./abilityHudRuntime";
-import { spawnImpactEffect, cancelFollowOwnerVfx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, usesLifeLeechFx, clearCrescentSpawnState } from "./vfx";
+import { spawnImpactEffect, cancelFollowOwnerVfx, usesFrostMistFx, usesGrooveFx, usesHealBeamFx, usesLifeLeechFx, usesPveHealPopupFx, clearCrescentSpawnState } from "./vfx";
 import { cancelActiveCastHandle } from "./vfx/runtime/playerVfxRuntime";
 import { dispatchCombatFxVfx } from "./vfx/combatFxDispatch";
 import { takePortalChannelBubbleScale } from "./vfx/portalChannelRuntime";
@@ -370,6 +370,7 @@ export function useBaseCityRoom(options: Options) {
     const [pvePaused, setPvePausedLocal] = useState(false);
     const [pveUpgradeDraft, setPveUpgradeDraft] = useState<{
         wave: number;
+        kills: number;
         offers: Array<{
             offerId: string;
             id: string;
@@ -439,7 +440,8 @@ export function useBaseCityRoom(options: Options) {
     >([]);
     const [pveLeaderboard, setPveLeaderboard] = useState<
         Array<{
-            userId: string;
+            partyKey: string;
+            memberIds: string[];
             displayName: string;
             wave: number;
             kills: number;
@@ -449,7 +451,8 @@ export function useBaseCityRoom(options: Options) {
         }>
     >([]);
     const [pveBest, setPveBest] = useState<{
-        userId: string;
+        partyKey: string;
+        memberIds: string[];
         displayName: string;
         wave: number;
         kills: number;
@@ -457,6 +460,16 @@ export function useBaseCityRoom(options: Options) {
         partySize: number;
         rank: number;
     } | null>(null);
+    const [pvePicks, setPvePicks] = useState<
+        Array<{
+            id: string;
+            stat: string;
+            rarity: string;
+            magnitude: number;
+            label: string;
+            hint: string;
+        }>
+    >([]);
     const [party, setParty] = useState<PartySnapshot | null>(null);
     const [partyInvite, setPartyInvite] = useState<{
         partyId: string;
@@ -638,6 +651,7 @@ export function useBaseCityRoom(options: Options) {
             setWaveHud(null);
             setPvePausedLocal(false);
             setPveUpgradeDraft(null);
+            setPvePicks([]);
             setPlazaState(null);
             setPlazaList([]);
             setPveFriendlyFire(Boolean((joined.state as { pveFriendlyFire?: boolean })?.pveFriendlyFire));
@@ -801,6 +815,7 @@ export function useBaseCityRoom(options: Options) {
                 "pve_upgrade_draft",
                 (msg: {
                     wave?: number;
+                    kills?: number;
                     offers?: Array<{
                         offerId: string;
                         id: string;
@@ -814,6 +829,7 @@ export function useBaseCityRoom(options: Options) {
                 }) => {
                     setPveUpgradeDraft({
                         wave: Math.max(0, Math.floor(Number(msg.wave) || 0)),
+                        kills: Math.max(0, Math.floor(Number(msg.kills) || 0)),
                         offers: Array.isArray(msg.offers) ? msg.offers : [],
                         waiting: Array.isArray(msg.waiting) ? msg.waiting : [],
                         picked: false,
@@ -928,6 +944,7 @@ export function useBaseCityRoom(options: Options) {
                 setDiedAt(null);
                 setPvePausedLocal(false);
                 setPveUpgradeDraft(null);
+                setPvePicks([]);
                 clearLocalCombatCastStateRef.current();
             });
 
@@ -1165,7 +1182,9 @@ export function useBaseCityRoom(options: Options) {
                 "hub_pve_leaderboard",
                 (msg: {
                     rows?: Array<{
-                        userId: string;
+                        partyKey?: string;
+                        memberIds?: string[];
+                        userId?: string;
                         displayName: string;
                         wave: number;
                         kills: number;
@@ -1174,7 +1193,9 @@ export function useBaseCityRoom(options: Options) {
                         rank: number;
                     }>;
                     mine?: {
-                        userId: string;
+                        partyKey?: string;
+                        memberIds?: string[];
+                        userId?: string;
                         displayName: string;
                         wave: number;
                         kills: number;
@@ -1183,8 +1204,50 @@ export function useBaseCityRoom(options: Options) {
                         rank: number;
                     } | null;
                 }) => {
-                    setPveLeaderboard(Array.isArray(msg.rows) ? msg.rows : []);
-                    setPveBest(msg.mine ?? null);
+                    const toRow = (row: {
+                        partyKey?: string;
+                        memberIds?: string[];
+                        userId?: string;
+                        displayName: string;
+                        wave: number;
+                        kills: number;
+                        damageDealt: number;
+                        partySize: number;
+                        rank: number;
+                    }) => {
+                        const memberIds = Array.isArray(row.memberIds)
+                            ? row.memberIds.filter(Boolean)
+                            : row.userId
+                              ? [row.userId]
+                              : [];
+                        return {
+                            partyKey: row.partyKey || row.userId || memberIds.join(",") || row.displayName,
+                            memberIds,
+                            displayName: row.displayName,
+                            wave: row.wave,
+                            kills: row.kills,
+                            damageDealt: row.damageDealt,
+                            partySize: row.partySize,
+                            rank: row.rank,
+                        };
+                    };
+                    setPveLeaderboard(Array.isArray(msg.rows) ? msg.rows.map(toRow) : []);
+                    setPveBest(msg.mine ? toRow(msg.mine) : null);
+                },
+            );
+            joined.onMessage(
+                "pve_upgrades",
+                (msg: {
+                    picks?: Array<{
+                        id: string;
+                        stat: string;
+                        rarity: string;
+                        magnitude: number;
+                        label: string;
+                        hint: string;
+                    }>;
+                }) => {
+                    setPvePicks(Array.isArray(msg.picks) ? msg.picks : []);
                 },
             );
 
@@ -1566,9 +1629,12 @@ export function useBaseCityRoom(options: Options) {
                         }
                         const key = ++dmgKeyRef.current;
                         const ang = Math.random() * Math.PI * 2;
+                        const isLifesteal = msg.abilityId === "pve_lifesteal";
                         const isHeal =
-                            usesGrooveFx(msg.abilityId) ||
+                            !isLifesteal &&
+                            (usesGrooveFx(msg.abilityId) ||
                             usesHealBeamFx(msg.abilityId) ||
+                            usesPveHealPopupFx(msg.abilityId) ||
                             msg.abilityId === "worldTree" ||
                             msg.abilityId === "pickup_heal" ||
                             msg.abilityId === "pickup_generic" ||
@@ -1577,11 +1643,11 @@ export function useBaseCityRoom(options: Options) {
                             // Life Leech: self-restore hits are heals; enemy hits stay damage.
                             (usesLifeLeechFx(msg.abilityId) &&
                                 !!msg.ownerId &&
-                                msg.targetId === msg.ownerId);
+                                msg.targetId === msg.ownerId));
                         const popup: DamagePopup = {
                             key,
                             amount: msg.damage,
-                            kind: isHeal ? "heal" : "damage",
+                            kind: isLifesteal ? "lifesteal" : isHeal ? "heal" : "damage",
                             crit: msg.crit === true,
                             x: msg.x,
                             z: msg.z,
@@ -3573,7 +3639,10 @@ export function useBaseCityRoom(options: Options) {
     }, []);
 
     const pickPveUpgrade = useCallback((offerId: string) => {
-        setPveUpgradeDraft((prev) => (prev ? { ...prev, picked: true } : prev));
+        setPveUpgradeDraft((prev) => {
+            if (!prev) return prev;
+            return { ...prev, picked: true };
+        });
         roomRef.current?.send("pve_upgrade_pick", { offerId });
     }, []);
 
@@ -3806,6 +3875,7 @@ export function useBaseCityRoom(options: Options) {
         pvePaused,
         setPvePaused,
         pveUpgradeDraft,
+        pvePicks,
         pickPveUpgrade,
         plazaState,
         plazaList,

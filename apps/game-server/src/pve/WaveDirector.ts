@@ -4,6 +4,8 @@ import {
   PVE_ELITE_HP_MUL,
   PVE_ELITE_KIND,
   PVE_ELITE_SPEED_MUL,
+  PVE_ENEMY_APPROACH_MAX_M,
+  PVE_ENEMY_APPROACH_MIN_M,
   PVE_ENEMY_INGRESS_MIN_M,
   PVE_WAVE_ENEMY_HARD_CAP,
   PVE_WAVE_INTERVAL_MS,
@@ -21,12 +23,15 @@ import {
   pveEliteKit,
   pveElitePickAbility,
   pveEliteProjectileDamage,
+  pveEliteProjectileSpeedMul,
+  pveEliteStrafeDir,
   pveUpgradeDraftDue,
   pveWaveDamage,
   pveWaveEnemyCount,
   pveWaveHp,
   pveWaveSpeed,
   pveZombieSpeedMul,
+  mobWalkYaw,
 } from "@battlebeasts/shared";
 import type { CombatSystem } from "../combat/CombatSystem.js";
 import type { BaseCityState } from "../schema/BaseCityState.js";
@@ -60,7 +65,6 @@ export class WaveDirector {
   waveIndex = 0;
   phase: WavePhase = "intro";
   private clearAt = 0;
-  private nextWaveAt = 0;
   private nextId = 1;
   private meleeCd = new Map<string, number>();
   private retargetAt = new Map<string, number>();
@@ -77,7 +81,9 @@ export class WaveDirector {
   private pendingSpawns: PendingSpawn[] = [];
   private nextSpawnAt = 0;
   private waveGoal = 0;
-  private lastDraftWave = 0;
+  private lastDraftKills = 0;
+  private kills = 0;
+  private waveElapsedMs = 0;
   private started = false;
   private readonly partySize: number;
 
@@ -88,7 +94,7 @@ export class WaveDirector {
     partySize = 1,
     private readonly ingress: ReadonlyArray<{ x: number; z: number }> = [],
     private holdout: { x: number; z: number } = { x: 0, z: 0 },
-    private readonly onDraftBeat?: (waveIndex: number) => void,
+    private readonly onDraftBeat?: (waveIndex: number, kills: number) => void,
   ) {
     this.partySize = clampPvePartySize(partySize);
   }
@@ -114,7 +120,6 @@ export class WaveDirector {
     this.waveIndex = 0;
     this.phase = "intro";
     this.clearAt = now + 1500;
-    this.nextWaveAt = 0;
     this.pendingSpawns = [];
     this.nextSpawnAt = 0;
     this.waveGoal = 0;
@@ -129,14 +134,17 @@ export class WaveDirector {
     this.pendingAbility.clear();
     this.eliteAbilityCd.clear();
     this.eliteLastAbility.clear();
-    this.lastDraftWave = 0;
+    this.waveElapsedMs = 0;
+    this.kills = 0;
+    this.lastDraftKills = 0;
     this.started = true;
     this.pushHud();
   }
 
-  /** Called after a draft finishes so the paused wave clock can roll the next wave. */
+  /** Called after a draft finishes. Kill drafts pause mid-wave; just resume. */
   beginPendingWave(now: number) {
     if (!this.started || this.phase === "complete") return;
+    if (this.phase === "fighting") return;
     this.beginWave(now);
   }
 
@@ -154,13 +162,9 @@ export class WaveDirector {
 
     if (this.phase !== "fighting") return;
 
-    if (this.nextWaveAt > 0 && now >= this.nextWaveAt) {
-      const next = this.waveIndex + 1;
-      if (pveUpgradeDraftDue(next) && this.lastDraftWave !== next) {
-        this.lastDraftWave = next;
-        this.onDraftBeat?.(next);
-        return;
-      }
+    this.waveElapsedMs += dt * 1000;
+    if (this.waveElapsedMs >= PVE_WAVE_INTERVAL_MS) {
+      this.waveElapsedMs = 0;
       this.beginWave(now);
     }
 
@@ -171,6 +175,7 @@ export class WaveDirector {
   }
 
   onTargetKilled(targetId: string) {
+    const wasMob = this.speedById.has(targetId);
     this.meleeCd.delete(targetId);
     this.retargetAt.delete(targetId);
     this.targetSession.delete(targetId);
@@ -183,6 +188,12 @@ export class WaveDirector {
     this.eliteLastAbility.delete(targetId);
     for (const key of [...this.eliteAbilityCd.keys()]) {
       if (key.startsWith(`${targetId}:`)) this.eliteAbilityCd.delete(key);
+    }
+    if (!wasMob || this.phase !== "fighting") return;
+    this.kills += 1;
+    if (pveUpgradeDraftDue(this.kills) && this.lastDraftKills !== this.kills) {
+      this.lastDraftKills = this.kills;
+      this.onDraftBeat?.(this.waveIndex, this.kills);
     }
   }
 
@@ -213,7 +224,7 @@ export class WaveDirector {
         kit,
       });
     }
-    this.nextWaveAt = now + PVE_WAVE_INTERVAL_MS;
+    this.waveElapsedMs = 0;
     if (this.nextSpawnAt < now) this.nextSpawnAt = now;
     // First zombie immediately so the wave doesn't feel empty.
     this.drainSpawns(now);
@@ -275,10 +286,14 @@ export class WaveDirector {
       const nx = dx / dist;
       const nz = dz / dist;
       const j = (i * 0.37) % 1;
+      const approach =
+        PVE_ENEMY_APPROACH_MIN_M +
+        j * (PVE_ENEMY_APPROACH_MAX_M - PVE_ENEMY_APPROACH_MIN_M);
+      const along = Math.min(dist, Math.max(PVE_ENEMY_INGRESS_MIN_M, approach));
       const side = (i % 2 === 0 ? 1 : -1) * (1.1 + j * 2.4);
       picks.push({
-        x: s.x + -nz * side,
-        z: s.z + nx * side,
+        x: origin.x + nx * along + -nz * side,
+        z: origin.z + nz * along + nx * side,
       });
     }
     return picks;
@@ -308,6 +323,8 @@ export class WaveDirector {
       return;
     }
 
+    this.combat.refreshMobFlow(living, now);
+
     this.state.targets.forEach((t, id) => {
       if (!isPveWaveMobKind(t.kind) || t.hp <= 0) return;
 
@@ -315,7 +332,6 @@ export class WaveDirector {
       const dx = focus.x - t.x;
       const dz = focus.z - t.z;
       const dist = Math.hypot(dx, dz) || 1;
-      t.yaw = Math.atan2(dx, dz);
 
       if (t.kind === PVE_ELITE_KIND) {
         this.tickElite(id, t, focus, dx, dz, dist, dt, now);
@@ -399,18 +415,17 @@ export class WaveDirector {
 
     const attacking = Boolean(t.castLockUntil && now < t.castLockUntil);
     if (attacking) {
-      // Hold feet during swing so the attack clip reads.
+      t.yaw = mobWalkYaw(t.yaw, 0, 0, dx, dz, dt, true);
     } else if (dist > PVE_ZOMBIE_MELEE_RANGE * 0.85) {
       const step = Math.min(dist - 0.4, speed * dt);
       const from = { x: t.x, z: t.z };
-      const desired = {
-        x: t.x + (dx / dist) * step,
-        z: t.z + (dz / dist) * step,
-      };
+      const desired = this.combat.steerWaveMob(from, { x: focus.x, z: focus.z }, step);
       const next = this.combat.moveWaveMob(id, from, desired);
+      t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, dx, dz, dt, false);
       t.x = next.x;
       t.z = next.z;
     } else if (cc.canCast) {
+      t.yaw = mobWalkYaw(t.yaw, 0, 0, dx, dz, dt, true);
       const ready = (this.meleeCd.get(id) ?? 0) <= now;
       if (ready) {
         const dmg = this.damageById.get(id) ?? 8;
@@ -421,6 +436,8 @@ export class WaveDirector {
         // Long enough for the attack clip to read (~0.7s).
         t.castLockUntil = now + 700;
       }
+    } else {
+      t.yaw = mobWalkYaw(t.yaw, 0, 0, dx, dz, dt, true);
     }
   }
 
@@ -483,7 +500,10 @@ export class WaveDirector {
     }
 
     const casting = Boolean(t.castLockUntil && now < t.castLockUntil);
-    if (casting || !cc.canMove) return;
+    if (casting || !cc.canMove) {
+      if (casting) t.yaw = mobWalkYaw(t.yaw, 0, 0, dx, dz, dt, true);
+      return;
+    }
 
     const nx = dx / dist;
     const nz = dz / dist;
@@ -493,25 +513,29 @@ export class WaveDirector {
 
     if (tooFar || tooClose) {
       const step = speed * dt;
-      let mx = 0;
-      let mz = 0;
-      if (!los) {
-        const side = id.charCodeAt(id.length - 1) % 2 === 0 ? 1 : -1;
-        mx = nx * 0.65 + -nz * side * 0.55;
-        mz = nz * 0.65 + nx * side * 0.55;
-      } else if (tooClose) {
-        mx = -nx;
-        mz = -nz;
+      const fromPos = from;
+      let desired: { x: number; z: number };
+      if (!los || tooFar) {
+        desired = this.combat.steerWaveMob(fromPos, { x: focus.x, z: focus.z }, step);
       } else {
-        mx = nx;
-        mz = nz;
+        desired = {
+          x: t.x + -nx * step,
+          z: t.z + -nz * step,
+        };
       }
-      const len = Math.hypot(mx, mz) || 1;
+      const next = this.combat.moveWaveMob(id, fromPos, desired);
+      t.yaw = mobWalkYaw(t.yaw, next.x - fromPos.x, next.z - fromPos.z, dx, dz, dt, false);
+      t.x = next.x;
+      t.z = next.z;
+    } else if (inCastRange) {
+      const step = speed * dt * 0.55;
+      const strafe = pveEliteStrafeDir(nx, nz, id);
       const desired = {
-        x: t.x + (mx / len) * step,
-        z: t.z + (mz / len) * step,
+        x: t.x + strafe.x * step,
+        z: t.z + strafe.z * step,
       };
       const next = this.combat.moveWaveMob(id, from, desired);
+      t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, dx, dz, dt, true);
       t.x = next.x;
       t.z = next.z;
     }
@@ -573,6 +597,7 @@ export class WaveDirector {
     const yaw = this.pendingAimYaw.get(id) ?? t.yaw;
     const waveDmg = this.damageById.get(id) ?? 8;
     const scaled = pveEliteProjectileDamage(abilityId, waveDmg);
+    const speedMul = pveEliteProjectileSpeedMul(abilityId);
     this.combat.fireProjectileFrom(
       id,
       {
@@ -585,7 +610,10 @@ export class WaveDirector {
         vulnerable: true,
       },
       abilityId,
-      scaled != null ? { damage: scaled } : undefined,
+      {
+        ...(scaled != null ? { damage: scaled } : {}),
+        ...(speedMul !== 1 ? { speedMul } : {}),
+      },
     );
     t.castPhase = "impact";
     this.meleeCd.set(id, now + 1100);
@@ -643,14 +671,15 @@ export class WaveDirector {
       }
     }
     const step = speed * dt;
+    const from = { x: t.x, z: t.z };
     const next = this.combat.moveWaveMob(
       id,
-      { x: t.x, z: t.z },
+      from,
       { x: t.x + fx * step, z: t.z + fz * step },
     );
+    t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, fx, fz, dt, false);
     t.x = next.x;
     t.z = next.z;
-    t.yaw = Math.atan2(fx, fz);
   }
 
   /** Cheap mob-vs-mob push so packs don't stack (avoids full O(n²) moveAndCollide). */

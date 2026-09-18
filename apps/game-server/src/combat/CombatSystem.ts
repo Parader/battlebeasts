@@ -91,6 +91,8 @@ import {
   clampTargetBeforeWalls,
   lastFreeTBeforeWalls,
   projectileBlockers,
+  MobNavGrid,
+  steerMobStep,
   COMBAT_ENGAGE_LINGER_MS,
   OPENING_SALVO_COOLDOWN_MS,
   PROTECTIVE_INSTINCT_COOLDOWN_MS,
@@ -207,6 +209,7 @@ import {
   resolvePickupRoll,
   applyPveUpgradeOverlay,
   type PveUpgradeDef,
+  PVE_MOB_CORPSE_MS,
 } from "@battlebeasts/shared";
 import {
   runEffectKindFire,
@@ -844,6 +847,8 @@ export class CombatSystem {
   private circleColliders: CircleCollider[] = [];
   /** Cached oriented prop boxes — rebuilt in setStaticColliders. */
   private boxColliders: BoxCollider[] = [];
+  /** Occupancy + flow so wave/dungeon mobs path around map props. */
+  private mobNav: MobNavGrid | null = null;
   /** Reused each collectBodies / tick — avoid GC spikes. */
   private bodyBuffer: CombatBody[] = [];
   private simList: ProjectileSim[] = [];
@@ -851,6 +856,11 @@ export class CombatSystem {
   private kits = new Map<string, CombatSessionKit>();
   /** Wave Assault run overlay — rebaked on top of resolveKit. */
   private pvePicks = new Map<string, PveUpgradeDef[]>();
+  /** Accumulated regen HP waiting for the next 1s popup. */
+  private pveRegenAcc = new Map<string, number>();
+  private pveRegenEmitAt = new Map<string, number>();
+  /** Epoch ms when a slain PvE mob should leave the world. */
+  private corpseUntil = new Map<string, number>();
   /** Last loadout bake args so overlay picks can rebake without a room call. */
   private kitBakeArgs = new Map<
     string,
@@ -919,7 +929,7 @@ export class CombatSystem {
   private efficientGuardReadyAt = new Map<string, number>();
   /** Perfect Defense (GUA_21) ICD tracking (6.0s per defender). */
   private perfectDefenseReadyAt = new Map<string, number>();
-  /** Fortified Resolve (GUA_16) ICD tracking (6.0s per defender). */
+  /** Fortified Resolve (GUA_16) ICD after the halved attack (6s). */
   private fortifiedResolveReadyAt = new Map<string, number>();
   /** Aegis Momentum (GUA_15) ICD tracking (6.0s per defender). */
   private aegisMomentumReadyAt = new Map<string, number>();
@@ -966,6 +976,8 @@ export class CombatSystem {
   private underPressureHits = new Map<string, Map<string, number[]>>();
   /** Guardian's Presence (GUA_09) tick throttle. */
   private lastGuardiansPresenceTick = 0;
+  /** Drop Presence this many ms after leaving ally range (no HUD timer). */
+  private guardiansPresenceUntil = new Map<string, number>();
   /** Shocked discharge ICD — targetId -> readyAt. */
   private shockDischargeReadyAt = new Map<string, number>();
   /** Set by fireEffect — false when the spell did not resolve (e.g. Soul Relay OOR). */
@@ -1048,6 +1060,7 @@ export class CombatSystem {
     this.wallColliders = walls;
     this.circleColliders = circles;
     this.boxColliders = boxes;
+    this.mobNav = new MobNavGrid(this.mobWalkSolids(), COLLISION.dummyRadius + COLLISION.skin);
   }
 
   /** Wave mobs and projectiles ignore this wall; players still collide. */
@@ -1059,6 +1072,11 @@ export class CombatSystem {
   private projectileColliders(): StaticCollider[] {
     if (!this.perimeterWallId) return this.staticColliders;
     return this.staticColliders.filter((c) => c.id !== this.perimeterWallId);
+  }
+
+  /** Map solids mobs collide with (no perimeter, no live rocks/rifts). */
+  private mobWalkSolids(): StaticCollider[] {
+    return this.projectileColliders();
   }
 
   private mobWalkColliders(at?: Vec2): StaticCollider[] {
@@ -1092,14 +1110,22 @@ export class CombatSystem {
     this.rebakeSessionKit(sessionId);
   }
 
+  getPveUpgrades(sessionId: string): PveUpgradeDef[] {
+    return this.pvePicks.get(sessionId)?.slice() ?? [];
+  }
+
   clearPveUpgrades(sessionId: string) {
     this.pvePicks.delete(sessionId);
+    this.pveRegenAcc.delete(sessionId);
+    this.pveRegenEmitAt.delete(sessionId);
     this.rebakeSessionKit(sessionId);
   }
 
   clearAllPveUpgrades() {
     const ids = [...this.pvePicks.keys()];
     this.pvePicks.clear();
+    this.pveRegenAcc.clear();
+    this.pveRegenEmitAt.clear();
     for (const id of ids) this.rebakeSessionKit(id);
   }
 
@@ -1119,6 +1145,8 @@ export class CombatSystem {
     };
     move(this.kits);
     move(this.pvePicks);
+    move(this.pveRegenAcc);
+    move(this.pveRegenEmitAt);
     move(this.kitBakeArgs);
     move(this.cds);
     move(this.casts);
@@ -1642,7 +1670,7 @@ export class CombatSystem {
   moveTarget(targetId: string, from: Vec2, desired: Vec2): Vec2 {
     const otherTargets: Array<[string, { x: number; z: number; hp?: number }]> = [];
     for (const [id, t] of this.room.state.targets.entries()) {
-      if (id === targetId) continue;
+      if (id === targetId || t.hp <= 0) continue;
       otherTargets.push([id, t]);
     }
     return moveAndCollide(
@@ -1667,6 +1695,16 @@ export class CombatSystem {
       this.mobWalkColliders(desired),
       playerCollidersExcept(this.room.state.players.entries(), ""),
     );
+  }
+
+  /** Shared flow toward living hunters so packs path around the same props. */
+  refreshMobFlow(goals: ReadonlyArray<{ x: number; z: number }>, now: number) {
+    this.mobNav?.rebuildFlow(goals, now);
+  }
+
+  /** Desired step toward a goal, detouring around map props when the ray is blocked. */
+  steerWaveMob(from: Vec2, goal: Vec2, step: number): Vec2 {
+    return steerMobStep(from, goal, step, this.mobNav);
   }
 
   /**
@@ -1756,17 +1794,44 @@ export class CombatSystem {
 
   private tickPveRegen(dt: number, now: number) {
     if (!(dt > 0)) return;
-    void now;
+    const emitEveryMs = 1000;
     for (const [sessionId, player] of this.room.state.players.entries()) {
       if (player.disconnected || player.roundDead || player.hp <= 0) continue;
       const regen = this.kits.get(sessionId)?.regenPerSec ?? 0;
-      if (!(regen > 0) || player.maxHp <= 0 || player.hp >= player.maxHp) continue;
-      const amount = player.maxHp * regen * dt;
-      if (amount < 0.05) continue;
-      this.applyHealAmount(sessionId, amount, sessionId, "pve_regen", {
+      if (!(regen > 0) || player.maxHp <= 0) continue;
+      if (player.hp >= player.maxHp) {
+        this.pveRegenAcc.delete(sessionId);
+        continue;
+      }
+      const acc = (this.pveRegenAcc.get(sessionId) ?? 0) + player.maxHp * regen * dt;
+      this.pveRegenAcc.set(sessionId, acc);
+      const last = this.pveRegenEmitAt.get(sessionId);
+      if (last == null) {
+        this.pveRegenEmitAt.set(sessionId, now);
+        continue;
+      }
+      if (now - last < emitEveryMs) continue;
+      this.pveRegenEmitAt.set(sessionId, now);
+      this.pveRegenAcc.set(sessionId, 0);
+      if (acc < 0.5) {
+        this.pveRegenAcc.set(sessionId, acc);
+        continue;
+      }
+      this.applyHealAmount(sessionId, acc, sessionId, "pve_regen", {
         skipHarmonyHooks: true,
         noCrit: true,
       });
+    }
+  }
+
+  private despawnPveCorpses(now: number) {
+    if (this.corpseUntil.size === 0) return;
+    for (const [id, until] of this.corpseUntil) {
+      if (now < until) continue;
+      this.corpseUntil.delete(id);
+      this.knockbacks.delete(id);
+      this.targetSpawns.delete(id);
+      this.room.state.targets.delete(id);
     }
   }
 
@@ -1921,6 +1986,14 @@ export class CombatSystem {
     const attacker = this.room.state.targets.get(attackerTargetId);
     if (!target || !attacker || target.hp <= 0 || attacker.hp <= 0) return;
     if (this.isHiddenFromAutoTarget(targetSessionId)) return;
+    if (this.meleeBlockedByHandShield(
+      { x: attacker.x, z: attacker.z },
+      { x: target.x, z: target.z },
+      targetSessionId,
+    )) {
+      this.fireHandShieldRetaliate(targetSessionId, Date.now());
+      return;
+    }
     this.applyRawDamage(targetSessionId, damage, attackerTargetId, abilityId, {
       triggersCounter: true,
     });
@@ -2077,7 +2150,7 @@ export class CombatSystem {
     ownerId: string,
     body: CombatBody,
     abilityId: string,
-    opts?: { damage?: number },
+    opts?: { damage?: number; speedMul?: number },
   ): boolean {
     const def = ABILITIES[abilityId];
     if (!def || def.shape !== "projectile") return false;
@@ -2089,6 +2162,14 @@ export class CombatSystem {
     sim.ownerId = ownerId;
     if (opts?.damage != null && Number.isFinite(opts.damage) && opts.damage >= 0) {
       sim.damage = opts.damage;
+    }
+    const speedMul = opts?.speedMul;
+    if (speedMul != null && Number.isFinite(speedMul) && speedMul > 0 && speedMul !== 1) {
+      sim.vx *= speedMul;
+      sim.vz *= speedMul;
+      if (typeof sim.baseSpeed === "number") sim.baseSpeed *= speedMul;
+      if (typeof sim.projectileSpeed === "number") sim.projectileSpeed *= speedMul;
+      sim.life /= speedMul;
     }
     this.applyTalentProjectileRadii(ownerId, sim);
     this.stampProjectileBubblePass(sim, Date.now());
@@ -2139,6 +2220,7 @@ export class CombatSystem {
     this.aegisMomentumReadyAt.delete(sessionId);
     this.frontlineSupportReadyAt.delete(sessionId);
     this.sharedProtectionReadyAt.delete(sessionId);
+    this.guardiansPresenceUntil.delete(sessionId);
     for (const key of [...this.controlIcdReadyAt.keys()]) {
       if (key.includes(`:${sessionId}`)) this.controlIcdReadyAt.delete(key);
     }
@@ -3502,6 +3584,7 @@ export class CombatSystem {
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
     this.tickPveRegen(dt, now);
+    this.despawnPveCorpses(now);
 
     // Periodic sweep for expired transient combat maps so long-running hub rooms don't leak entries
     if (this.exposedAngleTargets.size > 0) {
@@ -4442,6 +4525,16 @@ export class CombatSystem {
   private fireEffect(sessionId: string, player: PlayerState, def: AbilityDef, now: number): boolean {
     this.lastFireCommitted = true;
     this.consumeSpellbreakerCharges(sessionId, def, now);
+    // Open Relentless Pursuit / Momentum Engine window at the start of travel
+    // so a hit during the dash still counts as "within 3 seconds of moving".
+    if (
+      isFlowMovementAbility(def) &&
+      !this.flowRepeatActive.has(sessionId) &&
+      (this.kits.get(sessionId)?.hasRelentlessPursuit ||
+        this.kits.get(sessionId)?.hasMomentumEngine)
+    ) {
+      this.statuses.apply(sessionId, "flowEngage", sessionId, now, { durationMs: 3000 });
+    }
     const ownerBody = this.playerBody(sessionId, player);
     const travel = resolveTravel(def);
     const deferHit = travel.mode === "translate" && travel.effectOnArrive === true;
@@ -10958,6 +11051,12 @@ export class CombatSystem {
     const target = this.room.state.players.get(targetId);
     if (!target || target.hp <= 0 || target.disconnected) return false;
     if (!this.statuses.has(targetId, "handShielding")) return false;
+    const fx = Math.sin(target.yaw);
+    const fz = Math.cos(target.yaw);
+    const toAx = attackerPos.x - target.x;
+    const toAz = attackerPos.z - target.z;
+    // Behind the caster — the disc does not cover the back.
+    if (toAx * fx + toAz * fz <= 0) return false;
     const shieldCenter = pointInFront(
       { x: target.x, z: target.z },
       target.yaw,
@@ -10969,6 +11068,11 @@ export class CombatSystem {
       z: shieldCenter.z,
       radius: HAND_SHIELD_CAST.shieldRadius,
     };
+    const reach = bubble.radius + COMBAT.playerHitRadius;
+    const ox = attackerPos.x - bubble.x;
+    const oz = attackerPos.z - bubble.z;
+    // Close contact: the striker is already inside the disc.
+    if (ox * ox + oz * oz <= reach * reach) return true;
     if (
       projectileEntersProtectionBubble(
         attackerPos.x,
@@ -11427,6 +11531,11 @@ export class CombatSystem {
     if (!dealt) return;
     if (opts?.directSpell !== false) {
       this.trySoulRelayTrigger(attackerSessionId, abilityId, dealt);
+      // Rebound Window is first *direct* enemy hit only — not DoT/ground ticks.
+      if (attackerSessionId !== targetId) {
+        this.tryProcReboundWindow(attackerSessionId, now);
+        this.tryProcReboundWindow(targetId, now);
+      }
     }
     const def = ABILITIES[abilityId];
     if (def?.applyOnHit?.length) {
@@ -12069,16 +12178,31 @@ export class CombatSystem {
     if (now - this.lastGuardiansPresenceTick < 250) return;
     this.lastGuardiansPresenceTick = now;
 
+    const want = new Set<string>();
     this.room.state.players.forEach((player, sessionId) => {
       const kit = this.kits.get(sessionId);
       if (!kit?.hasGuardiansPresence) return;
       if (player.hp <= 0 || player.disconnected || player.role === "spectator" || player.roundDead) return;
       const allies = this.getNearbyAllies(sessionId, 8);
-      if (allies.length > 0) {
-        this.statuses.apply(sessionId, "guardiansPresence", sessionId, now, { durationMs: 1000 });
-        for (const allyId of allies) {
-          this.statuses.apply(allyId, "guardiansPresence", sessionId, now, { durationMs: 1000 });
+      if (allies.length === 0) return;
+      want.add(sessionId);
+      for (const allyId of allies) want.add(allyId);
+    });
+
+    for (const id of want) this.guardiansPresenceUntil.set(id, now + 500);
+
+    this.room.state.players.forEach((_player, sessionId) => {
+      const keepUntil = this.guardiansPresenceUntil.get(sessionId) ?? 0;
+      const on = want.has(sessionId) || now < keepUntil;
+      if (on) {
+        if (!this.statuses.has(sessionId, "guardiansPresence")) {
+          this.statuses.apply(sessionId, "guardiansPresence", sessionId, now);
         }
+        return;
+      }
+      this.guardiansPresenceUntil.delete(sessionId);
+      if (this.statuses.has(sessionId, "guardiansPresence")) {
+        this.statuses.remove(sessionId, "guardiansPresence");
       }
     });
   }
@@ -12272,7 +12396,7 @@ export class CombatSystem {
       const readyAt = this.perfectDefenseReadyAt.get(defenderId) ?? 0;
       if (now >= readyAt && !this.statuses.has(defenderId, "perfectDefense")) {
         this.perfectDefenseReadyAt.set(defenderId, now + 6000);
-        this.statuses.apply(defenderId, "perfectDefense", defenderId, now, { durationMs: 2000 });
+        this.statuses.apply(defenderId, "perfectDefense", defenderId, now, { durationMs: 4000 });
       }
     }
   }
@@ -12431,11 +12555,11 @@ export class CombatSystem {
     let dealt = Math.max(0, Math.round(scaleForCrit(scaledIn, crit, critMult) * resistMul));
     const shockStacks = this.statuses.getStacks(targetId, "shocked");
 
-    // Fortified Resolve (GUA_16) Anti-Burst Check: reduce hit >= 10% max HP by 25%
-    if (this.statuses.has(targetId, "fortifiedResolve") && dealt > 0) {
-      const tgtMaxHp = this.readVitals(targetId)?.maxHp ?? 100;
-      if (dealt >= tgtMaxHp * 0.10) {
-        dealt = Math.round(dealt * 0.75);
+    // Fortified Resolve (GUA_16): next attack deals 50% damage, then 6s ICD.
+    if (this.statuses.has(targetId, "fortifiedResolve") && dealt > 0 && attackerSessionId !== targetId) {
+      const tick = getStatus(abilityId);
+      if (tick?.mechanic !== "dot") {
+        dealt = Math.round(dealt * 0.5);
         this.statuses.remove(targetId, "fortifiedResolve");
         this.fortifiedResolveReadyAt.set(targetId, now + 6000);
       }
@@ -12460,7 +12584,7 @@ export class CombatSystem {
         this.noteTookDamage(targetId, now);
 
         if (attackerSessionId !== targetId) {
-          this.tryProcFlowOnDirectDamage(attackerSessionId, targetId, abilityId, now);
+          this.tryProcFlowEngageFromHit(attackerSessionId, targetId, now);
           // GUA_06 Under Pressure hit tracking
           if (tgtKit?.underPressureDr && tgtKit.underPressureDr > 0) {
             this.noteUnderPressureHit(targetId, attackerSessionId, now);
@@ -12527,6 +12651,7 @@ export class CombatSystem {
         this.noteDealtDamage(attackerSessionId, now);
         if (salvoMul > 1) this.commitOpeningSalvo(attackerSessionId, now);
         this.applyDestructionOnHit(attackerSessionId, targetId, abilityId, dist, now);
+        this.tryProcFlowEngageFromHit(attackerSessionId, targetId, now);
       }
       if (dealt > 0) {
         decoy.hp = Math.max(0, decoy.hp - dealt);
@@ -12557,10 +12682,12 @@ export class CombatSystem {
 
     const target = this.room.state.targets.get(targetId);
     if (target) {
+      if (target.hp <= 0) return 0;
       if (scaledIn > 0) {
         this.noteDealtDamage(attackerSessionId, now);
         if (salvoMul > 1) this.commitOpeningSalvo(attackerSessionId, now);
         this.applyDestructionOnHit(attackerSessionId, targetId, abilityId, dist, now);
+        this.tryProcFlowEngageFromHit(attackerSessionId, targetId, now);
       }
       if (dealt > 0) {
         target.hp = Math.max(0, target.hp - dealt);
@@ -12608,8 +12735,7 @@ export class CombatSystem {
         } else {
           target.statuses.clear();
           this.knockbacks.delete(targetId);
-          this.targetSpawns.delete(targetId);
-          this.room.state.targets.delete(targetId);
+          this.corpseUntil.set(targetId, Date.now() + PVE_MOB_CORPSE_MS);
         }
       }
       return damageForLeech;
@@ -13461,6 +13587,7 @@ export class CombatSystem {
       });
     });
     this.room.state.targets.forEach((t) => {
+      if (t.hp <= 0) return;
       bodies.push({
         id: t.id,
         x: t.x,
@@ -13856,17 +13983,13 @@ export class CombatSystem {
     });
   }
 
-  private tryProcFlowOnDirectDamage(
-    attackerId: string,
-    targetId: string,
-    abilityId: string,
-    now: number,
-  ) {
-    if (!ABILITIES[abilityId]) return;
-    this.tryProcReboundWindow(attackerId, now);
-    this.tryProcReboundWindow(targetId, now);
+  /** Relentless Pursuit / Momentum Engine — any combatant, including dummies and wave mobs. */
+  private tryProcFlowEngageFromHit(attackerId: string, targetId: string, now: number) {
+    if (attackerId === targetId) return;
     this.tryProcFlowEngageHaste(attackerId, now);
-    this.tryProcFlowEngageHaste(targetId, now);
+    if (this.room.state.players.has(targetId)) {
+      this.tryProcFlowEngageHaste(targetId, now);
+    }
   }
 
   private tryProcReboundWindow(sessionId: string, now: number) {

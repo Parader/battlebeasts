@@ -1,5 +1,28 @@
 [
   {
+    "id": "2026-09-18-pve-pathing",
+    "title": "Wave Assault pathing & scenery",
+    "date": "2026-09-18",
+    "content": [
+      "Wave Assault map layout and scenery updated",
+      "Wave Assault ladder now tracks team bests, with filters for party size",
+      "Shop sells a third saved loadout (unlock the second slot first)"
+    ],
+    "highlights": [
+      "Wave Assault mobs path around props instead of walking straight through them",
+      "Mobs face the way they are walking, then turn to you when they attack or cast",
+      "When a prop hides you, an ally, or an enemy, a silhouette shows through — stealthed hunters stay hidden",
+      "Wave Assault HUD shows the party's combined score and a list of drafted buffs"
+    ],
+    "fixes": [
+      "Void Disc keeps moving when you turn back on yourself"
+    ],
+    "balance": [
+      "Fortified Resolve now cuts the next incoming attack by 50% (DoT ticks no longer consume it)",
+      "After a block, the +25% block-chance window lasts 4s (was 2s)"
+    ]
+  },
+  {
     "id": "2026-09-18-dungeon",
     "title": "Dungeon instances",
     "date": "2026-09-18",

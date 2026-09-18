@@ -6,13 +6,135 @@
       "offsetX": 0.026,
       "offsetZ": -0.128
     },
+    "cemetery/PP_Broken_Fireplace_01": {
+      "mode": "circle",
+      "radius": 0.799
+    },
+    "cemetery/PP_Broken_Stand_01": {
+      "mode": "box",
+      "halfX": 1.543,
+      "halfZ": 0.893,
+      "yaw": 0
+    },
     "cemetery/PP_Cemetery_Grass_03": {
       "mode": "none"
+    },
+    "cemetery/PP_Cemetery_Pebbles_02": {
+      "mode": "none"
+    },
+    "cemetery/PP_Cemetery_Pebbles_03": {
+      "mode": "none"
+    },
+    "cemetery/PP_Cemetery_Pebbles_04": {
+      "mode": "none"
+    },
+    "cemetery/PP_Cemetery_Pebbles_05": {
+      "mode": "none"
+    },
+    "cemetery/PP_Cemetery_Pebbles_06": {
+      "mode": "none"
+    },
+    "cemetery/PP_Cemetery_Pebbles_07": {
+      "mode": "none"
+    },
+    "cemetery/PP_Cemetery_Pebbles_08": {
+      "mode": "none"
+    },
+    "cemetery/PP_Crumble_Small_Wooden_House_01": {
+      "mode": "box",
+      "halfX": 2.11,
+      "halfZ": 1.91,
+      "yaw": 0,
+      "offsetX": -0.046,
+      "offsetZ": -0.2
+    },
+    "cemetery/PP_Dead_Tree_01": {
+      "mode": "circle",
+      "radius": 1.751,
+      "offsetX": -0.267
+    },
+    "cemetery/PP_Death_Altar_01": {
+      "mode": "box",
+      "halfX": 1.333,
+      "halfZ": 0.933,
+      "yaw": 0,
+      "offsetZ": -0.15
+    },
+    "cemetery/PP_Grave_Plateau_01": {
+      "mode": "box",
+      "halfX": 3.441,
+      "halfZ": 2.741,
+      "yaw": 0,
+      "offsetX": 0.011999999999999997,
+      "offsetZ": -0.2
+    },
+    "cemetery/PP_Hole_Shovel_01": {
+      "mode": "none"
+    },
+    "cemetery/PP_Ruins_01": {
+      "mode": "box",
+      "halfX": 1.722,
+      "halfZ": 0.881,
+      "yaw": 0
+    },
+    "cemetery/PP_Ruins_02": {
+      "mode": "circle",
+      "radius": 1.646
+    },
+    "cemetery/PP_Ruins_03": {
+      "mode": "box",
+      "halfX": 1.452,
+      "halfZ": 1.455,
+      "yaw": 0
+    },
+    "cemetery/PP_Ruins_04": {
+      "mode": "circle",
+      "radius": 1.5425
+    },
+    "cemetery/PP_Ruins_05": {
+      "mode": "none"
+    },
+    "cemetery/PP_Ruins_06": {
+      "mode": "box",
+      "halfX": 2.228,
+      "halfZ": 0.606,
+      "yaw": 0
+    },
+    "cemetery/PP_Ruins_07": {
+      "mode": "box",
+      "halfX": 1.596,
+      "halfZ": 0.599,
+      "yaw": 0,
+      "offsetX": -0.015
+    },
+    "cemetery/PP_Ruins_08": {
+      "mode": "box",
+      "halfX": 1.525,
+      "halfZ": 0.667,
+      "yaw": 0
+    },
+    "cemetery/PP_Tombstone_01": {
+      "mode": "box",
+      "halfX": 0.835,
+      "halfZ": 0.735,
+      "yaw": 0
+    },
+    "cemetery/PP_Tombstone_Sarcophagus_01": {
+      "mode": "box",
+      "halfX": 1.259,
+      "halfZ": 0.853,
+      "yaw": 0
     },
     "cemetery/PP_Tree_Spooky_05": {
       "mode": "circle",
       "radius": 0.957,
       "offsetX": 0.127
+    },
+    "cemetery/PP_Tree_Spooky_08": {
+      "mode": "circle",
+      "radius": 0.641,
+      "offsetX": 0.192,
+      "offsetZ": -0.167
     },
     "cemetery/PP_Tree_Spooky_10": {
       "mode": "circle",
@@ -25,6 +147,15 @@
       "radius": 1.286,
       "offsetX": 0.891,
       "offsetZ": 0.5
+    },
+    "desert/PP_Crumbles_01": {
+      "mode": "circle",
+      "radius": 1.21
+    },
+    "desert/PP_Pile_Of_Crates_01": {
+      "mode": "circle",
+      "radius": 1.03,
+      "offsetZ": -0.056
     },
     "desert/PP_Sphinx_01": {
       "mode": "none"
@@ -66,7 +197,7 @@
     },
     "forest/PP_Tree_Stump_04": {
       "mode": "circle",
-      "radius": 0.727,
+      "radius": 0.677,
       "blocksProjectiles": false
     },
     "forest/PP_Tree_Trunk_03": {

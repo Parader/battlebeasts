@@ -79,11 +79,19 @@ export const SHOP_ITEMS: Record<string, ShopItemDef> = {
   },
   loadout_slot_2: {
     id: "loadout_slot_2",
-    name: "Loadout Preset Slot",
+    name: "Second Loadout",
     category: "loadouts",
     cost: coins(80 * COPPER_PER_SILVER),
     grant: { kind: "loadout_slot", toCount: 2 },
-    description: "Unlock a second saved spell loadout",
+    description: "Unlock a second saved spell + talent loadout",
+  },
+  loadout_slot_3: {
+    id: "loadout_slot_3",
+    name: "Third Loadout",
+    category: "loadouts",
+    cost: coins(200 * COPPER_PER_SILVER),
+    grant: { kind: "loadout_slot", toCount: 3 },
+    description: "Unlock a third saved spell + talent loadout. Requires the second slot.",
   },
   flex_slot_1: {
     id: "flex_slot_1",

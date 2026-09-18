@@ -2,8 +2,8 @@
 
 import type { CombatSessionKit } from "./talentKit";
 
-/** Draft every N waves. Commons are small, so 3 beats 5 on a 16s clock. */
-export const PVE_UPGRADE_EVERY_WAVES = 3;
+/** Draft every N mobs slain. Waves still roll on their own clock. */
+export const PVE_UPGRADE_EVERY_KILLS = 10;
 export const PVE_UPGRADE_OFFER_COUNT = 3;
 export const PVE_MOVE_SPEED_CAP = 1.45;
 export const PVE_COOLDOWN_FLOOR = 0.65;
@@ -135,12 +135,12 @@ export function pveUpgradeById(id: string): PveUpgradeDef | undefined {
   return BY_ID.get(id);
 }
 
-export function pveUpgradeDraftDue(nextWaveIndex: number): boolean {
-  return nextWaveIndex >= PVE_UPGRADE_EVERY_WAVES && nextWaveIndex % PVE_UPGRADE_EVERY_WAVES === 0;
+export function pveUpgradeDraftDue(kills: number): boolean {
+  return kills > 0 && kills % PVE_UPGRADE_EVERY_KILLS === 0;
 }
 
-export function pveUpgradeDraftBeat(waveIndex: number): number {
-  return Math.max(1, Math.round(waveIndex / PVE_UPGRADE_EVERY_WAVES));
+export function pveUpgradeDraftBeat(kills: number): number {
+  return Math.max(1, Math.floor(kills / PVE_UPGRADE_EVERY_KILLS));
 }
 
 /** Later drafts slightly luckier — bump rare+ weights. */

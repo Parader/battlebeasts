@@ -13,6 +13,8 @@ import {
   PVE_BOSS_KIND,
   PVE_ZOMBIE_BASE_SPEED,
   PVE_ZOMBIE_KIND,
+  PVE_MOB_CORPSE_MS,
+  PVE_MOB_CORPSE_FADE_MS,
   STARTER_COLORS,
   dungeonAuraTint,
   pveEliteTint,
@@ -44,9 +46,11 @@ import {
 } from "./characterVisual";
 import { SpiritVesselFx } from "./SpiritVesselFx";
 import { VesselBody } from "./VesselBody";
-import { CharacterAnimationController, heroAnimationConfig } from "./animation";
+import { CharacterAnimationController, heroAnimationConfig, playRandomDeath } from "./animation";
 import { ZOMBIE_URL, zombieAnimationConfig } from "./zombieAsset";
 import { registerCharacterRoot } from "./characterRoots";
+import { OcclusionSilhouette } from "./OcclusionSilhouette";
+import { deathSinkOffsetY, startDeathSink, type DeathSinkState } from "./deathSink";
 import { StatusOrnaments } from "./StatusOrnaments";
 import { SoulMarkOrnament } from "./SoulMarkOrnament";
 import { StatusHpBadgeStack } from "./StatusHpBadgeStack";
@@ -97,6 +101,12 @@ import {
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
 import { SpellbreakerProjectileOrbs } from "./vfx/SpellbreakerProjectileOrbs";
+
+function pveCorpseOpacity(deadForMs: number): number {
+  const fadeStart = PVE_MOB_CORPSE_MS - PVE_MOB_CORPSE_FADE_MS;
+  if (deadForMs <= fadeStart) return 1;
+  return Math.max(0, 1 - (deadForMs - fadeStart) / PVE_MOB_CORPSE_FADE_MS);
+}
 
 export { Volcanoes } from "./vfx/Volcanoes";
 export { RockWalls } from "./vfx/RockWalls";
@@ -325,8 +335,8 @@ export function CombatFxMeshes() {
 export type DamagePopup = {
     key: number;
     amount: number;
-    /** Heal popups render green `+N`; damage stays red. */
-    kind?: "damage" | "heal";
+    /** Heal popups render green `+N`; lifesteal is red `+N`; damage stays red. */
+    kind?: "damage" | "heal" | "lifesteal";
     /** Critical hit/heal — larger, accented popup. */
     crit?: boolean;
     x: number;
@@ -344,6 +354,8 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
     const group = useRef<THREE.Group>(null);
     const el = useRef<HTMLDivElement>(null);
     const isHeal = popup.kind === "heal";
+    const isLifesteal = popup.kind === "lifesteal";
+    const isGain = isHeal || isLifesteal;
     const isCrit = popup.crit === true;
 
     useFrame(() => {
@@ -374,6 +386,10 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
         ? isCrit
             ? "#4ade80"
             : "#22c55e"
+        : isLifesteal
+          ? isCrit
+            ? "#fb7185"
+            : "#f43f5e"
         : isCrit
           ? "#f87171"
           : "#fecaca";
@@ -381,6 +397,10 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
         ? isCrit
             ? "0 1px 0 #14532d, 0 0 14px rgba(74,222,128,0.95)"
             : "0 1px 0 #14532d, 0 0 10px rgba(34,197,94,0.9)"
+        : isLifesteal
+          ? isCrit
+            ? "0 1px 0 #881337, 0 0 14px rgba(244,63,94,0.95)"
+            : "0 1px 0 #881337, 0 0 10px rgba(244,63,94,0.9)"
         : isCrit
           ? "0 1px 0 #7f1d1d, 0 0 14px rgba(239,68,68,0.95)"
           : "0 1px 0 #450a0a, 0 0 8px rgba(127,29,29,0.85)";
@@ -402,7 +422,7 @@ function DamagePopupMesh({ popup }: { popup: DamagePopup }) {
                         willChange: "transform, opacity",
                     }}
                 >
-                    {isHeal ? `+${Math.round(popup.amount)}` : Math.round(popup.amount)}
+                    {isGain ? `+${Math.round(popup.amount)}` : Math.round(popup.amount)}
                     {isCrit ? "!" : ""}
                 </div>
             </Html>
@@ -524,6 +544,9 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
   const seeded = useRef(false);
   const lastAttackKey = useRef("");
   const movingRef = useRef(false);
+  const wasDeadRef = useRef(false);
+  const deathSinkRef = useRef<DeathSinkState | null>(null);
+  const diedAtMsRef = useRef(0);
   const gltf = useGLTF(ZOMBIE_URL);
   const scene = useMemo(() => {
     const idle =
@@ -582,12 +605,47 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
     const now = performance.now();
     const safeDt = Math.min(0.05, Math.max(0, dt));
     const yaw = t.yaw ?? 0;
+    const dead = typeof t.hp === "number" && t.hp <= 0;
+    const controller = controllerRef.current;
 
     if (!seeded.current) {
       renderPos.current.set(t.x, 0, t.z);
       lastServer.current = { x: t.x, z: t.z, t: now };
       renderYaw.current = yaw;
       seeded.current = true;
+    }
+
+    if (dead && !wasDeadRef.current) {
+      wasDeadRef.current = true;
+      lastAttackKey.current = "";
+      diedAtMsRef.current = now;
+      vel.current.set(0, 0, 0);
+      movingRef.current = false;
+      if (controller) {
+        controller.cancelFullBodyAction();
+        const played = playRandomDeath(controller, gltf.animations);
+        deathSinkRef.current = startDeathSink(played?.duration ?? 2.6);
+      } else {
+        deathSinkRef.current = startDeathSink(2.6);
+      }
+    } else if (!dead && wasDeadRef.current) {
+      wasDeadRef.current = false;
+      deathSinkRef.current = null;
+      diedAtMsRef.current = 0;
+      setCharacterOpacity(scene, 1);
+      controller?.cancelFullBodyAction();
+    }
+
+    if (dead) {
+      g.position.set(renderPos.current.x, deathSinkOffsetY(deathSinkRef.current, now), renderPos.current.z);
+      if (body.current) body.current.rotation.y = renderYaw.current;
+      setCharacterOpacity(scene, pveCorpseOpacity(now - diedAtMsRef.current));
+      if (controller) {
+        _zombieVel.set(0, 0, 0);
+        controller.setMovementFromYaw(_zombieVel, yaw, PVE_ZOMBIE_BASE_SPEED);
+        controller.update(paused ? 0 : safeDt);
+      }
+      return;
     }
 
     const serverMoved = t.x !== lastServer.current.x || t.z !== lastServer.current.z;
@@ -654,7 +712,6 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
       movingRef.current = true;
     }
 
-    const controller = controllerRef.current;
     if (controller) {
       const attacking = t.castAbilityId === "zombie_melee" && t.castPhase === "impact";
       const attackKey = attacking ? `${targetId}:${t.castAbilityId}:${t.castPhase}` : "";
@@ -689,6 +746,14 @@ function ZombieAvatar({ room, targetId }: { room: Room | null; targetId: string 
   return (
     <group ref={root}>
       <group ref={body}>
+        <OcclusionSilhouette
+          rootRef={body}
+          color={AIM_RELATION_COLORS.enemy}
+          getEnabled={() => {
+            const t = room?.state?.targets?.get(targetId) as { hp?: number } | undefined;
+            return (t?.hp ?? 0) > 0;
+          }}
+        />
         <primitive object={scene} />
         <StatusOrnaments
           characterRoot={scene}
@@ -963,6 +1028,10 @@ function DecoyAvatar({
     return (
         <group ref={group}>
             <group ref={bodyRef}>
+                <OcclusionSilhouette
+                    rootRef={bodyRef}
+                    color={AIM_RELATION_COLORS[relation]}
+                />
                 <primitive object={scene} />
                 <VesselBody characterRoot={scene} body={vessel} color={colorRef.current} />
                 <EquippedCosmetics characterRoot={scene} equipped={equipped} body={vessel} />
@@ -1033,6 +1102,9 @@ function PracticeDummyAvatar({
     const controllerRef = useRef<CharacterAnimationController | null>(null);
     const lastCastId = useRef("");
     const tintedFor = useRef("");
+    const wasDeadRef = useRef(false);
+    const deathSinkRef = useRef<DeathSinkState | null>(null);
+    const diedAtMsRef = useRef(0);
     const gltf = useGLTF(CHARACTER_URL);
     const scene = useMemo(() => {
         const idle =
@@ -1108,30 +1180,54 @@ function PracticeDummyAvatar({
         }
         if (controller && t) {
             const yaw = t?.yaw ?? 0;
-            controller.setStunned(hasStatusId(t?.statuses, "stunned"));
-
-            let vx = 0;
-            let vz = 0;
-            if (prevPos.current.initialized && safeDt > 1e-4) {
-                vx = (t.x - prevPos.current.x) / safeDt;
-                vz = (t.z - prevPos.current.z) / safeDt;
-            } else {
-                prevPos.current.initialized = true;
-            }
-            prevPos.current.x = t.x;
-            prevPos.current.z = t.z;
-
-            const speed = Math.hypot(vx, vz);
-            const maxSpeed = elite ? PVE_ZOMBIE_BASE_SPEED * 0.78 : MOVE_SPEED;
-            if (speed > 0.28) {
-                dummyVel.current.set(vx, 0, vz);
-                controller.setMovementFromYaw(dummyVel.current, yaw, maxSpeed);
-            } else {
-                controller.setMovementFromYaw(_zeroVel, yaw, maxSpeed);
+            const dead = typeof t.hp === "number" && t.hp <= 0;
+            const now = performance.now();
+            if (dead && !wasDeadRef.current) {
+                wasDeadRef.current = true;
+                lastCastId.current = "";
+                diedAtMsRef.current = now;
+                dummyVel.current.set(0, 0, 0);
+                controller.cancelAbilityAnimation();
+                const played = playRandomDeath(controller, gltf.animations);
+                deathSinkRef.current = startDeathSink(played?.duration ?? 2.6);
+            } else if (!dead && wasDeadRef.current) {
+                wasDeadRef.current = false;
+                deathSinkRef.current = null;
+                diedAtMsRef.current = 0;
+                setCharacterOpacity(scene, 1);
+                controller.cancelFullBodyAction();
             }
 
-            syncAbilityCast(controller, t, lastCastId);
-            controller.update(safeDt);
+            if (dead) {
+                controller.setStunned(false);
+                controller.setMovementFromYaw(_zeroVel, yaw, MOVE_SPEED);
+                controller.update(safeDt);
+            } else {
+                controller.setStunned(hasStatusId(t?.statuses, "stunned"));
+
+                let vx = 0;
+                let vz = 0;
+                if (prevPos.current.initialized && safeDt > 1e-4) {
+                    vx = (t.x - prevPos.current.x) / safeDt;
+                    vz = (t.z - prevPos.current.z) / safeDt;
+                } else {
+                    prevPos.current.initialized = true;
+                }
+                prevPos.current.x = t.x;
+                prevPos.current.z = t.z;
+
+                const speed = Math.hypot(vx, vz);
+                const maxSpeed = elite ? PVE_ZOMBIE_BASE_SPEED * 0.78 : MOVE_SPEED;
+                if (speed > 0.28) {
+                    dummyVel.current.set(vx, 0, vz);
+                    controller.setMovementFromYaw(dummyVel.current, yaw, maxSpeed);
+                } else {
+                    controller.setMovementFromYaw(_zeroVel, yaw, maxSpeed);
+                }
+
+                syncAbilityCast(controller, t, lastCastId);
+                controller.update(safeDt);
+            }
         }
 
         const g = root.current;
@@ -1143,14 +1239,21 @@ function PracticeDummyAvatar({
         }
         g.visible = true;
         const yaw = t.yaw ?? 0;
+        const dead = typeof t.hp === "number" && t.hp <= 0;
         if (b) b.rotation.y = yaw;
         const aim = aimRef.current;
-        if (aim) aim.rotation.y = yaw;
+        if (aim) {
+            aim.rotation.y = yaw;
+            aim.visible = !dead;
+        }
 
-        const targetY = t.y ?? 0;
+        const targetY = (t.y ?? 0) + (dead ? deathSinkOffsetY(deathSinkRef.current) : 0);
         g.position.set(t.x, targetY, t.z);
         const visualScale = boss ? Math.max(1.8, t.scale ?? 2) : elite ? PVE_ELITE_SCALE : 1;
         g.scale.setScalar(visualScale);
+        if (dead) {
+            setCharacterOpacity(scene, pveCorpseOpacity(performance.now() - diedAtMsRef.current));
+        }
     });
 
     const live = room?.state?.targets?.get(targetId) as
@@ -1178,6 +1281,15 @@ function PracticeDummyAvatar({
                 </mesh>
             ) : null}
             <group ref={body}>
+                <OcclusionSilhouette
+                    rootRef={body}
+                    color={AIM_RELATION_COLORS.enemy}
+                    chestHeight={boss ? 2.05 : elite ? 1.55 : 1.15}
+                    getEnabled={() => {
+                        const t = room?.state?.targets?.get(targetId) as { hp?: number } | undefined;
+                        return (t?.hp ?? 0) > 0;
+                    }}
+                />
                 <primitive object={scene} />
                 <SpiritVesselFx
                     characterRoot={scene}
@@ -1272,6 +1384,7 @@ function HpBillboard({
     const lastChillStacks = useRef(0);
     const lastShockStacks = useRef(0);
     const lastSpellbreakerStacks = useRef(0);
+    const root = useRef<THREE.Group>(null);
     useFrame(() => {
         const t = room?.state?.targets?.get(targetId) as
             | {
@@ -1282,7 +1395,8 @@ function HpBillboard({
             | undefined;
         const m = fill.current;
         const s = shield.current;
-        if (!m || !t) {
+        if (root.current) root.current.visible = Boolean(t && t.hp > 0);
+        if (!m || !t || t.hp <= 0) {
             syncPoisonBadge(
                 poisonBadge.current,
                 poisonStacksEl.current,
@@ -1449,6 +1563,7 @@ function HpBillboard({
         );
     });
     return (
+        <group ref={root}>
         <Billboard position={[0, y, 0]} follow lockX={false} lockY={false} lockZ={false}>
             <mesh>
                 <planeGeometry args={[1, 0.12]} />
@@ -1502,5 +1617,6 @@ function HpBillboard({
                 spellbreakerRingRef={spellbreakerRing}
             />
         </Billboard>
+        </group>
     );
 }

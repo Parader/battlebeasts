@@ -13,6 +13,7 @@ import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { assetUrl } from "./assetUrl";
 import { DocNpcs } from "./DocNpcs";
 import { reportMapPropMounted, reportMapPropUnmounted } from "./mapPropMountGate";
+import { useOccluder } from "./useOccluder";
 import { PaintedGround, type HeightGrid } from "./PaintedGround";
 
 /**
@@ -88,6 +89,7 @@ function BakedMap({
     reportMapPropMounted(mapId, "__baked__");
     return () => reportMapPropUnmounted(mapId, "__baked__");
   }, [mapId, scene]);
+  useOccluder(scene);
 
   return <primitive object={scene} />;
 }
@@ -386,6 +388,7 @@ function InstancedPart({
   }, [geometry, material, local, matrices]);
 
   useEffect(() => () => mesh.dispose(), [mesh]);
+  useOccluder(mesh);
 
   return <primitive object={mesh} />;
 }

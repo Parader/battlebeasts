@@ -173,7 +173,7 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
     parts.push("+10% move speed · +10% damage dealt");
   }
   if (row.statusId === "fortifiedResolve") {
-    parts.push("Fortified Resolve · next hit ≥ 10% max HP reduced by 25%");
+    parts.push("Next attack deals 50% less damage");
   }
   if (row.statusId === "bastion") {
     parts.push("+12% damage reduction (Bastion bond)");
@@ -241,17 +241,16 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
   if (row.statusId === "phaseShield") {
     parts.push(`Phase Shield (${row.stacks} HP)`);
   }
-  if (row.statusId === "relentlessPursuit") {
-    parts.push("+15% move speed");
-  }
   if (row.statusId === "momentumEngine") {
-    parts.push("+15% move speed · movement cooldowns recover faster");
+    parts.push("movement cooldowns recover faster");
   }
   if (row.statusId === "phantomCharge") {
     parts.push(`${row.stacks}/3 phantom charges`);
   }
   if (row.statusId === "flowEngage") {
-    parts.push("Damage will ignite pursuit haste");
+    parts.push(
+      "Deal or take damage to gain Relentless Pursuit / Momentum Engine haste",
+    );
   }
   if (row.statusId === "empathicSurge") {
     parts.push(`+${row.stacks}% move speed`);
@@ -297,7 +296,27 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
   }
   if (row.statusId === "fifthSpellCadence") parts.push(`${row.stacks}/5 stacks`);
   if (parts.length === 0) {
-    parts.push(def.polarity === "buff" ? "Buff" : "Debuff");
+    if (def.description) {
+      parts.push(def.description);
+    } else if (def.mechanic === "shield") {
+      parts.push("Absorbs incoming damage");
+    } else if (def.mechanic === "dot") {
+      parts.push("Damage over time");
+    } else if (def.mechanic === "hot") {
+      parts.push("Healing over time");
+    } else if (def.mechanic === "stealth") {
+      parts.push("Invisible to enemies");
+    } else if (def.mechanic === "empower") {
+      parts.push("Deals extra damage");
+    } else if (def.mechanic === "resist") {
+      parts.push("Takes less damage");
+    } else if (def.mechanic === "haste") {
+      parts.push("Moving faster");
+    } else if (def.mechanic === "slow") {
+      parts.push("Moving slower");
+    } else {
+      parts.push(def.polarity === "buff" ? "Beneficial effect" : "Harmful effect");
+    }
   }
   return parts.join(" · ");
 }
@@ -308,7 +327,7 @@ function StatusTooltip({ def, row, now }: { def: StatusDef; row: StatusHudRow; n
   const left = permanent || isAura ? 0 : Math.max(0, row.expiresAt - now);
   return (
     <div
-      className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-max max-w-[200px] -translate-x-1/2"
+      className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-max max-w-[16.5rem] -translate-x-1/2"
       style={{ fontFamily: "var(--bb-font-display)" }}
     >
       <div
@@ -343,7 +362,9 @@ function StatusTooltip({ def, row, now }: { def: StatusDef; row: StatusHudRow; n
         )}
         {isAura && (
           <div className="mt-1 text-[9px] text-[#a09880]">
-            Active while in area
+            {row.statusId === "guardiansPresence"
+              ? "Active while near an ally"
+              : "Active while in area"}
           </div>
         )}
       </div>
@@ -424,7 +445,7 @@ export function StatusBar({ room, sessionId }: { room: Room | null; sessionId: s
                   {row.stacks}
                 </span>
               )}
-              {!permanent && (
+              {!permanent && !isAura && (
                 <div
                   className="absolute bottom-0 left-0 h-0.5 bg-[#c9b27a]"
                   style={{ width: `${frac * 100}%` }}

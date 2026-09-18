@@ -42,11 +42,14 @@ import {
   pveEliteCooldownMs,
   pveElitePickAbility,
   pveEliteProjectileDamage,
+  pveEliteProjectileSpeedMul,
+  pveEliteStrafeDir,
   pveWaveSpeed,
   pveZombieSpeedMul,
   type DungeonRunChestDepth,
   type MapElement,
   type MapDoc,
+  mobWalkYaw,
 } from "@battlebeasts/shared";
 import { mapElementsOfType } from "@battlebeasts/shared";
 import type { CombatSystem } from "../combat/CombatSystem.js";
@@ -446,6 +449,7 @@ export class DungeonDirector {
   private tickMobs(dt: number, now: number) {
     const living = this.livingPlayers();
     this.updateAggro(living);
+    if (living.length > 0) this.combat.refreshMobFlow(living, now);
 
     this.state.targets.forEach((t, id) => {
       if (!isPveInstanceMobKind(t.kind) || t.hp <= 0) return;
@@ -458,7 +462,6 @@ export class DungeonDirector {
       const dx = focus.x - t.x;
       const dz = focus.z - t.z;
       const dist = Math.hypot(dx, dz) || 0.001;
-      t.yaw = Math.atan2(dx, dz);
       if (t.kind === PVE_ZOMBIE_KIND) {
         this.tickZombie(id, t, focus, dx, dz, dist, dt, now);
       } else {
@@ -562,17 +565,17 @@ export class DungeonDirector {
     if (!cc.canMove) return;
     const attacking = Boolean(t.castLockUntil && now < t.castLockUntil);
     if (attacking) {
-      // Hold feet during swing.
+      t.yaw = mobWalkYaw(t.yaw, 0, 0, dx, dz, dt, true);
     } else if (dist > PVE_ZOMBIE_MELEE_RANGE * 0.85) {
       const step = Math.min(dist - 0.4, speed * dt);
-      const next = this.combat.moveWaveMob(
-        id,
-        { x: t.x, z: t.z },
-        { x: t.x + (dx / dist) * step, z: t.z + (dz / dist) * step },
-      );
+      const from = { x: t.x, z: t.z };
+      const desired = this.combat.steerWaveMob(from, { x: focus.x, z: focus.z }, step);
+      const next = this.combat.moveWaveMob(id, from, desired);
+      t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, dx, dz, dt, false);
       t.x = next.x;
       t.z = next.z;
     } else if (cc.canCast) {
+      t.yaw = mobWalkYaw(t.yaw, 0, 0, dx, dz, dt, true);
       const ready = (this.meleeCd.get(id) ?? 0) <= now;
       if (ready) {
         const dmg = this.damageById.get(id) ?? 8;
@@ -582,6 +585,8 @@ export class DungeonDirector {
         t.castPhase = "impact";
         t.castLockUntil = now + 700;
       }
+    } else {
+      t.yaw = mobWalkYaw(t.yaw, 0, 0, dx, dz, dt, true);
     }
   }
 
@@ -644,7 +649,10 @@ export class DungeonDirector {
     }
 
     const casting = Boolean(t.castLockUntil && now < t.castLockUntil);
-    if (casting || !cc.canMove) return;
+    if (casting || !cc.canMove) {
+      if (casting) t.yaw = mobWalkYaw(t.yaw, 0, 0, dx, dz, dt, true);
+      return;
+    }
 
     const nx = dx / dist;
     const nz = dz / dist;
@@ -654,25 +662,28 @@ export class DungeonDirector {
 
     if (tooFar || tooClose) {
       const step = speed * dt;
-      let mx = 0;
-      let mz = 0;
-      if (!los) {
-        const side = id.charCodeAt(id.length - 1) % 2 === 0 ? 1 : -1;
-        mx = nx * 0.65 + -nz * side * 0.55;
-        mz = nz * 0.65 + nx * side * 0.55;
-      } else if (tooClose) {
-        mx = -nx;
-        mz = -nz;
+      let desired: { x: number; z: number };
+      if (!los || tooFar) {
+        desired = this.combat.steerWaveMob(from, { x: focus.x, z: focus.z }, step);
       } else {
-        mx = nx;
-        mz = nz;
+        desired = {
+          x: t.x + -nx * step,
+          z: t.z + -nz * step,
+        };
       }
-      const len = Math.hypot(mx, mz) || 1;
+      const next = this.combat.moveWaveMob(id, from, desired);
+      t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, dx, dz, dt, false);
+      t.x = next.x;
+      t.z = next.z;
+    } else if (inCastRange) {
+      const step = speed * dt * 0.55;
+      const strafe = pveEliteStrafeDir(nx, nz, id);
       const next = this.combat.moveWaveMob(
         id,
         from,
-        { x: t.x + (mx / len) * step, z: t.z + (mz / len) * step },
+        { x: t.x + strafe.x * step, z: t.z + strafe.z * step },
       );
+      t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, dx, dz, dt, true);
       t.x = next.x;
       t.z = next.z;
     }
@@ -733,6 +744,7 @@ export class DungeonDirector {
     const yaw = this.pendingAimYaw.get(id) ?? t.yaw;
     const waveDmg = this.damageById.get(id) ?? 8;
     const scaled = pveEliteProjectileDamage(abilityId, waveDmg);
+    const speedMul = pveEliteProjectileSpeedMul(abilityId);
     this.combat.fireProjectileFrom(
       id,
       {
@@ -745,7 +757,10 @@ export class DungeonDirector {
         vulnerable: true,
       },
       abilityId,
-      scaled != null ? { damage: scaled } : undefined,
+      {
+        ...(scaled != null ? { damage: scaled } : {}),
+        ...(speedMul !== 1 ? { speedMul } : {}),
+      },
     );
     t.castPhase = "impact";
     this.meleeCd.set(id, now + 1100);
@@ -805,14 +820,15 @@ export class DungeonDirector {
       }
     }
     const step = speed * dt;
+    const from = { x: t.x, z: t.z };
     const next = this.combat.moveWaveMob(
       id,
-      { x: t.x, z: t.z },
+      from,
       { x: t.x + fx * step, z: t.z + fz * step },
     );
+    t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, fx, fz, dt, false);
     t.x = next.x;
     t.z = next.z;
-    t.yaw = Math.atan2(fx, fz);
   }
 
   private separateMobs() {

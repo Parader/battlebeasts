@@ -38,6 +38,7 @@ import { PortalChannelAura } from "./vfx/effects/portalChannel";
 import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
 import { RiftArmRing } from "./vfx/effects/riftArmRing";
 import { registerCharacterRoot } from "./characterRoots";
+import { OcclusionSilhouette } from "./OcclusionSilhouette";
 import { isRevengeVanished } from "./revengeVanishRuntime";
 import { getTeleportSlamOpacity } from "./teleportSlamFadeRuntime";
 import { sampleRemoteDashTravel } from "./dashTravelRuntime";
@@ -435,6 +436,19 @@ function RemotePlayerAvatar({
   return (
     <group ref={group}>
       <group ref={bodyRef}>
+        <OcclusionSilhouette
+          rootRef={bodyRef}
+          color={AIM_RELATION_COLORS[relation]}
+          getEnabled={() => {
+            const p = room.state?.players?.get(sessionId) as
+              | { hp?: number; statuses?: Parameters<typeof isStealthedStatus>[0] }
+              | undefined;
+            if (!p || (p.hp ?? 1) <= 0) return false;
+            if (isStealthedStatus(p.statuses)) return false;
+            if (isRevengeVanished(sessionId)) return false;
+            return true;
+          }}
+        />
         <primitive object={scene} />
         <VesselBody characterRoot={scene} body={vessel} color={skinColor} />
         <EquippedCosmetics characterRoot={scene} equipped={equipped} body={vessel} />

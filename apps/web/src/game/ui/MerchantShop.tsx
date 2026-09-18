@@ -72,6 +72,17 @@ function ownsShopItem(
   }
 }
 
+function shopSlotPrerequisiteMet(unlocks: PlayerUnlocks, item: ShopItemDef): boolean {
+  const grant = item.grant;
+  if (grant.kind === "loadout_slot") {
+    return unlocks.loadoutSlotCount === grant.toCount - 1;
+  }
+  if (grant.kind === "flex_slot") {
+    return unlocks.flexSlotCount === grant.toCount - 1;
+  }
+  return true;
+}
+
 type ShopOwnership = { total: number; owned: number; available: number };
 
 function ShopCatStats({ stats }: { stats: ShopOwnership }) {
@@ -399,11 +410,14 @@ export function MerchantPanel({
     : false;
   const selectedNeedsOwnLobby =
     selectedItem?.grant.kind === "lobby_beach_ball" && !isOwnLobby;
+  const selectedNeedsPriorSlot =
+    selectedItem != null && !shopSlotPrerequisiteMet(unlocks, selectedItem);
   const hasAura = ownsNonPlainAura(unlocks.patterns);
   const canBuySelected =
     selectedItem != null &&
     !selectedOwned &&
     !selectedNeedsOwnLobby &&
+    !selectedNeedsPriorSlot &&
     canAffordShopCost(wallet, selectedItem.cost) &&
     !(selectedItem.grant.kind === "pattern_color" && !hasAura);
   const selectedEquipped =
@@ -419,6 +433,7 @@ export function MerchantPanel({
   const canHoldBuyItem = (item: ShopItemDef) =>
     canAffordShopCost(wallet, item.cost) &&
     !ownsShopItem(unlocks, item, beachBallCount) &&
+    shopSlotPrerequisiteMet(unlocks, item) &&
     !(item.grant.kind === "lobby_beach_ball" && !isOwnLobby) &&
     !(item.grant.kind === "pattern_color" && !hasAura);
 
@@ -796,6 +811,12 @@ export function MerchantPanel({
                   )
                 ) : selectedNeedsOwnLobby ? (
                   <p className="bb-meta text-center">Buy beach balls in your own lobby.</p>
+                ) : selectedNeedsPriorSlot ? (
+                  <p className="bb-meta text-center">
+                    {selectedItem.grant.kind === "loadout_slot"
+                      ? "Unlock the previous loadout slot first"
+                      : "Unlock the previous flex slot first"}
+                  </p>
                 ) : (
                   <button
                     type="button"
@@ -837,6 +858,12 @@ export function MerchantPanel({
           <div className="bb-shop__buy-row bb-shop__buy-row--solo">
             {selectedNeedsOwnLobby ? (
               <p className="bb-meta text-center">Buy beach balls in your own lobby.</p>
+            ) : selectedNeedsPriorSlot ? (
+              <p className="bb-meta text-center">
+                {selectedItem.grant.kind === "loadout_slot"
+                  ? "Unlock the previous loadout slot first"
+                  : "Unlock the previous flex slot first"}
+              </p>
             ) : (
               <button
                 type="button"

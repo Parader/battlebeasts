@@ -3,6 +3,7 @@ import { docStore, useEditorSlice } from "../state/docStore";
 import { CATEGORY_LABELS, CATEGORY_ORDER, categorize } from "./categories";
 import { propDisplayName, searchProps, usePropIndex, type PropEntry } from "./manifest";
 import { colliderOverrides } from "./overrides";
+import { PropThumb } from "./PropThumb";
 import { unusable, useUnusableVersion } from "./unusable";
 
 /**
@@ -258,7 +259,9 @@ export const Palette = memo(function Palette() {
                           title={single ? `${first.key}\n${dims(first)}` : undefined}
                         >
                           <span className="caret">{single ? "·" : famOpen ? "▾" : "▸"}</span>
+                          <PropThumb url={first.url} label={propDisplayName(first)} />
                           <span
+                            className="tree-fam-name"
                             style={{
                               color: brushProp === first.key && single ? "var(--accent)" : undefined,
                             }}
@@ -297,6 +300,7 @@ export const Palette = memo(function Palette() {
                               <button
                                 key={v.key}
                                 className={[
+                                  "variant-chip",
                                   brushProp === v.key ? "active" : "",
                                   marked ? "chip--unusable" : "",
                                 ]
@@ -309,9 +313,9 @@ export const Palette = memo(function Palette() {
                                   else arm(v.key);
                                 }}
                                 title={`${v.key}\n${dims(v)}${marked ? "\nMarked unusable" : ""}`}
-                                style={{ padding: "2px 8px", fontSize: 11 }}
                               >
-                                {v.variant}
+                                <PropThumb url={v.url} label={`${propDisplayName(v)} ${v.variant}`} />
+                                <span>{v.variant}</span>
                               </button>
                             );
                           })}

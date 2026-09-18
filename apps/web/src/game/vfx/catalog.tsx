@@ -226,6 +226,11 @@ export function usesLifeLeechFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "lifeLeech";
 }
 
+/** Self-heal combat numbers that are not catalog spells (PvE Blood Drink / regen). */
+export function usesPveHealPopupFx(abilityId: string | undefined): boolean {
+  return abilityId === "pve_lifesteal" || abilityId === "pve_regen";
+}
+
 export function usesFirewallFx(abilityId: string | undefined): boolean {
   return abilityEffectKind(abilityId ? ABILITIES[abilityId] : undefined) === "firewall";
 }

@@ -20,6 +20,11 @@ export const PVE_ZOMBIE_MELEE_DAMAGE = 32;
 export const PVE_ZOMBIE_MELEE_COOLDOWN_MS = 900;
 export const PVE_ZOMBIE_RETARGET_MS = 200;
 
+/** Keep slain wave/dungeon mobs in the world for a death clip + sink before despawn. */
+export const PVE_MOB_CORPSE_MS = 4500;
+/** Fade the corpse during the last second of linger. */
+export const PVE_MOB_CORPSE_FADE_MS = 1000;
+
 /** Legacy clear-beat; waves now roll on a fixed clock (`PVE_WAVE_INTERVAL_MS`). */
 export const PVE_WAVE_CLEAR_MS = 2500;
 
@@ -35,10 +40,21 @@ export const PVE_WAVE_SPAWN_STAGGER_MS = 650;
  * Authored pads give *direction* (come from that side of the map). The actual
  * spawn sits on that ray, close enough that hunters can see and react.
  */
-export const PVE_ENEMY_APPROACH_MIN_M = 14;
-export const PVE_ENEMY_APPROACH_MAX_M = 22;
+export const PVE_ENEMY_APPROACH_MIN_M = 9;
+export const PVE_ENEMY_APPROACH_MAX_M = 13;
 /** Pads closer than this are the holdout itself and are not ingress. */
 export const PVE_ENEMY_INGRESS_MIN_M = 8;
+
+/** Occupancy cell size for PvE pathing around map props. */
+export const PVE_MOB_NAV_CELL_M = 1;
+/** Rebuild the shared flow field at most this often. */
+export const PVE_MOB_NAV_FLOW_MS = 220;
+/** If the walk ray to the focus is clear, skip the flow field and go straight. */
+export const PVE_MOB_NAV_LOS_M = 12;
+/** Turn onto the walk heading (~515°/s) so packs don't snap every frame. */
+export const PVE_MOB_TURN_RAD_PER_SEC = 9;
+/** Displacement below this is treated as standing still for facing. */
+export const PVE_MOB_WALK_YAW_EPS_M = 0.03;
 
 /** First wave enemy count; scales +1/wave, capped. */
 export const PVE_WAVE_BASE_COUNT = 4;

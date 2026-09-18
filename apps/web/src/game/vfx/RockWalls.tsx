@@ -9,6 +9,7 @@ import {
   instantiateRockWallPiles,
   warmRockWallAssets,
 } from "./rockWallAsset";
+import { useOccluderRef } from "../useOccluder";
 
 type RockWallSchema = {
   x: number;
@@ -33,6 +34,7 @@ function RockWallMesh({
   const root = useRef<THREE.Group>(null);
   const anim = useRef<THREE.Group>(null);
   const born = useRef(performance.now());
+  useOccluderRef(root);
 
   const piles = useMemo(() => {
     warmRockWallAssets(scene);

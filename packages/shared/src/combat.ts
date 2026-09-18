@@ -1,5 +1,5 @@
 import { ABILITIES, MAGMA_ORBS_CAST, travelDistance, type AbilityDef } from "./abilities";
-import { length2, normalize2 } from "./sim";
+import { length2, normalize2, shortestYawDelta, stepYawToward } from "./sim";
 import type { Vec2 } from "./protocol";
 import type { WallCollider, ProtectionBubbleCollider, CircleCollider, BoxCollider } from "./collision";
 import {
@@ -1573,9 +1573,14 @@ export function tickReturningProjectiles(
   const beginTurn = (p: ProjectileSim) => {
     p.returnPhase = "turning";
     p.mode = "turning";
-    p.vx = 0;
-    p.vz = 0;
     p.turnDelayRemaining = p.turnDelaySec ?? 0.07;
+    // Keep travel speed — a halt at the apex reads as the disc getting stuck.
+    const spd = p.projectileSpeed ?? 15;
+    const len = Math.hypot(p.vx, p.vz);
+    if (len > 0.01) {
+      p.vx = (p.vx / len) * spd;
+      p.vz = (p.vz / len) * spd;
+    }
   };
 
   for (const p of projectiles) {
@@ -1597,12 +1602,81 @@ export function tickReturningProjectiles(
 
     if (p.returnPhase === "turning") {
       p.turnDelayRemaining = Math.max(0, (p.turnDelayRemaining ?? 0) - dt);
-      if (p.turnDelayRemaining <= 0) {
+      const desired = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
+      const turnWindow = Math.max(0.02, p.turnDelaySec ?? 0.07);
+      const curYaw = Math.atan2(p.vx, p.vz);
+      const wantYaw = Math.atan2(desired.x, desired.z);
+      const nextYaw = stepYawToward(curYaw, wantYaw, Math.PI / turnWindow, dt);
+      const face = facingVector(nextYaw);
+      p.vx = face.x * speed;
+      p.vz = face.z * speed;
+
+      const fromX = p.x;
+      const fromZ = p.z;
+      p.x += p.vx * dt;
+      p.z += p.vz * dt;
+
+      const hitWall =
+        (walls.length > 0 || circles.length > 0 || boxes.length > 0) &&
+        projectileHitsSolids(fromX, fromZ, p.x, p.z, p.wallRadius, walls, circles, boxes);
+      const hitBubble =
+        !hitWall && protectionBubbles.length > 0
+          ? projectileHitsProtectionBubbles(
+              fromX,
+              fromZ,
+              p.x,
+              p.z,
+              p.wallRadius,
+              protectionBubbles,
+              p.passBubbleIds,
+            )
+          : null;
+      if (hitWall || hitBubble) {
+        p.x = fromX;
+        p.z = fromZ;
         p.returnPhase = "returning";
         p.mode = "returning";
-        const dir = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
-        p.vx = dir.x * speed;
-        p.vz = dir.z * speed;
+        p.vx = desired.x * speed;
+        p.vz = desired.z * speed;
+        if (hitBubble?.id) {
+          wallHits.push({
+            projectileId: p.id,
+            ownerId: p.ownerId,
+            abilityId: p.abilityId,
+            x: fromX,
+            z: fromZ,
+            blockBubbleId: hitBubble.id,
+          });
+        }
+        continue;
+      }
+
+      const aligned = Math.abs(shortestYawDelta(nextYaw, wantYaw)) < 0.15;
+      if (p.turnDelayRemaining <= 0 || aligned) {
+        p.returnPhase = "returning";
+        p.mode = "returning";
+      }
+
+      for (const body of bodies) {
+        if (body.id === p.ownerId) continue;
+        if (p.hitIds.has(body.id)) continue;
+        if (body.vulnerable === false || body.hp <= 0) continue;
+        if (!canHurt(p.ownerId, body.id)) continue;
+        if (!circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, hitRadiusOf(body))) {
+          continue;
+        }
+        p.hitIds.add(body.id);
+        const hpAfter = Math.max(0, body.hp - p.damage);
+        hits.push({
+          projectileId: p.id,
+          ownerId: p.ownerId,
+          abilityId: p.abilityId,
+          targetId: body.id,
+          damage: p.damage,
+          hpAfter,
+          x: body.x,
+          z: body.z,
+        });
       }
       continue;
     }

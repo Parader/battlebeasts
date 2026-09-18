@@ -55,6 +55,25 @@ function normalizeNotes(raw) {
   };
 }
 
+function normalizeHistory(feed, fallback) {
+  const raw = Array.isArray(feed && feed.history) ? feed.history : [];
+  const out = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const title = typeof entry.title === "string" ? entry.title.trim() : "";
+    if (!title) continue;
+    out.push({
+      id: typeof entry.id === "string" ? entry.id : "",
+      title,
+      date: typeof entry.date === "string" ? entry.date : "",
+      version: typeof entry.version === "string" ? entry.version : "",
+      notes: normalizeNotes(entry.notes || entry),
+    });
+  }
+  if (out.length > 0) return out;
+  return fallback ? [fallback] : [];
+}
+
 async function fetchJson(url, timeoutMs = 20_000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -383,11 +402,16 @@ async function runUpdater(opts) {
     typeof feed.title === "string" && feed.title.trim()
       ? feed.title.trim()
       : `Patch ${feed.contentVersion ?? ""}`.trim();
-  onNotes({
+  const current = {
+    id: "",
     title,
     date: typeof feed.date === "string" ? feed.date : "",
     version: feed.contentVersion != null ? String(feed.contentVersion) : "",
     notes,
+  };
+  onNotes({
+    ...current,
+    history: normalizeHistory(feed, current),
   });
 
   const gameServerUrl =

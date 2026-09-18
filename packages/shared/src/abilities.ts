@@ -1684,7 +1684,8 @@ export const VOID_DISC_CAST = {
   radius: 0.55,
   maxActivePerCaster: 1,
   maxLifetimeMs: 2800,
-  turnDelayMs: 70,
+  /** Time to rotate 180° while still flying — not a pause at the apex. */
+  turnDelayMs: 120,
   returnCatchRadius: 0.6,
   fps: POISON_DART_CAST.fps,
   releaseFrame: POISON_DART_CAST.releaseFrame,
@@ -2633,7 +2634,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
   },
   /**
-   * Void Disc (LMB) — outbound pierce, brief turnaround, homing return hit.
+   * Void Disc (LMB) — outbound pierce, hooked U-turn at speed, homing return hit.
    * Anim: Right Hook (Poison Dart clip).
    */
   voidDisc: {

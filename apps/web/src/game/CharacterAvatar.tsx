@@ -35,6 +35,7 @@ import { StatusOrnaments } from "./StatusOrnaments";
 import { SpiritVesselFx } from "./SpiritVesselFx";
 import { collectStatusRows, hasStatusId, isStealthedStatus } from "./statusBadgeUtils";
 import { registerCharacterRoot } from "./characterRoots";
+import { OcclusionSilhouette } from "./OcclusionSilhouette";
 import type { PredictedPose } from "./useBaseCityRoom";
 import { PlayerHpBillboard } from "./PlayerHpBillboard";
 import { PlayerCastChannelBar } from "./PlayerCastChannelBar";
@@ -486,6 +487,16 @@ export function CharacterAvatar({
   return (
     <group ref={group}>
       <group ref={bodyRef}>
+        <OcclusionSilhouette
+          rootRef={bodyRef}
+          color={AIM_RELATION_COLORS.self}
+          getEnabled={() => {
+            if (!localSessionId) return false;
+            if (isRevengeVanished(localSessionId)) return false;
+            const me = room?.state?.players?.get(localSessionId) as { hp?: number } | undefined;
+            return (me?.hp ?? 1) > 0;
+          }}
+        />
         <primitive object={scene} />
         <VesselBody
           characterRoot={scene}

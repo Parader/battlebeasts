@@ -14,6 +14,7 @@ apps/web/public/assets/props/**/*.glb filter=lfs diff=lfs merge=lfs -text
 # models, so these stay external to the GLBs rather than embedded per-model --
 # a few MB on disk instead of a few hundred, and one GPU upload at runtime.
 apps/web/public/assets/props/**/textures/*.png filter=lfs diff=lfs merge=lfs -text
+apps/web/public/assets/props/**/textures/*.jpg filter=lfs diff=lfs merge=lfs -text
 
 # Ground material library (Poly Haven, CC0). Two 1k JPEGs per material and the
 # pool is meant to keep growing, so this is a blanket rule rather than one line

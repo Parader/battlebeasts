@@ -33,9 +33,9 @@ export const STARTER_PATTERNS = [DEFAULT_COSMETIC_PATTERN] as const;
 /** Free aura ink — charcoal (other inks are sold in the shop). */
 export const STARTER_PATTERN_COLORS = [DEFAULT_COSMETIC_PATTERN_COLOR] as const;
 
-/** Free loadout preset count. Coin shop sells slot 2; slot 3+ reserved for rubies later. */
+/** Free loadout preset count. Coin shop sells slots 2 and 3. */
 export const STARTER_LOADOUT_SLOT_COUNT = 1;
-export const MAX_COIN_LOADOUT_SLOTS = 2;
+export const MAX_COIN_LOADOUT_SLOTS = 3;
 export const MAX_LOADOUT_SLOTS = 5;
 export const LOADOUT_PRESET_NAME_MAX = 20;
 
@@ -117,7 +117,9 @@ export function normalizePlayerUnlocks(raw: unknown): PlayerUnlocks {
     normalizeStringIdList(obj.patternColors ?? obj.pattern_colors),
   );
   const emotes = uniqueMerge(base.emotes, normalizeStringIdList(obj.emotes));
-  const abilities = normalizeStringIdList(obj.abilities);
+  const abilities = normalizeStringIdList(obj.abilities).filter(
+    (id) => !ABILITIES[id]?.talentTreeUnlock,
+  );
 
   let loadoutSlotCount = STARTER_LOADOUT_SLOT_COUNT;
   if (typeof obj.loadoutSlotCount === "number") {
@@ -201,12 +203,20 @@ export function ownsAbility(
   talentBuild?: Record<string, number>,
 ): boolean {
   const def = ABILITIES[abilityId];
-  if (def?.talentTreeUnlock) {
-    if (talentBuild && (talentBuild[def.talentTreeUnlock.talentId] ?? 0) >= 1) {
-      return true;
-    }
+  if (!def) return false;
+  if (def.talentTreeUnlock) {
+    return (talentBuild?.[def.talentTreeUnlock.talentId] ?? 0) >= 1;
   }
   return Boolean(owned?.includes(abilityId));
+}
+
+/** Drop ids this hunter cannot use on the current talent loadout. Empty slots stay empty. */
+export function filterOwnedAbilityIds(
+  ids: readonly string[],
+  owned: string[] | null | undefined,
+  talentBuild?: Record<string, number>,
+): string[] {
+  return ids.map((id) => (id && ownsAbility(owned, id, talentBuild) ? id : ""));
 }
 
 /** Ensure equipped appearance ids are legal; clear illegal gear. */
@@ -228,7 +238,10 @@ export function sanitizeUnlocksWithEquipped(
     next.patternColors = uniqueMerge(next.patternColors, [equippedPatternColor]);
   }
   if (equippedAbilityIds?.length) {
-    next.abilities = uniqueMerge(next.abilities, equippedAbilityIds.filter(Boolean));
+    next.abilities = uniqueMerge(
+      next.abilities,
+      equippedAbilityIds.filter((id) => id && !ABILITIES[id]?.talentTreeUnlock),
+    );
   }
   next.emoteSlots = normalizeEmoteSlots(next.emoteSlots, next.emotes);
   return next;

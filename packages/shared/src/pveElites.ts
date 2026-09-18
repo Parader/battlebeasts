@@ -83,6 +83,16 @@ export function pveEliteComfortRange(abilityId: string): {
   };
 }
 
+/** Sidestep while holding a cast pocket so elites do not plant and trade. */
+export function pveEliteStrafeDir(
+  nx: number,
+  nz: number,
+  id: string,
+): { x: number; z: number } {
+  const side = id.charCodeAt(id.length - 1) % 2 === 0 ? 1 : -1;
+  return { x: -nz * side, z: nx * side };
+}
+
 export function pveElitePickAbility(
   kit: readonly string[],
   dist: number,
@@ -124,6 +134,24 @@ export function pveEliteProjectileDamage(
   if (abilityId === "iceLance") return Math.round(waveDamage * 0.88);
   if (abilityId === "prismLance") return Math.round(waveDamage * 0.82);
   return Math.round(waveDamage * 0.75);
+}
+
+/**
+ * Perfect NPC aim makes player-speed skillshots undodgeable.
+ * LMB pokes (Ice Lance) drop more; other shots a bit; crawlers stay as-authored.
+ */
+export const PVE_ELITE_M1_SPEED_MUL = 0.55;
+export const PVE_ELITE_PROJECTILE_SPEED_MUL = 0.72;
+
+export function pveEliteProjectileSpeedMul(abilityId: string): number {
+  const def = ABILITIES[abilityId];
+  const speed = def?.speed ?? 0;
+  if (speed > 0 && speed < 8) return 1;
+  const m1Only =
+    Boolean(def?.allowedSlots?.includes("m1")) &&
+    !def?.allowedSlots?.some((slot) => slot !== "m1");
+  if (m1Only || def?.defaultSlot === "m1") return PVE_ELITE_M1_SPEED_MUL;
+  return PVE_ELITE_PROJECTILE_SPEED_MUL;
 }
 
 export const PVE_ELITE_HP_MUL = 1.55;

@@ -8,6 +8,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +18,23 @@ import { encodePng } from "./png";
 const run = promisify(execFile);
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
+/** Same folder Vite's publicDir points at -- served from disk so new imports work. */
+const PUBLIC_DIR = path.join(REPO_ROOT, "apps", "web", "public");
+
+const PUBLIC_MIME: Record<string, string> = {
+  ".glb": "model/gltf-binary",
+  ".gltf": "model/gltf+json",
+  ".bin": "application/octet-stream",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+};
+
+function isInsideRoot(root: string, target: string) {
+  const rel = path.relative(root, target);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
 const MANIFEST = path.join(REPO_ROOT, "data", "props.manifest.json");
 /**
  * Props marked unusable from inside the editor -- too small to see, badly
@@ -91,6 +109,48 @@ export function editorApi(): Plugin {
   return {
     name: "bb-editor-api",
     configureServer(server) {
+      /*
+       * Vite snapshots publicDir at boot, and this app ignores
+       * `apps/web/public/**` so splat writes do not reload the page. New
+       * prop GLBs added after start therefore fall through to index.html,
+       * and the loader reports "Unexpected token '<'". Serve those assets
+       * from disk instead, so an import shows up without a restart.
+       */
+      server.middlewares.use((req, res, next) => {
+        if (req.method !== "GET" && req.method !== "HEAD") return next();
+        const raw = req.url?.split("?")[0] ?? "";
+        if (!raw.startsWith("/assets/") && !raw.startsWith("/ground_textures/")) return next();
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(raw);
+        } catch {
+          return next();
+        }
+        if (decoded.includes("\0")) return next();
+        const file = path.resolve(PUBLIC_DIR, decoded.slice(1));
+        if (!isInsideRoot(PUBLIC_DIR, file)) return next();
+        const type = PUBLIC_MIME[path.extname(file).toLowerCase()];
+        if (!type) return next();
+        void fs
+          .stat(file)
+          .then((st) => {
+            if (!st.isFile()) {
+              next();
+              return;
+            }
+            res.statusCode = 200;
+            res.setHeader("content-type", type);
+            res.setHeader("content-length", String(st.size));
+            res.setHeader("cache-control", "no-cache");
+            if (req.method === "HEAD") {
+              res.end();
+              return;
+            }
+            createReadStream(file).pipe(res);
+          })
+          .catch(() => next());
+      });
+
       server.middlewares.use(async (req, res, next) => {
         const url = req.url?.split("?")[0] ?? "";
         if (!url.startsWith("/api/")) return next();

@@ -90,7 +90,7 @@ import { grantPendingLoot } from "../pendingLoot.js";
 import { insertRewardGrant } from "../persistence.js";
 import { bumpQuest, insertClosedChest } from "../quests.js";
 import { applyRankedMatchFinish } from "../ranked.js";
-import { recordPveWaveBest } from "../pveLeaderboard.js";
+import { recordPveTeamBest } from "../pveLeaderboard.js";
 import { ObjectiveDirector } from "../pvp/ObjectiveDirector.js";
 import { DungeonDirector } from "../pve/DungeonDirector.js";
 import { WaveDirector } from "../pve/WaveDirector.js";
@@ -179,7 +179,8 @@ export class ContentRoom extends ServicedRoom {
   private pveDraft: {
     wave: number;
     offersBySession: Map<string, PveUpgradeOffer[]>;
-    picked: Set<string>;
+    /** Tentative offerId per hunter — can change until the party is fully in. */
+    choiceBySession: Map<string, string>;
   } | null = null;
 
   private emptyDisposeClear: (() => void) | null = null;
@@ -289,7 +290,7 @@ export class ContentRoom extends ServicedRoom {
         this.partySize,
         this.mapId ? mapPveIngressPoints(this.mapId) : [],
         holdout,
-        (wave) => this.beginPveUpgradeDraft(wave),
+        (wave, kills) => this.beginPveUpgradeDraft(wave, kills),
       );
     } else if (this.kind === "pve" && isInstanceMode(this.mode)) {
       this.rollPveHoldout();
@@ -583,21 +584,22 @@ export class ContentRoom extends ServicedRoom {
     this.inputs.set(client.sessionId, []);
     this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents, {});
 
-    if (this.kind === "pve" && isWaveAssaultMode(this.mode) && this.waveDirector) {
-      this.armWaveStart();
-    } else if (this.kind === "pve" && isInstanceMode(this.mode) && this.dungeonDirector) {
-      this.armDungeonStart();
-    }
-
     // Awaited, not fired off. An NPC merchant means a purchase can arrive in
     // the first frames here, and a half-loaded player has a zeroed wallet --
     // which would not merely fail the sale, it would save that zero over the
     // real balance. Colyseus holds the client until onJoin resolves.
     await this.loadPlayerEconomy(client.sessionId, player, verified);
     this.applyCombatKit(client.sessionId, player);
+    player.hp = player.maxHp;
     this.sendInventory(client, player);
     this.rememberSeat(client.sessionId, verified.userId, options);
     this.clearEmptyDispose();
+
+    if (this.kind === "pve" && isWaveAssaultMode(this.mode) && this.waveDirector) {
+      this.armWaveStart();
+    } else if (this.kind === "pve" && isInstanceMode(this.mode) && this.dungeonDirector) {
+      this.armDungeonStart();
+    }
 
     client.send("toast", {
       message:
@@ -783,6 +785,13 @@ export class ContentRoom extends ServicedRoom {
     }, 2000);
   }
 
+  private fillFighterHp() {
+    this.state.players.forEach((p) => {
+      if (p.role === "spectator") return;
+      p.hp = p.maxHp;
+    });
+  }
+
   private startWavesNow() {
     if (!this.waveDirector || this.waveStartArmed) return;
     this.waveStartArmed = true;
@@ -790,6 +799,7 @@ export class ContentRoom extends ServicedRoom {
       this.waveStartTimeout.clear();
       this.waveStartTimeout = null;
     }
+    this.fillFighterHp();
     this.waveDirector.start(Date.now());
     this.pveOrbNextAt = Date.now() + nextPveOrbDelay();
   }
@@ -815,6 +825,7 @@ export class ContentRoom extends ServicedRoom {
       this.waveStartTimeout.clear();
       this.waveStartTimeout = null;
     }
+    this.fillFighterHp();
     this.dungeonDirector.start(Date.now(), `${this.matchId}:r${this.rematchIndex}`);
   }
 
@@ -971,18 +982,32 @@ export class ContentRoom extends ServicedRoom {
 
   private persistPveBests(wave: number) {
     if (wave <= 0) return;
-    const partySize = this.partySize;
+    const members: { userId: string; displayName: string }[] = [];
+    let kills = 0;
+    let damageDealt = 0;
     this.state.players.forEach((p, sessionId) => {
       if (p.role === "spectator") return;
+      kills += Math.max(0, Math.floor(p.statKills || 0));
+      damageDealt += Math.max(0, Math.floor(p.statDamageDealt || 0));
       const userId = p.id || this.identities.get(sessionId)?.userId;
       if (!userId) return;
-      void recordPveWaveBest(userId, {
-        wave,
-        kills: p.statKills,
-        damageDealt: p.statDamageDealt,
-        partySize,
-      });
+      members.push({ userId, displayName: p.displayName || "Hunter" });
     });
+    void recordPveTeamBest(members, {
+      wave,
+      kills,
+      damageDealt,
+      partySize: this.partySize,
+    });
+  }
+
+  protected sendInventory(client: Client, player: PlayerState) {
+    super.sendInventory(client, player);
+    this.sendPveUpgrades(client);
+  }
+
+  private sendPveUpgrades(client: Client) {
+    client.send("pve_upgrades", { picks: this.combat.getPveUpgrades(client.sessionId) });
   }
 
   private tryRestartPveRun() {
@@ -1027,11 +1052,13 @@ export class ContentRoom extends ServicedRoom {
     this.combat.clearAllPveUpgrades();
     this.combat.clearRuntimePickups();
     this.pveDraft = null;
+    for (const c of this.clients) this.sendPveUpgrades(c);
     if (isWaveAssaultMode(this.mode)) {
       this.pveOrbNextAt = Date.now() + nextPveOrbDelay();
     }
     this.state.players.forEach((p, sessionId) => {
       this.applyCombatKit(sessionId, p);
+      p.hp = p.maxHp;
     });
     this.broadcast("pve_run_restart", {});
     this.broadcast("pve_pause", { paused: false });
@@ -1054,24 +1081,21 @@ export class ContentRoom extends ServicedRoom {
       return {
         sessionId,
         displayName: p?.displayName ?? "Hunter",
-        picked: draft.picked.has(sessionId),
+        picked: draft.choiceBySession.has(sessionId),
       };
     });
   }
 
-  private beginPveUpgradeDraft(wave: number) {
+  private beginPveUpgradeDraft(wave: number, kills = 0) {
     if (this.pveRunEnded || this.pveDraft) return;
     const fighters = this.pveFighterSessions();
-    if (fighters.length === 0) {
-      this.waveDirector?.beginPendingWave(Date.now());
-      return;
-    }
-    const beat = pveUpgradeDraftBeat(wave);
+    if (fighters.length === 0) return;
+    const beat = pveUpgradeDraftBeat(kills);
     const offersBySession = new Map<string, PveUpgradeOffer[]>();
     for (const id of fighters) {
       offersBySession.set(id, rollPveUpgradeOffers(beat));
     }
-    this.pveDraft = { wave, offersBySession, picked: new Set() };
+    this.pveDraft = { wave, offersBySession, choiceBySession: new Map() };
     this.state.paused = true;
     this.state.pauseReason = "pve_upgrade";
     this.broadcast("pve_pause", { paused: true, reason: "pve_upgrade" });
@@ -1079,23 +1103,20 @@ export class ContentRoom extends ServicedRoom {
     for (const client of this.clients) {
       const offers = offersBySession.get(client.sessionId);
       if (!offers) continue;
-      client.send("pve_upgrade_draft", { wave, offers, waiting });
+      client.send("pve_upgrade_draft", { wave, kills, offers, waiting });
     }
   }
 
   private handlePveUpgradePick(client: Client, offerId: string) {
     const draft = this.pveDraft;
     if (!draft || this.pveRunEnded) return;
-    if (draft.picked.has(client.sessionId)) return;
     const offers = draft.offersBySession.get(client.sessionId);
     if (!offers) return;
-    const offer = offers.find((o) => o.offerId === offerId) ?? offers[0];
+    const offer = offers.find((o) => o.offerId === offerId);
     if (!offer) return;
-    const def = pveUpgradeById(offer.id);
-    if (!def) return;
-    this.combat.addPveUpgrade(client.sessionId, def);
-    this.refreshPveKitHp(client.sessionId);
-    draft.picked.add(client.sessionId);
+    if (!pveUpgradeById(offer.id)) return;
+    if (draft.choiceBySession.get(client.sessionId) === offer.offerId) return;
+    draft.choiceBySession.set(client.sessionId, offer.offerId);
     this.broadcast("pve_upgrade_waiting", { waiting: this.pveDraftWaiting() });
     this.tryFinishPveUpgradeDraft();
   }
@@ -1113,25 +1134,32 @@ export class ContentRoom extends ServicedRoom {
   private tryFinishPveUpgradeDraft() {
     const draft = this.pveDraft;
     if (!draft) return;
-    for (const sessionId of this.pveFighterSessions()) {
-      if (!draft.picked.has(sessionId)) {
-        const p = this.state.players.get(sessionId);
-        if (p?.disconnected) {
-          const offers = draft.offersBySession.get(sessionId);
-          const fallback = offers?.[0];
-          const def = fallback ? pveUpgradeById(fallback.id) : undefined;
-          if (def) this.combat.addPveUpgrade(sessionId, def);
-          draft.picked.add(sessionId);
-          continue;
-        }
-        return;
+    const fighters = this.pveFighterSessions();
+    for (const sessionId of fighters) {
+      if (draft.choiceBySession.has(sessionId)) continue;
+      const p = this.state.players.get(sessionId);
+      if (p?.disconnected) {
+        const fallback = draft.offersBySession.get(sessionId)?.[0];
+        if (fallback) draft.choiceBySession.set(sessionId, fallback.offerId);
+        continue;
+      }
+      return;
+    }
+    for (const sessionId of fighters) {
+      const offers = draft.offersBySession.get(sessionId);
+      const offerId = draft.choiceBySession.get(sessionId);
+      const offer = offers?.find((o) => o.offerId === offerId) ?? offers?.[0];
+      const def = offer ? pveUpgradeById(offer.id) : undefined;
+      if (def) {
+        this.combat.addPveUpgrade(sessionId, def);
+        this.refreshPveKitHp(sessionId);
       }
     }
     this.pveDraft = null;
-    this.waveDirector?.beginPendingWave(Date.now());
     this.state.paused = false;
     this.state.pauseReason = "";
     this.broadcast("pve_pause", { paused: false });
+    for (const client of this.clients) this.sendPveUpgrades(client);
   }
 
   private tickPveOrbs(now: number) {

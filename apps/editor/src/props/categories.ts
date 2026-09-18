@@ -33,7 +33,7 @@ const RULES: Category[] = [
   {
     id: "floor",
     label: "Floors, Paths & Stairs",
-    words: ["floor", "flooring", "path", "paths", "paving", "tile", "tiles", "walkway", "stair", "stairs", "ramp", "step", "steps", "bridge", "dock", "podest"],
+    words: ["floor", "flooring", "path", "paths", "paving", "tile", "tiles", "walkway", "stair", "stairs", "ramp", "step", "steps", "bridge", "dock", "podest", "cobble", "cobbles"],
   },
   {
     id: "building",
@@ -60,20 +60,20 @@ const RULES: Category[] = [
   },
   { id: "water", label: "Water", words: ["water", "river", "riverbed", "lake", "fountain", "pool", "well", "waterfall", "floe", "puddle"] },
 
-  { id: "light", label: "Lighting & Fire", words: ["torch", "lamp", "lantern", "lanturn", "candle", "candlestand", "candlestick", "brazier", "campfire", "firepit", "fireplace", "fire", "chandelier", "forge"] },
+  { id: "light", label: "Lighting & Fire", words: ["torch", "lamp", "lantern", "lanturn", "candle", "candlestand", "candlestick", "brazier", "campfire", "firepit", "fireplace", "fire", "flame", "chandelier", "forge"] },
   { id: "sign", label: "Signs, Flags & Market", words: ["sign", "banner", "flag", "bunting", "poster", "board", "label", "awning", "market", "weathervane", "direction", "quest"] },
-  { id: "container", label: "Containers & Planters", words: ["barrel", "crate", "chest", "sack", "basket", "bucket", "pot", "cauldron", "box", "planter", "planterbox", "bag", "bindle", "kettle"] },
+  { id: "container", label: "Containers & Planters", words: ["barrel", "crate", "chest", "sack", "basket", "bucket", "pot", "cauldron", "box", "planter", "planterbox", "bag", "bindle", "kettle", "vase", "vases"] },
   {
     id: "furniture",
     label: "Furniture & Workstations",
-    words: ["table", "chair", "bench", "stool", "bed", "shelf", "shelves", "cabinet", "dresser", "workbench", "anvil", "rack", "throne", "desk", "stand", "divider", "lectern", "grinding", "cooking", "plow"],
+    words: ["table", "chair", "bench", "stool", "bed", "shelf", "shelves", "cabinet", "dresser", "workbench", "anvil", "rack", "throne", "desk", "stand", "divider", "lectern", "grinding", "cooking", "plow", "rug", "rugs"],
   },
   { id: "vehicle", label: "Vehicles & Carts", words: ["cart", "coach", "boat", "wheelbarrow", "sleigh", "dinghy", "wagon", "sled", "surfboard"] },
 
   {
     id: "monument",
     label: "Monuments & Grim",
-    words: ["grave", "gravestone", "tomb", "skull", "bone", "skeleton", "spiderweb", "rune", "statue", "cross", "gallows", "guillotine", "cage", "dummy", "target", "spike", "teleporter", "relic", "shrine", "limb"],
+    words: ["grave", "gravestone", "tomb", "skull", "bone", "skeleton", "spiderweb", "rune", "statue", "cross", "gallows", "guillotine", "cage", "dummy", "target", "spike", "teleporter", "relic", "shrine", "limb", "altar", "monolith"],
   },
   {
     id: "debris",

@@ -268,7 +268,8 @@ export type ServerMessage =
   | {
       type: "hub_pve_leaderboard";
       rows: Array<{
-        userId: string;
+        partyKey: string;
+        memberIds: string[];
         displayName: string;
         wave: number;
         kills: number;
@@ -277,7 +278,8 @@ export type ServerMessage =
         rank: number;
       }>;
       mine: {
-        userId: string;
+        partyKey: string;
+        memberIds: string[];
         displayName: string;
         wave: number;
         kills: number;
@@ -285,6 +287,17 @@ export type ServerMessage =
         partySize: number;
         rank: number;
       } | null;
+    }
+  | {
+      type: "pve_upgrades";
+      picks: Array<{
+        id: string;
+        stat: string;
+        rarity: string;
+        magnitude: number;
+        label: string;
+        hint: string;
+      }>;
     }
   | {
       type: "combat_fx";
@@ -308,6 +321,7 @@ export type ServerMessage =
   | {
       type: "pve_upgrade_draft";
       wave: number;
+      kills?: number;
       offers: Array<{
         offerId: string;
         id: string;

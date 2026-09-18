@@ -237,6 +237,7 @@ export const PlayScreen = () => {
         pvePaused,
         setPvePaused,
         pveUpgradeDraft,
+        pvePicks,
         pickPveUpgrade,
         plazaState,
         friendLocations,
@@ -566,6 +567,7 @@ export const PlayScreen = () => {
             {playReady && isWaveAssault && inContent && pveUpgradeDraft && (
                 <PveUpgradeDraft
                     wave={pveUpgradeDraft.wave}
+                    kills={pveUpgradeDraft.kills}
                     offers={pveUpgradeDraft.offers}
                     waiting={pveUpgradeDraft.waiting}
                     localSessionId={room?.sessionId ?? null}
@@ -584,6 +586,7 @@ export const PlayScreen = () => {
                     localSessionId={room?.sessionId ?? null}
                     friendlyFire={pveFriendlyFire}
                     onToggleFriendlyFire={() => setPveFriendlyFireEnabled(!pveFriendlyFire)}
+                    picks={pvePicks}
                 />
             )}
 

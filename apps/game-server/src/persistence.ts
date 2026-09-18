@@ -20,6 +20,7 @@ import {
   normalizeFlexLoadout,
   EMPTY_FLEX_LOADOUT,
   DEFAULT_COSMETIC_BODY,
+  filterOwnedAbilityIds,
   type FlexLoadout,
   type CosmeticsEquipped,
   type PlayerUnlocks,
@@ -288,8 +289,12 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     return {
       slotIndex: row.slot_index as number,
       name: (row.name as string) || `Loadout ${(row.slot_index as number) + 1}`,
-      abilityIds: normalizeLoadout(
-        Array.isArray(row.ability_ids) ? (row.ability_ids as string[]) : null,
+      abilityIds: filterOwnedAbilityIds(
+        normalizeLoadout(
+          Array.isArray(row.ability_ids) ? (row.ability_ids as string[]) : null,
+        ),
+        unlocks.abilities,
+        Object.keys(fromPreset).length > 0 ? fromPreset : accountTalentBuild,
       ),
       // Empty preset builds inherit the account build so old rows stay playable.
       talentBuild:
@@ -302,7 +307,7 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
     loadoutPresets.push({
       slotIndex: 0,
       name: "Loadout 1",
-      abilityIds,
+      abilityIds: filterOwnedAbilityIds(abilityIds, unlocks.abilities, accountTalentBuild),
       talentBuild: accountTalentBuild,
       flexAbilityIds: [...EMPTY_FLEX_LOADOUT],
     });
@@ -317,10 +322,14 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
   );
 
   const activePreset = loadoutPresets.find((p) => p.slotIndex === activeLoadoutSlot);
-  const resolvedAbilityIds = activePreset?.abilityIds?.length
-    ? normalizeLoadout(activePreset.abilityIds)
-    : abilityIds;
   const resolvedTalentBuild = activePreset?.talentBuild ?? accountTalentBuild;
+  const resolvedAbilityIds = filterOwnedAbilityIds(
+    activePreset?.abilityIds?.length
+      ? normalizeLoadout(activePreset.abilityIds)
+      : abilityIds,
+    unlocks.abilities,
+    resolvedTalentBuild,
+  );
   const resolvedFlex = clampFlexToUnlocked(
     activePreset?.flexAbilityIds ?? EMPTY_FLEX_LOADOUT,
     unlocks.flexSlotCount,

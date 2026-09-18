@@ -111,6 +111,27 @@ export function projectileBlockers(colliders: readonly StaticCollider[]): {
   return { walls, circles, boxes };
 }
 
+/**
+ * Every solid that stops a walking body, including waist-high cover that
+ * arrows fly over. Mesh footprints are omitted here — ray tests don't
+ * understand them; occupancy baking still marks those cells blocked.
+ */
+export function bodyBlockers(colliders: readonly StaticCollider[]): {
+  walls: WallCollider[];
+  circles: CircleCollider[];
+  boxes: BoxCollider[];
+} {
+  const walls: WallCollider[] = [];
+  const circles: CircleCollider[] = [];
+  const boxes: BoxCollider[] = [];
+  for (const c of colliders) {
+    if (c.shape === "walls") walls.push(c);
+    else if (c.shape === "box") boxes.push(c);
+    else if (!c.shape || c.shape === "circle") circles.push(c);
+  }
+  return { walls, circles, boxes };
+}
+
 /** Hub solids are exported from hubVillage as `baseCityStaticColliders` (see index.ts). */
 
 function isBox(c: StaticCollider): c is BoxCollider {

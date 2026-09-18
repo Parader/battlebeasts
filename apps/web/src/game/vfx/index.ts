@@ -28,6 +28,7 @@ export {
   usesGrooveFx,
   usesHealBeamFx,
   usesLifeLeechFx,
+  usesPveHealPopupFx,
   usesFirewallFx,
   usesPoisonCloudFx,
   usesSmokeBombFx,

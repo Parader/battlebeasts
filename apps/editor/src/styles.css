@@ -373,14 +373,14 @@ select:focus {
 
 .tree-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   width: 100%;
   text-align: left;
   border: none;
   border-radius: 0;
   background: transparent;
-  padding: 5px 10px;
+  padding: 4px 10px;
 }
 
 .tree-row:hover:not(:disabled) {
@@ -405,7 +405,7 @@ select:focus {
  */
 .tree-row__main {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   flex: 1;
   min-width: 0;
@@ -455,6 +455,47 @@ select:focus {
 .chip--unusable {
   opacity: 0.45;
   text-decoration: line-through;
+}
+
+.tree-fam-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.prop-thumb {
+  position: relative;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  background: #161a21;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.prop-thumb canvas {
+  width: 40px;
+  height: 40px;
+  display: block;
+}
+
+.variant-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 3px;
+  font-size: 10px;
+  min-width: 48px;
+}
+
+.variant-chip .prop-thumb,
+.variant-chip .prop-thumb canvas {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
 }
 
 .caret {

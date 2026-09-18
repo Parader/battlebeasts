@@ -14,23 +14,30 @@ function setStatus(message, isError) {
   statusEl.classList.toggle("error", Boolean(isError));
 }
 
-function renderNotes(payload) {
-  if (!payload) return;
-  if (payload.title) titleEl.textContent = payload.title;
-  const notes = payload.notes || {};
+function formatDate(iso) {
+  const [y, m, d] = String(iso || "").split("-").map(Number);
+  if (!y || !m || !d) return iso || "";
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function renderSections(notes) {
   const sections = [
-    ["Balance", notes.balance],
-    ["Bug fixes", notes.fixes],
-    ["New content", notes.content],
-    ["Updates", notes.highlights],
+    ["Balance", notes && notes.balance],
+    ["Bug fixes", notes && notes.fixes],
+    ["New content", notes && notes.content],
+    ["Updates", notes && notes.highlights],
   ].filter(([, items]) => Array.isArray(items) && items.length > 0);
 
   if (sections.length === 0) {
-    notesEl.innerHTML = `<p class="placeholder">No patch notes for this drop.</p>`;
-    return;
+    return `<p class="placeholder">No patch notes for this drop.</p>`;
   }
 
-  notesEl.innerHTML = sections
+  return `<div class="note-cols">${sections
     .map(
       ([label, items]) => `
       <section class="col">
@@ -38,7 +45,35 @@ function renderNotes(payload) {
         <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
       </section>`,
     )
-    .join("");
+    .join("")}</div>`;
+}
+
+function renderEntry(entry, open) {
+  const title = entry && entry.title ? entry.title : "Patch notes";
+  const date = entry && entry.date ? formatDate(entry.date) : "";
+  return `<details class="note"${open ? " open" : ""}>
+    <summary>
+      <span class="note-title">${escapeHtml(title)}</span>
+      ${date ? `<time datetime="${escapeHtml(entry.date)}">${escapeHtml(date)}</time>` : ""}
+    </summary>
+    ${renderSections(entry && entry.notes)}
+  </details>`;
+}
+
+function renderNotes(payload) {
+  if (!payload) return;
+  if (payload.title) titleEl.textContent = payload.title;
+  const history =
+    Array.isArray(payload.history) && payload.history.length > 0
+      ? payload.history
+      : [
+          {
+            title: payload.title,
+            date: payload.date,
+            notes: payload.notes,
+          },
+        ];
+  notesEl.innerHTML = history.map((entry, i) => renderEntry(entry, i === 0)).join("");
 }
 
 function escapeHtml(value) {

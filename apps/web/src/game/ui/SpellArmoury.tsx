@@ -32,7 +32,7 @@ import {
   type SpellSlotId,
   type TalentBuild,
 } from "@battlebeasts/shared";
-import { talentModLines } from "./abilityTalentMods";
+import { talentModsForSpell, type TalentSpellMod } from "./abilityTalentMods";
 import { ArmouryStatRow, formatSpellTag, getArmouryHighlightStats } from "./armouryStats";
 import { GemIcon } from "./CoinDisplay";
 import { KeyGlyph, SpellSlotGlyph } from "./InputGlyph";
@@ -95,13 +95,13 @@ function SpellCardTooltip({
   open,
   anchor,
   ability,
-  modLines,
+  mods,
   adjustedCdLabel,
 }: {
   open: boolean;
   anchor: HTMLElement | null;
   ability: AbilityDef;
-  modLines: string[];
+  mods: TalentSpellMod[];
   adjustedCdLabel: string;
 }) {
   const tipRef = useRef<HTMLDivElement>(null);
@@ -141,7 +141,7 @@ function SpellCardTooltip({
       window.removeEventListener("scroll", place, true);
       window.removeEventListener("resize", place);
     };
-  }, [open, anchor, ability.id, modLines.length, adjustedCdLabel]);
+  }, [open, anchor, ability.id, mods.length, adjustedCdLabel]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -152,12 +152,17 @@ function SpellCardTooltip({
         <p className="bb-armoury-card__tooltip-desc">{ability.description}</p>
       ) : null}
       <p className="bb-armoury-card__tooltip-stats">{adjustedCdLabel}</p>
-      {modLines.length > 0 ? (
-        <ul className="bb-armoury-card__tooltip-mods">
-          {modLines.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
+      {mods.length > 0 ? (
+        <>
+          <p className="bb-armoury-card__tooltip-talents-label">Talents</p>
+          <ul className="bb-armoury-card__tooltip-mods">
+            {mods.map((mod) => (
+              <li key={`${mod.talentId}:${mod.effect}`}>
+                <strong>{mod.name}.</strong> {mod.effect}
+              </li>
+            ))}
+          </ul>
+        </>
       ) : null}
     </div>,
     document.body,
@@ -181,7 +186,7 @@ function SpellCard({
   energyCost,
   stats,
   cdLabel,
-  modLines,
+  mods,
   unlockCost,
   canAffordUnlock,
   onEquip,
@@ -194,7 +199,7 @@ function SpellCard({
   energyCost: number | null;
   stats: ReturnType<typeof getArmouryHighlightStats>;
   cdLabel: string;
-  modLines: string[];
+  mods: TalentSpellMod[];
   unlockCost: number;
   canAffordUnlock: boolean;
   onEquip: () => void;
@@ -209,7 +214,7 @@ function SpellCard({
       open={tipOpen}
       anchor={cardRef.current}
       ability={ability}
-      modLines={modLines}
+      mods={mods}
       adjustedCdLabel={cdLabel}
     />
   );
@@ -649,7 +654,7 @@ export function SpellArmoury({
                             energyCost={flexCost(a.id)}
                             stats={getArmouryHighlightStats(a)}
                             cdLabel={`CD ${(adjustedCd / 1000).toFixed(adjustedCd % 1000 === 0 ? 0 : 1)}s`}
-                            modLines={talentModLines(a, kit)}
+                            mods={talentModsForSpell(a, kit)}
                             unlockCost={unlockCost}
                             canAffordUnlock={
                               voucher ||
@@ -689,7 +694,7 @@ export function SpellArmoury({
                     energyCost={null}
                     stats={getArmouryHighlightStats(a)}
                     cdLabel={`CD ${(adjustedCd / 1000).toFixed(adjustedCd % 1000 === 0 ? 0 : 1)}s`}
-                    modLines={talentModLines(a, kit)}
+                    mods={talentModsForSpell(a, kit)}
                     unlockCost={unlockCost}
                     canAffordUnlock={
                       voucher ||

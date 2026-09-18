@@ -97,29 +97,46 @@ function listStrings(v) {
   return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
 }
 
-function loadGamePatchNote() {
+function normalizeEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const title = typeof entry.title === "string" ? entry.title.trim() : "";
+  if (!title) return null;
+  return {
+    id: typeof entry.id === "string" ? entry.id : "",
+    title,
+    date: typeof entry.date === "string" ? entry.date : "",
+    notes: {
+      balance: listStrings(entry.balance),
+      fixes: listStrings(entry.fixes),
+      content: listStrings(entry.content),
+      highlights: listStrings(entry.highlights),
+    },
+  };
+}
+
+function loadGamePatchNotes() {
   const entries = JSON.parse(fs.readFileSync(gameNotesPath, "utf8"));
-  if (!Array.isArray(entries) || entries.length === 0) return null;
-  const latest = entries[0];
-  if (!latest || typeof latest !== "object") return null;
-  return latest;
+  if (!Array.isArray(entries)) return [];
+  return entries.map(normalizeEntry).filter(Boolean);
 }
 
 function loadNotes() {
   const raw = fs.existsSync(notesPath) ? JSON.parse(fs.readFileSync(notesPath, "utf8")) : {};
-  const game = loadGamePatchNote();
+  const history = loadGamePatchNotes();
+  const game = history[0] ?? null;
   const now = new Date();
   const fallback = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}.1`;
   return {
     contentVersion: String(raw.contentVersion || fallback),
     title: String(game?.title || raw.title || `Patch ${raw.contentVersion || fallback}`),
     date: typeof game?.date === "string" ? game.date : "",
-    notes: {
-      balance: listStrings(game?.balance),
-      fixes: listStrings(game?.fixes),
-      content: listStrings(game?.content),
-      highlights: listStrings(game?.highlights),
+    notes: game?.notes ?? {
+      balance: [],
+      fixes: [],
+      content: [],
+      highlights: [],
     },
+    history,
   };
 }
 
@@ -222,6 +239,7 @@ const latest = {
   title: notes.title,
   date: notes.date,
   notes: notes.notes,
+  history: notes.history,
   releaseTag: tag,
   full: {
     name: "content.zip",
