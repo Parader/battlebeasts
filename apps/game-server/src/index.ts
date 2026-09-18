@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { Encoder } from "@colyseus/schema";
 import { Server } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import express from "express";
@@ -7,6 +8,13 @@ import { createServer } from "http";
 import { registerAuthoredMaps, ROOM } from "@battlebeasts/shared";
 import { BaseCityRoom } from "./rooms/BaseCityRoom.js";
 import { ContentRoom } from "./rooms/ContentRoom.js";
+
+/**
+ * Default encoder buffer is 8 KB. Wave Assault / battleground state (mobs,
+ * shots, statuses) blows past that, and Colyseus then warns on every patch
+ * because it reallocates without keeping the larger buffer.
+ */
+Encoder.BUFFER_SIZE = 256 * 1024;
 
 // Before any room is created: ContentRoom.onCreate resolves its map through
 // the registry, so authored documents must already be in it.
@@ -31,6 +39,7 @@ const gameServer = new Server({
 });
 
 gameServer.define(ROOM.BASE_CITY, BaseCityRoom).filterBy(["hubOwnerId"]);
+gameServer.define(ROOM.PLAZA, BaseCityRoom).filterBy(["plazaId"]);
 gameServer.define(ROOM.ARENA, ContentRoom).filterBy(["matchId"]);
 gameServer.define(ROOM.BATTLEGROUND, ContentRoom).filterBy(["matchId"]);
 gameServer.define(ROOM.DUNGEON, ContentRoom).filterBy(["matchId"]);

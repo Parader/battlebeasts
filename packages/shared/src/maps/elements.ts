@@ -73,7 +73,8 @@ export type ElementGroup =
   | "Hub stands"
   | "Portals"
   | "Objectives"
-  | "Pickups";
+  | "Pickups"
+  | "Dungeon";
 
 /**
  * A numeric param drawn as a range circle in the editor.
@@ -119,7 +120,7 @@ export const PICKUP_EFFECTS: Record<string, PickupEffectDef> = {
   heal: { label: "Heal", kind: "instant", unit: "hp", defaultMagnitude: 300 },
   energy: { label: "Energy", kind: "instant", unit: "pips", defaultMagnitude: 2 },
   absorb: { label: "Absorb shield", kind: "instant", unit: "hp", defaultMagnitude: 250 },
-  speed: { label: "Move speed", kind: "buff", unit: "x", defaultMagnitude: 1.3 },
+  speed: { label: "Move speed", kind: "buff", unit: "x", defaultMagnitude: 1.5 },
   power: { label: "Power", kind: "buff", unit: "x", defaultMagnitude: 1.5 },
   haste: { label: "Cooldown rate", kind: "buff", unit: "x", defaultMagnitude: 1.25 },
   random: { label: "Random orb", kind: "instant", unit: "—", defaultMagnitude: 0 },
@@ -136,9 +137,9 @@ export const RANDOM_PICKUP_POOL = [
 export const PICKUP_PREVIEW_COLOR: Record<string, string> = {
   heal: "#4ade80",
   energy: "#facc15",
-  absorb: "#60a5fa",
-  speed: "#fb923c",
-  power: "#f87171",
+  absorb: "#3b82f6",
+  speed: "#22d3ee",
+  power: "#ef4444",
   haste: "#c084fc",
   random: "#e7e5e4",
 };
@@ -353,6 +354,137 @@ export const ELEMENT_TYPES: readonly ElementTypeDef[] = [
     params: [
       { key: "label", label: "Label", kind: "string", default: "PvE Portal" },
       { key: "dungeon", label: "Dungeon", kind: "string", default: "" },
+    ],
+  },
+
+  {
+    id: "dungeon_start",
+    label: "Entrance",
+    group: "Dungeon",
+    color: "#5eead4",
+    volume: "none",
+    facing: true,
+    params: [],
+  },
+  {
+    id: "dungeon_exit",
+    label: "Exit",
+    group: "Dungeon",
+    color: "#fbbf24",
+    volume: "circle",
+    defaultRadius: 2.4,
+    facing: false,
+    interact: "dungeon_exit",
+    params: [],
+  },
+  {
+    id: "dungeon_pack",
+    label: "Pack",
+    group: "Dungeon",
+    color: "#f87171",
+    volume: "none",
+    facing: true,
+    rings: [
+      { param: "aggroRadius", label: "Aggro", color: "#ff5f5f" },
+      { param: "roamRadius", label: "Roam", color: "#7ad9ff" },
+    ],
+    params: [
+      { key: "stage", label: "Stage", kind: "number", default: 1, step: 1, min: 1 },
+      { key: "count", label: "Fodder", kind: "number", default: 4, step: 1, min: 1 },
+      { key: "elites", label: "Elites", kind: "number", default: 0, step: 1, min: 0 },
+      {
+        key: "pool",
+        label: "Pool",
+        kind: "enum",
+        options: ["required", "optional"],
+        default: "required",
+      },
+      { key: "aggroRadius", label: "Aggro range", kind: "number", default: 10, step: 0.5, min: 0 },
+      { key: "roamRadius", label: "Roam range", kind: "number", default: 0, step: 0.5, min: 0 },
+    ],
+  },
+  {
+    id: "dungeon_boss",
+    label: "Boss",
+    group: "Dungeon",
+    color: "#c084fc",
+    volume: "none",
+    facing: true,
+    rings: [{ param: "aggroRadius", label: "Aggro", color: "#ff5f5f" }],
+    params: [
+      { key: "name", label: "Name", kind: "string", default: "Dungeon Boss" },
+      { key: "stage", label: "Stage", kind: "number", default: 3, step: 1, min: 1 },
+      { key: "hp", label: "HP (solo)", kind: "number", default: 2800, step: 50, min: 200 },
+      { key: "scale", label: "Scale", kind: "number", default: 2, step: 0.1, min: 1.8 },
+      {
+        key: "aura",
+        label: "Aura",
+        kind: "enum",
+        options: ["infernal", "plague", "frost", "void"],
+        default: "infernal",
+      },
+      {
+        key: "spell1",
+        label: "Spell 1",
+        kind: "enum",
+        options: ["iceLance", "poisonDart", "frostBall", "grasp", "prismLance"],
+        default: "iceLance",
+      },
+      {
+        key: "spell2",
+        label: "Spell 2",
+        kind: "enum",
+        options: ["iceLance", "poisonDart", "frostBall", "grasp", "prismLance"],
+        default: "poisonDart",
+      },
+      {
+        key: "spell3",
+        label: "Spell 3",
+        kind: "enum",
+        options: ["iceLance", "poisonDart", "frostBall", "grasp", "prismLance"],
+        default: "frostBall",
+      },
+      {
+        key: "spell4",
+        label: "Spell 4",
+        kind: "enum",
+        options: ["iceLance", "poisonDart", "frostBall", "grasp", "prismLance"],
+        default: "grasp",
+      },
+      {
+        key: "pool",
+        label: "Pool",
+        kind: "enum",
+        options: ["required", "optional"],
+        default: "required",
+      },
+      { key: "aggroRadius", label: "Aggro range", kind: "number", default: 14, step: 0.5, min: 0 },
+    ],
+  },
+  {
+    id: "dungeon_objective",
+    label: "Objective",
+    group: "Dungeon",
+    color: "#34d399",
+    volume: "circle",
+    defaultRadius: 4,
+    facing: false,
+    params: [
+      {
+        key: "tag",
+        label: "Tag",
+        kind: "enum",
+        options: ["hold", "survive"],
+        default: "hold",
+      },
+      {
+        key: "pool",
+        label: "Pool",
+        kind: "enum",
+        options: ["optional"],
+        default: "optional",
+      },
+      { key: "durationMs", label: "Duration (ms)", kind: "number", default: 8000, step: 500, min: 2000 },
     ],
   },
 

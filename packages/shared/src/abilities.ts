@@ -1106,8 +1106,8 @@ export const ARC_BLADE_CAST = {
   cooldownMs: 6500,
   range: 0,
   /** Fallback / first-hit damage when `damageByHit` is absent. */
-  damage: combatMag(6),
-  radius: 2.55,
+  damage: combatMag(8),
+  radius: 2.7,
   /** Visual outer-band start (VFX / aim telegraph). */
   outerEdgeStartRadius: 1.5,
   /** Consecutive self-centered snapshots while spinning. */
@@ -1115,7 +1115,7 @@ export const ARC_BLADE_CAST = {
   /** Delay between consecutive spin hits (ms). */
   hitIntervalMs: 110,
   /** Per-hit damage (hit 1 / 2 / 3). */
-  damageByHit: [combatMag(6), combatMag(6), combatMag(8)] as const,
+  damageByHit: [combatMag(8), combatMag(8), combatMag(10)] as const,
 } as const;
 
 /** Arc Blade damage for the Nth spin hit (0-based). */
@@ -1139,8 +1139,8 @@ export const BLOOMING_PATH_CAST = {
   healTickMs: 500,
   /** Tip travel speed — slow enough to read as a growing path. */
   speed: 3.8,
-  /** Half-width ~0.85 → ~1.7m total corridor. */
-  radius: 0.85,
+  /** Half-width 1.7 → ~3.4m total corridor. */
+  radius: 1.7,
   spawnOffset: 0.35,
   /** How long the laid path stays after the tip despawns (ms). */
   trailLingerMs: 4500,
@@ -1365,10 +1365,10 @@ export const CHAIN_LIGHTNING_CAST = {
   unlockCostEssence: 130,
   cooldownMs: 16000,
   range: 9.0,
-  maxTargets: 5,
-  bounceRadius: 4.0,
+  maxTargets: 7,
+  bounceRadius: 4.5,
   bounceDelayMs: 110,
-  enemyDamage: combatMag(13),
+  enemyDamage: combatMag(16),
   allyMoveSpeedMul: 1.15,
   /** Cast phase duration mul — 1/1.12 ≈ 12% faster casts. */
   allyCastDurationMul: 1 / 1.12,
@@ -4376,7 +4376,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
   },
   /**
-   * Arc Blade (E) — fast 360° magical spin; three consecutive hits (60 / 60 / 80).
+   * Arc Blade (E) — fast 360° magical spin; three consecutive hits (80 / 80 / 100).
    * Anim: Dual Weapon Combo (attack_combo).
    */
   arcBlade: {

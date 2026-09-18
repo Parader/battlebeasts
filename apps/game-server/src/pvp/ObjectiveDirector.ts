@@ -7,6 +7,7 @@ import {
   BG_MATCH_DURATION_MS,
   BG_SCORE_TICK_MS,
   TICK_MS,
+  DEFAULT_PLAY_MAP_ID,
   mapObjectivesFor,
   type MapObjectivePlacement,
 } from "@battlebeasts/shared";
@@ -117,7 +118,7 @@ export class ObjectiveDirector {
   }
 
   private padsForKind(mapId: string | undefined, kind: ObjectiveKind): MapObjectivePlacement[] {
-    const all = mapObjectivesFor(mapId ?? "desert");
+    const all = mapObjectivesFor(mapId ?? DEFAULT_PLAY_MAP_ID);
     if (kind === "ctf") {
       const flags = all.filter((o) => o.tag === "flag_stand");
       return flags.length >= 2 ? flags : all.filter((o) => o.id.startsWith("flag_"));

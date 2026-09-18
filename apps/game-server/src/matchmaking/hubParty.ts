@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  COOP_PVE_MAX_PLAYERS,
+  coopPveCapForModes,
   parsePvpFamilyToken,
   pvpFamilyFromModes,
   pvpFamilyToken,
@@ -20,7 +20,14 @@ export type HubPartyMember = {
   userId: string;
   displayName: string;
   seat: PvpSeat;
+  /** False while disconnected / logged out. Omitted or true means in-world. */
+  online?: boolean;
+  offlineSince?: number;
 };
+
+export function offlinePartySessionId(userId: string): string {
+  return `offline:${userId}`;
+}
 
 export type HubParty = {
   partyId: string;
@@ -31,6 +38,8 @@ export type HubParty = {
   pendingInvites: Set<string>;
   pendingFriendInvites: Set<string>;
   queued: boolean;
+  /** True after the leader opens a portal lobby (PvP / Wave Assault). */
+  lobbyOpen: boolean;
   /** PvP custom sides — everyone sees Team 1 / Team 2. */
   splitSides: boolean;
   /** PvP skirmish third column. */
@@ -87,7 +96,7 @@ export function defaultSeatFor(party: HubParty): PvpSeat {
 }
 
 export function partyFitsFamily(party: HubParty, family: PvpFamily = partyFamily(party)): boolean {
-  if (party.kind === "coop_pve") return party.members.size <= COOP_PVE_MAX_PLAYERS;
+  if (party.kind === "coop_pve") return party.members.size <= coopPveCapForModes(party.modes);
   const modes = pvpModesForFamily(family);
   if (modes.length === 0) return false;
   const maxSpec = Math.max(...modes.map((m) => m.maxSpectators));
@@ -125,12 +134,25 @@ export function partyFitsMode(party: HubParty, modeId: string): boolean {
   return partyFitsFamily(party, family);
 }
 
+export function retargetParty(party: HubParty, kind: PartyKind, modes: string[]): void {
+  const family = kind === "pvp" ? pvpFamilyFromModes(modes) : undefined;
+  party.kind = kind;
+  party.modes = kind === "pvp" && family ? [pvpFamilyToken(family)] : [...modes];
+  party.splitSides = kind === "pvp";
+  party.teamCOpen = false;
+  party.teamSize = family === "battleground" ? (party.teamSize ?? 5) : undefined;
+  if (kind === "coop_pve") {
+    for (const member of party.members.values()) member.seat = "teamA";
+  }
+}
+
 export function toPartySnapshot(party: HubParty): PartySnapshot {
   const members: PartyMemberSnapshot[] = [...party.members.values()].map((m) => ({
     sessionId: m.sessionId,
     userId: m.userId,
     displayName: m.displayName,
     seat: m.seat,
+    online: m.online !== false,
   }));
   const family = party.kind === "pvp" ? partyFamily(party) : undefined;
   return {
@@ -170,11 +192,12 @@ export class HubPartyRegistry {
     leader: { sessionId: string; userId: string; displayName: string },
     modes: string[],
     kind: PartyKind = "pvp",
+    partyId?: string,
   ): HubParty {
     const family = kind === "pvp" ? pvpFamilyFromModes(modes) : undefined;
     const stored = kind === "pvp" && family ? [pvpFamilyToken(family)] : [...modes];
     const party: HubParty = {
-      partyId: randomUUID(),
+      partyId: partyId ?? randomUUID(),
       leaderSessionId: leader.sessionId,
       kind,
       modes: stored,
@@ -182,20 +205,98 @@ export class HubPartyRegistry {
       pendingInvites: new Set(),
       pendingFriendInvites: new Set(),
       queued: false,
+      lobbyOpen: false,
       splitSides: kind === "pvp",
       teamCOpen: false,
       teamSize: family === "battleground" ? 5 : undefined,
     };
-    party.members.set(leader.sessionId, { ...leader, seat: "teamA" });
+    party.members.set(leader.sessionId, { ...leader, seat: "teamA", online: true });
     this.parties.set(party.partyId, party);
     this.partyBySession.set(leader.sessionId, party.partyId);
     return party;
   }
 
-  addMember(party: HubParty, member: { sessionId: string; userId: string; displayName: string }, seat: PvpSeat): void {
+  addMember(
+    party: HubParty,
+    member: { sessionId: string; userId: string; displayName: string },
+    seat: PvpSeat,
+    presence: { online?: boolean; offlineSince?: number } = {},
+  ): void {
     party.pendingFriendInvites.delete(member.userId);
-    party.members.set(member.sessionId, { ...member, seat });
+    const online = presence.online !== false;
+    party.members.set(member.sessionId, {
+      ...member,
+      seat,
+      online,
+      offlineSince: online ? undefined : (presence.offlineSince ?? Date.now()),
+    });
     this.partyBySession.set(member.sessionId, party.partyId);
+  }
+
+  addOfflineMember(
+    party: HubParty,
+    member: { userId: string; displayName: string; seat?: PvpSeat; offlineSince?: number },
+  ): void {
+    const sessionId = offlinePartySessionId(member.userId);
+    this.addMember(
+      party,
+      { sessionId, userId: member.userId, displayName: member.displayName },
+      member.seat ?? defaultSeatFor(party),
+      { online: false, offlineSince: member.offlineSince ?? Date.now() },
+    );
+  }
+
+  getByUserId(userId: string): HubParty | undefined {
+    for (const party of this.parties.values()) {
+      for (const member of party.members.values()) {
+        if (member.userId === userId) return party;
+      }
+    }
+    return undefined;
+  }
+
+  all(): HubParty[] {
+    return [...this.parties.values()];
+  }
+
+  /** Move a parked / stale member onto a live session and mark them online. */
+  rebindUser(userId: string, sessionId: string, displayName?: string): HubParty | undefined {
+    const party = this.getByUserId(userId);
+    if (!party) return undefined;
+    const member = [...party.members.values()].find((m) => m.userId === userId);
+    if (!member) return undefined;
+    if (member.sessionId !== sessionId) {
+      party.members.delete(member.sessionId);
+      this.partyBySession.delete(member.sessionId);
+      if (party.leaderSessionId === member.sessionId) party.leaderSessionId = sessionId;
+      member.sessionId = sessionId;
+      party.members.set(sessionId, member);
+    }
+    if (displayName) member.displayName = displayName;
+    member.online = true;
+    member.offlineSince = undefined;
+    this.partyBySession.set(sessionId, party.partyId);
+    return party;
+  }
+
+  markOffline(sessionId: string, at = Date.now()): HubParty | undefined {
+    const party = this.getBySession(sessionId);
+    const member = party?.members.get(sessionId);
+    if (!party || !member) return undefined;
+    if (member.online !== false) {
+      member.online = false;
+      member.offlineSince = at;
+    }
+    return party;
+  }
+
+  markOnline(sessionId: string): HubParty | undefined {
+    const party = this.getBySession(sessionId);
+    const member = party?.members.get(sessionId);
+    if (!party || !member) return undefined;
+    member.online = true;
+    member.offlineSince = undefined;
+    return party;
   }
 
   removeMember(party: HubParty, sessionId: string): boolean {
@@ -208,14 +309,6 @@ export class HubPartyRegistry {
   findByPendingFriend(userId: string): HubParty | undefined {
     for (const party of this.parties.values()) {
       if (party.pendingFriendInvites.has(userId)) return party;
-    }
-    return undefined;
-  }
-
-  /** First non-queued hub party (typically the open lobby everyone should join). */
-  findOpen(): HubParty | undefined {
-    for (const party of this.parties.values()) {
-      if (!party.queued) return party;
     }
     return undefined;
   }

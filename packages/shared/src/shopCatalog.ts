@@ -5,7 +5,12 @@
 
 import { COPPER_PER_GOLD, COPPER_PER_SILVER, type ShopCost } from "./resources";
 import { HEALTH_TONIC_HEAL } from "./combatMagnitude";
-import { COSMETIC_CATALOG, COSMETIC_SLOT_LABELS } from "./cosmetics";
+import {
+  COSMETIC_CATALOG,
+  COSMETIC_SLOT_LABELS,
+  type CosmeticItemDef,
+  type CosmeticSlot,
+} from "./cosmetics";
 import { EMOTES } from "./emotes";
 import {
   COSMETIC_AURAS,
@@ -165,6 +170,39 @@ for (const aura of COSMETIC_AURAS) {
   };
 }
 
+/** Slot silhouette weight — belts/bracers cheap, chests/shoulders statement pieces. */
+const GEAR_SLOT_BASE_COPPER: Record<CosmeticSlot, number> = {
+  belt: 6 * COPPER_PER_SILVER,
+  gloves: 7 * COPPER_PER_SILVER,
+  shoes: 8 * COPPER_PER_SILVER,
+  hat: 9 * COPPER_PER_SILVER,
+  legs: 10 * COPPER_PER_SILVER,
+  shoulders: 12 * COPPER_PER_SILVER,
+  chest: 14 * COPPER_PER_SILVER,
+};
+
+/** Later sets in the same slot cost more. */
+const GEAR_SET_STEP_COPPER = 2 * COPPER_PER_SILVER;
+
+/** Named one-offs sitting above their slot's first set. */
+const GEAR_UNIQUE_EXTRA_COPPER: Record<string, number> = {
+  hat_wizard: 4 * COPPER_PER_SILVER,
+};
+
+function gearSetIndex(itemId: string): number {
+  const match = itemId.match(/_(\d+)$/);
+  if (!match) return 1;
+  return Math.max(1, Number(match[1]) || 1);
+}
+
+/** Merchant copper price for a wearable. New catalog rows pick this up automatically. */
+export function gearShopCopper(item: CosmeticItemDef): number {
+  const base = GEAR_SLOT_BASE_COPPER[item.slot];
+  const unique = GEAR_UNIQUE_EXTRA_COPPER[item.id];
+  const extra = unique ?? (gearSetIndex(item.id) - 1) * GEAR_SET_STEP_COPPER;
+  return base + extra;
+}
+
 function syncCosmeticShopItems(): void {
   for (const item of Object.values(COSMETIC_CATALOG)) {
     const id = `gear_${item.id}`;
@@ -172,7 +210,7 @@ function syncCosmeticShopItems(): void {
       id,
       name: item.name,
       category: "cosmetics",
-      cost: coins(280),
+      cost: coins(gearShopCopper(item)),
       grant: { kind: "cosmetic", itemId: item.id },
       description: COSMETIC_SLOT_LABELS[item.slot],
     };

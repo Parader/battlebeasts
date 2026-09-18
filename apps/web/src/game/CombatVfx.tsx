@@ -10,9 +10,11 @@ import {
   PROP_TARGET_KIND,
   PVE_ELITE_KIND,
   PVE_ELITE_SCALE,
+  PVE_BOSS_KIND,
   PVE_ZOMBIE_BASE_SPEED,
   PVE_ZOMBIE_KIND,
   STARTER_COLORS,
+  dungeonAuraTint,
   pveEliteTint,
   totalShieldAbsorb,
   type CosmeticsEquipped,
@@ -438,12 +440,17 @@ export function WorldTargets({ room }: { room: Room | null }) {
             ? PVE_ZOMBIE_KIND
             : id.startsWith("elite_")
               ? PVE_ELITE_KIND
-              : "dummy");
+              : id.startsWith("boss_")
+                ? PVE_BOSS_KIND
+                : "dummy");
         if (kind === PVE_ZOMBIE_KIND) {
           return <ZombieAvatar key={id} room={room} targetId={id} />;
         }
         if (kind === PVE_ELITE_KIND) {
           return <PracticeDummyAvatar key={id} room={room} targetId={id} elite />;
+        }
+        if (kind === PVE_BOSS_KIND) {
+          return <PracticeDummyAvatar key={id} room={room} targetId={id} boss />;
         }
         if (kind === PROP_TARGET_KIND) {
           return <PropTargetBar key={id} room={room} targetId={id} />;
@@ -1013,10 +1020,12 @@ function PracticeDummyAvatar({
     room,
     targetId,
     elite = false,
+    boss = false,
 }: {
     room: Room | null;
     targetId: string;
     elite?: boolean;
+    boss?: boolean;
 }) {
     const root = useRef<THREE.Group>(null);
     const body = useRef<THREE.Group>(null);
@@ -1038,9 +1047,16 @@ function PracticeDummyAvatar({
                 ? mesh.material.map((m) => m.clone())
                 : mesh.material.clone();
         });
-        tintCharacterSurface(rootScene, elite ? pveEliteTint(undefined) : DUMMY_COLOR);
+        tintCharacterSurface(
+            rootScene,
+            boss
+                ? dungeonAuraTint(undefined).body
+                : elite
+                  ? pveEliteTint(undefined)
+                  : DUMMY_COLOR,
+        );
         return rootScene;
-    }, [gltf.scene, gltf.animations, elite]);
+    }, [gltf.scene, gltf.animations, elite, boss]);
 
     useEffect(() => {
         const controller = new CharacterAnimationController(
@@ -1075,13 +1091,18 @@ function PracticeDummyAvatar({
                   hp: number;
                   maxHp: number;
                   abilityId?: string;
+                  aura?: string;
+                  scale?: number;
                   castAbilityId?: string;
                   castPhase?: string;
                   castLockUntil?: number;
                   statuses?: Parameters<typeof hasStatusId>[0];
               }
             | undefined;
-        if (elite && t?.abilityId && tintedFor.current !== t.abilityId) {
+        if (boss && t?.aura && tintedFor.current !== `aura:${t.aura}`) {
+            tintedFor.current = `aura:${t.aura}`;
+            tintCharacterSurface(scene, dungeonAuraTint(t.aura).body);
+        } else if (elite && t?.abilityId && tintedFor.current !== t.abilityId) {
             tintedFor.current = t.abilityId;
             tintCharacterSurface(scene, pveEliteTint(t.abilityId));
         }
@@ -1128,25 +1149,45 @@ function PracticeDummyAvatar({
 
         const targetY = t.y ?? 0;
         g.position.set(t.x, targetY, t.z);
+        const visualScale = boss ? Math.max(1.8, t.scale ?? 2) : elite ? PVE_ELITE_SCALE : 1;
+        g.scale.setScalar(visualScale);
     });
 
-    const eliteTint = elite
-        ? pveEliteTint(
-              (room?.state?.targets?.get(targetId) as { abilityId?: string } | undefined)?.abilityId,
-          )
-        : DUMMY_COLOR;
+    const live = room?.state?.targets?.get(targetId) as
+        | { abilityId?: string; aura?: string }
+        | undefined;
+    const eliteTint = elite ? pveEliteTint(live?.abilityId) : DUMMY_COLOR;
+    const bossTint = boss ? dungeonAuraTint(live?.aura) : null;
 
     return (
         <group
             ref={root}
             userData={{ bbSkipGround: true }}
-            scale={elite ? PVE_ELITE_SCALE : 1}
+            scale={elite && !boss ? PVE_ELITE_SCALE : 1}
         >
+            {boss && bossTint ? (
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]} renderOrder={2}>
+                    <ringGeometry args={[0.7, 1.35, 48]} />
+                    <meshBasicMaterial
+                        color={bossTint.glow}
+                        transparent
+                        opacity={0.62}
+                        blending={THREE.AdditiveBlending}
+                        depthWrite={false}
+                    />
+                </mesh>
+            ) : null}
             <group ref={body}>
                 <primitive object={scene} />
                 <SpiritVesselFx
                     characterRoot={scene}
                     getColor={() => {
+                        if (boss) {
+                            const aura = (
+                                room?.state?.targets?.get(targetId) as { aura?: string } | undefined
+                            )?.aura;
+                            return dungeonAuraTint(aura).glow;
+                        }
                         if (!elite) return DUMMY_COLOR;
                         const id = (
                             room?.state?.targets?.get(targetId) as { abilityId?: string } | undefined
@@ -1167,11 +1208,11 @@ function PracticeDummyAvatar({
             </group>
             <group ref={aimRef}>
                 <AimIndicator
-                    color={elite ? eliteTint : AIM_RELATION_COLORS.neutral}
-                    radius={elite ? 0.7 : 0.55}
+                    color={boss && bossTint ? bossTint.glow : elite ? eliteTint : AIM_RELATION_COLORS.neutral}
+                    radius={boss ? 0.95 : elite ? 0.7 : 0.55}
                 />
             </group>
-            <HpBillboard room={room} targetId={targetId} y={elite ? 2.28 : 2.05} />
+            <HpBillboard room={room} targetId={targetId} y={boss ? 2.55 : elite ? 2.28 : 2.05} />
         </group>
     );
 }

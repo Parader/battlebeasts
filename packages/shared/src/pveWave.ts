@@ -14,7 +14,7 @@ export function isPveWaveMobKind(kind: string | undefined | null): boolean {
 }
 
 export const PVE_ZOMBIE_BASE_HP = 380;
-export const PVE_ZOMBIE_BASE_SPEED = 3.2;
+export const PVE_ZOMBIE_BASE_SPEED = 2.55;
 export const PVE_ZOMBIE_MELEE_RANGE = 1.35;
 export const PVE_ZOMBIE_MELEE_DAMAGE = 32;
 export const PVE_ZOMBIE_MELEE_COOLDOWN_MS = 900;
@@ -81,7 +81,7 @@ export function pveWaveDamage(waveIndex: number, partySize = 1): number {
 }
 
 export function pveWaveSpeed(waveIndex: number): number {
-  return PVE_ZOMBIE_BASE_SPEED * (1 + Math.min(0.35, (waveIndex - 1) * 0.03));
+  return PVE_ZOMBIE_BASE_SPEED * (1 + Math.min(0.22, (waveIndex - 1) * 0.02));
 }
 
 /**
@@ -89,7 +89,7 @@ export function pveWaveSpeed(waveIndex: number): number {
  * Deterministic from spawn ordinal within the wave.
  */
 export function pveZombieSpeedMul(spawnOrdinal: number): number {
-  // Spread ~0.72× … 1.28× across the wave so packs fan out.
-  const tiers = [0.72, 0.84, 0.95, 1.05, 1.16, 1.28];
+  // Spread ~0.78× … 1.14× so packs fan out without outrunning hunters.
+  const tiers = [0.78, 0.86, 0.94, 1.02, 1.08, 1.14];
   return tiers[spawnOrdinal % tiers.length]!;
 }

@@ -1,4 +1,4 @@
-import { useFrame, useThree } from "@react-three/fiber";
+import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { coneRayMaxLength, isPveWaveMobKind } from "@battlebeasts/shared";
@@ -12,36 +12,7 @@ const BEAM_COLOR = "#6ee7b7";
 const BEAM_HOT = "#a7f3d0";
 const HAND_Y = 1.15;
 const SPAWN = 0.55;
-const _down = new THREE.Vector3(0, -1, 0);
-const _origin = new THREE.Vector3();
-
-function collectGroundMeshes(scene: THREE.Object3D): THREE.Object3D[] {
-  const meshes: THREE.Object3D[] = [];
-  scene.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (!m.isMesh || !m.visible) return;
-    const n = m.name.toLowerCase();
-    if (n.includes("beta_") || n.includes("mixamorig") || n.startsWith("sm_chr")) return;
-    if (/ground|terrain|floor|meadow|path|tile/.test(n) || meshes.length < 40) {
-      meshes.push(m);
-    }
-  });
-  return meshes;
-}
-
-function sampleGroundY(
-  meshes: THREE.Object3D[],
-  x: number,
-  z: number,
-  raycaster: THREE.Raycaster,
-): number {
-  if (!meshes.length) return 0;
-  _origin.set(x, 80, z);
-  raycaster.set(_origin, _down);
-  const hits = raycaster.intersectObjects(meshes, false);
-  const y = hits[0]?.point.y;
-  return typeof y === "number" && Number.isFinite(y) ? y : 0;
-}
+const SELF_BEAM_LEN = 1.55;
 
 /** Fixed pools — no alloc in the tick. */
 const HAND_MOTES = 32;
@@ -72,6 +43,7 @@ type Mote = {
 function collectOccludeBodies(
   follow: VfxFollowContext | undefined,
   ownerId: string | undefined,
+  excludeId?: string | null,
 ): OccludeBody[] {
   const room = follow?.room;
   if (!room?.state) return [];
@@ -79,16 +51,30 @@ function collectOccludeBodies(
   const players = room.state.players as Map<string, { x?: number; z?: number; hp?: number }> | undefined;
   players?.forEach((p, id) => {
     if (ownerId && id === ownerId) return;
+    if (excludeId && id === excludeId) return;
     out.push({ id, x: p.x ?? 0, z: p.z ?? 0, hp: p.hp });
   });
   const targets = room.state.targets as
     | Map<string, { x?: number; z?: number; hp?: number; kind?: string }>
     | undefined;
   targets?.forEach((t, id) => {
+    if (excludeId && id === excludeId) return;
     if (isPveWaveMobKind(t.kind)) return;
     out.push({ id, x: t.x ?? 0, z: t.z ?? 0, hp: t.hp });
   });
   return out;
+}
+
+function readBodyXZ(
+  follow: VfxFollowContext | undefined,
+  id: string | undefined,
+): { x: number; z: number } | null {
+  if (!id || !follow?.room?.state) return null;
+  const p = follow.room.state.players?.get(id) as { x?: number; z?: number } | undefined;
+  if (p) return { x: p.x ?? 0, z: p.z ?? 0 };
+  const t = follow.room.state.targets?.get(id) as { x?: number; z?: number } | undefined;
+  if (t) return { x: t.x ?? 0, z: t.z ?? 0 };
+  return null;
 }
 
 function createMotePool(n: number): Mote[] {
@@ -136,8 +122,8 @@ function spawnBeamMote(p: Mote, beamLen: number) {
 }
 
 /**
- * Heal Beam — narrow green line from the caster’s hands, follows aim, clips on walls.
- * Soft hand sparkles + motes streaming along the beam while channeling.
+ * Divine Beam — green channel from the caster’s hands to the heal target.
+ * Clips on walls and other bodies; the intended target does not occlude itself.
  */
 export function HealBeamEffect({
   shot,
@@ -157,9 +143,6 @@ export function HealBeamEffect({
   const spawnAcc = useRef(0);
   const handPool = useRef(createMotePool(HAND_MOTES));
   const beamPool = useRef(createMotePool(BEAM_MOTES));
-  const { scene } = useThree();
-  const raycaster = useMemo(() => new THREE.Raycaster(), []);
-  const groundMeshes = useMemo(() => collectGroundMeshes(scene), [scene]);
 
   const endLength = shot.radius ?? 14;
 
@@ -256,30 +239,49 @@ export function HealBeamEffect({
       }
     }
 
-    const bodies = collectOccludeBodies(follow, shot.followOwnerId);
+    const targetId = shot.followTargetId ?? shot.targetId;
+    const targetPose =
+      targetId && targetId !== shot.followOwnerId ? readBodyXZ(follow, targetId) : null;
+    const aimX =
+      targetPose?.x ??
+      (typeof shot.originX === "number" && Number.isFinite(shot.originX) ? shot.originX : pose.current.x);
+    const aimZ =
+      targetPose?.z ??
+      (typeof shot.originZ === "number" && Number.isFinite(shot.originZ) ? shot.originZ : pose.current.z);
+    const dx = aimX - pose.current.x;
+    const dz = aimZ - pose.current.z;
+    const dist = Math.hypot(dx, dz);
+    const targeting = dist > 0.35;
+    const rayYaw = targeting ? Math.atan2(dx, dz) : pose.current.yaw;
+    const wantLen = targeting ? Math.min(dist, endLength) : SELF_BEAM_LEN;
+    const excludeId = targeting ? (targetId ?? null) : null;
+
+    const bodies = collectOccludeBodies(follow, shot.followOwnerId, excludeId);
     const walls = getWorldProjectileWalls();
     const maxLen = coneRayMaxLength(
       { x: pose.current.x, z: pose.current.z },
-      pose.current.yaw,
-      endLength,
+      rayYaw,
+      Math.max(wantLen, SPAWN + 0.4),
       walls,
       bodies,
       shot.followOwnerId ?? "",
-      { circles: getWorldProjectileCircles(), boxes: getWorldProjectileBoxes() },
+      {
+        circles: getWorldProjectileCircles(),
+        boxes: getWorldProjectileBoxes(),
+        excludeId,
+      },
     );
     const grow = smooth01(Math.min(1, ageMs / Math.max(80, shot.growMs ?? 140)));
-    liveLen.current = THREE.MathUtils.lerp(SPAWN, Math.max(SPAWN, maxLen), grow);
+    liveLen.current = THREE.MathUtils.lerp(
+      SPAWN,
+      Math.max(SPAWN, targeting ? Math.min(wantLen, maxLen) : maxLen),
+      grow,
+    );
 
     if (root.current) {
       root.current.visible = true;
-      const groundY = sampleGroundY(
-        groundMeshes,
-        pose.current.x,
-        pose.current.z,
-        raycaster,
-      );
-      root.current.position.set(pose.current.x, groundY, pose.current.z);
-      root.current.rotation.y = pose.current.yaw;
+      root.current.position.set(pose.current.x, 0, pose.current.z);
+      root.current.rotation.y = rayYaw;
     }
 
     const len = liveLen.current;

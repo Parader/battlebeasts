@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "rea
 import { useFrame, useThree } from "@react-three/fiber";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
-import { CAMERA, mapIdForMode, STARTER_COLORS } from "@battlebeasts/shared";
+import { CAMERA, DEFAULT_PLAY_MAP_ID, isPveRunMode, mapDocFor, mapElementsOfType, mapIdForMode, STARTER_COLORS } from "@battlebeasts/shared";
 import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
@@ -62,6 +62,47 @@ function LocalMesh({
   );
 }
 
+function DungeonExitMarkers({
+  room,
+  mapId,
+}: {
+  room: Room | null;
+  mapId: string;
+}) {
+  const unlocked = Boolean(
+    (room?.state as { dungeonExitUnlocked?: boolean } | undefined)?.dungeonExitUnlocked,
+  );
+  const exits = useMemo(() => {
+    const doc = mapDocFor(mapId);
+    return doc ? mapElementsOfType(doc, "dungeon_exit") : [];
+  }, [mapId]);
+  if (!unlocked) return null;
+  return (
+    <>
+      {exits.map((el) => {
+        const r = el.shape?.kind === "circle" ? el.shape.radius : 2.4;
+        return (
+          <mesh
+            key={el.id}
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[el.x, 0.06, el.z]}
+            renderOrder={2}
+          >
+            <ringGeometry args={[Math.max(0.4, r * 0.7), r, 48]} />
+            <meshBasicMaterial
+              color="#fbbf24"
+              transparent
+              opacity={0.7}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+            />
+          </mesh>
+        );
+      })}
+    </>
+  );
+}
+
 /** Content room scene — map resolved from the room's mode. */
 export function ContentScene({
   room,
@@ -70,10 +111,10 @@ export function ContentScene({
   modeLabel,
   spectateTargetId = null,
 }: Props) {
-  const isDungeon = modeLabel === "dungeon";
+  const isDungeon = isPveRunMode(modeLabel);
   // `modeLabel` is the room's mode id, so it resolves straight to a map. Falls
-  // back to the desert for unknown modes, which is what shipped before.
-  const mapId = mapIdForMode(modeLabel) ?? "desert";
+  // back to Arena 1 when a mode has no live tagged map.
+  const mapId = mapIdForMode(modeLabel) ?? DEFAULT_PLAY_MAP_ID;
   const localPos = useRef(new THREE.Vector3(0, 0, 0));
   const cameraYaw = useRef(0);
   const aimNdc = useRef(new THREE.Vector2(0, 0));
@@ -177,6 +218,7 @@ export function ContentScene({
         localTeam={localTeam}
       />
       {isDungeon ? <WorldTargets room={room} /> : null}
+      {modeLabel === "instance" ? <DungeonExitMarkers room={room} mapId={mapId} /> : null}
       <Decoys
         room={room}
         localSessionId={localSessionId}

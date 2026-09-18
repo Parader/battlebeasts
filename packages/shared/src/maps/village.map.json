@@ -2,6 +2,10 @@
   "version": 1,
   "id": "village",
   "name": "Village",
+  "active": true,
+  "modeIds": [
+    "hub"
+  ],
   "ground": {
     "kind": "painted",
     "sizeX": 360,

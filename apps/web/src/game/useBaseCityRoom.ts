@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ASTRAL_CHAIN_CAST, COMBAT_ENGAGE_LINGER_MS, EMPTY_FLEX_LOADOUT, flexCost, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, baseCityStaticColliders, mapCollidersFor, mapIdForMode, mapNpcsFor, HUB_NPCS, npcElementIdFrom, npcInteractId, NPC_INTERACT_RADIUS, type NpcPlacement, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, castBarShowsChannel, castBarShowsWindup, castWindupMs, phaseDurationMs, combineStatusMoveMul, getStatus, isFlowMovementAbility, isRepeatableFlowMovement, normalizeFlexLoadout, normalizeLoadout, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, rockWallColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, formatRankLabel, normalizeRankSnapshot, type FlexLoadout, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
-import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub } from "./contentRejoin";
+import { ABILITIES, ASTRAL_CHAIN_CAST, COMBAT_ENGAGE_LINGER_MS, EMPTY_FLEX_LOADOUT, flexCost, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, baseCityStaticColliders, mapCollidersFor, mapDocFor, mapElementsOfType, mapIdForMode, mapNpcsFor, dungeonExitInteractId, HUB_NPCS, npcElementIdFrom, npcInteractId, NPC_INTERACT_RADIUS, type NpcPlacement, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, castBarShowsChannel, castBarShowsWindup, castWindupMs, phaseDurationMs, combineStatusMoveMul, getStatus, isFlowMovementAbility, isRepeatableFlowMovement, normalizeFlexLoadout, normalizeLoadout, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, rockWallColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, formatRankLabel, normalizeRankSnapshot, type FlexLoadout, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
+import { PLAZA_WALK_IN_CAP, nextPlazaId, parsePlazaId } from "@battlebeasts/shared";
+import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub, saveLastPlaza, loadLastPlaza, saveLastSocial } from "./contentRejoin";
 import { recordWaveBestRun } from "./waveBestRun";
 import { setDashStick } from "./dashStickRuntime";
 import { LocalPredictor } from "./LocalPredictor";
@@ -242,11 +243,13 @@ type Options = {
     color?: string;
     accessToken?: string | null;
     hubOwnerId?: string;
+    /** Join a public plaza instead of a private hub (default Play). */
+    plazaId?: string | null;
+    wantPlaza?: boolean;
     enabled?: boolean;
-    /** When true, WASD/arrows/casts are ignored so UI typing works. */
     inputLocked?: boolean;
-    /** Sync React visit state when reconnect picks a different host hub (or falls back home). */
     onActiveHubOwnerId?: (hubOwnerId: string | null) => void;
+    onActivePlazaId?: (plazaId: string | null) => void;
 };
 
 type TransferMsg = {
@@ -254,6 +257,46 @@ type TransferMsg = {
     roomId?: string;
     options?: Record<string, unknown>;
 };
+
+async function resolvePlazaJoin(
+    client: Client,
+    preferred: string | null | undefined,
+    groupSize = 1,
+): Promise<{ plazaId: string; roomId?: string }> {
+    type Listed = {
+        roomId: string;
+        clients: number;
+        metadata?: { plazaId?: string; walkIns?: number; walkInCap?: number };
+    };
+    let rooms: Listed[] = [];
+    try {
+        const res = await client.http.get<Listed[]>(`/matchmake/${ROOM.PLAZA}`);
+        rooms = Array.isArray(res.data) ? res.data : [];
+    } catch {
+        rooms = [];
+    }
+    const parsed = preferred ? parsePlazaId(preferred) ?? preferred : null;
+    const rows = rooms
+        .map((r) => {
+            const meta = r.metadata ?? {};
+            return {
+                roomId: r.roomId,
+                plazaId: meta.plazaId || "",
+                walkIns: meta.walkIns ?? r.clients,
+                walkInCap: meta.walkInCap ?? PLAZA_WALK_IN_CAP,
+            };
+        })
+        .filter((r) => r.plazaId);
+    if (parsed) {
+        const exact = rows.find((r) => r.plazaId === parsed);
+        if (exact) return { plazaId: exact.plazaId, roomId: exact.roomId };
+    }
+    const fit = [...rows]
+        .filter((r) => r.walkIns + groupSize <= r.walkInCap)
+        .sort((a, b) => b.walkIns - a.walkIns);
+    if (fit[0]) return { plazaId: fit[0].plazaId, roomId: fit[0].roomId };
+    return { plazaId: nextPlazaId(rows.map((r) => r.plazaId)) };
+}
 
 export function useBaseCityRoom(options: Options) {
     const [status, setStatus] = useState<"connecting" | "connected" | "error" | "disconnected">("connecting");
@@ -322,9 +365,45 @@ export function useBaseCityRoom(options: Options) {
         phase: string;
         alive: number;
         goal: number;
+        label?: string;
     } | null>(null);
     const [pvePaused, setPvePausedLocal] = useState(false);
+    const [pveUpgradeDraft, setPveUpgradeDraft] = useState<{
+        wave: number;
+        offers: Array<{
+            offerId: string;
+            id: string;
+            stat: string;
+            rarity: string;
+            magnitude: number;
+            label: string;
+            hint: string;
+        }>;
+        waiting: Array<{ sessionId: string; displayName: string; picked: boolean }>;
+        picked: boolean;
+    } | null>(null);
     const [pveFriendlyFire, setPveFriendlyFire] = useState(false);
+    const [plazaState, setPlazaState] = useState<{
+        plazaId: string;
+        code: string;
+        clients: number;
+        walkIns: number;
+        walkInCap: number;
+    } | null>(null);
+    const [plazaList, setPlazaList] = useState<
+        Array<{
+            plazaId: string;
+            code: string;
+            clients: number;
+            walkIns: number;
+            walkInCap: number;
+            maxClients: number;
+            roomId: string;
+        }>
+    >([]);
+    const [friendLocations, setFriendLocations] = useState<
+        Record<string, { plazaId: string | null; hubOwnerId: string | null }>
+    >({});
     const [waveRunRecap, setWaveRunRecap] = useState<{
         kills: number;
         wave: number;
@@ -332,6 +411,8 @@ export function useBaseCityRoom(options: Options) {
         isNewBest: boolean;
         retryReady: boolean;
         rows: MatchRecapRow[];
+        victory?: boolean;
+        chestQuality?: string | null;
     } | null>(null);
     const [matchRecap, setMatchRecap] = useState<MatchRecapState | null>(null);
     const [rankedState, setRankedState] = useState<{
@@ -356,6 +437,26 @@ export function useBaseCityRoom(options: Options) {
             rank: number;
         }>
     >([]);
+    const [pveLeaderboard, setPveLeaderboard] = useState<
+        Array<{
+            userId: string;
+            displayName: string;
+            wave: number;
+            kills: number;
+            damageDealt: number;
+            partySize: number;
+            rank: number;
+        }>
+    >([]);
+    const [pveBest, setPveBest] = useState<{
+        userId: string;
+        displayName: string;
+        wave: number;
+        kills: number;
+        damageDealt: number;
+        partySize: number;
+        rank: number;
+    } | null>(null);
     const [party, setParty] = useState<PartySnapshot | null>(null);
     const [partyInvite, setPartyInvite] = useState<{
         partyId: string;
@@ -536,6 +637,9 @@ export function useBaseCityRoom(options: Options) {
             setMatchPause(null);
             setWaveHud(null);
             setPvePausedLocal(false);
+            setPveUpgradeDraft(null);
+            setPlazaState(null);
+            setPlazaList([]);
             setPveFriendlyFire(Boolean((joined.state as { pveFriendlyFire?: boolean })?.pveFriendlyFire));
             emotePieOpenRef.current = false;
             setEmotePieOpen(false);
@@ -679,31 +783,122 @@ export function useBaseCityRoom(options: Options) {
 
             joined.onMessage(
                 "wave_hud",
-                (msg: { wave?: number; phase?: string; alive?: number; goal?: number }) => {
+                (msg: { wave?: number; phase?: string; alive?: number; goal?: number; label?: string }) => {
                     setWaveHud({
                         wave: Math.max(0, Math.floor(Number(msg.wave) || 0)),
                         phase: typeof msg.phase === "string" ? msg.phase : "idle",
                         alive: Math.max(0, Math.floor(Number(msg.alive) || 0)),
                         goal: Math.max(0, Math.floor(Number(msg.goal) || 0)),
+                        label: typeof msg.label === "string" ? msg.label : undefined,
                     });
                 },
             );
-            joined.onMessage("pve_pause", (msg: { paused?: boolean }) => {
-                setPvePausedLocal(Boolean(msg?.paused));
+            joined.onMessage("pve_pause", (msg: { paused?: boolean; reason?: string }) => {
+                setPvePausedLocal(Boolean(msg?.paused) && msg?.reason !== "pve_upgrade");
+                if (!msg?.paused) setPveUpgradeDraft(null);
             });
+            joined.onMessage(
+                "pve_upgrade_draft",
+                (msg: {
+                    wave?: number;
+                    offers?: Array<{
+                        offerId: string;
+                        id: string;
+                        stat: string;
+                        rarity: string;
+                        magnitude: number;
+                        label: string;
+                        hint: string;
+                    }>;
+                    waiting?: Array<{ sessionId: string; displayName: string; picked: boolean }>;
+                }) => {
+                    setPveUpgradeDraft({
+                        wave: Math.max(0, Math.floor(Number(msg.wave) || 0)),
+                        offers: Array.isArray(msg.offers) ? msg.offers : [],
+                        waiting: Array.isArray(msg.waiting) ? msg.waiting : [],
+                        picked: false,
+                    });
+                },
+            );
+            joined.onMessage(
+                "pve_upgrade_waiting",
+                (msg: { waiting?: Array<{ sessionId: string; displayName: string; picked: boolean }> }) => {
+                    setPveUpgradeDraft((prev) =>
+                        prev
+                            ? {
+                                  ...prev,
+                                  waiting: Array.isArray(msg.waiting) ? msg.waiting : prev.waiting,
+                              }
+                            : prev,
+                    );
+                },
+            );
             joined.onMessage("pve_friendly_fire", (msg: { enabled?: boolean }) => {
                 setPveFriendlyFire(Boolean(msg?.enabled));
             });
             joined.onMessage(
+                "plaza_state",
+                (msg: { plazaId?: string; code?: string; clients?: number; walkIns?: number; walkInCap?: number }) => {
+                    if (!msg?.plazaId) {
+                        setPlazaState(null);
+                        return;
+                    }
+                    setPlazaState({
+                        plazaId: msg.plazaId,
+                        code: msg.code || msg.plazaId,
+                        clients: Math.max(0, Math.floor(Number(msg.clients) || 0)),
+                        walkIns: Math.max(0, Math.floor(Number(msg.walkIns) || 0)),
+                        walkInCap: Math.max(1, Math.floor(Number(msg.walkInCap) || 10)),
+                    });
+                    saveLastPlaza(msg.plazaId);
+                    saveLastSocial("plaza");
+                    optionsRef.current.onActivePlazaId?.(msg.plazaId);
+                },
+            );
+            joined.onMessage(
+                "plaza_list",
+                (msg: {
+                    plazas?: Array<{
+                        plazaId: string;
+                        code: string;
+                        clients: number;
+                        walkIns: number;
+                        walkInCap: number;
+                        maxClients: number;
+                        roomId: string;
+                    }>;
+                }) => {
+                    setPlazaList(Array.isArray(msg.plazas) ? msg.plazas : []);
+                },
+            );
+            joined.onMessage(
+                "friend_locations",
+                (msg: { locations?: Array<{ userId: string; plazaId: string | null; hubOwnerId: string | null }> }) => {
+                    const next: Record<string, { plazaId: string | null; hubOwnerId: string | null }> = {};
+                    for (const row of msg.locations ?? []) {
+                        if (!row?.userId) continue;
+                        next[row.userId] = {
+                            plazaId: row.plazaId ?? null,
+                            hubOwnerId: row.hubOwnerId ?? null,
+                        };
+                    }
+                    setFriendLocations(next);
+                },
+            );
+            joined.onMessage(
                 "pve_run_end",
-                (msg: { kills?: number; wave?: number; rows?: MatchRecapRow[] }) => {
+                (msg: { kills?: number; wave?: number; rows?: MatchRecapRow[]; victory?: boolean }) => {
                     const kills = Math.max(0, Math.floor(Number(msg.kills) || 0));
                     const wave = Math.max(0, Math.floor(Number(msg.wave) || 0));
                     const rows = Array.isArray(msg.rows) ? msg.rows : [];
-                    const { best, isNewBest } = recordWaveBestRun(optionsRef.current.userId, {
-                        kills,
-                        wave,
-                    });
+                    const victory = Boolean(msg.victory);
+                    const instance = contentModeRef.current === "instance";
+                    const { best, isNewBest } = instance
+                        ? { best: { kills: 0 }, isNewBest: false }
+                        : recordWaveBestRun(optionsRef.current.userId, {
+                            kills,
+                            wave,
+                        });
                     setWaveRunRecap({
                         kills,
                         wave,
@@ -711,9 +906,20 @@ export function useBaseCityRoom(options: Options) {
                         isNewBest,
                         retryReady: false,
                         rows,
+                        victory,
+                        chestQuality: null,
                     });
                     setDiedAt(null);
                     setPvePausedLocal(true);
+                },
+            );
+            joined.onMessage(
+                "pve_run_chest",
+                (msg: { quality?: string; victory?: boolean }) => {
+                    const quality = typeof msg.quality === "string" ? msg.quality : null;
+                    setWaveRunRecap((prev) =>
+                        prev ? { ...prev, chestQuality: quality, victory: prev.victory || Boolean(msg.victory) } : prev,
+                    );
                 },
             );
             joined.onMessage("pve_run_restart", () => {
@@ -721,6 +927,7 @@ export function useBaseCityRoom(options: Options) {
                 setWaveHud(null);
                 setDiedAt(null);
                 setPvePausedLocal(false);
+                setPveUpgradeDraft(null);
                 clearLocalCombatCastStateRef.current();
             });
 
@@ -869,6 +1076,8 @@ export function useBaseCityRoom(options: Options) {
 
             joined.onMessage("party_update", (msg: { party?: PartySnapshot | null }) => {
                 const next = msg.party ?? null;
+                const myId = joined.sessionId;
+                if (next && !next.members.some((m) => m.sessionId === myId)) return;
                 setParty(
                     next
                         ? {
@@ -877,8 +1086,7 @@ export function useBaseCityRoom(options: Options) {
                           }
                         : null,
                 );
-                if (next) setActiveUi("party_lobby");
-                else setActiveUi((ui) => (ui === "party_lobby" ? null : ui));
+                if (!next) setActiveUi((ui) => (ui === "party_lobby" ? null : ui));
                 if (next?.queued) setPartyInvite(null);
             });
 
@@ -950,6 +1158,33 @@ export function useBaseCityRoom(options: Options) {
                     }>;
                 }) => {
                     setRankedLeaderboard(msg.rows ?? []);
+                },
+            );
+
+            joined.onMessage(
+                "hub_pve_leaderboard",
+                (msg: {
+                    rows?: Array<{
+                        userId: string;
+                        displayName: string;
+                        wave: number;
+                        kills: number;
+                        damageDealt: number;
+                        partySize: number;
+                        rank: number;
+                    }>;
+                    mine?: {
+                        userId: string;
+                        displayName: string;
+                        wave: number;
+                        kills: number;
+                        damageDealt: number;
+                        partySize: number;
+                        rank: number;
+                    } | null;
+                }) => {
+                    setPveLeaderboard(Array.isArray(msg.rows) ? msg.rows : []);
+                    setPveBest(msg.mine ?? null);
                 },
             );
 
@@ -1521,7 +1756,7 @@ export function useBaseCityRoom(options: Options) {
             transferringRef.current = true;
             try {
                 clearHubRejoin();
-                const goingHome = msg.room === ROOM.BASE_CITY;
+                const goingHome = msg.room === ROOM.BASE_CITY || msg.room === ROOM.PLAZA;
                 if (goingHome) {
                     clearContentRejoin();
                 }
@@ -1548,6 +1783,8 @@ export function useBaseCityRoom(options: Options) {
 
                 const hubOwnerId =
                     (msg.options?.hubOwnerId as string | undefined) ?? opts.hubOwnerId ?? opts.userId;
+                const plazaId = typeof msg.options?.plazaId === "string" ? msg.options.plazaId : undefined;
+                const groupId = typeof msg.options?.groupId === "string" ? msg.options.groupId : undefined;
 
                 const joinOpts: Record<string, unknown> = {
                     userId: opts.userId,
@@ -1564,7 +1801,10 @@ export function useBaseCityRoom(options: Options) {
                     cosmeticLegs: localPlayer?.cosmeticLegs,
                     cosmeticShoes: localPlayer?.cosmeticShoes,
                     accessToken: opts.accessToken ?? undefined,
-                    hubOwnerId,
+                    hubOwnerId: plazaId ? undefined : hubOwnerId,
+                    plazaId,
+                    plazaInvite: msg.options?.plazaInvite ?? Boolean(plazaId),
+                    groupId,
                     mode: msg.options?.mode,
                     modifiers: msg.options?.modifiers,
                     matchId: msg.options?.matchId,
@@ -1600,7 +1840,8 @@ export function useBaseCityRoom(options: Options) {
                           ROOM_CONNECT_TIMEOUT_MS,
                           "transfer joinOrCreate",
                       );
-                const nextPhase: SessionPhase = msg.room === ROOM.BASE_CITY ? "hub" : "content";
+                const nextPhase: SessionPhase =
+                    msg.room === ROOM.BASE_CITY || msg.room === ROOM.PLAZA ? "hub" : "content";
                 const mode = typeof msg.options?.mode === "string" ? msg.options.mode : null;
                 wireRoom(joined, nextPhase, mode);
                 if (nextPhase === "hub") {
@@ -1609,17 +1850,25 @@ export function useBaseCityRoom(options: Options) {
                     setArenaHud(null);
                     clearContentRejoin();
                     const ownId = opts.userId;
-                    if (hubOwnerId && ownId && hubOwnerId !== ownId) {
+                    if (plazaId) {
+                        saveLastPlaza(plazaId);
+                        saveLastSocial("plaza");
+                        optionsRef.current.onActivePlazaId?.(plazaId);
+                        optionsRef.current.onActiveHubOwnerId?.(null);
+                    } else if (hubOwnerId && ownId && hubOwnerId !== ownId) {
                         savePreferredHub(ownId, hubOwnerId);
                         optionsRef.current.onActiveHubOwnerId?.(hubOwnerId);
+                        showToast("Visiting hub");
                     } else {
                         clearPreferredHub();
+                        saveLastSocial("home");
                         optionsRef.current.onActiveHubOwnerId?.(null);
+                        showToast("Returned to your city");
                     }
                     // Pull fresh ladder after ranked games so My rank isn't stale.
                     joined.send("hub_ranked_request");
                     joined.send("hub_ranked_leaderboard");
-                    showToast("Returned to base city");
+                    joined.send("hub_pve_leaderboard");
                 } else {
                     showToast(`Transferred to ${mode ?? msg.room}`);
                 }
@@ -2386,7 +2635,11 @@ export function useBaseCityRoom(options: Options) {
                     loadPreferredHub(options.userId) ??
                     requestedHub;
 
-                if (savedHub?.token && savedHub.hubOwnerId === hubOwnerId) {
+                const visiting =
+                    Boolean(options.hubOwnerId) && options.hubOwnerId !== options.userId;
+                const usePlaza = options.wantPlaza !== false && !visiting;
+
+                if (savedHub?.token && savedHub.hubOwnerId === hubOwnerId && !usePlaza) {
                     try {
                         const rejoined = await withTimeout(
                             client.reconnect(savedHub.token),
@@ -2405,6 +2658,55 @@ export function useBaseCityRoom(options: Options) {
                     }
                 }
 
+                if (usePlaza) {
+                    const pick = await resolvePlazaJoin(
+                        client,
+                        options.plazaId || loadLastPlaza(),
+                    );
+                    const plazaOpts = {
+                        userId: options.userId,
+                        displayName: options.displayName,
+                        color: options.color,
+                        accessToken: options.accessToken ?? undefined,
+                        plazaId: pick.plazaId,
+                        plazaInvite: Boolean(options.plazaId) && options.plazaId === pick.plazaId,
+                    };
+                    let joined: Room;
+                    try {
+                        joined = pick.roomId
+                            ? await withTimeout(
+                                  client.joinById(pick.roomId, plazaOpts),
+                                  ROOM_CONNECT_TIMEOUT_MS,
+                                  "plaza joinById",
+                              )
+                            : await withTimeout(
+                                  client.joinOrCreate(ROOM.PLAZA, plazaOpts),
+                                  ROOM_CONNECT_TIMEOUT_MS,
+                                  "plaza joinOrCreate",
+                              );
+                    } catch {
+                        const fallback = await resolvePlazaJoin(client, null);
+                        joined = await withTimeout(
+                            client.joinOrCreate(ROOM.PLAZA, {
+                                ...plazaOpts,
+                                plazaId: fallback.plazaId,
+                                plazaInvite: false,
+                            }),
+                            ROOM_CONNECT_TIMEOUT_MS,
+                            "plaza fallback",
+                        );
+                    }
+                    if (cancelled) {
+                        joined.leave(true);
+                        return;
+                    }
+                    saveLastPlaza(pick.plazaId);
+                    saveLastSocial("plaza");
+                    options.onActivePlazaId?.(pick.plazaId);
+                    wireRoom(joined, "hub", null);
+                    return;
+                }
+
                 try {
                     const joined = await withTimeout(
                         client.joinOrCreate(ROOM.BASE_CITY, {
@@ -2421,6 +2723,7 @@ export function useBaseCityRoom(options: Options) {
                         joined.leave(true);
                         return;
                     }
+                    if (hubOwnerId === options.userId) saveLastSocial("home");
                     wireRoom(joined, "hub", null);
                 } catch (joinErr) {
                     // Host hub may be gone; fall back home rather than hard-fail.
@@ -2487,6 +2790,8 @@ export function useBaseCityRoom(options: Options) {
         options.accessToken,
         options.hubOwnerId,
         options.enabled,
+        options.plazaId,
+        options.wantPlaza,
         wireRoom,
         showToast,
     ]);
@@ -2858,7 +3163,7 @@ export function useBaseCityRoom(options: Options) {
                         if (prev?.id === prompt?.id && prev?.kind === prompt?.kind) return prev;
                         return prompt;
                     });
-                } else if (predictor.isSeeded && npcsRef.current.length > 0) {
+                } else if (predictor.isSeeded && (npcsRef.current.length > 0 || contentModeRef.current === "instance")) {
                     // Authored maps: villagers, shopkeepers and quest givers read
                     // from the same document the server validates against. Plain
                     // radius rather than an oriented pad -- an NPC is a person you
@@ -2872,6 +3177,28 @@ export function useBaseCityRoom(options: Options) {
                         if (d > bestDist) continue;
                         bestDist = d;
                         best = { id: npcInteractId(npc.id), label: npc.name, kind: "npc" };
+                    }
+                    if (contentModeRef.current === "instance") {
+                        const unlocked = Boolean(
+                            (r.state as { dungeonExitUnlocked?: boolean } | undefined)
+                                ?.dungeonExitUnlocked,
+                        );
+                        if (unlocked) {
+                            const mapId = mapIdForMode("instance");
+                            const doc = mapId ? mapDocFor(mapId) : undefined;
+                            const exits = doc ? mapElementsOfType(doc, "dungeon_exit") : [];
+                            for (const el of exits) {
+                                const radius = el.shape?.kind === "circle" ? el.shape.radius : 2.4;
+                                const d = Math.hypot(px - el.x, pz - el.z);
+                                if (d > radius || d >= bestDist) continue;
+                                bestDist = d;
+                                best = {
+                                    id: dungeonExitInteractId(el.id),
+                                    label: "Exit",
+                                    kind: "npc",
+                                };
+                            }
+                        }
                     }
                     const prompt =
                         best && activeUiRef.current == null && !uiInputLockedRef.current ? best : null;
@@ -3219,6 +3546,37 @@ export function useBaseCityRoom(options: Options) {
         roomRef.current?.send("pve_friendly_fire", { enabled: Boolean(enabled) });
     }, []);
 
+    const requestPlazaList = useCallback(() => {
+        roomRef.current?.send("list_plazas");
+    }, []);
+
+    const joinPlaza = useCallback((plazaId?: string) => {
+        roomRef.current?.send("join_plaza", { plazaId: plazaId ?? "" });
+    }, []);
+
+    const joinHome = useCallback(() => {
+        roomRef.current?.send("join_home");
+    }, []);
+
+    const joinHub = useCallback((hubOwnerId: string) => {
+        if (!hubOwnerId) return;
+        roomRef.current?.send("join_hub", { hubOwnerId });
+    }, []);
+
+    const joinFriendPlaza = useCallback((userId: string) => {
+        if (!userId) return;
+        roomRef.current?.send("join_friend_plaza", { userId });
+    }, []);
+
+    const requestFriendLocations = useCallback((userIds: string[]) => {
+        roomRef.current?.send("list_friend_locations", { userIds });
+    }, []);
+
+    const pickPveUpgrade = useCallback((offerId: string) => {
+        setPveUpgradeDraft((prev) => (prev ? { ...prev, picked: true } : prev));
+        roomRef.current?.send("pve_upgrade_pick", { offerId });
+    }, []);
+
     const voteRematch = useCallback(() => {
         setWaveRunRecap((prev) => (prev ? { ...prev, retryReady: true } : prev));
         roomRef.current?.send("rematch_vote");
@@ -3317,6 +3675,10 @@ export function useBaseCityRoom(options: Options) {
         roomRef.current?.send("hub_admin_tp_map", { mapId });
     }, []);
 
+    const adminEnterMode = useCallback((modeId: string) => {
+        roomRef.current?.send("hub_admin_enter_mode", { modeId });
+    }, []);
+
     const clearChestReveal = useCallback(() => {
         setChestReveal(null);
         setPendingChestOpenId(null);
@@ -3357,6 +3719,7 @@ export function useBaseCityRoom(options: Options) {
     const refreshRanked = useCallback(() => {
         roomRef.current?.send("hub_ranked_request");
         roomRef.current?.send("hub_ranked_leaderboard");
+        roomRef.current?.send("hub_pve_leaderboard");
     }, []);
 
     const cancelParty = useCallback(() => {
@@ -3374,7 +3737,6 @@ export function useBaseCityRoom(options: Options) {
         if (!invite) return;
         roomRef.current?.send("party_respond", { accept, partyId: invite.partyId });
         setPartyInvite(null);
-        if (accept) setActiveUi("party_lobby");
     }, [partyInvite]);
 
     useEffect(() => {
@@ -3412,6 +3774,7 @@ export function useBaseCityRoom(options: Options) {
         requestRespawn,
         deathSpectate,
         adminTpToMap,
+        adminEnterMode,
         spectateTargetId,
         beginDeathSpectate,
         hubRoster,
@@ -3442,6 +3805,17 @@ export function useBaseCityRoom(options: Options) {
         waveHud,
         pvePaused,
         setPvePaused,
+        pveUpgradeDraft,
+        pickPveUpgrade,
+        plazaState,
+        plazaList,
+        friendLocations,
+        requestPlazaList,
+        requestFriendLocations,
+        joinPlaza,
+        joinHome,
+        joinHub,
+        joinFriendPlaza,
         pveFriendlyFire,
         setPveFriendlyFireEnabled,
         waveRunRecap,
@@ -3449,6 +3823,8 @@ export function useBaseCityRoom(options: Options) {
         voteRematch,
         rankedState,
         rankedLeaderboard,
+        pveLeaderboard,
+        pveBest,
         refreshRanked,
         party,
         partyInvite,

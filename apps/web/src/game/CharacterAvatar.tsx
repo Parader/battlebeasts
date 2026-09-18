@@ -18,7 +18,7 @@ import {
   prepareCharacterScene,
   setCharacterOpacity,
   tintCharacterSurface,
-  warmCharacterOpacityVariants,
+  scheduleWarmCharacterOpacityVariants,
   disposeCharacterMaterials,
 } from "./characterVisual";
 import { getAdminBindPose } from "./adminBindPose";
@@ -92,6 +92,8 @@ export function CharacterAvatar({
   const appearanceKey = useRef("");
   const cosmeticsKeyRef = useRef("");
   const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
+  const [vesselColor, setVesselColor] = useState(color ?? STARTER_COLORS[0]!);
+  const liveColorRef = useRef(color ?? STARTER_COLORS[0]!);
   const vessel = usePlayerVessel(room, localSessionId);
   const wasDeadRef = useRef(false);
   const deathSinkRef = useRef<DeathSinkState | null>(null);
@@ -129,6 +131,8 @@ export function CharacterAvatar({
     const liveVessel = me?.vessel || "female";
     tintCharacterSurface(scene, color, pattern, patternColor);
     appearanceKey.current = `${color}|${pattern}|${patternColor}|${liveVessel}`;
+    liveColorRef.current = color;
+    setVesselColor(color);
     const nextKey = cosmeticsKey(me);
     if (nextKey !== cosmeticsKeyRef.current) {
       cosmeticsKeyRef.current = nextKey;
@@ -149,23 +153,19 @@ export function CharacterAvatar({
   }, [scene]);
 
   /*
-   * Pre-compile the ghosted variant of this loadout, so the first decoy or
-   * cloak does not relink the hero and gear mid-fight. Re-runs on equipment
-   * change because new gear can bring a material configuration -- skinned vs
-   * rigid, normal-mapped or not -- that has not been compiled yet.
-   *
-   * Deferred a frame so the avatar is in the scene graph for gl.compile.
+   * Pre-compile the ghosted variant of this loadout, so the first decoy,
+   * cloak, or Teleport Slam fade does not relink the hero and gear mid-fight.
+   * Waits a few frames so skins are in the graph, then compileAsync + a 1x1
+   * draw so the GPU actually links before the first vanish.
    */
   const gl = useThree((s) => s.gl);
   const rootScene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
   const equippedKey = JSON.stringify(equipped);
-  useEffect(() => {
-    const id = requestAnimationFrame(() =>
-      warmCharacterOpacityVariants(gl, rootScene, camera, scene, equippedKey),
-    );
-    return () => cancelAnimationFrame(id);
-  }, [gl, rootScene, camera, scene, equippedKey]);
+  useEffect(
+    () => scheduleWarmCharacterOpacityVariants(gl, rootScene, camera, scene, equippedKey),
+    [gl, rootScene, camera, scene, equippedKey],
+  );
 
   useEffect(() => {
     const controller = new CharacterAnimationController(
@@ -238,10 +238,12 @@ export function CharacterAvatar({
     const livePattern = me?.pattern ?? "plain";
     const livePatternColor = me?.patternColor ?? "#1f2937";
     const liveVessel = me?.vessel ?? "female";
+    liveColorRef.current = liveColor;
     const key = `${liveColor}|${livePattern}|${livePatternColor}|${liveVessel}`;
     if (key !== appearanceKey.current) {
       appearanceKey.current = key;
       tintCharacterSurface(scene, liveColor, livePattern, livePatternColor);
+      if (liveColor !== vesselColor) setVesselColor(liveColor);
     }
     const nextCosmetics = cosmeticsKey(me);
     if (nextCosmetics !== cosmeticsKeyRef.current) {
@@ -444,13 +446,17 @@ export function CharacterAvatar({
         ? 0.32
         : getTeleportSlamOpacity(localSessionId);
     const slamFading = !cloaked && !revengeVanished && hasTeleportSlamFade(localSessionId);
-    if (ghosted || slamFading || ghostOpacity !== ghostOpacityRef.current) {
-      ghostOpacityRef.current = ghostOpacity;
-      setCharacterOpacity(scene, ghostOpacity);
-      setCloakOpacity(ghostOpacity);
+    // Always walk materials: a no-op when already at the target, and it heals
+    // any leftover ghost from GPU warmup overlapping this loadout.
+    ghostOpacityRef.current = ghostOpacity;
+    setCharacterOpacity(scene, ghostOpacity);
+    if (ghosted || slamFading) {
+      if (!slamFading) setCloakOpacity(ghostOpacity);
       if (!cloaked) {
         controller.setCrouchLoco(false);
       }
+    } else if (cloakOpacity !== 1) {
+      setCloakOpacity(1);
     }
 
     if (crouchWalkActive) {
@@ -484,12 +490,12 @@ export function CharacterAvatar({
         <VesselBody
           characterRoot={scene}
           body={vessel}
-          color={color ?? STARTER_COLORS[0]!}
+          color={vesselColor}
         />
         <EquippedCosmetics characterRoot={scene} equipped={equipped} opacity={cloakOpacity} body={vessel} />
         <SpiritVesselFx
           characterRoot={scene}
-          getColor={() => color ?? STARTER_COLORS[0]!}
+          getColor={() => liveColorRef.current}
           getOpacity={() => {
             if (!room || !localSessionId) return cloakOpacity;
             const me = room.state?.players?.get(localSessionId) as

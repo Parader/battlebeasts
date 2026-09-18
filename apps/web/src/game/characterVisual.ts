@@ -13,6 +13,7 @@ import {
   type CosmeticsEquipped,
 } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
+import { compileLiveScene } from "./compileLiveScene";
 
 /** Desired standing height in world meters. */
 export const CHARACTER_TARGET_HEIGHT = 1.7;
@@ -572,11 +573,16 @@ function hideYRange(mesh: THREE.Mesh): { y0: number; y1: number } {
   return range;
 }
 
+function isHideTintUniforms(value: unknown): value is HideTintUniforms {
+  const hide = value as HideTintUniforms | undefined;
+  return Boolean(hide?.a?.value && (hide.a.value as THREE.Color).isColor);
+}
+
 function applyHideTintMaterial(std: THREE.MeshStandardMaterial, mesh: THREE.Mesh, colorId: string): void {
   const tint = resolveHideTint(colorId);
   const range = hideYRange(mesh);
   let hide = std.userData.bbHide as HideTintUniforms | undefined;
-  if (!hide) {
+  if (!isHideTintUniforms(hide)) {
     hide = {
       a: { value: new THREE.Color(tint.a) },
       b: { value: new THREE.Color(tint.b) },
@@ -633,7 +639,9 @@ if (uHideGrade > 1.5) {
 diffuseColor.rgb = mix(uHideA, uHideB, hideT);`,
         );
     };
-    std.customProgramCacheKey = () => "bbHideTint2";
+    // Per-material key: a shared "bbHideTint2" lets onBeforeCompile run once,
+    // so later avatars keep the first character's uniforms (or black defaults).
+    std.customProgramCacheKey = () => `bbHideTint2:${std.uuid}`;
   }
   hide.a.value.set(tint.a);
   hide.b.value.set(tint.b);
@@ -656,7 +664,7 @@ export function tintCharacterSurface(
 ): void {
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.material || !mesh.visible) return;
+    if (!mesh.isMesh || !mesh.material) return;
     if (mesh.name.startsWith("bb")) return;
     if (obj.userData.bbBoneSkin) return;
     const name = mesh.name.toLowerCase();
@@ -705,81 +713,129 @@ export function setCharacterOpacity(scene: THREE.Object3D, opacity: number): voi
     for (const m of mats) {
       const std = m as THREE.MeshStandardMaterial;
       if (!("opacity" in std)) continue;
-      std.transparent = o < 0.999;
+      const transparent = o < 0.999;
+      const depthWrite = o >= 0.999;
+      if (std.transparent === transparent && std.opacity === o && std.depthWrite === depthWrite) {
+        continue;
+      }
+      std.transparent = transparent;
       std.opacity = o;
-      std.depthWrite = o >= 0.999;
+      std.depthWrite = depthWrite;
       std.needsUpdate = true;
     }
   });
 }
 
 const warmedOpacityLoadouts = new Set<string>();
+const OPACITY_WARM_DUMMY = "OpacityWarmDummy";
+let opacityWarmQueue: Promise<void> = Promise.resolve();
+
+function cloneOpacityWarmDummy(source: THREE.Object3D): THREE.Object3D {
+  const dummy = cloneSkinned(source) as THREE.Object3D;
+  dummy.name = OPACITY_WARM_DUMMY;
+  dummy.visible = false;
+  dummy.position.set(0, -800, 0);
+  dummy.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    mesh.material = Array.isArray(mesh.material)
+      ? mesh.material.map((m) => m.clone())
+      : mesh.material.clone();
+    mesh.frustumCulled = false;
+  });
+  return dummy;
+}
 
 /**
  * Compile the ghosted variant of the character's materials up front.
  *
  * `setCharacterOpacity` flips `transparent`, which three folds into the
- * program cache key (the `opaque` bit). So the first decoy, cloak or spirit
- * husk of a session relinks every hero and gear material on the spot -- a
- * visible spike, measured on the first decoy cast.
+ * program cache key (the `opaque` bit). So the first decoy, cloak, teleport
+ * slam fade or spirit husk of a session relinks every hero and gear material
+ * on the spot -- a visible spike.
  *
- * Programs are keyed by material configuration -- maps, skinning, vertex
- * attributes -- rather than by cosmetic item, so distinct gear sharing a
- * configuration also shares a program. A handful of loadouts covers the
- * catalogue, which is why `loadoutKey` dedupes rather than warming per item.
+ * Never mutate the live avatar: compileAsync yields, overlapping loadout
+ * warms (avatar + bone skins) used to snapshot each other at 0.32 and
+ * restore players as permanent ghosts. A hidden clone carries the variants.
+ *
+ * `gl.compile` only queues programs; the GPU often finishes on first draw.
+ * We compileAsync (Bloom linear + canvas) then actually render into a 1x1
+ * probe so Teleport Slam's first vanish is a cache hit.
  *
  * Call this whenever a new loadout enters the scene: the local avatar, an
  * equipment change, or a remote player appearing. Repeats for a key already
- * seen are skipped, since `gl.compile` walks the whole scene and is not free
- * even when every program is a cache hit.
+ * seen are skipped.
  */
-export function warmCharacterOpacityVariants(
+export async function warmCharacterOpacityVariants(
   gl: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.Camera,
   characterRoot: THREE.Object3D,
   loadoutKey = "default",
-): void {
+): Promise<void> {
   if (warmedOpacityLoadouts.has(loadoutKey)) return;
   warmedOpacityLoadouts.add(loadoutKey);
 
-  // Snapshot per material rather than reducing to one scalar. A character
-  // carries meshes this warm-up must not speak for -- hidden gear, eye and
-  // decal materials -- so any summary of "what opacity was the character at"
-  // is wrong for someone. Restoring each material to its own recorded state
-  // is exact, and it keeps a cloaked remote player cloaked.
-  const restore: Array<[THREE.Material, number, boolean, boolean]> = [];
-  characterRoot.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.material) return;
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const m of mats) {
-      if (!("opacity" in m)) continue;
-      restore.push([m, m.opacity, m.transparent, m.depthWrite]);
-    }
-  });
+  const dummy = cloneOpacityWarmDummy(characterRoot);
+  scene.add(dummy);
 
-  // Matches the VFX warmup: bind a target so the key carries the composer's
-  // linear output space rather than the canvas's sRGB. Cloak uses 0.32.
   const probe = new THREE.WebGLRenderTarget(1, 1);
   const previousTarget = gl.getRenderTarget();
   try {
-    setCharacterOpacity(characterRoot, 0.32);
+    // Cloak 0.32 and slam fade both use transparent + depthWrite off.
+    // Draw at 0.01 so the GPU actually links; opacity 0 can skip the mesh.
+    setCharacterOpacity(dummy, 0.32);
+    await compileLiveScene(gl, scene, camera);
+    setCharacterOpacity(dummy, 0.01);
+    dummy.visible = true;
     gl.setRenderTarget(probe);
-    gl.compile(scene, camera);
+    gl.render(scene, camera);
   } catch {
+    warmedOpacityLoadouts.delete(loadoutKey);
     // Best-effort — a missed warm costs a hitch, not correctness.
   } finally {
     gl.setRenderTarget(previousTarget);
     probe.dispose();
-    // No frame renders inside this call, so the swap is never visible.
-    for (const [m, opacity, transparent, depthWrite] of restore) {
-      m.opacity = opacity;
-      m.transparent = transparent;
-      m.depthWrite = depthWrite;
-      m.needsUpdate = true;
-    }
+    scene.remove(dummy);
+    disposeCharacterMaterials(dummy);
   }
+}
+
+/**
+ * Wait until the avatar is in the graph (and skins have a couple of frames
+ * to attach), then compile ghosted programs. Returns a cancel for unmount.
+ */
+export function scheduleWarmCharacterOpacityVariants(
+  gl: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  characterRoot: THREE.Object3D,
+  loadoutKey = "default",
+): () => void {
+  let cancelled = false;
+  let raf = 0;
+  let left = 3;
+  const tick = () => {
+    left -= 1;
+    if (cancelled) return;
+    if (left > 0) {
+      raf = requestAnimationFrame(tick);
+      return;
+    }
+    opacityWarmQueue = opacityWarmQueue.then(async () => {
+      if (cancelled) return;
+      try {
+        await warmCharacterOpacityVariants(gl, scene, camera, characterRoot, loadoutKey);
+      } catch {
+        // Isolated — a missed warm is a hitch, not a stuck queue.
+      }
+    });
+  };
+  raf = requestAnimationFrame(tick);
+  return () => {
+    cancelled = true;
+    cancelAnimationFrame(raf);
+  };
 }
 
 /**

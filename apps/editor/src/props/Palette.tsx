@@ -9,9 +9,9 @@ import { unusable, useUnusableVersion } from "./unusable";
  * Prop palette: a two-level accordion of Category > Family, with variants as
  * chips inside a family.
  *
- * A flat list is unusable at this size (3800+ props in 900+ families), and
- * biome alone does not help -- `kingdom` is 578 families on its own. Searching
- * auto-expands whatever matched, so the tree never hides a hit.
+ * A flat list is unusable once the library grows, and biome alone does not
+ * help -- a kit folder can still dump dozens of families into one list.
+ * Searching auto-expands whatever matched, so the tree never hides a hit.
  */
 
 function dims(p: PropEntry): string {

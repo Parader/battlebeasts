@@ -4,7 +4,7 @@ import { Room } from "colyseus.js";
 import { Suspense, memo, useLayoutEffect, useMemo, useRef, type MutableRefObject } from "react";
 import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import * as THREE from "three";
-import { CAMERA, HUB_GROUND_SIZE, HUB_MAP_ID, mapIdForMode } from "@battlebeasts/shared";
+import { CAMERA, DEFAULT_PLAY_MAP_ID, HUB_GROUND_SIZE, HUB_MAP_ID, isPveRunMode, mapIdForMode } from "@battlebeasts/shared";
 import { BaseCityScene } from "./BaseCityScene";
 import { ContentScene } from "./ContentScene";
 import { PerfOverlay, PerfProbe } from "./PerfHud";
@@ -112,9 +112,9 @@ export const GameCanvas = memo(function GameCanvas({
     spectateTargetId = null,
 }: Props) {
     const inContent = phase === "content";
-    const isDungeon = inContent && contentMode === "dungeon";
+    const isDungeon = inContent && isPveRunMode(contentMode);
     const isArena = inContent && !isDungeon;
-    const mapId = inContent ? (mapIdForMode(contentMode) ?? "desert") : HUB_MAP_ID;
+    const mapId = inContent ? (mapIdForMode(contentMode) ?? DEFAULT_PLAY_MAP_ID) : HUB_MAP_ID;
     // Hub: cool night. Arena: warm sand haze so albedo isn't crushed to mud. Dungeon: dark.
     const skyColor = isDungeon ? "#0a1018" : isArena ? "#b59a6a" : "#0b1220";
     const fogNear = isDungeon ? 28 : isArena ? 42 : 55;

@@ -215,6 +215,16 @@ export const LoginScreen = () => {
                     </div>
                 </>
             )}
+
+            {desktop && (
+                <button
+                    type="button"
+                    className="bb-btn-ink bb-auth-quit"
+                    onClick={() => void window.battlebeasts?.quit?.()}
+                >
+                    Quit game
+                </button>
+            )}
         </AuthShell>
     );
 };

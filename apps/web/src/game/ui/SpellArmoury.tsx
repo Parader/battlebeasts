@@ -36,6 +36,7 @@ import { talentModLines } from "./abilityTalentMods";
 import { ArmouryStatRow, formatSpellTag, getArmouryHighlightStats } from "./armouryStats";
 import { GemIcon } from "./CoinDisplay";
 import { KeyGlyph, SpellSlotGlyph } from "./InputGlyph";
+import { LoadoutPresetTabs } from "./LoadoutPresetTabs";
 import { SpellIcon } from "./SpellIcon";
 
 type LoadoutPreset = {
@@ -337,33 +338,25 @@ export function SpellArmouryHeaderExtras({
   activeLoadoutSlot,
   loadoutSlotCount,
   onSelectPreset,
+  onRenamePreset,
 }: {
   essence: number;
   loadoutPresets: LoadoutPreset[];
   activeLoadoutSlot: number;
   loadoutSlotCount: number;
   onSelectPreset: (slotIndex: number) => void;
+  onRenamePreset: (slotIndex: number, name: string) => void;
 }): { titleAside: ReactNode; headerActions: ReactNode } {
   return {
     titleAside: (
-      <div className="bb-loadout-presets bb-loadout-presets--inline" role="tablist" aria-label="Loadout presets">
-        {Array.from({ length: loadoutSlotCount }, (_, i) => i).map((i) => {
-          const preset = loadoutPresets.find((p) => p.slotIndex === i);
-          const active = activeLoadoutSlot === i;
-          return (
-            <button
-              key={i}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              className={["bb-slot-chip", active ? "bb-slot-chip--on" : ""].join(" ")}
-              onClick={() => onSelectPreset(i)}
-            >
-              {preset?.name ?? `Loadout ${i + 1}`}
-            </button>
-          );
-        })}
-      </div>
+      <LoadoutPresetTabs
+        className="bb-loadout-presets--inline"
+        loadoutPresets={loadoutPresets}
+        activeLoadoutSlot={activeLoadoutSlot}
+        loadoutSlotCount={loadoutSlotCount}
+        onSelectPreset={onSelectPreset}
+        onRenamePreset={onRenamePreset}
+      />
     ),
     headerActions: (
       <span className="bb-armoury-essence" title="Essence">

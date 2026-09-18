@@ -9,6 +9,7 @@ function readGameServerUrl() {
 contextBridge.exposeInMainWorld("battlebeasts", {
   isElectron: true,
   gameServerUrl: readGameServerUrl(),
+  quit: () => ipcRenderer.invoke("quit-app"),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   beginDesktopOAuth: () => ipcRenderer.invoke("begin-desktop-oauth"),
   cancelDesktopOAuth: () => ipcRenderer.invoke("cancel-desktop-oauth"),

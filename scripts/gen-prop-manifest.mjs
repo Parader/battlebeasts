@@ -368,6 +368,8 @@ async function main() {
 
   for (const file of files) {
     const rel = path.relative(PROPS_DIR, file).split(path.sep).join("/");
+    // Root-level GLBs (CTF flag1/flag2) are gameplay assets, not palette props.
+    if (!rel.includes("/")) continue;
     const stat = await fsp.stat(file);
     const stamp = `${stat.size}:${Math.floor(stat.mtimeMs)}`;
 

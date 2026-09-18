@@ -4,6 +4,8 @@ const CONTENT_KEY = "bb_content_rejoin";
 const HUB_KEY = "bb_hub_rejoin";
 /** Last visited host hub — survives refresh so guests can rejoin without a new invite. */
 const PREFERRED_HUB_KEY = "bb_preferred_hub";
+const LAST_PLAZA_KEY = "bb_last_plaza";
+const LAST_SOCIAL_KEY = "bb_last_social";
 
 export type ContentRejoinPayload = {
     token?: string;
@@ -175,4 +177,53 @@ export function loadPreferredHub(userId: string, maxAgeMs = 8 * 60 * 60_000): st
         // ignore
     }
     return null;
+}
+
+export function saveLastPlaza(plazaId: string) {
+    if (!plazaId) return;
+    try {
+        localStorage.setItem(LAST_PLAZA_KEY, JSON.stringify({ plazaId, savedAt: Date.now() }));
+    } catch {
+        // ignore
+    }
+}
+
+export function loadLastPlaza(): string | null {
+    try {
+        const raw = localStorage.getItem(LAST_PLAZA_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as { plazaId?: string };
+        return parsed?.plazaId || null;
+    } catch {
+        return null;
+    }
+}
+
+export function clearLastPlaza() {
+    try {
+        localStorage.removeItem(LAST_PLAZA_KEY);
+    } catch {
+        // ignore
+    }
+}
+
+export type LastSocialDest = "plaza" | "home";
+
+export function saveLastSocial(dest: LastSocialDest) {
+    try {
+        localStorage.setItem(LAST_SOCIAL_KEY, JSON.stringify({ dest, savedAt: Date.now() }));
+    } catch {
+        // ignore
+    }
+}
+
+export function loadLastSocial(): LastSocialDest {
+    try {
+        const raw = localStorage.getItem(LAST_SOCIAL_KEY);
+        if (!raw) return "plaza";
+        const parsed = JSON.parse(raw) as { dest?: string };
+        return parsed?.dest === "home" ? "home" : "plaza";
+    } catch {
+        return "plaza";
+    }
 }

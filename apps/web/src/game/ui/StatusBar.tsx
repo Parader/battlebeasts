@@ -134,10 +134,10 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
     parts.push("+15% elemental damage dealt (3+ enemy elemental stacks)");
   }
   if (row.statusId === "speedPickup") {
-    parts.push("+35% move speed surge");
+    parts.push("+50% move speed surge");
   }
   if (row.statusId === "powerPickup") {
-    parts.push("+30% damage surge");
+    parts.push("+50% damage surge");
   }
   if (row.statusId === "absorbPickup") {
     parts.push(`Absorb shield (${row.stacks} HP remaining)`);

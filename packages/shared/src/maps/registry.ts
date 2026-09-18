@@ -33,6 +33,8 @@ import {
   mapPickups,
   mapPlayerSpawns,
   mapDocPveIngressPoints,
+  mapDocInstancePlayerSpawn,
+  mapDocInstanceStartPads,
   mapDocPvePlayerSpawn,
   mapDocPveStartPads,
   mapSpawnForSlot,
@@ -115,6 +117,11 @@ export function registerMapDoc(doc: MapDoc, name = doc.name): void {
 
 export function getMapSource(id: MapId): MapSource | undefined {
   return registry.get(id);
+}
+
+export function mapDocFor(id: MapId): MapDoc | undefined {
+  const source = registry.get(id);
+  return source?.kind === "doc" ? source.doc : undefined;
 }
 
 export function listMaps(): MapSource[] {
@@ -242,6 +249,23 @@ export function mapPveStartPads(id: MapId): SpawnPose[] {
     return home ? [home] : [{ x: 0, z: 0, yaw: 0 }];
   }
   const pads = mapDocPveStartPads(source.doc);
+  return pads.length ? pads : [{ x: 0, z: 0, yaw: 0 }];
+}
+
+/** Party spawn for an authored dungeon instance. */
+export function mapInstancePlayerSpawn(id: MapId, slot: number, startIndex = 0): SpawnPose {
+  const source = registry.get(id);
+  if (!source) return { x: 0, z: 0, yaw: 0 };
+  if (source.kind === "baked") return mapPvePlayerSpawn(id, slot, startIndex);
+  return mapDocInstancePlayerSpawn(source.doc, slot, startIndex);
+}
+
+/** Entrance pads a dungeon run can roll as the shared start. */
+export function mapInstanceStartPads(id: MapId): SpawnPose[] {
+  const source = registry.get(id);
+  if (!source) return [{ x: 0, z: 0, yaw: 0 }];
+  if (source.kind === "baked") return mapPveStartPads(id);
+  const pads = mapDocInstanceStartPads(source.doc);
   return pads.length ? pads : [{ x: 0, z: 0, yaw: 0 }];
 }
 

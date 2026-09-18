@@ -39,8 +39,20 @@ export function VesselBody({ characterRoot, body, color }: Props) {
       setHeroSurfaceVisible(characterRoot, true);
       return;
     }
+    const owned: THREE.Material[] = [];
     for (const mesh of meshes) {
       mesh.userData.bbVesselBody = true;
+      if (mesh.material) {
+        const cloned = Array.isArray(mesh.material)
+          ? mesh.material.map((m) => {
+              const next = m.clone();
+              owned.push(next);
+              return next;
+            })
+          : mesh.material.clone();
+        if (!Array.isArray(cloned)) owned.push(cloned);
+        mesh.material = cloned;
+      }
       const lower = mesh.name.toLowerCase();
       if (lower.includes("joint")) {
         mesh.visible = false;
@@ -53,6 +65,7 @@ export function VesselBody({ characterRoot, body, color }: Props) {
 
     return () => {
       for (const mesh of meshes) mesh.removeFromParent();
+      for (const mat of owned) mat.dispose();
       setHeroSurfaceVisible(characterRoot, true);
     };
   }, [characterRoot, male, gltf.scene, color]);

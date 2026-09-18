@@ -6,6 +6,7 @@ type WaveHud = {
   phase: string;
   alive: number;
   goal: number;
+  label?: string;
 };
 
 type Props = {
@@ -79,12 +80,17 @@ export function WaveAssaultHud({
       className="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-col items-center gap-2 px-3 pt-3"
     >
       <div className="bb-panel pointer-events-auto flex flex-wrap items-center justify-center gap-3 px-3 py-2">
-        <span className="text-sm font-semibold text-[var(--bb-ink)]" style={{ fontFamily: "var(--bb-font-display)" }}>
-          {hud && hud.wave > 0 ? `Wave ${hud.wave}` : "Wave Assault"}
+                    <span className="text-sm font-semibold text-[var(--bb-ink)]" style={{ fontFamily: "var(--bb-font-display)" }}>
+          {hud?.label
+            ? hud.label
+            : hud && hud.wave > 0
+              ? `Wave ${hud.wave}`
+              : "Wave Assault"}
         </span>
-        {hud && hud.phase === "fighting" ? (
+        {hud && (hud.phase === "fighting" || hud.phase === "exploring") ? (
           <span className="bb-meta tabular-nums">{hud.alive} alive</span>
         ) : null}
+        {hud && hud.phase === "complete" ? <span className="bb-meta">Exit unlocked</span> : null}
         {hud && hud.phase === "intro" ? <span className="bb-meta">Get ready…</span> : null}
         {paused ? <span className="text-sm text-[var(--bb-brass)]">Paused</span> : null}
         <button type="button" className="bb-btn-ink" onClick={onTogglePause}>

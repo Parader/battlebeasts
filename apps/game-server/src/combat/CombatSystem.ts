@@ -205,6 +205,8 @@ import {
   type MapPickupPlacement,
   type PickupSpec,
   resolvePickupRoll,
+  applyPveUpgradeOverlay,
+  type PveUpgradeDef,
 } from "@battlebeasts/shared";
 import {
   runEffectKindFire,
@@ -847,6 +849,18 @@ export class CombatSystem {
   private simList: ProjectileSim[] = [];
   /** Per-session baked loadout + talent mods. */
   private kits = new Map<string, CombatSessionKit>();
+  /** Wave Assault run overlay — rebaked on top of resolveKit. */
+  private pvePicks = new Map<string, PveUpgradeDef[]>();
+  /** Last loadout bake args so overlay picks can rebake without a room call. */
+  private kitBakeArgs = new Map<
+    string,
+    { loadoutCsv: string; talentIdsCsv: string; talentBuild?: TalentBuild }
+  >();
+  /** Closed perimeter wall id — players collide; wave mobs and shots pass. */
+  private perimeterWallId: string | null = null;
+  /** Runtime Wave Assault orbs (not authored map pickups). */
+  private runtimePickupIds = new Set<string>();
+  private runtimePickupSeq = 1;
   /**
    * Engagement / Opening Salvo state — leave-combat mirrors client HP linger.
    * `disarmed` = got hit first (or contested) this engagement; cleared when OOC.
@@ -1030,10 +1044,27 @@ export class CombatSystem {
     this.staticColliders = colliders;
     // Movement still collides with everything; only the projectile sets honour
     // `blocksProjectiles`, so low cover stops bodies but not arrows.
-    const { walls, circles, boxes } = projectileBlockers(colliders);
+    const { walls, circles, boxes } = projectileBlockers(this.projectileColliders());
     this.wallColliders = walls;
     this.circleColliders = circles;
     this.boxColliders = boxes;
+  }
+
+  /** Wave mobs and projectiles ignore this wall; players still collide. */
+  setPerimeterWallId(id: string | null) {
+    this.perimeterWallId = id && id.length > 0 ? id : null;
+    this.setStaticColliders(this.staticColliders);
+  }
+
+  private projectileColliders(): StaticCollider[] {
+    if (!this.perimeterWallId) return this.staticColliders;
+    return this.staticColliders.filter((c) => c.id !== this.perimeterWallId);
+  }
+
+  private mobWalkColliders(at?: Vec2): StaticCollider[] {
+    const all = this.walkStaticColliders(at);
+    if (!this.perimeterWallId) return all;
+    return all.filter((c) => c.id !== this.perimeterWallId);
   }
 
   /** Bake loadout + stub talents + catalog talent build for this session. */
@@ -1044,9 +1075,38 @@ export class CombatSystem {
     talentBuild?: TalentBuild,
   ) {
     const talentIds = talentIdsCsv.split(",").filter(Boolean);
-    const kit = resolveKit(loadoutCsv, talentIds, talentBuild);
+    this.kitBakeArgs.set(sessionId, { loadoutCsv, talentIdsCsv, talentBuild });
+    let kit = resolveKit(loadoutCsv, talentIds, talentBuild);
+    const picks = this.pvePicks.get(sessionId);
+    if (picks && picks.length > 0) {
+      applyPveUpgradeOverlay(kit, picks);
+    }
     this.kits.set(sessionId, kit);
     this.syncFifthCadenceStatus(sessionId, Date.now());
+  }
+
+  addPveUpgrade(sessionId: string, def: PveUpgradeDef) {
+    const list = this.pvePicks.get(sessionId) ?? [];
+    list.push(def);
+    this.pvePicks.set(sessionId, list);
+    this.rebakeSessionKit(sessionId);
+  }
+
+  clearPveUpgrades(sessionId: string) {
+    this.pvePicks.delete(sessionId);
+    this.rebakeSessionKit(sessionId);
+  }
+
+  clearAllPveUpgrades() {
+    const ids = [...this.pvePicks.keys()];
+    this.pvePicks.clear();
+    for (const id of ids) this.rebakeSessionKit(id);
+  }
+
+  private rebakeSessionKit(sessionId: string) {
+    const args = this.kitBakeArgs.get(sessionId);
+    if (!args) return;
+    this.syncSessionKit(sessionId, args.loadoutCsv, args.talentIdsCsv, args.talentBuild);
   }
 
   /** Keep kit / CDs when a hunter rejoins the same match under a new socket. */
@@ -1058,6 +1118,8 @@ export class CombatSystem {
       m.delete(fromId);
     };
     move(this.kits);
+    move(this.pvePicks);
+    move(this.kitBakeArgs);
     move(this.cds);
     move(this.casts);
     move(this.travels);
@@ -1536,7 +1598,15 @@ export class CombatSystem {
     id: string,
     x: number,
     z: number,
-    opts: { kind: string; hp: number; yaw?: number; abilityId?: string },
+    opts: {
+      kind: string;
+      hp: number;
+      yaw?: number;
+      abilityId?: string;
+      scale?: number;
+      aura?: string;
+      radius?: number;
+    },
   ) {
     if (this.room.state.targets.has(id)) return;
     this.targetSpawns.set(id, { x, z });
@@ -1549,6 +1619,9 @@ export class CombatSystem {
     t.hp = opts.hp;
     t.maxHp = opts.hp;
     t.abilityId = opts.abilityId ?? "";
+    t.scale = opts.scale && opts.scale > 0 ? opts.scale : 1;
+    t.aura = opts.aura ?? "";
+    t.radius = opts.radius && opts.radius > 0 ? opts.radius : 0;
     this.room.state.targets.set(t.id, t);
   }
 
@@ -1591,7 +1664,7 @@ export class CombatSystem {
       from,
       desired,
       COLLISION.dummyRadius,
-      this.walkStaticColliders(desired),
+      this.mobWalkColliders(desired),
       playerCollidersExcept(this.room.state.players.entries(), ""),
     );
   }
@@ -1603,6 +1676,7 @@ export class CombatSystem {
   initPickups(pickups: readonly MapPickupPlacement[], now = Date.now()) {
     this.room.state.pickups.clear();
     this.pickupSpecs.clear();
+    this.runtimePickupIds.clear();
     for (const p of pickups) {
       const state = new PickupState();
       state.id = p.id;
@@ -1621,6 +1695,78 @@ export class CombatSystem {
         state.respawnsAt = 0;
       }
       this.room.state.pickups.set(p.id, state);
+    }
+  }
+
+  spawnRuntimePickup(spec: PickupSpec, x: number, z: number, y = 0.4, radius = 1.2): string {
+    const id = `pve_orb_${this.runtimePickupSeq++}`;
+    const state = new PickupState();
+    state.id = id;
+    this.pickupSpecs.set(id, spec);
+    this.applyPickupRoll(state, spec);
+    state.x = x;
+    state.y = y;
+    state.z = z;
+    state.radius = radius;
+    state.respawnMs = 0;
+    state.available = true;
+    state.respawnsAt = 0;
+    this.runtimePickupIds.add(id);
+    this.room.state.pickups.set(id, state);
+    return id;
+  }
+
+  clearRuntimePickups() {
+    for (const id of this.runtimePickupIds) {
+      this.room.state.pickups.delete(id);
+      this.pickupSpecs.delete(id);
+    }
+    this.runtimePickupIds.clear();
+  }
+
+  countAvailableRuntimePickups(): number {
+    let n = 0;
+    for (const id of this.runtimePickupIds) {
+      const p = this.room.state.pickups.get(id);
+      if (p?.available) n += 1;
+    }
+    return n;
+  }
+
+  runtimePickupPositions(): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [];
+    for (const id of this.runtimePickupIds) {
+      const p = this.room.state.pickups.get(id);
+      if (p?.available) out.push({ x: p.x, z: p.z });
+    }
+    return out;
+  }
+
+  private tryPveLifesteal(attackerSessionId: string, dealt: number, targetId: string) {
+    if (!(dealt > 0) || !attackerSessionId || attackerSessionId === targetId) return;
+    const kit = this.kits.get(attackerSessionId);
+    const frac = kit?.lifesteal ?? 0;
+    if (!(frac > 0)) return;
+    const heal = Math.max(1, Math.round(dealt * frac));
+    this.applyHealAmount(attackerSessionId, heal, attackerSessionId, "pve_lifesteal", {
+      skipHarmonyHooks: true,
+      noCrit: true,
+    });
+  }
+
+  private tickPveRegen(dt: number, now: number) {
+    if (!(dt > 0)) return;
+    void now;
+    for (const [sessionId, player] of this.room.state.players.entries()) {
+      if (player.disconnected || player.roundDead || player.hp <= 0) continue;
+      const regen = this.kits.get(sessionId)?.regenPerSec ?? 0;
+      if (!(regen > 0) || player.maxHp <= 0 || player.hp >= player.maxHp) continue;
+      const amount = player.maxHp * regen * dt;
+      if (amount < 0.05) continue;
+      this.applyHealAmount(sessionId, amount, sessionId, "pve_regen", {
+        skipHarmonyHooks: true,
+        noCrit: true,
+      });
     }
   }
 
@@ -1680,6 +1826,11 @@ export class CombatSystem {
       pickup.respawnsAt = now + pickup.respawnMs;
     } else {
       pickup.respawnsAt = 0;
+      if (this.runtimePickupIds.has(pickup.id)) {
+        this.runtimePickupIds.delete(pickup.id);
+        this.pickupSpecs.delete(pickup.id);
+        this.room.state.pickups.delete(pickup.id);
+      }
     }
 
     const player = this.room.state.players.get(sessionId);
@@ -1703,13 +1854,13 @@ export class CombatSystem {
       }
       case "absorb": {
         const shieldHp = mag > 0 ? mag : 25;
-        const dur = pickup.durationMs > 0 ? pickup.durationMs : 8000;
+        const dur = pickup.durationMs > 0 ? pickup.durationMs : 12000;
         this.applyShield(sessionId, "absorbPickup", sessionId, shieldHp, dur);
         this.emitPickupCollectFx(sessionId, "pickup_absorb");
         break;
       }
       case "speed": {
-        const dur = pickup.durationMs > 0 ? pickup.durationMs : 6000;
+        const dur = pickup.durationMs > 0 ? pickup.durationMs : 10000;
         this.statuses.apply(sessionId, "speedPickup", sessionId, now, {
           durationMs: dur,
         });
@@ -1717,7 +1868,7 @@ export class CombatSystem {
         break;
       }
       case "power": {
-        const dur = pickup.durationMs > 0 ? pickup.durationMs : 6000;
+        const dur = pickup.durationMs > 0 ? pickup.durationMs : 10000;
         this.statuses.apply(sessionId, "powerPickup", sessionId, now, {
           durationMs: dur,
         });
@@ -3350,6 +3501,7 @@ export class CombatSystem {
     this.advancePendingDistortedWakes(now);
     this.syncAllInvulnerable(now);
     this.statuses.tick(now);
+    this.tickPveRegen(dt, now);
 
     // Periodic sweep for expired transient combat maps so long-running hub rooms don't leak entries
     if (this.exposedAngleTargets.size > 0) {
@@ -8380,6 +8532,25 @@ export class CombatSystem {
       targetId = pick.id;
     }
 
+    const targetBody =
+      this.room.state.players.get(targetId) ?? this.room.state.targets.get(targetId);
+    const tx = targetBody?.x ?? player.x;
+    const tz = targetBody?.z ?? player.z;
+    this.fx({
+      kind: "aoe",
+      abilityId: def.id,
+      x: player.x,
+      z: player.z,
+      x2: tx,
+      z2: tz,
+      radius: range,
+      yaw: Math.atan2(tx - player.x, tz - player.z),
+      ownerId: sessionId,
+      targetId,
+      comboHit: 1,
+      variant: 0,
+    });
+
     this.pendingHealBeam.push({
       ownerId: sessionId,
       abilityId: def.id,
@@ -8779,15 +8950,35 @@ export class CombatSystem {
       const owner = this.room.state.players.get(beam.ownerId);
       if (!owner || owner.disconnected || owner.hp <= 0) continue;
 
+      const keepChannel = () => {
+        beam.tickIndex += 1;
+        if (beam.tickIndex < beam.ticksTotal) {
+          beam.nextTickAt = now + beam.tickMs;
+          remain.push(beam);
+        }
+      };
+
       const target =
         this.room.state.players.get(beam.targetId) ??
         this.room.state.targets.get(beam.targetId);
-      if (!target || target.hp <= 0) continue;
+      if (!target || target.hp <= 0) {
+        keepChannel();
+        continue;
+      }
 
       const dist = Math.hypot(owner.x - target.x, owner.z - target.z);
-      if (dist > beam.breakRange) continue;
+      if (dist > beam.breakRange) {
+        keepChannel();
+        continue;
+      }
 
-      if (!this.hasLineOfSight({ x: owner.x, z: owner.z }, { x: target.x, z: target.z })) {
+      // Self-heal (or overlapping bodies) has a zero-length LoS segment that
+      // fails whenever the caster stands near a wall collider.
+      if (
+        dist > 0.05 &&
+        !this.hasLineOfSight({ x: owner.x, z: owner.z }, { x: target.x, z: target.z })
+      ) {
+        keepChannel();
         continue;
       }
 
@@ -8874,23 +9065,6 @@ export class CombatSystem {
             });
           }
         }
-      }
-
-      if (beam.tickIndex === 0) {
-        this.fx({
-          kind: "aoe",
-          abilityId: beam.abilityId,
-          x: owner.x,
-          z: owner.z,
-          x2: target.x,
-          z2: target.z,
-          radius: beam.range,
-          yaw: owner.yaw,
-          ownerId: beam.ownerId,
-          targetId: beam.targetId,
-          comboHit: 1,
-          variant: 0, // 0 = main beam
-        });
       }
 
       beam.tickIndex += 1;
@@ -12168,8 +12342,18 @@ export class CombatSystem {
     const fifthMul = this.peekFifthCadenceMul(attackerSessionId, abilityId, damage);
     const orbBonus = damage > 0 ? this.takeSpellbreakerEmpowerBonus(attackerSessionId, now) : 0;
     const guardianBonus = damage > 0 ? this.calcGuardianOutgoingBonus(attackerSessionId, dist) : 0;
+    const atkKit = this.kits.get(attackerSessionId);
     let scaledIn =
-      damage > 0 ? (damage * dealtMul * salvoMul * fifthMul * destructMul * (1 + guardianBonus)) + orbBonus : damage;
+      damage > 0
+        ? (damage *
+            dealtMul *
+            salvoMul *
+            fifthMul *
+            destructMul *
+            (atkKit?.damageDealtMul ?? 1) *
+            (1 + guardianBonus)) +
+          orbBonus
+        : damage;
     const allowCounter = opts?.triggersCounter !== false;
 
     // Armed Counter / Revenge: deny the next melee / direct projectile / magma / shroom.
@@ -12182,7 +12366,6 @@ export class CombatSystem {
     }
 
     // Crit once at the gate — before resist/shields — so every damage path shares one RNG.
-    const atkKit = this.kits.get(attackerSessionId);
     const crit =
       !opts?.noCrit &&
       scaledIn > 0 &&
@@ -12316,6 +12499,7 @@ export class CombatSystem {
         // player losing it gets some pressure back.
         this.grantEnergy(attackerSessionId, "damageDealt", dealt, abilityId);
         this.grantEnergy(targetId, "damageTaken", dealt);
+        this.tryPveLifesteal(attackerSessionId, damageForLeech, targetId);
       }
       this.fx({
         kind: "hit",
@@ -12346,6 +12530,7 @@ export class CombatSystem {
       }
       if (dealt > 0) {
         decoy.hp = Math.max(0, decoy.hp - dealt);
+        this.tryPveLifesteal(attackerSessionId, damageForLeech, targetId);
       }
       this.fx({
         kind: "hit",
@@ -12384,6 +12569,7 @@ export class CombatSystem {
         // player. The rate cap already makes this no faster than a real
         // fight, so it is a testing affordance rather than a shortcut.
         this.grantEnergy(attackerSessionId, "damageDealt", dealt, abilityId);
+        this.tryPveLifesteal(attackerSessionId, damageForLeech, targetId);
       }
       this.fx({
         kind: "hit",
@@ -12871,6 +13057,7 @@ export class CombatSystem {
       player.z = rez.z;
       player.hp = Math.max(1, Math.round(player.maxHp * REBIRTH_CAST.rezHealthFrac));
       player.roundDead = false;
+      player.respawnAt = 0;
       player.invulnerable = false;
       this.syncInvulnerable(rez.sessionId, player, now);
       this.fx({

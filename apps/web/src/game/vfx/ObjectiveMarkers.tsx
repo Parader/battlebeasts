@@ -6,7 +6,6 @@ import * as THREE from "three";
 import type { PredictedPose } from "../useBaseCityRoom";
 import { useObjectiveIds } from "../useColyseusMapKeys";
 import { getCharacterRoot } from "../characterRoots";
-import { findMixamoBone } from "./attach";
 import { FlagCarryTrail, type FlagTrailPose } from "./effects/flagCarryTrail";
 import {
   applyFlagTint,
@@ -49,13 +48,23 @@ const TEAM_B = new THREE.Color(FLAG_TEAM_B_HEX);
 const NEUTRAL = new THREE.Color("#9ca3af");
 const CONTESTED = new THREE.Color("#eab308");
 
-/** Spine2 local: +Y up the spine, +Z out the chest — backpack is −Z. */
-const CARRY_LOCAL = new THREE.Vector3(0, -0.16, -0.28);
-const CARRY_TILT = 0.1;
+/**
+ * Mixamo scene space (Y-up, +Z face). Mid-back, clearly behind the torso —
+ * Spine2 bone axes are Z-up from the Hips bind and parked the banner on the head.
+ */
+const CARRY_LOCAL = new THREE.Vector3(0.02, 0.82, -0.18);
+/** Lean the pole back a little so it reads as carried. */
+const CARRY_TILT = 0.12;
 
 const _world = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 const _euler = new THREE.Euler(0, 0, 0, "YXZ");
+const _fwd = new THREE.Vector3();
+const _back = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+const _basis = new THREE.Matrix4();
+const _tilt = new THREE.Quaternion();
 
 function tintFor(row: ObjectiveRow): THREE.Color {
   if (row.contest === "contested") return CONTESTED;
@@ -91,43 +100,44 @@ function placeCarriedFlag(
   homeZ: number,
   carrierId: string,
   pose: { x: number; z: number; yaw: number },
-  time: number,
   emit: MutableRefObject<FlagTrailPose | null>,
 ): void {
   const charRoot = getCharacterRoot(carrierId);
-  const spine =
-    (charRoot && (findMixamoBone(charRoot, "Spine2") ?? findMixamoBone(charRoot, "Spine1"))) ||
-    null;
+  let yaw = pose.yaw;
 
-  if (spine) {
-    spine.updateWorldMatrix(true, false);
-    _world.copy(CARRY_LOCAL).applyMatrix4(spine.matrixWorld);
+  if (charRoot) {
+    charRoot.updateWorldMatrix(true, false);
+    _world.copy(CARRY_LOCAL).applyMatrix4(charRoot.matrixWorld);
+    charRoot.getWorldQuaternion(_quat);
+    _euler.setFromQuaternion(_quat, "YXZ");
+    yaw = _euler.y;
   } else {
     _world.set(
-      pose.x - Math.sin(pose.yaw) * 0.3,
-      1.05,
-      pose.z - Math.cos(pose.yaw) * 0.3,
+      pose.x - Math.sin(pose.yaw) * 0.18,
+      0.82,
+      pose.z - Math.cos(pose.yaw) * 0.18,
     );
   }
 
+  // Authored flag: pole +Y, cloth +X. Align +X with the character's back so
+  // the banner streams behind instead of sitting across the shoulders.
+  _fwd.set(Math.sin(yaw), 0, Math.cos(yaw));
+  _back.copy(_fwd).negate();
+  _right.set(_fwd.z, 0, -_fwd.x);
+  _basis.makeBasis(_back, _up, _right);
+  _quat.setFromRotationMatrix(_basis);
+  _tilt.setFromAxisAngle(_right, -CARRY_TILT);
+  _quat.premultiply(_tilt);
+  flag.quaternion.copy(_quat);
+
   flag.position.set(_world.x - homeX, _world.y, _world.z - homeZ);
-  if (charRoot) {
-    charRoot.getWorldQuaternion(_quat);
-    _euler.setFromQuaternion(_quat, "YXZ");
-    _euler.x = CARRY_TILT;
-    _euler.z = Math.sin(time * 5.5) * 0.05;
-    flag.quaternion.setFromEuler(_euler);
-  } else {
-    _euler.set(CARRY_TILT, pose.yaw, Math.sin(time * 5.5) * 0.05, "YXZ");
-    flag.quaternion.setFromEuler(_euler);
-  }
   flag.visible = true;
 
   emit.current = {
-    x: _world.x,
-    y: _world.y + 0.72,
-    z: _world.z,
-    yaw: pose.yaw,
+    x: _world.x - _fwd.x * 0.08,
+    y: _world.y + 0.42,
+    z: _world.z - _fwd.z * 0.08,
+    yaw,
   };
 }
 
@@ -169,7 +179,7 @@ function FlagStandMarker({
     };
   }, [standRoot, carryRoot]);
 
-  useFrame((state) => {
+  useFrame(() => {
     const row = room.state?.objectives?.get(id) as ObjectiveRow | undefined;
     const g = pad.current;
     const planted = worldFlag.current;
@@ -202,7 +212,6 @@ function FlagStandMarker({
         homeZ,
         row.carrierId,
         pose,
-        state.clock.elapsedTime,
         emitPose,
       );
       return;

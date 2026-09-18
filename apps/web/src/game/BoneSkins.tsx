@@ -17,7 +17,7 @@ import {
   type CosmeticsEquipped,
 } from "@battlebeasts/shared";
 import { assetUrl } from "./assetUrl";
-import { hideRevealedEmbeddedSkinnedMeshes, revealEmbeddedSkinnedMeshes, setCharacterOpacity, warmCharacterOpacityVariants } from "./characterVisual";
+import { hideRevealedEmbeddedSkinnedMeshes, revealEmbeddedSkinnedMeshes, setCharacterOpacity, scheduleWarmCharacterOpacityVariants } from "./characterVisual";
 import { useResolvedCosmeticFit } from "./cosmeticFitStore";
 import { inflateSkinnedGeometry, mountSkinnedCosmetic, sealSkinnedSeams } from "./cosmeticSkinBind";
 import { getGearEnvMap, prepareGearMaterial } from "./gearEnvMap";
@@ -305,12 +305,17 @@ function BoneSkinItem({
     };
   }, [root, skinnedMeshes, characterRoot, item.catalogId, item.skinned, item.bone, bonesKey]);
 
-  useEffect(() => {
-    const id = requestAnimationFrame(() =>
-      warmCharacterOpacityVariants(gl, scene, camera, characterRoot, `skin:${item.catalogId}`),
-    );
-    return () => cancelAnimationFrame(id);
-  }, [gl, scene, camera, characterRoot, item.catalogId, root]);
+  useEffect(
+    () =>
+      scheduleWarmCharacterOpacityVariants(
+        gl,
+        scene,
+        camera,
+        characterRoot,
+        `skin:${item.catalogId}`,
+      ),
+    [gl, scene, camera, characterRoot, item.catalogId, root],
+  );
 
   useEffect(() => {
     for (const node of boundRef.current) {

@@ -41,8 +41,8 @@ export function InvitePromptStack({
     >
       {partyInvite ? (
         <InviteCard
-          title="Party invite"
-          body={`${partyInvite.fromName} invited you (${partyInvite.modes.join(", ") || "PvP"})`}
+          title="Group invite"
+          body={`${partyInvite.fromName} invited you to their group`}
           onAccept={onPartyAccept}
           onDecline={onPartyDecline}
         />

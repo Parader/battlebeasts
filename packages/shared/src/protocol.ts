@@ -82,6 +82,7 @@ export type ClientMessage =
   | { type: "set_loadout"; abilityIds: string[] }
   | { type: "save_loadout_preset"; slotIndex: number; abilityIds: string[]; name?: string }
   | { type: "select_loadout_preset"; slotIndex: number }
+  | { type: "rename_loadout_preset"; slotIndex: number; name: string }
   | { type: "set_emote_loadout"; emoteSlots: (string | null)[] }
   | { type: "cast_emote"; emoteId: string }
   | { type: "cancel_emote" }
@@ -93,6 +94,8 @@ export type ClientMessage =
   | { type: "set_cosmetic"; slot: string; itemId: string | null }
   | { type: "respawn" }
   | { type: "hub_kick"; sessionId: string }
+  | { type: "hub_admin_tp_map"; mapId: string }
+  | { type: "hub_admin_enter_mode"; modeId: string }
   | { type: "party_invite"; sessionId: string }
   /** Leader invites a friend (by user id) into the open party — often paired with a hub invite. */
   | { type: "party_invite_friend"; userId: string }
@@ -106,6 +109,14 @@ export type ClientMessage =
   | { type: "party_cancel" }
   | { type: "hub_ranked_request" }
   | { type: "hub_ranked_leaderboard" }
+  | { type: "hub_pve_leaderboard" }
+  | { type: "pve_upgrade_pick"; offerId: string }
+  | { type: "join_plaza"; plazaId?: string }
+  | { type: "join_home" }
+  | { type: "join_hub"; hubOwnerId: string }
+  | { type: "join_friend_plaza"; userId: string }
+  | { type: "list_plazas" }
+  | { type: "list_friend_locations"; userIds: string[] }
   | { type: "rematch_vote" }
   | { type: "return_hub" };
 
@@ -114,6 +125,8 @@ export type PartyMemberSnapshot = {
   userId?: string;
   displayName: string;
   seat: "teamA" | "teamB" | "teamC" | "spectator";
+  /** False while the hunter is disconnected / logged out. Omitted means online. */
+  online?: boolean;
 };
 
 export type PartySnapshot = {
@@ -253,6 +266,27 @@ export type ServerMessage =
       }>;
     }
   | {
+      type: "hub_pve_leaderboard";
+      rows: Array<{
+        userId: string;
+        displayName: string;
+        wave: number;
+        kills: number;
+        damageDealt: number;
+        partySize: number;
+        rank: number;
+      }>;
+      mine: {
+        userId: string;
+        displayName: string;
+        wave: number;
+        kills: number;
+        damageDealt: number;
+        partySize: number;
+        rank: number;
+      } | null;
+    }
+  | {
       type: "combat_fx";
       kind: "aoe" | "melee" | "dash" | "hit" | "cast_phase" | "portal";
       abilityId: string;
@@ -270,4 +304,22 @@ export type ServerMessage =
       phaseEndsAt?: number;
       cooldownMs?: number;
       comboHit?: number;
-    };
+    }
+  | {
+      type: "pve_upgrade_draft";
+      wave: number;
+      offers: Array<{
+        offerId: string;
+        id: string;
+        stat: string;
+        rarity: string;
+        magnitude: number;
+        label: string;
+        hint: string;
+      }>;
+      waiting: Array<{ sessionId: string; displayName: string; picked: boolean }>;
+    }
+  | { type: "pve_upgrade_waiting"; waiting: Array<{ sessionId: string; displayName: string; picked: boolean }> }
+  | { type: "plaza_list"; plazas: Array<{ plazaId: string; code: string; clients: number; walkIns: number; walkInCap: number; maxClients: number; roomId: string }>; currentPlazaId?: string }
+  | { type: "plaza_state"; plazaId: string; code: string; clients: number; walkIns: number; walkInCap: number }
+  | { type: "friend_locations"; locations: Array<{ userId: string; plazaId: string | null; hubOwnerId: string | null }> };

@@ -13,6 +13,7 @@ import {
   VFX_SPELL_EFFECTS_URL,
   VFX_WIND_STREAK_URL,
   VFX_AURA_EYES_URLS,
+  PICKUP_SIGIL_URLS,
 } from "./vfxUrls";
 import { getRegisteredSpellVfxAssets } from "./profiles/registry";
 
@@ -43,6 +44,7 @@ export const CORE_SPELL_VFX_TEXTURES = [
   VFX_SPELL_EFFECTS_URL,
   VFX_WIND_STREAK_URL,
   ...Object.values(VFX_AURA_EYES_URLS),
+  ...Object.values(PICKUP_SIGIL_URLS),
 ] as const;
 
 /** Shared meshes used by multiple spells / UI. */

@@ -3,10 +3,11 @@ import { clampPvePartySize } from "./pveWave";
 
 /** Distinctive body tints keyed by signature spell. */
 export const PVE_ELITE_TINT: Record<string, string> = {
-  bolt: "#e8c547",
   iceLance: "#7dd3fc",
   frostBall: "#38bdf8",
   poisonDart: "#4ade80",
+  grasp: "#7c3aed",
+  prismLance: "#c4b5fd",
 };
 
 export const PVE_ELITE_TINT_DEFAULT = "#f59e0b";
@@ -19,12 +20,15 @@ export function pveEliteTint(abilityId: string | undefined | null): string {
 /**
  * Projectile spells elites may learn. Channels, dashes, and ground plants stay
  * off this list — NPC fire goes through `fireProjectileFrom`.
+ * Skip Bolt: it is an M1 poke and the old kit preferred it whenever anyone
+ * was close, so elites just spammed LMB.
  */
 export const PVE_ELITE_SPELL_UNLOCKS: ReadonlyArray<{ wave: number; id: string }> = [
-  { wave: 2, id: "bolt" },
-  { wave: 3, id: "iceLance" },
-  { wave: 4, id: "poisonDart" },
-  { wave: 6, id: "frostBall" },
+  { wave: 2, id: "iceLance" },
+  { wave: 2, id: "poisonDart" },
+  { wave: 3, id: "frostBall" },
+  { wave: 4, id: "grasp" },
+  { wave: 5, id: "prismLance" },
 ];
 
 export function pveEliteSpellPool(waveIndex: number): string[] {
@@ -41,24 +45,29 @@ export function pveEliteCount(waveIndex: number, partySize = 1): number {
   return Math.min(4, 2 + Math.floor((waveIndex - 10) / 3) + (n >= 3 ? 1 : 0));
 }
 
-/** Signature first; later waves add Bolt as a close-range filler. */
+/** Signature plus 1–2 other unlocked spells so each elite rotates a kit. */
 export function pveEliteKit(waveIndex: number, spawnOrdinal: number): string[] {
   const pool = pveEliteSpellPool(waveIndex);
-  if (!pool.length) return ["bolt"];
+  if (!pool.length) return ["iceLance", "poisonDart"];
   const signature = pool[spawnOrdinal % pool.length]!;
-  const kit = [signature];
-  if (waveIndex >= 8 && signature !== "bolt" && pool.includes("bolt")) {
-    kit.push("bolt");
+  const kit: string[] = [signature];
+  const others = pool.filter((id) => id !== signature);
+  const extraCount = waveIndex >= 6 ? 2 : 1;
+  for (let n = 0; n < extraCount && others.length > 0; n++) {
+    kit.push(others[(spawnOrdinal + n) % others.length]!);
   }
   return kit;
 }
 
-/** Faster than players, but Bolt never dumps every 300ms. Tightens slightly each wave. */
+/** Keep a floor so even short-CD spells cannot dump every GCD. */
 export function pveEliteCooldownMs(abilityId: string, waveIndex: number): number {
   const def = ABILITIES[abilityId];
   const raw = def?.cooldownMs ?? 4000;
-  const waveMul = Math.max(0.42, 0.62 - Math.max(0, waveIndex - 2) * 0.015);
-  return Math.max(1400, Math.round(raw * waveMul));
+  const waveMul = Math.max(0.5, 0.7 - Math.max(0, waveIndex - 2) * 0.012);
+  const m1Only =
+    Boolean(def?.allowedSlots?.includes("m1")) && !def?.allowedSlots?.includes("m2");
+  const floor = m1Only ? 2400 : 1800;
+  return Math.max(floor, Math.round(raw * waveMul));
 }
 
 export function pveEliteComfortRange(abilityId: string): {
@@ -74,12 +83,32 @@ export function pveEliteComfortRange(abilityId: string): {
   };
 }
 
-export function pveElitePickAbility(kit: readonly string[], dist: number): string {
-  if (kit.length > 1 && dist < 6.2) {
-    const bolt = kit.find((id) => id === "bolt");
-    if (bolt) return bolt;
+export function pveElitePickAbility(
+  kit: readonly string[],
+  dist: number,
+  opts?: { readyIds?: ReadonlySet<string>; lastId?: string | null },
+): string {
+  const ready = opts?.readyIds
+    ? kit.filter((id) => opts.readyIds!.has(id))
+    : [...kit];
+  const candidates = ready.length > 0 ? ready : [...kit];
+  let best = candidates[0] ?? "iceLance";
+  let bestScore = -Infinity;
+  for (const id of candidates) {
+    const c = pveEliteComfortRange(id);
+    let score = 0;
+    if (dist >= c.min && dist <= c.maxCast) score += 4;
+    else if (dist <= c.maxCast * 1.2) score += 2;
+    else score -= Math.abs(dist - (c.min + c.max) * 0.5) * 0.08;
+    if (id === opts?.lastId) score -= 2.4;
+    const slots = ABILITIES[id]?.allowedSlots ?? [];
+    if (slots.includes("m1") && !slots.includes("m2")) score -= 0.8;
+    if (score > bestScore) {
+      bestScore = score;
+      best = id;
+    }
   }
-  return kit[0] ?? "bolt";
+  return best;
 }
 
 /**
@@ -91,8 +120,9 @@ export function pveEliteProjectileDamage(
 ): number | undefined {
   if (abilityId === "frostBall") return undefined;
   if (abilityId === "poisonDart") return Math.max(8, Math.round(waveDamage * 0.4));
-  if (abilityId === "bolt") return Math.round(waveDamage * 0.72);
+  if (abilityId === "grasp") return Math.max(8, Math.round(waveDamage * 0.45));
   if (abilityId === "iceLance") return Math.round(waveDamage * 0.88);
+  if (abilityId === "prismLance") return Math.round(waveDamage * 0.82);
   return Math.round(waveDamage * 0.75);
 }
 

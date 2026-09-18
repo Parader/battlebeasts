@@ -5,10 +5,24 @@ import {
   ARENA_ROUNDS_TO_WIN,
   ARENA_WIPE_EMOTE_MS,
   BG_RESPAWN_MS,
+  clampInstancePartySize,
   clampPvePartySize,
+  COOP_INSTANCE_MAX_PLAYERS,
   COOP_PVE_MAX_PLAYERS,
-  PVE_RECONNECT_GRACE_MS,
+  dungeonExitElementIdFrom,
+  dungeonRunChestSource,
+  type DungeonRunChestDepth,
+  INTERACT,
+  isInstanceMode,
+  isPveInstanceMobKind,
+  isPveRunMode,
   isPveWaveMobKind,
+  isWaveAssaultMode,
+  mapElementsOfType,
+  mapInstancePlayerSpawn,
+  mapInstanceStartPads,
+  PVE_RECONNECT_GRACE_MS,
+  rollDungeonRunChestQuality,
   PVP_RECONNECT_GRACE_MS,
   MATCH_REJOIN_MS,
   RECONNECT_RESUME_GRACE_MS,
@@ -32,6 +46,24 @@ import {
   mapPveStartPads,
   mapSpawn,
   mapSpawnsFor,
+  mapDocFor,
+  mapLargestClosedWall,
+  pointInClosedWall,
+  clearanceFromColliders,
+  PLAYER_BASE_MAX_HP,
+  PVE_ORB_CLEARANCE_M,
+  PVE_ORB_COUNT,
+  PVE_ORB_PEER_CLEARANCE_M,
+  PVE_ORB_PLAYER_CLEARANCE_M,
+  PVE_ORB_RADIUS,
+  nextPveOrbDelay,
+  nextPveOrbRetry,
+  rollPveOrbSpec,
+  rollPveUpgradeOffers,
+  pveUpgradeById,
+  pveUpgradeDraftBeat,
+  type PveUpgradeOffer,
+  type MapWall,
   type SpawnPose,
   computeMatchReward,
   isBattlegroundMode,
@@ -56,9 +88,11 @@ import { verifyJoinOptions, type AuthJoinOptions, type VerifiedIdentity } from "
 import { CombatSystem } from "../combat/CombatSystem.js";
 import { grantPendingLoot } from "../pendingLoot.js";
 import { insertRewardGrant } from "../persistence.js";
-import { bumpQuest } from "../quests.js";
+import { bumpQuest, insertClosedChest } from "../quests.js";
 import { applyRankedMatchFinish } from "../ranked.js";
+import { recordPveWaveBest } from "../pveLeaderboard.js";
 import { ObjectiveDirector } from "../pvp/ObjectiveDirector.js";
+import { DungeonDirector } from "../pve/DungeonDirector.js";
 import { WaveDirector } from "../pve/WaveDirector.js";
 import {
   rememberActiveMatch,
@@ -76,6 +110,8 @@ export type ContentJoinOptions = AuthJoinOptions & {
   matchKind?: MatchKind;
   seasonId?: string | null;
   team?: "a" | "b" | "c" | "";
+  plazaId?: string;
+  groupId?: string;
   role?: "fighter" | "spectator";
   spawnSlot?: number;
   /** Locked coop party size (1–4) — scales Wave Assault difficulty for the whole run. */
@@ -96,6 +132,8 @@ export class ContentRoom extends ServicedRoom {
   private returnHubOwnerId: string | null = null;
   /** Per-player return lobby (stamped at match transfer / join). */
   private returnHubBySession = new Map<string, string>();
+  private returnPlazaBySession = new Map<string, string>();
+  private returnGroupBySession = new Map<string, string>();
   private kind: ContentKind = "pve";
   /** Registry map backing this room; undefined for modes with no map. */
   private mapId: string | undefined;
@@ -123,6 +161,7 @@ export class ContentRoom extends ServicedRoom {
   private wipeEndsAt = 0;
   private wipeWinner: "a" | "b" | "c" | null = null;
   private waveDirector: WaveDirector | null = null;
+  private dungeonDirector: DungeonDirector | null = null;
   private objectiveDirector: ObjectiveDirector | null = null;
   private bgRespawnAt = new Map<string, number>();
   /** Wave Assault wipe / score screen active. */
@@ -135,6 +174,13 @@ export class ContentRoom extends ServicedRoom {
   private waveStartTimeout: { clear: () => void } | null = null;
   /** Shared Wave Assault start pad; whole party clusters here. */
   private pveHoldoutIndex = 0;
+  private pvePerimeter: MapWall | null = null;
+  private pveOrbNextAt = 0;
+  private pveDraft: {
+    wave: number;
+    offersBySession: Map<string, PveUpgradeOffer[]>;
+    picked: Set<string>;
+  } | null = null;
 
   private emptyDisposeClear: (() => void) | null = null;
 
@@ -159,7 +205,9 @@ export class ContentRoom extends ServicedRoom {
     this.matchId = options.matchId ?? `m_${Date.now().toString(36)}`;
     this.matchKind = options.matchKind === "custom" ? "custom" : "ranked";
     this.seasonId = options.seasonId ?? null;
-    this.partySize = clampPvePartySize(options.partySize ?? 1);
+    this.partySize = isInstanceMode(this.mode)
+      ? clampInstancePartySize(options.partySize ?? 1)
+      : clampPvePartySize(options.partySize ?? 1);
     this.expectedPartySize = this.partySize;
     this.state.matchMode = this.mode;
     this.objectiveDirector = new ObjectiveDirector(
@@ -175,8 +223,10 @@ export class ContentRoom extends ServicedRoom {
       matchKind: this.matchKind,
       partySize: this.partySize,
     });
-    if (this.kind === "pve" && this.mode === "dungeon") {
+    if (this.kind === "pve" && isWaveAssaultMode(this.mode)) {
       this.maxClients = COOP_PVE_MAX_PLAYERS;
+    } else if (this.kind === "pve" && isInstanceMode(this.mode)) {
+      this.maxClients = COOP_INSTANCE_MAX_PLAYERS;
     }
     this.combat = new CombatSystem(this as never, {
       canHurtPlayers: this.kind !== "pve",
@@ -195,12 +245,13 @@ export class ContentRoom extends ServicedRoom {
       onTargetDamaged: (targetId, damage, attackerId) => {
         if (this.kind !== "pve" || !(damage > 0)) return;
         const target = this.state.targets.get(targetId);
-        if (!target || !isPveWaveMobKind(target.kind)) return;
+        if (!target || !isPveInstanceMobKind(target.kind)) return;
         const atk = this.state.players.get(attackerId);
         if (atk) atk.statDamageDealt += damage;
       },
       onTargetKilled: (targetId, killerSessionId) => {
         this.waveDirector?.onTargetKilled(targetId);
+        this.dungeonDirector?.onTargetKilled(targetId);
         if (this.kind === "pve" && killerSessionId) {
           const killer = this.state.players.get(killerSessionId);
           if (killer) killer.statKills += 1;
@@ -213,6 +264,11 @@ export class ContentRoom extends ServicedRoom {
     this.mapId = mapIdForMode(this.mode);
     if (this.mapId) {
       this.combat.setStaticColliders(mapCollidersFor(this.mapId));
+      const doc = mapDocFor(this.mapId);
+      this.pvePerimeter = doc ? mapLargestClosedWall(doc) : null;
+      if (this.kind === "pve" && isPveRunMode(this.mode)) {
+        this.combat.setPerimeterWallId(this.pvePerimeter?.id ?? null);
+      }
       // Props the author gave health to become world targets. They keep the
       // collider they already contributed above; this only adds the HP.
       for (const p of mapAttackablePropsFor(this.mapId)) this.combat.spawnPropTarget(p);
@@ -221,7 +277,7 @@ export class ContentRoom extends ServicedRoom {
     this.setPatchRate(1000 / 30);
     this.setSimulationInterval((dt) => this.tick(dt), TICK_MS);
 
-    if (this.kind === "pve" && this.mode === "dungeon") {
+    if (this.kind === "pve" && isWaveAssaultMode(this.mode)) {
       this.rollPveHoldout();
       const holdout = this.pveHoldoutPose();
       this.waveDirector = new WaveDirector(
@@ -233,6 +289,23 @@ export class ContentRoom extends ServicedRoom {
         this.partySize,
         this.mapId ? mapPveIngressPoints(this.mapId) : [],
         holdout,
+        (wave) => this.beginPveUpgradeDraft(wave),
+      );
+    } else if (this.kind === "pve" && isInstanceMode(this.mode)) {
+      this.rollPveHoldout();
+      const doc = this.mapId ? mapDocFor(this.mapId) : null;
+      this.dungeonDirector = new DungeonDirector(
+        this.state,
+        this.combat,
+        (hud) => {
+          this.broadcast("wave_hud", hud);
+        },
+        () => {
+          this.broadcast("toast", { message: "The exit is unlocked" });
+          this.broadcast("dungeon_exit_unlocked", { unlocked: true });
+        },
+        this.partySize,
+        doc ?? null,
       );
     }
 
@@ -245,13 +318,18 @@ export class ContentRoom extends ServicedRoom {
     });
 
     this.onMessage("pve_pause", (client, message: { paused?: boolean }) => {
-      if (this.kind !== "pve" || !this.waveDirector) return;
+      if (this.kind !== "pve" || (!this.waveDirector && !this.dungeonDirector)) return;
       if (this.pveRunEnded) return;
+      if (this.pveDraft) return;
       if (!this.state.players.has(client.sessionId)) return;
       const pause = Boolean(message?.paused);
       this.state.paused = pause;
       this.state.pauseReason = pause ? "pve_manual" : "";
       this.broadcast("pve_pause", { paused: pause });
+    });
+
+    this.onMessage("pve_upgrade_pick", (client, message: { offerId?: string }) => {
+      this.handlePveUpgradePick(client, message?.offerId ?? "");
     });
 
     this.onMessage("pve_friendly_fire", (client, message: { enabled?: boolean }) => {
@@ -274,7 +352,7 @@ export class ContentRoom extends ServicedRoom {
 
     this.onMessage("respawn", (client) => {
       // Wave Assault: no mid-run respawn (coop revive later).
-      if (this.kind === "pvp" || this.mode === "dungeon") return;
+      if (this.kind === "pvp" || isPveRunMode(this.mode)) return;
       const player = this.state.players.get(client.sessionId);
       if (!player || player.hp > 0) return;
       const diedAt = this.diedAtBySession.get(client.sessionId) ?? 0;
@@ -285,7 +363,7 @@ export class ContentRoom extends ServicedRoom {
     this.onMessage("rematch_vote", (client) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
-      if (this.kind === "pve" && this.mode === "dungeon") {
+      if (this.kind === "pve" && isPveRunMode(this.mode)) {
         if (!this.pveRunEnded) return;
         player.rematchReady = true;
         this.tryRestartPveRun();
@@ -473,6 +551,15 @@ export class ContentRoom extends ServicedRoom {
         spawn = this.mapId
           ? mapPvePlayerSpawn(this.mapId, slot, this.pveHoldoutIndex)
           : this.spawnPose("a", slot, false);
+      } else if (isInstanceMode(this.mode)) {
+        const preferred = Number(options.spawnSlot);
+        const slot = this.claimDungeonSpawnSlot(
+          Number.isFinite(preferred) ? Math.floor(preferred) : undefined,
+        );
+        this.spawnSlotBySession.set(client.sessionId, slot);
+        spawn = this.mapId
+          ? mapInstancePlayerSpawn(this.mapId, slot, this.pveHoldoutIndex)
+          : this.spawnPose("a", slot, false);
       } else {
         const spawnIndex = this.state.players.size;
         const angle = (spawnIndex / Math.max(1, this.maxClients)) * Math.PI * 2;
@@ -496,8 +583,10 @@ export class ContentRoom extends ServicedRoom {
     this.inputs.set(client.sessionId, []);
     this.combat.syncSessionKit(client.sessionId, player.loadout, player.talents, {});
 
-    if (this.kind === "pve" && this.mode === "dungeon" && this.waveDirector) {
+    if (this.kind === "pve" && isWaveAssaultMode(this.mode) && this.waveDirector) {
       this.armWaveStart();
+    } else if (this.kind === "pve" && isInstanceMode(this.mode) && this.dungeonDirector) {
+      this.armDungeonStart();
     }
 
     // Awaited, not fired off. An NPC merchant means a purchase can arrive in
@@ -514,7 +603,7 @@ export class ContentRoom extends ServicedRoom {
       message:
         this.kind === "pvp"
           ? `Arena ${this.mode} — first to ${ARENA_ROUNDS_TO_WIN} rounds`
-          : `Entered ${this.mode} — Return to city when ready`,
+          : `Entered ${isInstanceMode(this.mode) ? "Dungeon" : this.mode} — Return to city when ready`,
     });
 
     if (this.kind === "pvp" && !this.state.matchPhase) {
@@ -629,26 +718,34 @@ export class ContentRoom extends ServicedRoom {
     this.clearPlayerServices(sessionId);
     this.emoteUntilBySession.delete(sessionId);
     this.returnHubBySession.delete(sessionId);
+    this.returnPlazaBySession.delete(sessionId);
+    this.returnGroupBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
     if (userId) releaseActiveMatch(userId, this.roomId);
   }
 
-  /** Pick one authored player pad; the whole Wave Assault party starts there. */
+  /** Pick one authored player pad; the whole Wave Assault / dungeon party starts there. */
   private rollPveHoldout() {
-    const pads = this.mapId ? mapPveStartPads(this.mapId) : [];
+    const pads = this.mapId
+      ? isInstanceMode(this.mode)
+        ? mapInstanceStartPads(this.mapId)
+        : mapPveStartPads(this.mapId)
+      : [];
     this.pveHoldoutIndex = pads.length > 0 ? Math.floor(Math.random() * pads.length) : 0;
   }
 
   private pveHoldoutPose(): SpawnPose {
     if (!this.mapId) return { x: 0, z: 0, yaw: 0 };
-    return mapPvePlayerSpawn(this.mapId, 0, this.pveHoldoutIndex);
+    return isInstanceMode(this.mode)
+      ? mapInstancePlayerSpawn(this.mapId, 0, this.pveHoldoutIndex)
+      : mapPvePlayerSpawn(this.mapId, 0, this.pveHoldoutIndex);
   }
 
   /**
-   * Unique cemetery pad (0..COOP_PVE_MAX_PLAYERS-1). Prefers matchmaking spawnSlot when free.
+   * Unique coop pad. Prefers matchmaking spawnSlot when free.
    */
   private claimDungeonSpawnSlot(preferred?: number): number {
-    const max = COOP_PVE_MAX_PLAYERS;
+    const max = isInstanceMode(this.mode) ? COOP_INSTANCE_MAX_PLAYERS : COOP_PVE_MAX_PLAYERS;
     const used = new Set<number>();
     for (const [sessionId] of this.state.players.entries()) {
       const slot = this.spawnSlotBySession.get(sessionId);
@@ -694,6 +791,31 @@ export class ContentRoom extends ServicedRoom {
       this.waveStartTimeout = null;
     }
     this.waveDirector.start(Date.now());
+    this.pveOrbNextAt = Date.now() + nextPveOrbDelay();
+  }
+
+  private armDungeonStart() {
+    if (!this.dungeonDirector || this.waveStartArmed) return;
+    const present = this.state.players.size;
+    if (present >= this.expectedPartySize) {
+      this.startDungeonNow();
+      return;
+    }
+    if (this.waveStartTimeout) return;
+    this.waveStartTimeout = this.clock.setTimeout(() => {
+      this.waveStartTimeout = null;
+      this.startDungeonNow();
+    }, 2000);
+  }
+
+  private startDungeonNow() {
+    if (!this.dungeonDirector || this.waveStartArmed) return;
+    this.waveStartArmed = true;
+    if (this.waveStartTimeout) {
+      this.waveStartTimeout.clear();
+      this.waveStartTimeout = null;
+    }
+    this.dungeonDirector.start(Date.now(), `${this.matchId}:r${this.rematchIndex}`);
   }
 
   /** Random unused pad from the team's spawn pool. */
@@ -728,20 +850,22 @@ export class ContentRoom extends ServicedRoom {
       player.hp = 0;
       if (isBattlegroundMode(this.mode)) {
         this.objectiveDirector?.onPlayerDied(sessionId, Date.now());
-        this.bgRespawnAt.set(sessionId, Date.now() + BG_RESPAWN_MS);
+        const at = Date.now() + BG_RESPAWN_MS;
+        this.bgRespawnAt.set(sessionId, at);
+        player.respawnAt = at;
       }
       return;
     }
     if (!this.diedAtBySession.has(sessionId)) {
       this.diedAtBySession.set(sessionId, Date.now());
     }
-    if (this.mode === "dungeon") {
+    if (isPveRunMode(this.mode)) {
       this.checkPveWipe();
     }
   }
 
   private checkPveWipe() {
-    if (this.kind !== "pve" || this.mode !== "dungeon" || this.pveRunEnded) return;
+    if (this.kind !== "pve" || !isPveRunMode(this.mode) || this.pveRunEnded) return;
     let living = 0;
     let fighters = 0;
     this.state.players.forEach((p) => {
@@ -752,29 +876,39 @@ export class ContentRoom extends ServicedRoom {
     });
     // Wipe when every present fighter is dead (no ally revive in v1).
     if (fighters > 0 && living === 0) {
-      this.finishPveRun();
+      this.finishPveRun(false);
     }
   }
 
   private clearWaveMobs() {
     const ids: string[] = [];
     this.state.targets.forEach((t, id) => {
-      if (isPveWaveMobKind(t.kind)) ids.push(id);
+      if (isPveInstanceMobKind(t.kind) || isPveWaveMobKind(t.kind)) ids.push(id);
     });
     for (const id of ids) {
       this.waveDirector?.onTargetKilled(id);
+      this.dungeonDirector?.onTargetKilled(id);
       this.state.targets.delete(id);
     }
   }
 
-  private finishPveRun() {
+  private finishPveRun(victory = false) {
     if (this.pveRunEnded) return;
+    const wave = isInstanceMode(this.mode)
+      ? (this.dungeonDirector?.checkpointWave() ?? 0)
+      : (this.waveDirector?.getWaveIndex() ?? 0);
+    const chestDepth = isInstanceMode(this.mode)
+      ? (this.dungeonDirector?.chestDepth() ?? "none")
+      : "none";
     this.pveRunEnded = true;
     this.state.paused = true;
     this.state.pauseReason = "pve_run_end";
     this.waveDirector?.stop();
+    this.dungeonDirector?.stop();
     this.clearWaveMobs();
     this.combat.clearRoundWorldEffects();
+    this.pveDraft = null;
+    this.combat.clearRuntimePickups();
 
     let kills = 0;
     const rows: MatchRecapRow[] = [];
@@ -792,13 +926,67 @@ export class ContentRoom extends ServicedRoom {
         shield: p.statShield,
       });
     });
-    const wave = this.waveDirector?.getWaveIndex() ?? 0;
-    this.broadcast("pve_run_end", { kills, wave, rows });
+    this.broadcast("pve_run_end", { kills, wave, rows, victory });
     this.broadcast("pve_pause", { paused: true });
+    if (isWaveAssaultMode(this.mode)) this.persistPveBests(wave);
+    if (isInstanceMode(this.mode)) {
+      void this.grantDungeonRunChests(victory, chestDepth);
+      if (victory) {
+        this.state.players.forEach((p, sessionId) => {
+          this.computeAndGrantLoot(p, sessionId, false);
+        });
+      }
+    }
+  }
+
+  private async grantDungeonRunChests(
+    victory: boolean,
+    depth: DungeonRunChestDepth = "none",
+  ) {
+    if (depth === "none") return;
+    const source = dungeonRunChestSource(this.matchId, this.rematchIndex);
+    const qualityName: Record<string, string> = {
+      green: "green",
+      blue: "blue",
+      purple: "purple",
+      legendary: "legendary",
+    };
+    for (const [sessionId, player] of this.state.players.entries()) {
+      if (player.role === "spectator") continue;
+      const userId = player.id || this.identities.get(sessionId)?.userId;
+      if (!userId || userId.startsWith("guest_")) continue;
+      const salt = rewardRollSalt(source, userId);
+      const quality = rollDungeonRunChestQuality(depth, salt);
+      if (!quality) continue;
+      const result = await insertClosedChest(userId, quality, source);
+      const client = this.clients.find((c) => c.sessionId === sessionId);
+      if (result.ok) {
+        client?.send("toast", {
+          message: `${victory ? "Dungeon clear" : "Run chest"}: ${qualityName[quality] ?? quality}`,
+        });
+        client?.send("pve_run_chest", { quality, victory });
+      }
+    }
+  }
+
+  private persistPveBests(wave: number) {
+    if (wave <= 0) return;
+    const partySize = this.partySize;
+    this.state.players.forEach((p, sessionId) => {
+      if (p.role === "spectator") return;
+      const userId = p.id || this.identities.get(sessionId)?.userId;
+      if (!userId) return;
+      void recordPveWaveBest(userId, {
+        wave,
+        kills: p.statKills,
+        damageDealt: p.statDamageDealt,
+        partySize,
+      });
+    });
   }
 
   private tryRestartPveRun() {
-    if (!this.pveRunEnded || this.kind !== "pve" || this.mode !== "dungeon") return;
+    if (!this.pveRunEnded || this.kind !== "pve" || !isPveRunMode(this.mode)) return;
     let ready = 0;
     let total = 0;
     this.state.players.forEach((p) => {
@@ -811,6 +999,9 @@ export class ContentRoom extends ServicedRoom {
     this.pveRunEnded = false;
     this.state.paused = false;
     this.state.pauseReason = "";
+    this.state.dungeonExitUnlocked = false;
+    this.rematchIndex += 1;
+    this.grantedUserIds.clear();
     this.clearWaveMobs();
     this.combat.clearRoundWorldEffects();
     this.rollPveHoldout();
@@ -824,14 +1015,175 @@ export class ContentRoom extends ServicedRoom {
       p.rematchReady = false;
       const slot = this.spawnSlotBySession.get(sessionId) ?? 0;
       const pose = this.mapId
-        ? mapPvePlayerSpawn(this.mapId, slot, this.pveHoldoutIndex)
+        ? isInstanceMode(this.mode)
+          ? mapInstancePlayerSpawn(this.mapId, slot, this.pveHoldoutIndex)
+          : mapPvePlayerSpawn(this.mapId, slot, this.pveHoldoutIndex)
         : this.pveHoldoutPose();
       this.spawnBySession.set(sessionId, pose);
       this.softRespawnPlayer(sessionId, p);
     });
     this.waveDirector?.resetRun(Date.now());
+    this.dungeonDirector?.resetRun(Date.now(), `${this.matchId}:r${this.rematchIndex}`);
+    this.combat.clearAllPveUpgrades();
+    this.combat.clearRuntimePickups();
+    this.pveDraft = null;
+    if (isWaveAssaultMode(this.mode)) {
+      this.pveOrbNextAt = Date.now() + nextPveOrbDelay();
+    }
+    this.state.players.forEach((p, sessionId) => {
+      this.applyCombatKit(sessionId, p);
+    });
     this.broadcast("pve_run_restart", {});
     this.broadcast("pve_pause", { paused: false });
+  }
+
+  private pveFighterSessions(): string[] {
+    const ids: string[] = [];
+    this.state.players.forEach((p, id) => {
+      if (p.disconnected || p.role === "spectator") return;
+      ids.push(id);
+    });
+    return ids;
+  }
+
+  private pveDraftWaiting() {
+    const draft = this.pveDraft;
+    if (!draft) return [];
+    return this.pveFighterSessions().map((sessionId) => {
+      const p = this.state.players.get(sessionId);
+      return {
+        sessionId,
+        displayName: p?.displayName ?? "Hunter",
+        picked: draft.picked.has(sessionId),
+      };
+    });
+  }
+
+  private beginPveUpgradeDraft(wave: number) {
+    if (this.pveRunEnded || this.pveDraft) return;
+    const fighters = this.pveFighterSessions();
+    if (fighters.length === 0) {
+      this.waveDirector?.beginPendingWave(Date.now());
+      return;
+    }
+    const beat = pveUpgradeDraftBeat(wave);
+    const offersBySession = new Map<string, PveUpgradeOffer[]>();
+    for (const id of fighters) {
+      offersBySession.set(id, rollPveUpgradeOffers(beat));
+    }
+    this.pveDraft = { wave, offersBySession, picked: new Set() };
+    this.state.paused = true;
+    this.state.pauseReason = "pve_upgrade";
+    this.broadcast("pve_pause", { paused: true, reason: "pve_upgrade" });
+    const waiting = this.pveDraftWaiting();
+    for (const client of this.clients) {
+      const offers = offersBySession.get(client.sessionId);
+      if (!offers) continue;
+      client.send("pve_upgrade_draft", { wave, offers, waiting });
+    }
+  }
+
+  private handlePveUpgradePick(client: Client, offerId: string) {
+    const draft = this.pveDraft;
+    if (!draft || this.pveRunEnded) return;
+    if (draft.picked.has(client.sessionId)) return;
+    const offers = draft.offersBySession.get(client.sessionId);
+    if (!offers) return;
+    const offer = offers.find((o) => o.offerId === offerId) ?? offers[0];
+    if (!offer) return;
+    const def = pveUpgradeById(offer.id);
+    if (!def) return;
+    this.combat.addPveUpgrade(client.sessionId, def);
+    this.refreshPveKitHp(client.sessionId);
+    draft.picked.add(client.sessionId);
+    this.broadcast("pve_upgrade_waiting", { waiting: this.pveDraftWaiting() });
+    this.tryFinishPveUpgradeDraft();
+  }
+
+  private refreshPveKitHp(sessionId: string) {
+    const player = this.state.players.get(sessionId);
+    if (!player) return;
+    const prev = player.maxHp;
+    const bonus = this.combat.getSessionKit(sessionId)?.maxHpBonus ?? 0;
+    player.maxHp = PLAYER_BASE_MAX_HP + bonus;
+    if (player.maxHp > prev) player.hp += player.maxHp - prev;
+    player.hp = Math.min(player.hp, player.maxHp);
+  }
+
+  private tryFinishPveUpgradeDraft() {
+    const draft = this.pveDraft;
+    if (!draft) return;
+    for (const sessionId of this.pveFighterSessions()) {
+      if (!draft.picked.has(sessionId)) {
+        const p = this.state.players.get(sessionId);
+        if (p?.disconnected) {
+          const offers = draft.offersBySession.get(sessionId);
+          const fallback = offers?.[0];
+          const def = fallback ? pveUpgradeById(fallback.id) : undefined;
+          if (def) this.combat.addPveUpgrade(sessionId, def);
+          draft.picked.add(sessionId);
+          continue;
+        }
+        return;
+      }
+    }
+    this.pveDraft = null;
+    this.waveDirector?.beginPendingWave(Date.now());
+    this.state.paused = false;
+    this.state.pauseReason = "";
+    this.broadcast("pve_pause", { paused: false });
+  }
+
+  private tickPveOrbs(now: number) {
+    if (!this.waveDirector || this.pveDraft) return;
+    const have = this.combat.countAvailableRuntimePickups();
+    if (have >= PVE_ORB_COUNT) return;
+    if (now < this.pveOrbNextAt) return;
+    const pos = this.samplePveOrbPos();
+    if (!pos) {
+      this.pveOrbNextAt = now + nextPveOrbRetry();
+      return;
+    }
+    this.combat.spawnRuntimePickup(rollPveOrbSpec(), pos.x, pos.z, 0.45, PVE_ORB_RADIUS);
+    this.pveOrbNextAt = now + nextPveOrbDelay();
+  }
+
+  private samplePveOrbPos(): { x: number; z: number } | null {
+    const wall = this.pvePerimeter;
+    const colliders = this.mapId ? mapCollidersFor(this.mapId) : [];
+    const skip = wall ? new Set([wall.id]) : undefined;
+    let minX = -40;
+    let maxX = 40;
+    let minZ = -40;
+    let maxZ = 40;
+    if (wall && wall.points.length > 0) {
+      minX = Infinity;
+      maxX = -Infinity;
+      minZ = Infinity;
+      maxZ = -Infinity;
+      for (const [x, z] of wall.points) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+      }
+    }
+    const peers = this.combat.runtimePickupPositions();
+    const players: Array<{ x: number; z: number }> = [];
+    this.state.players.forEach((p) => {
+      if (p.disconnected || p.hp <= 0) return;
+      players.push({ x: p.x, z: p.z });
+    });
+    for (let i = 0; i < 48; i++) {
+      const x = minX + Math.random() * (maxX - minX);
+      const z = minZ + Math.random() * (maxZ - minZ);
+      if (wall && !pointInClosedWall(wall, x, z)) continue;
+      if (clearanceFromColliders(x, z, colliders, skip) < PVE_ORB_CLEARANCE_M) continue;
+      if (players.some((p) => Math.hypot(p.x - x, p.z - z) < PVE_ORB_PLAYER_CLEARANCE_M)) continue;
+      if (peers.some((p) => Math.hypot(p.x - x, p.z - z) < PVE_ORB_PEER_CLEARANCE_M)) continue;
+      return { x, z };
+    }
+    return null;
   }
 
   private softRespawnPlayer(sessionId: string, player: PlayerState) {
@@ -847,6 +1199,7 @@ export class ContentRoom extends ServicedRoom {
     player.castComboHit = 0;
     player.invulnerable = false;
     player.roundDead = false;
+    player.respawnAt = 0;
     player.statuses.clear();
     this.diedAtBySession.delete(sessionId);
     this.combat.clearSession(sessionId);
@@ -937,6 +1290,7 @@ export class ContentRoom extends ServicedRoom {
       // earned them.
       p.energy = 0;
       p.roundDead = false;
+      p.respawnAt = 0;
       p.statuses.clear();
       p.castAbilityId = "";
       p.castPhase = "";
@@ -1352,13 +1706,15 @@ export class ContentRoom extends ServicedRoom {
       void this.disconnect();
       return;
     }
-    if (this.mode === "dungeon") this.checkPveWipe();
+    if (isPveRunMode(this.mode)) this.checkPveWipe();
     this.forceResume();
   }
 
   private rememberReturnHub(sessionId: string, userId: string, options: ContentJoinOptions) {
     const hub = options.hubOwnerId || userId;
     if (hub) this.returnHubBySession.set(sessionId, hub);
+    if (options.plazaId) this.returnPlazaBySession.set(sessionId, options.plazaId);
+    if (options.groupId) this.returnGroupBySession.set(sessionId, options.groupId);
   }
 
   private sessionForUser(userId: string): string | undefined {
@@ -1420,6 +1776,8 @@ export class ContentRoom extends ServicedRoom {
     this.moveKeyed(this.spawnSlotBySession, fromId, toId);
     this.moveKeyed(this.diedAtBySession, fromId, toId);
     this.moveKeyed(this.returnHubBySession, fromId, toId);
+    this.moveKeyed(this.returnPlazaBySession, fromId, toId);
+    this.moveKeyed(this.returnGroupBySession, fromId, toId);
     this.moveKeyed(this.activityBySession, fromId, toId);
     this.moveKeyed(this.recapRewardsBySession, fromId, toId);
     this.moveKeyed(this.emoteUntilBySession, fromId, toId);
@@ -1472,6 +1830,21 @@ export class ContentRoom extends ServicedRoom {
     );
   }
 
+  private homeTransferFor(client: Client): { room: string; options: Record<string, unknown> } {
+    const plazaId = this.returnPlazaBySession.get(client.sessionId);
+    const groupId = this.returnGroupBySession.get(client.sessionId);
+    if (plazaId) {
+      return {
+        room: ROOM.PLAZA,
+        options: { plazaId, groupId, plazaInvite: true },
+      };
+    }
+    return {
+      room: ROOM.BASE_CITY,
+      options: { hubOwnerId: this.hubForClient(client), groupId },
+    };
+  }
+
   private endMatch(message: string) {
     releaseMatchesForRoom(this.roomId);
     this.clearEmptyDispose();
@@ -1480,10 +1853,8 @@ export class ContentRoom extends ServicedRoom {
     for (const client of this.clients) {
       const player = this.state.players.get(client.sessionId);
       if (player) this.grantMatchLoot(player, client.sessionId, earlyLeave);
-      client.send("transfer", {
-        room: ROOM.BASE_CITY,
-        options: { hubOwnerId: this.hubForClient(client) },
-      });
+      const home = this.homeTransferFor(client);
+      client.send("transfer", home);
     }
     this.clock.setTimeout(() => {
       void this.disconnect();
@@ -1495,10 +1866,8 @@ export class ContentRoom extends ServicedRoom {
     if (player) this.grantMatchLoot(player, client.sessionId, true);
     const userId = this.identities.get(client.sessionId)?.userId;
     if (userId) releaseActiveMatch(userId, this.roomId);
-    client.send("transfer", {
-      room: ROOM.BASE_CITY,
-      options: { hubOwnerId: this.hubForClient(client) },
-    });
+    const home = this.homeTransferFor(client);
+    client.send("transfer", home);
   }
 
   /** Fighters: casts only when alive and outside countdown / round_end / match_end. */
@@ -1637,9 +2006,34 @@ export class ContentRoom extends ServicedRoom {
 
     this.combat.tick(dt, now);
     this.waveDirector?.tick(dt, now);
-    if (this.kind === "pve" && this.mode === "dungeon") {
+    this.dungeonDirector?.tick(dt, now);
+    if (this.kind === "pve" && isWaveAssaultMode(this.mode) && !this.pveRunEnded) {
+      this.tickPveOrbs(now);
+    }
+    if (this.kind === "pve" && isPveRunMode(this.mode)) {
       this.checkPveWipe();
     }
+  }
+
+  private tryDungeonExit(sessionId: string, player: PlayerState, interactId: string): boolean {
+    const parsed = dungeonExitElementIdFrom(interactId);
+    if (parsed == null && interactId !== INTERACT.DUNGEON_EXIT) return false;
+    if (this.pveRunEnded) return true;
+    if (!this.dungeonDirector?.exitIsUnlocked()) {
+      const client = this.clients.find((c) => c.sessionId === sessionId);
+      client?.send("toast", { message: "The exit is sealed until the boss falls" });
+      return true;
+    }
+    if (!this.mapId) return true;
+    const doc = mapDocFor(this.mapId);
+    if (!doc) return true;
+    const exits = mapElementsOfType(doc, "dungeon_exit");
+    const target = parsed ? exits.find((e) => e.id === parsed) : exits[0];
+    if (!target) return true;
+    const radius = target.shape?.kind === "circle" ? target.shape.radius : 2.4;
+    if (Math.hypot(player.x - target.x, player.z - target.z) > radius + 1.2) return true;
+    this.finishPveRun(true);
+    return true;
   }
 
   /**
@@ -1653,6 +2047,10 @@ export class ContentRoom extends ServicedRoom {
    * a conversation they were standing in range to start.
    */
   private handleInteract(sessionId: string, player: PlayerState, interactId: string) {
+    if (isInstanceMode(this.mode) && this.tryDungeonExit(sessionId, player, interactId)) {
+      return;
+    }
+
     const elementId = npcElementIdFrom(interactId);
     if (!elementId || !this.mapId) return;
 

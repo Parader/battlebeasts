@@ -10,9 +10,12 @@ type Props = {
   onReturnHub: () => void;
   rows?: MatchRecapRow[];
   localSessionId?: string | null;
+  victory?: boolean;
+  chestQuality?: string | null;
+  instance?: boolean;
 };
 
-/** Wave Assault wipe — kills + best run, retry or return to village. */
+/** Wave Assault / Dungeon run recap — retry or return to village. */
 export function WaveRunRecapPanel({
   kills,
   wave,
@@ -23,6 +26,9 @@ export function WaveRunRecapPanel({
   onReturnHub,
   rows = [],
   localSessionId = null,
+  victory = false,
+  chestQuality = null,
+  instance = false,
 }: Props) {
   const ranked = [...rows].sort((a, b) => b.damageDealt - a.damageDealt);
 
@@ -32,12 +38,20 @@ export function WaveRunRecapPanel({
       className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/55 px-4"
     >
       <div className="bb-parchment pointer-events-auto w-full max-w-md px-5 py-5">
-        <p className="bb-panel-title !text-2xl">Run over</p>
-        <p className="bb-panel-sub">All hunters have fallen.</p>
+        <p className="bb-panel-title !text-2xl">
+          {instance ? (victory ? "Dungeon cleared" : "Run over") : "Run over"}
+        </p>
+        <p className="bb-panel-sub">
+          {instance
+            ? victory
+              ? "The exit is open. The party made it out."
+              : "All hunters have fallen."
+            : "All hunters have fallen."}
+        </p>
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="bb-panel px-3 py-3 text-center">
-            <p className="bb-meta">Wave reached</p>
+            <p className="bb-meta">{instance ? "Progress" : "Wave reached"}</p>
             <p
               className="text-2xl font-semibold tabular-nums text-[var(--bb-ink)]"
               style={{ fontFamily: "var(--bb-font-display)" }}
@@ -89,12 +103,20 @@ export function WaveRunRecapPanel({
           </div>
         ) : null}
 
+        {chestQuality ? (
+          <p className="bb-meta mt-3 text-center">
+            Run chest: <span className="text-[var(--bb-brass)]">{chestQuality}</span>
+          </p>
+        ) : null}
+
+        {instance ? null : (
         <p className="bb-meta mt-3 text-center">
           Best run: <span className="tabular-nums text-[var(--bb-ink)]">{bestKills}</span> kills
           {isNewBest ? (
             <span className="ml-2 text-[var(--bb-brass)]">New best!</span>
           ) : null}
         </p>
+        )}
 
         <footer className="bb-panel-footer mt-4 justify-end gap-2">
           <button

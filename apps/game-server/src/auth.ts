@@ -15,6 +15,11 @@ export type AuthJoinOptions = {
   accessToken?: string;
   /** Whose base city this room belongs to (filterBy key). */
   hubOwnerId?: string;
+  /** Public plaza shard (filterBy key for ROOM.PLAZA). */
+  plazaId?: string;
+  /** Join past the walk-in cap as a friend / group member. */
+  plazaInvite?: boolean;
+  groupId?: string;
 };
 
 export type VerifiedIdentity = {

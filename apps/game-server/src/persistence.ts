@@ -15,6 +15,7 @@ import {
   normalizeTalentBuild,
   sanitizeTalentBuild,
   sanitizeUnlocksWithEquipped,
+  sanitizeLoadoutPresetName,
   emptyPlayerUnlocks,
   normalizeFlexLoadout,
   EMPTY_FLEX_LOADOUT,
@@ -461,7 +462,7 @@ export async function saveLoadoutPreset(
   const payload: Record<string, unknown> = {
     user_id: userId,
     slot_index: slotIndex,
-    name: options?.name || `Loadout ${slotIndex + 1}`,
+    name: sanitizeLoadoutPresetName(options?.name, slotIndex),
     ability_ids: abilityIds,
     updated_at: new Date().toISOString(),
   };

@@ -37,6 +37,19 @@ export const STARTER_PATTERN_COLORS = [DEFAULT_COSMETIC_PATTERN_COLOR] as const;
 export const STARTER_LOADOUT_SLOT_COUNT = 1;
 export const MAX_COIN_LOADOUT_SLOTS = 2;
 export const MAX_LOADOUT_SLOTS = 5;
+export const LOADOUT_PRESET_NAME_MAX = 20;
+
+/** Display name for a loadout preset slot. Empty / junk falls back to "Loadout N". */
+export function sanitizeLoadoutPresetName(raw: unknown, slotIndex: number): string {
+  const fallback = `Loadout ${Math.max(0, Math.floor(slotIndex)) + 1}`;
+  if (typeof raw !== "string") return fallback;
+  const cleaned = raw
+    .replace(/[^\p{L}\p{N} _+\-]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, LOADOUT_PRESET_NAME_MAX);
+  return cleaned || fallback;
+}
 
 /**
  * Flex slots start locked. Each one is an essence buy, so a new hunter's

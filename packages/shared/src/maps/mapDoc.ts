@@ -30,7 +30,6 @@ import {
   defaultElementShape,
   elementType,
   npcPlacement,
-  paramNumber,
   paramString,
   pickupSpec,
 } from "./elements";
@@ -238,7 +237,12 @@ export type MapDoc = {
    */
   suppressedWarnings?: string[];
   /**
-   * Mode ids this map is tagged for (skirmish 2v2, Wave Assault, …).
+   * Live play. Off by default so a WIP map cannot sneak into a queue.
+   * `mapIdForMode` only considers maps with `active: true`.
+   */
+  active?: boolean;
+  /**
+   * Mode ids this map is tagged for (skirmish 2v2, Wave Assault, hub, …).
    * When set, `mapIdForMode` prefers a tagged authored map over the mode's
    * default `mapId`.
    */
@@ -381,6 +385,51 @@ export function mapStaticColliders(doc: MapDoc): StaticCollider[] {
   return out;
 }
 
+function shoelaceArea(points: ReadonlyArray<readonly [number, number]>): number {
+  let acc = 0;
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const a = points[i]!;
+    const b = points[(i + 1) % n]!;
+    acc += a[0] * b[1] - b[0] * a[1];
+  }
+  return acc * 0.5;
+}
+
+/** Largest closed wall by enclosed area — the playable perimeter. */
+export function mapLargestClosedWall(doc: MapDoc): MapWall | null {
+  let best: MapWall | null = null;
+  let bestArea = 0;
+  for (const wall of doc.walls) {
+    if (!wall.closed || wall.points.length < 3) continue;
+    const area = Math.abs(shoelaceArea(wall.points));
+    if (area > bestArea) {
+      bestArea = area;
+      best = wall;
+    }
+  }
+  return best;
+}
+
+/** Point-in-polygon (even-odd) for a closed wall polyline. */
+export function pointInClosedWall(wall: MapWall, x: number, z: number): boolean {
+  const pts = wall.points;
+  const n = pts.length;
+  if (n < 3) return false;
+  let inside = false;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = pts[i]![0];
+    const zi = pts[i]![1];
+    const xj = pts[j]![0];
+    const zj = pts[j]![1];
+    const denom = zj - zi;
+    if (Math.abs(denom) < 1e-12) continue;
+    const intersect = zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / denom + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 /** Every element of one catalog type, e.g. `stand_shop` or `portal_pve`. */
 export function mapElementsOfType(doc: MapDoc, type: string): MapElement[] {
   return doc.elements.filter((e) => e.type === type);
@@ -414,6 +463,33 @@ function groundHalf(doc: MapDoc): { halfX: number; halfZ: number } {
 /** Team-A player pads — one is rolled as the party's shared start. */
 export function mapDocPveStartPads(doc: MapDoc): PvePose[] {
   return mapPlayerSpawns(doc, "a").map((el) => ({ x: el.x, z: el.z, yaw: el.yaw }));
+}
+
+/** Authored dungeon instance entrance pads. Falls back to team-A player spawns. */
+export function mapDocInstanceStartPads(doc: MapDoc): PvePose[] {
+  const pads = mapElementsOfType(doc, "dungeon_start").map((el) => ({
+    x: el.x,
+    z: el.z,
+    yaw: el.yaw,
+  }));
+  if (pads.length > 0) return pads;
+  return mapDocPveStartPads(doc);
+}
+
+/** Coop dungeon pads: the whole party clusters on one entrance. */
+export function mapDocInstancePlayerSpawn(doc: MapDoc, slot: number, startIndex = 0): PvePose {
+  const pads = mapDocInstanceStartPads(doc);
+  const home = pads.length
+    ? pads[((startIndex % pads.length) + pads.length) % pads.length]!
+    : { x: 0, z: 0, yaw: 0 };
+  const s = Math.max(0, Math.floor(slot));
+  if (s === 0) return home;
+  const angle = ((s - 1) / Math.max(4, s)) * Math.PI * 2;
+  return {
+    x: home.x + Math.sin(angle) * PVE_HOLDOUT_STAGGER_M,
+    z: home.z + Math.cos(angle) * PVE_HOLDOUT_STAGGER_M,
+    yaw: home.yaw,
+  };
 }
 
 /**
@@ -559,6 +635,7 @@ export function emptyMapDoc(id: string, name = id): MapDoc {
     props: [],
     walls: [],
     elements: [],
+    active: false,
   };
 }
 
@@ -859,6 +936,7 @@ export function parseMapDoc(raw: unknown): Parsed {
       suppressedWarnings: Array.isArray(raw.suppressedWarnings)
         ? raw.suppressedWarnings.filter(isStr)
         : undefined,
+      active: raw.active === true,
       modeIds: Array.isArray(raw.modeIds) ? raw.modeIds.filter(isStr) : undefined,
     },
     errors,
@@ -877,7 +955,10 @@ export type MapWarningCode =
   | "narrow-gap"
   | "narrow-gap-overflow"
   | "pickup-buff-no-duration"
-  | "pickup-no-effect";
+  | "pickup-no-effect"
+  | "dungeon-missing-start"
+  | "dungeon-missing-boss"
+  | "dungeon-missing-exit";
 
 export type MapWarning = {
   severity: "error" | "warning";
@@ -1029,6 +1110,23 @@ export function validateMapDoc(
   }
   if (hiddenNarrow > 0) {
     warn("narrow-gap-overflow", [], `...and ${hiddenNarrow} more impassable gaps not listed`);
+  }
+
+  if (doc.active && doc.modeIds?.includes("instance")) {
+    const starts = mapElementsOfType(doc, "dungeon_start");
+    const exits = mapElementsOfType(doc, "dungeon_exit");
+    const bosses = mapElementsOfType(doc, "dungeon_boss").filter(
+      (el) => paramString(el, "pool", "required") !== "optional",
+    );
+    if (starts.length === 0) {
+      warn("dungeon-missing-start", [], "Dungeon map needs an Entrance");
+    }
+    if (bosses.length === 0) {
+      warn("dungeon-missing-boss", [], "Dungeon map needs a required Boss");
+    }
+    if (exits.length === 0) {
+      warn("dungeon-missing-exit", [], "Dungeon map needs an Exit");
+    }
   }
 
   return out;

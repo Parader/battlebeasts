@@ -13,15 +13,46 @@ export type PvpModeId =
   | "bg_koth"
   | "bg_domination";
 
-export type PveContentId = "dungeon" | "boss";
+export type PveContentId = "dungeon" | "instance" | "boss";
 
 export type PvpSeat = "teamA" | "teamB" | "teamC" | "spectator";
 
 /** Hub party lobby kind — PvP arenas vs coop Wave Assault. */
 export type PartyKind = "pvp" | "coop_pve";
 
-/** Max fighters in a coop PvE Wave Assault party / dungeon room. */
+/** Max fighters in a coop Wave Assault party / room. */
 export const COOP_PVE_MAX_PLAYERS = 4;
+
+/** Authored dungeon instance (ROOM.BOSS). Do not reuse for a later Raid style. */
+export const COOP_INSTANCE_MIN_PLAYERS = 1;
+export const COOP_INSTANCE_MAX_PLAYERS = 5;
+
+export function isWaveAssaultMode(mode: string | undefined | null): boolean {
+  return mode === "dungeon";
+}
+
+export function isInstanceMode(mode: string | undefined | null): boolean {
+  return mode === "instance";
+}
+
+export function isPveRunMode(mode: string | undefined | null): boolean {
+  return isWaveAssaultMode(mode) || isInstanceMode(mode);
+}
+
+export function coopPveMaxPlayersForContent(id: string | undefined | null): number {
+  return isInstanceMode(id) ? COOP_INSTANCE_MAX_PLAYERS : COOP_PVE_MAX_PLAYERS;
+}
+
+export function pveContentIdFromModes(modes: readonly string[] | undefined | null): PveContentId {
+  for (const id of modes ?? []) {
+    if (id === "instance" || id === "dungeon" || id === "boss") return id;
+  }
+  return "dungeon";
+}
+
+export function coopPveCapForModes(modes: readonly string[] | undefined | null): number {
+  return coopPveMaxPlayersForContent(pveContentIdFromModes(modes));
+}
 
 export const PVP_FAMILY_TOKEN_PREFIX = "family:";
 
@@ -82,7 +113,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: true,
-    mapId: "test_arena",
+    mapId: "arena_1",
   },
   {
     id: "arena_1v1v1",
@@ -95,7 +126,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 3,
     maxSpectators: 1,
     enabled: true,
-    mapId: "test_arena",
+    mapId: "arena_1",
   },
   {
     id: "arena_2v2",
@@ -108,7 +139,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: true,
-    mapId: "test_arena",
+    mapId: "arena_1",
   },
   {
     id: "arena_3v3",
@@ -121,7 +152,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: true,
-    mapId: "test_arena",
+    mapId: "arena_1",
   },
   {
     id: "battleground",
@@ -134,7 +165,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: false,
-    mapId: "desert",
+    mapId: "arena_1",
   },
   {
     id: "bg_ctf",
@@ -147,7 +178,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: true,
-    mapId: "desert",
+    mapId: "arena_1",
   },
   {
     id: "bg_koth",
@@ -160,7 +191,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: true,
-    mapId: "desert",
+    mapId: "arena_1",
   },
   {
     id: "bg_domination",
@@ -173,7 +204,7 @@ export const PVP_MODES: readonly PvpModeDef[] = [
     teamCount: 2,
     maxSpectators: 2,
     enabled: true,
-    mapId: "desert",
+    mapId: "arena_1",
   },
 ];
 
@@ -188,7 +219,7 @@ export const BG_MATCH_DURATION_MS = 8 * 60 * 1000;
 export const BG_CTF_CAPTURES_TO_WIN = 3;
 export const BG_KOTH_SCORE_TO_WIN = 100;
 export const BG_DOMINATION_SCORE_TO_WIN = 150;
-export const BG_RESPAWN_MS = 8000;
+export const BG_RESPAWN_MS = 12000;
 export const BG_FLAG_RETURN_MS = 8000;
 export const BG_CAPTURE_MS = 4000;
 export const BG_SCORE_TICK_MS = 1000;
@@ -314,7 +345,15 @@ export const PVE_CONTENTS: readonly {
     id: "dungeon",
     label: "Wave Assault",
     room: ROOM.DUNGEON,
-    description: "Infinite waves — survive escalating enemies",
+    description: "Infinite waves — survive escalating enemies. Up to 4 hunters.",
+    enabled: true,
+    mapId: "pve_infinite_waves_1",
+  },
+  {
+    id: "instance",
+    label: "Dungeon",
+    room: ROOM.BOSS,
+    description: "Walk an authored instance: packs, one optional wing, end boss. Up to 5 hunters.",
     enabled: true,
     mapId: "pve_infinite_waves_1",
   },
@@ -358,19 +397,59 @@ export function sandboxMapId(mode: string | null | undefined): string | undefine
   return mode.slice(SANDBOX_MODE_PREFIX.length) || undefined;
 }
 
+export const MAP_HUB_SLOT_ID = "hub";
+
+export type MapPlaySlot = {
+  id: string;
+  label: string;
+  group: "world" | "pvp" | "pve";
+};
+
+/** Slots a map can be turned on for in the editor. */
+export function mapPlaySlots(): MapPlaySlot[] {
+  return [
+    { id: MAP_HUB_SLOT_ID, label: "Village / Hub", group: "world" },
+    ...PVP_MODES.filter((m) => m.enabled).map((m) => ({
+      id: m.id,
+      label: m.label,
+      group: "pvp" as const,
+    })),
+    ...PVE_CONTENTS.filter((c) => c.enabled).map((c) => ({
+      id: c.id,
+      label: c.label,
+      group: "pve" as const,
+    })),
+  ];
+}
+
+export function isMapLive(doc: { active?: boolean }): boolean {
+  return doc.active === true;
+}
+
+export function mapSlotLabel(modeId: string): string {
+  return mapPlaySlots().find((s) => s.id === modeId)?.label ?? modeId;
+}
+
+/** Fallback when a mode has no live tagged map. Never the retired desert GLB. */
+export const DEFAULT_PLAY_MAP_ID = "arena_1";
+
 export function mapIdForMode(mode: string | null | undefined): string | undefined {
   if (!mode) return undefined;
   const sandbox = sandboxMapId(mode);
   if (sandbox) return sandbox;
   for (const src of listMaps()) {
-    if (src.kind === "doc" && src.doc.modeIds?.includes(mode)) {
+    if (src.kind === "doc" && isMapLive(src.doc) && src.doc.modeIds?.includes(mode)) {
       return src.doc.id;
     }
   }
-  return (
+  const fallback =
     PVP_MODES.find((m) => m.id === mode)?.mapId ??
-    PVE_CONTENTS.find((c) => c.id === mode)?.mapId
-  );
+    PVE_CONTENTS.find((c) => c.id === mode)?.mapId;
+  if (!fallback) return undefined;
+  const src = listMaps().find((s) => s.id === fallback);
+  if (src?.kind === "baked") return undefined;
+  if (src?.kind === "doc" && !isMapLive(src.doc)) return undefined;
+  return fallback;
 }
 
 export function resolvePvpTransfer(modeId: string): { room: string; mode: PvpModeId } {

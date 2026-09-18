@@ -30,13 +30,20 @@ export function PlayerNameBillboard({ room, sessionId, y = 3.2 }: Props) {
           displayName?: string;
           hp?: number;
           disconnected?: boolean;
+          respawnAt?: number;
           statuses?: Parameters<typeof hasStatusId>[0];
         }
       | undefined;
+    const dead = typeof p?.hp === "number" && p.hp <= 0;
+    const respawnLeft =
+      dead && typeof p?.respawnAt === "number" && p.respawnAt > 0
+        ? Math.max(0, Math.ceil((p.respawnAt - Date.now()) / 1000))
+        : 0;
+    const showRespawn = dead && respawnLeft > 0;
     if (
       !p ||
       p.disconnected ||
-      (typeof p.hp === "number" && p.hp <= 0) ||
+      (dead && !showRespawn) ||
       hasStatusId(p.statuses, "cloaked") ||
       hasStatusId(p.statuses, "revengePhased")
     ) {
@@ -44,7 +51,8 @@ export function PlayerNameBillboard({ room, sessionId, y = 3.2 }: Props) {
       return;
     }
     el.style.visibility = "visible";
-    const next = (p.displayName ?? "").trim() || "Hunter";
+    const name = (p.displayName ?? "").trim() || "Hunter";
+    const next = showRespawn ? `${name} · ${respawnLeft}s` : name;
     if (next !== lastName.current) {
       lastName.current = next;
       el.textContent = next;

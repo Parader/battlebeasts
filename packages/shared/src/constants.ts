@@ -26,6 +26,7 @@ export const CAMERA = {
 
 export const ROOM = {
   BASE_CITY: "base_city",
+  PLAZA: "plaza",
   ARENA: "arena",
   BATTLEGROUND: "battleground",
   DUNGEON: "dungeon",
@@ -45,6 +46,7 @@ export const INTERACT = {
   PORTAL_PVP: "portal_pvp",
   PORTAL_PVE: "portal_pve",
   PRACTICE_DUMMY: "practice_dummy",
+  DUNGEON_EXIT: "dungeon_exit",
 } as const;
 
 /** PvP disconnect grace before forfeit (ms). */
@@ -55,3 +57,5 @@ export const PVE_RECONNECT_GRACE_MS = 90_000;
 export const RECONNECT_RESUME_GRACE_MS = 3_000;
 /** Disconnected hunters may rejoin a still-running match for this long. */
 export const MATCH_REJOIN_MS = 15 * 60_000;
+/** Hub group keeps a logged-out hunter this long, then drops them (and disbands if fewer than 2 remain). */
+export const GROUP_OFFLINE_GRACE_MS = 5 * 60_000;

@@ -16,8 +16,13 @@ type Props = {
   onInviteToHub: (friendId: string) => Promise<void>;
   onRemoveFriend: (friendId: string) => Promise<void>;
   onReturnHome: () => void;
+  onFindPlaza: () => void;
+  onJoinFriendPlaza: (friendUserId: string) => void;
+  onVisitCity: (hubOwnerId: string) => void;
+  friendLocations: Record<string, { plazaId: string | null; hubOwnerId: string | null }>;
   currentHubOwnerId: string;
   myUserId: string;
+  inPlaza: boolean;
 };
 
 export function FriendsPanel({
@@ -33,8 +38,13 @@ export function FriendsPanel({
   onInviteToHub,
   onRemoveFriend,
   onReturnHome,
+  onFindPlaza,
+  onJoinFriendPlaza,
+  onVisitCity,
+  friendLocations,
   currentHubOwnerId,
   myUserId,
+  inPlaza,
 }: Props) {
   const [name, setName] = useState("");
   const [codeInput, setCodeInput] = useState("");
@@ -60,7 +70,7 @@ export function FriendsPanel({
   return (
     <GamePanelShell
       title="Friends"
-      subtitle="Invite hunters to your base city"
+      subtitle="Invite hunters, join their plaza, or visit a city"
       onClose={onClose}
       maxHeightClass="max-h-[min(80dvh,640px)]"
     >
@@ -68,11 +78,30 @@ export function FriendsPanel({
         {visiting ? (
           <div className="bb-list-row bb-list-row--stack">
             <p className="bb-muted">You are visiting another hub.</p>
-            <button type="button" className="bb-btn-ink self-start" onClick={onReturnHome}>
-              Return to my city
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="bb-btn-ink self-start" onClick={onReturnHome}>
+                Return to my city
+              </button>
+              <button type="button" className="bb-btn-ghost self-start" onClick={onFindPlaza}>
+                Find plaza
+              </button>
+            </div>
+          </div>
+        ) : !inPlaza ? (
+          <div className="bb-list-row bb-list-row--stack">
+            <p className="bb-muted">You are in your city.</p>
+            <button type="button" className="bb-btn-ink self-start" onClick={onFindPlaza}>
+              Find plaza
             </button>
           </div>
-        ) : null}
+        ) : (
+          <div className="bb-list-row bb-list-row--stack">
+            <p className="bb-muted">You are in a public plaza.</p>
+            <button type="button" className="bb-btn-ink self-start" onClick={onReturnHome}>
+              My city
+            </button>
+          </div>
+        )}
 
         <section className="space-y-2">
           <h3 className="bb-section-label">Your friend code</h3>
@@ -169,7 +198,25 @@ export function FriendsPanel({
                       {f.online ? "Online" : "Offline"}
                     </span>
                   </div>
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                    {f.online && friendLocations[f.id]?.plazaId ? (
+                      <button
+                        type="button"
+                        className="bb-btn-brass"
+                        disabled={busy}
+                        onClick={() => onJoinFriendPlaza(f.id)}
+                      >
+                        Join plaza
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="bb-btn-ink"
+                      disabled={busy || !f.online}
+                      onClick={() => onVisitCity(f.id)}
+                    >
+                      Visit city
+                    </button>
                     <button
                       type="button"
                       className="bb-btn-ink"

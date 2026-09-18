@@ -1,7 +1,7 @@
 import { useGLTF } from "@react-three/drei";
 import { useMemo } from "react";
 import * as THREE from "three";
-import { CHARACTER_URL, prepareCharacterScene } from "./characterVisual";
+import { CHARACTER_URL, prepareCharacterScene, setCharacterOpacity } from "./characterVisual";
 import { cloneFittedRockPile, ROCK_WALL_GLB_URL } from "./vfx/rockWallAsset";
 import {
   cloneFittedShroom,
@@ -21,13 +21,14 @@ const PARK = [0, -500, 0] as const;
 
 /**
  * Hidden live meshes whose programs only appear on first cast / first wave.
- * Kept parented so the compile stays resident (same idea as VfxWarmup).
+ * Invisible in gameplay; compileLiveScene flashes the group for the compile pass.
  */
 export function GpuWarmDummies({ includeZombie }: { includeZombie: boolean }) {
   return (
-    <group name="GpuWarmDummies" position={PARK}>
+    <group name="GpuWarmDummies" position={PARK} visible={false}>
       <SpellGlbDummies />
       <OverlaySkinDummy />
+      <GhostCharacterDummy />
       {includeZombie ? <ZombieDummy /> : null}
     </group>
   );
@@ -58,6 +59,25 @@ function SpellGlbDummies() {
     }
     return g;
   }, [rock.scene, green.scene, red.scene, volcano.scene]);
+
+  return <primitive object={root} />;
+}
+
+/**
+ * Live MeshStandard + skinning + shadows with transparent=true.
+ * OverlaySkinDummy swaps in MeshBasic (counter/spirit overlay) — that is a
+ * different program, so the first Teleport Slam / cloak fade still compiled
+ * the real ghosted hero on first use. Keep this parented so map warmup
+ * compileAsync picks it up.
+ */
+function GhostCharacterDummy() {
+  const gltf = useGLTF(CHARACTER_URL);
+  const root = useMemo(() => {
+    const idle = gltf.animations[0] ?? null;
+    const scene = prepareCharacterScene(gltf.scene, { restClip: idle, upAxis: "y" });
+    setCharacterOpacity(scene, 0.32);
+    return scene;
+  }, [gltf.scene, gltf.animations]);
 
   return <primitive object={root} />;
 }

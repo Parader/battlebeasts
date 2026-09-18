@@ -1,5 +1,8 @@
 import * as THREE from "three";
 
+/** compile() skips invisible objects — flash these parked groups on for the compile pass. */
+const WARMUP_GROUP_NAMES = new Set(["VfxWarmup", "GpuWarmDummies", "OpacityWarmDummy"]);
+
 const TEXTURE_KEYS = [
   "map",
   "normalMap",
@@ -58,8 +61,7 @@ export async function compileLiveScene(
   const seenSources = new Set<THREE.Source>();
   const hidden = new Set<THREE.Object3D>();
   scene.traverse((object) => {
-    // compile() skips invisible objects — flash hidden warmup groups on.
-    if (object.name === "VfxWarmup" && !object.visible) {
+    if (WARMUP_GROUP_NAMES.has(object.name) && !object.visible) {
       object.visible = true;
       hidden.add(object);
     }
@@ -76,23 +78,14 @@ export async function compileLiveScene(
    */
   const probe = new THREE.WebGLRenderTarget(1, 1);
   const previousTarget = gl.getRenderTarget();
-  const compile = async () => {
-    const asyncCompile = (
-      gl as THREE.WebGLRenderer & {
-        compileAsync?: (scene: THREE.Scene, camera: THREE.Camera) => Promise<void>;
-      }
-    ).compileAsync;
-    if (typeof asyncCompile === "function") {
-      await asyncCompile.call(gl, scene, camera);
-      return;
-    }
-    gl.compile(scene, camera);
-  };
   try {
+    // Sync compile only. compileAsync in three 0.175 throws
+    // `currentProgram is undefined` from a rAF after materials dispose or
+    // skip a program, and that error is not a rejected promise.
     gl.setRenderTarget(probe);
-    await compile();
+    gl.compile(scene, camera);
     gl.setRenderTarget(null);
-    await compile();
+    gl.compile(scene, camera);
   } catch {
     // Best-effort — a missed warm costs an in-game hitch, not correctness.
   } finally {

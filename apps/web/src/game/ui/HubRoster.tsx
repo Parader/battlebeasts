@@ -20,6 +20,10 @@ type Props = {
   isHubOwner: boolean;
   /** True when server flagged this session as admin. */
   isAdmin: boolean;
+  occupancy?: { current: number; cap: number } | null;
+  groupSessionIds?: ReadonlySet<string>;
+  canInviteToGroup?: boolean;
+  onInviteToGroup?: (sessionId: string) => void;
   onKick: (sessionId: string) => void;
   onGrantResources: (
     sessionId: string,
@@ -34,6 +38,7 @@ type ContextMenu = {
   y: number;
   canKick: boolean;
   canGrant: boolean;
+  canInvite: boolean;
 };
 
 /** Top-left hub presence list — owner kick / admin grant via right-click. */
@@ -42,6 +47,10 @@ export function HubRoster({
   localSessionId,
   isHubOwner,
   isAdmin,
+  occupancy,
+  groupSessionIds,
+  canInviteToGroup = false,
+  onInviteToGroup,
   onKick,
   onGrantResources,
 }: Props) {
@@ -77,13 +86,22 @@ export function HubRoster({
 
   return (
     <div className="bb-parchment pointer-events-auto relative mt-1 max-w-[12rem] px-3 py-2">
-      <p className="bb-section-label mb-1.5">In hub</p>
+      <p className="bb-section-label mb-1.5">
+        In hub
+        {occupancy ? (
+          <span className="bb-meta ml-1 tabular-nums">
+            {occupancy.current}/{occupancy.cap}
+          </span>
+        ) : null}
+      </p>
       <ul className="space-y-1">
         {players.map((p) => {
           const isSelf = p.sessionId === localSessionId;
           const canKick = isHubOwner && !isSelf && !p.isOwner;
           const canGrant = isAdmin;
-          const hasMenu = canKick || canGrant;
+          const alreadyGrouped = Boolean(groupSessionIds?.has(p.sessionId));
+          const canInvite = Boolean(canInviteToGroup && onInviteToGroup && !isSelf && !alreadyGrouped);
+          const hasMenu = canKick || canGrant || canInvite;
           return (
             <li key={p.sessionId}>
               <span
@@ -106,6 +124,7 @@ export function HubRoster({
                           y: e.clientY,
                           canKick,
                           canGrant,
+                          canInvite,
                         });
                       }
                     : undefined
@@ -127,6 +146,19 @@ export function HubRoster({
           role="menu"
           onPointerDown={(e) => e.stopPropagation()}
         >
+          {menu.canInvite ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="bb-context-menu__item"
+              onClick={() => {
+                onInviteToGroup?.(menu.sessionId);
+                setMenu(null);
+              }}
+            >
+              Invite to group
+            </button>
+          ) : null}
           {menu.canGrant ? (
             <button
               type="button"

@@ -232,6 +232,88 @@ select:focus {
   border-radius: 50%;
   background: var(--warn);
   display: inline-block;
+  flex-shrink: 0;
+}
+
+.dot.live {
+  background: var(--ok);
+}
+
+.dot.idle {
+  background: #5a6575;
+}
+
+.map-picker {
+  position: relative;
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.map-picker-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.map-picker-btn .map-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-picker-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  width: 280px;
+  max-height: min(420px, calc(100vh - 60px));
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  padding: 6px;
+}
+
+.map-picker-hint {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 8px 8px;
+}
+
+.map-picker-menu button {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  padding: 6px 8px;
+}
+
+.map-picker-menu button:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: transparent;
+}
+
+.map-picker-menu button.current {
+  background: #2a3140;
+}
+
+.map-picker-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.map-picker-modes {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 /* --- panel sections --- */

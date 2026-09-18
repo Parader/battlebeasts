@@ -42,7 +42,7 @@ export function PortalPanel({
         title={title}
         subtitle={
           loadoutReady
-            ? "Open a Wave Assault lobby — solo or up to 4 hunters."
+            ? "Wave Assault (up to 4) or Dungeon (up to 5). Solo is fine."
             : "Slot a spell on every key at the House before you can start."
         }
         onClose={onClose}

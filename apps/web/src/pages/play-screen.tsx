@@ -25,8 +25,10 @@ import { PatchNotesPanel } from "@/game/ui/PatchNotesPanel";
 import { hasUnseenPatchNotes } from "@/game/patchNotes";
 import { DeathOverlay } from "@/game/ui/DeathOverlay";
 import { HubRoster } from "@/game/ui/HubRoster";
+import { GroupBox, isLiveGroup } from "@/game/ui/GroupBox";
 import { ArenaMatchHud } from "@/game/ui/ArenaMatchHud";
 import { WaveAssaultHud } from "@/game/ui/WaveAssaultHud";
+import { PveUpgradeDraft } from "@/game/ui/PveUpgradeDraft";
 import { WaveRunRecapPanel } from "@/game/ui/WaveRunRecapPanel";
 import { MatchRecapPanel } from "@/game/ui/MatchRecapPanel";
 import { PartyLobbyPanel } from "@/game/ui/PartyLobbyPanel";
@@ -49,12 +51,20 @@ import {
     startHubIntro,
     subscribeHubIntro,
 } from "@/game/intro/hubIntroRuntime";
-import { isLoadoutReady, TUTORIAL_CHEST_SOURCE } from "@battlebeasts/shared";
+import {
+    BG_RESPAWN_MS,
+    isBattlegroundMode,
+    isInstanceMode,
+    isPveRunMode,
+    isWaveAssaultMode,
+    isLoadoutReady,
+    TUTORIAL_CHEST_SOURCE,
+} from "@battlebeasts/shared";
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
 import { emptyEmoteSlots, isAdminEmail } from "@battlebeasts/shared";
-import { clearPreferredHub, loadPreferredHub, savePreferredHub } from "@/game/contentRejoin";
+import { clearPreferredHub, loadLastSocial, savePreferredHub } from "@/game/contentRejoin";
 
 const WS_URL =
     (typeof window !== "undefined" && window.battlebeasts?.gameServerUrl) ||
@@ -118,17 +128,16 @@ export const PlayScreen = () => {
     const clientIsAdmin = isAdminEmail(authEmail);
 
     const [hubOwnerId, setHubOwnerId] = useState<string | null>(null);
-    const [hubPrefReady, setHubPrefReady] = useState(false);
+    const [wantPlaza, setWantPlaza] = useState(() => loadLastSocial() !== "home");
+    const [hubPrefReady] = useState(true);
     const [profileWaitExpired, setProfileWaitExpired] = useState(false);
     const effectiveHubOwnerId = hubOwnerId ?? userId;
 
-    // Restore last visited host hub before joining so refresh stays in that lobby.
     useEffect(() => {
-        if (!ready || !user?.id) return;
-        const preferred = loadPreferredHub(user.id);
-        if (preferred) setHubOwnerId(preferred);
-        setHubPrefReady(true);
-    }, [ready, user?.id]);
+        if (!user?.id) return;
+        if (hubOwnerId && hubOwnerId !== user.id) savePreferredHub(user.id, hubOwnerId);
+        else if (hubOwnerId === null && !wantPlaza) clearPreferredHub();
+    }, [user?.id, hubOwnerId, wantPlaza]);
 
     // If profile fetch stalls (or never sets error), surface Retry instead of spinning forever.
     useEffect(() => {
@@ -141,12 +150,6 @@ export const PlayScreen = () => {
         const id = window.setTimeout(() => setProfileWaitExpired(true), 28_000);
         return () => window.clearTimeout(id);
     }, [profile, profileError, user?.id, profileLoading]);
-
-    useEffect(() => {
-        if (!user?.id || !hubPrefReady) return;
-        if (hubOwnerId && hubOwnerId !== user.id) savePreferredHub(user.id, hubOwnerId);
-        else if (hubOwnerId === null) clearPreferredHub();
-    }, [user?.id, hubOwnerId, hubPrefReady]);
 
     const canJoinRoom =
         ready && Boolean(user) && hubPrefReady && Boolean(profile) && !needsNameSetup && Boolean(accessToken);
@@ -202,6 +205,7 @@ export const PlayScreen = () => {
         requestRespawn,
         deathSpectate,
         adminTpToMap,
+        adminEnterMode,
         spectateTargetId,
         beginDeathSpectate,
         hubRoster,
@@ -232,6 +236,15 @@ export const PlayScreen = () => {
         waveHud,
         pvePaused,
         setPvePaused,
+        pveUpgradeDraft,
+        pickPveUpgrade,
+        plazaState,
+        friendLocations,
+        requestFriendLocations,
+        joinPlaza,
+        joinHome,
+        joinHub,
+        joinFriendPlaza,
         pveFriendlyFire,
         setPveFriendlyFireEnabled,
         waveRunRecap,
@@ -239,10 +252,13 @@ export const PlayScreen = () => {
         voteRematch,
         rankedState,
         rankedLeaderboard,
+        pveLeaderboard,
+        pveBest,
         refreshRanked,
         party,
         partyInvite,
         inviteFriendToParty,
+        inviteToParty,
         setPartySeat,
         setPartyLayout,
         lockParty,
@@ -258,6 +274,7 @@ export const PlayScreen = () => {
         color,
         accessToken,
         hubOwnerId: effectiveHubOwnerId,
+        wantPlaza,
         enabled: canJoinRoom,
         inputLocked:
             friendsOpen ||
@@ -269,11 +286,19 @@ export const PlayScreen = () => {
             loadingGate ||
             chestLocksInput ||
             introPlaying,
-        onActiveHubOwnerId: (id) => setHubOwnerId(id),
+        onActiveHubOwnerId: (id) => {
+            if (id && id !== userId) setHubOwnerId(id);
+            else if (!id) setHubOwnerId(null);
+        },
     });
 
     const inContent = phase === "content";
     const isAdmin = isHubAdmin || clientIsAdmin;
+
+    useEffect(() => {
+        if (!friendsOpen) return;
+        requestFriendLocations(friendsApi.friends.map((f) => f.id));
+    }, [friendsOpen, friendsApi.friends, requestFriendLocations]);
     useEffect(() => {
         setChestLocksInput(Boolean(chestReveal) || Boolean(pendingChestOpenId));
         if (chestReveal) setQuestsOpen(false);
@@ -409,8 +434,11 @@ export const PlayScreen = () => {
     }
 
     const isArena = Boolean(arenaHud);
-    const isWaveAssault = contentMode === "dungeon";
-    const arenaAllowRespawn = !isArena && !isWaveAssault;
+    const isWaveAssault = isWaveAssaultMode(contentMode);
+    const isInstance = isInstanceMode(contentMode);
+    const isPveRun = isPveRunMode(contentMode);
+    const isBattleground = isBattlegroundMode(contentMode);
+    const arenaAllowRespawn = !isArena && !isPveRun;
     const isSpectator =
         Boolean(inContent) &&
         (room?.sessionId
@@ -518,9 +546,11 @@ export const PlayScreen = () => {
                     animDurationMs={deathAnimMs}
                     onRespawn={requestRespawn}
                     allowRespawn={arenaAllowRespawn}
+                    autoRespawn={isBattleground}
+                    respawnMs={BG_RESPAWN_MS}
                     onSpectate={!arenaAllowRespawn ? beginDeathSpectate : undefined}
                     fallenHint={
-                        isWaveAssault ? "No respawn — the run ends when all hunters fall." : undefined
+                        isPveRun ? "No respawn — the run ends when all hunters fall." : undefined
                     }
                 />
             )}
@@ -533,7 +563,18 @@ export const PlayScreen = () => {
 
             {playReady && arenaHud && inContent && <ArenaMatchHud hud={arenaHud} />}
 
-            {playReady && isWaveAssault && inContent && !waveRunRecap && (
+            {playReady && isWaveAssault && inContent && pveUpgradeDraft && (
+                <PveUpgradeDraft
+                    wave={pveUpgradeDraft.wave}
+                    offers={pveUpgradeDraft.offers}
+                    waiting={pveUpgradeDraft.waiting}
+                    localSessionId={room?.sessionId ?? null}
+                    picked={pveUpgradeDraft.picked}
+                    onPick={pickPveUpgrade}
+                />
+            )}
+
+            {playReady && isPveRun && inContent && !waveRunRecap && (
                 <WaveAssaultHud
                     hud={waveHud}
                     paused={pvePaused}
@@ -557,6 +598,9 @@ export const PlayScreen = () => {
                     onReturnHub={returnToHub}
                     rows={waveRunRecap.rows}
                     localSessionId={room?.sessionId ?? null}
+                    victory={waveRunRecap.victory}
+                    chestQuality={waveRunRecap.chestQuality}
+                    instance={isInstance}
                 />
             )}
 
@@ -594,7 +638,7 @@ export const PlayScreen = () => {
                                   ? " · queued"
                                   : ""}
                         </span>
-                        {effectiveHubOwnerId !== userId && !inContent ? (
+                        {effectiveHubOwnerId !== userId && !inContent && !plazaState ? (
                             <span className="bb-chip bb-chip--warn">Visiting</span>
                         ) : null}
                         {!inContent && (
@@ -603,20 +647,44 @@ export const PlayScreen = () => {
                                 localSessionId={room?.sessionId ?? null}
                                 isHubOwner={isHubOwner}
                                 isAdmin={isAdmin}
+                                occupancy={
+                                    plazaState
+                                        ? { current: hubRoster.length, cap: plazaState.walkInCap }
+                                        : null
+                                }
+                                groupSessionIds={
+                                    isLiveGroup(party, room?.sessionId ?? null)
+                                        ? new Set(party.members.map((m) => m.sessionId))
+                                        : undefined
+                                }
+                                canInviteToGroup={
+                                    !party ||
+                                    !isLiveGroup(party, room?.sessionId ?? null) ||
+                                    party.leaderSessionId === room?.sessionId
+                                }
+                                onInviteToGroup={inviteToParty}
                                 onKick={kickFromHub}
                                 onGrantResources={grantHubResources}
                             />
                         )}
+                        {playReady &&
+                        isLiveGroup(party, room?.sessionId ?? null) &&
+                        !inContent &&
+                        activeUi !== "party_lobby" ? (
+                            <GroupBox
+                                members={party.members}
+                                leaderSessionId={party.leaderSessionId}
+                                localSessionId={room?.sessionId ?? null}
+                                onKick={kickFromParty}
+                                onLeave={
+                                    party.leaderSessionId === room?.sessionId
+                                        ? cancelParty
+                                        : leaveParty
+                                }
+                            />
+                        ) : null}
                     </div>
                     <div className="pointer-events-auto bb-hud-icon-rail">
-                        {party && !inContent && activeUi !== "party_lobby" && (
-                            <HudIconButton
-                                label="Party lobby"
-                                icon="party-flags"
-                                accent
-                                onClick={() => setActiveUi("party_lobby")}
-                            />
-                        )}
                         {inContent && (
                             <HudIconButton
                                 label="Return to city"
@@ -627,7 +695,7 @@ export const PlayScreen = () => {
                         )}
                         {user && !inContent && (
                             <HudIconButton
-                                label="Ranked"
+                                label="Ladders"
                                 icon="party-flags"
                                 onClick={() => {
                                     setRankOpen(true);
@@ -832,7 +900,11 @@ export const PlayScreen = () => {
                         void friendsApi.answerHubInvite(id, true).then((hub) => {
                             if (hub && user?.id) {
                                 savePreferredHub(user.id, hub);
-                                setHubOwnerId(hub);
+                                if (room) joinHub(hub);
+                                else {
+                                    setWantPlaza(false);
+                                    setHubOwnerId(hub);
+                                }
                             }
                         });
                     }}
@@ -931,10 +1003,13 @@ export const PlayScreen = () => {
                 <RankPanel
                     open={rankOpen}
                     onClose={() => setRankOpen(false)}
+                    localUserId={userId}
                     season={rankedState.season}
                     rating={rankedState.rating}
                     label={rankedState.label}
                     leaderboard={rankedLeaderboard}
+                    pveLeaderboard={pveLeaderboard}
+                    pveBest={pveBest}
                     onRefresh={refreshRanked}
                 />
             )}
@@ -957,10 +1032,36 @@ export const PlayScreen = () => {
                     onRemoveFriend={friendsApi.removeFriend}
                     onReturnHome={() => {
                         clearPreferredHub();
-                        setHubOwnerId(null);
+                        if (room) joinHome();
+                        else {
+                            setWantPlaza(false);
+                            setHubOwnerId(null);
+                        }
                     }}
+                    onFindPlaza={() => {
+                        clearPreferredHub();
+                        if (room) joinPlaza();
+                        else {
+                            setWantPlaza(true);
+                            setHubOwnerId(null);
+                        }
+                    }}
+                    onJoinFriendPlaza={(friendUserId) => {
+                        joinFriendPlaza(friendUserId);
+                        setFriendsOpen(false);
+                    }}
+                    onVisitCity={(friendId) => {
+                        if (room) joinHub(friendId);
+                        else {
+                            setWantPlaza(false);
+                            setHubOwnerId(friendId);
+                        }
+                        setFriendsOpen(false);
+                    }}
+                    friendLocations={friendLocations}
                     currentHubOwnerId={effectiveHubOwnerId}
                     myUserId={userId}
+                    inPlaza={Boolean(plazaState)}
                 />
             )}
 
@@ -990,6 +1091,10 @@ export const PlayScreen = () => {
                     onTpToMap={(mapId) => {
                         setAdminOpen(false);
                         adminTpToMap(mapId);
+                    }}
+                    onEnterMode={(modeId) => {
+                        setAdminOpen(false);
+                        adminEnterMode(modeId);
                     }}
                     onReplayIntro={() => {
                         setAdminOpen(false);

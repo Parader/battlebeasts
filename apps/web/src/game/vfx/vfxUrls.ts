@@ -22,6 +22,15 @@ export const VFX_AURA_EYES_URLS = {
   gold: assetUrl("assets/vfx/aura-eyes-gold.png"),
 } as const;
 
+/** Ground sigils under Wave Assault pickup orbs. */
+export const PICKUP_SIGIL_URLS: Record<string, string> = {
+  heal: assetUrl("assets/vfx/orbs/sigil-heal.png"),
+  energy: assetUrl("assets/vfx/orbs/sigil-energy.png"),
+  speed: assetUrl("assets/vfx/orbs/sigil-speed.png"),
+  power: assetUrl("assets/vfx/orbs/sigil-power.png"),
+  absorb: assetUrl("assets/vfx/orbs/sigil-absorb.png"),
+};
+
 /** Chest reveal mesh (match end / hub rewards). */
 export const CHEST_GLB_URL = assetUrl("assets/vfx/chest.glb");
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import {
-  COOP_PVE_MAX_PLAYERS,
+  coopPveCapForModes,
   PVE_CONTENTS,
+  pveContentIdFromModes,
   PVP_FAMILIES,
   pvpFamilyFighterCap,
   pvpFamilyFromModes,
@@ -111,6 +112,7 @@ function PlayerSlot({
         "bb-lobby-slot bb-lobby-slot--filled",
         isYou ? "bb-lobby-slot--you" : "",
         canKick ? "bb-lobby-slot--kickable" : "",
+        member.online === false ? "opacity-55" : "",
       ].join(" ")}
       title={canKick ? "Right-click to kick" : undefined}
       onContextMenu={
@@ -131,6 +133,9 @@ function PlayerSlot({
           {isLeader ? <span className="bb-lobby-slot__crown" title="Party leader">♛</span> : null}
           <span className="bb-lobby-slot__name">{member.displayName}</span>
           {isYou ? <span className="bb-lobby-slot__you">You</span> : null}
+          {member.online === false ? (
+            <span className="bb-lobby-slot__you">Logged out</span>
+          ) : null}
         </div>
       </div>
     </div>
@@ -219,9 +224,10 @@ export function PartyLobbyPanel({
     ),
     [party.members, maxSpectators],
   );
+  const coopCap = coopPveCapForModes(party.modes);
   const coopFighters = useMemo(
-    () => padSlots(party.members, COOP_PVE_MAX_PLAYERS),
-    [party.members],
+    () => padSlots(party.members, coopCap),
+    [party.members, coopCap],
   );
 
   const localMember = party.members.find((m) => m.sessionId === localSessionId);
@@ -230,13 +236,14 @@ export function PartyLobbyPanel({
     isLeader &&
     !party.queued &&
     loadoutReady &&
+    party.members.every((m) => m.online !== false) &&
     (isCoopPve ? party.members.length >= 1 : true);
 
   const coopSubtitle = useMemo(() => {
-    const contentId = party.modes.find((m) => m === "dungeon" || m === "boss") ?? "dungeon";
-    const label = PVE_CONTENTS.find((c) => c.id === contentId)?.label ?? "Wave Assault";
-    return `${label} · up to ${COOP_PVE_MAX_PLAYERS}${party.queued ? " · Starting…" : ""}`;
-  }, [party.modes, party.queued]);
+    const contentId = pveContentIdFromModes(party.modes);
+    const label = PVE_CONTENTS.find((c) => c.id === contentId)?.label ?? "PvE";
+    return `${label} · up to ${coopCap}${party.queued ? " · Starting…" : ""}`;
+  }, [party.modes, party.queued, coopCap]);
 
   useEffect(() => {
     if (!menu) return;
@@ -315,7 +322,7 @@ export function PartyLobbyPanel({
                   <button
                     type="button"
                     className="bb-lobby-btn bb-lobby-btn--slot"
-                    disabled={pending || (isCoopPve && party.members.length >= COOP_PVE_MAX_PLAYERS)}
+                    disabled={pending || (isCoopPve && party.members.length >= coopCap)}
                     onClick={() => onInviteFriend(f.id)}
                   >
                     {pending
@@ -380,13 +387,15 @@ export function PartyLobbyPanel({
         <div
           role="dialog"
           aria-modal
-          aria-label="Wave Assault lobby"
+          aria-label={`${PVE_CONTENTS.find((c) => c.id === pveContentIdFromModes(party.modes))?.label ?? "PvE"} lobby`}
           className="bb-lobby-panel"
           onClick={(e) => e.stopPropagation()}
         >
           <header className="bb-lobby-panel__header">
             <div>
-              <h2 className="bb-lobby-panel__title">Wave Assault Lobby</h2>
+              <h2 className="bb-lobby-panel__title">
+                {PVE_CONTENTS.find((c) => c.id === pveContentIdFromModes(party.modes))?.label ?? "PvE"} Lobby
+              </h2>
               <p className="bb-lobby-panel__sub">{coopSubtitle}</p>
             </div>
             <button
@@ -413,7 +422,7 @@ export function PartyLobbyPanel({
                   type="button"
                   className="bb-lobby-btn bb-lobby-btn--slot"
                   onClick={() => setInviteOpen((v) => !v)}
-                  disabled={party.members.length >= COOP_PVE_MAX_PLAYERS}
+                  disabled={party.members.length >= coopCap}
                 >
                   {inviteOpen ? "Hide Invites" : "Invite Friend"}
                 </button>
@@ -427,7 +436,7 @@ export function PartyLobbyPanel({
                     onClose();
                   }}
                 >
-                  Start Assault
+                  Start
                 </button>
               ) : party.queued ? (
                 <span className="bb-lobby-queued">Starting…</span>

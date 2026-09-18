@@ -1004,30 +1004,30 @@ export const STATUSES: Record<string, StatusDef> = {
     color: "#32134A",
     tag: "DREAD",
   },
-  /** Map pickup: move speed surge (+35% speed). */
+  /** Map pickup: move speed surge (+50% speed). */
   speedPickup: {
     id: "speedPickup",
     name: "Speed Surge",
     polarity: "buff",
     mechanic: "haste",
-    durationMs: 6000,
-    moveMul: 1.35,
+    durationMs: 10000,
+    moveMul: 1.5,
     maxStacks: 1,
     stackRule: "refresh",
-    color: "#eab308",
+    color: "#22d3ee",
     tag: "SPD",
   },
-  /** Map pickup: damage power surge (+30% damage dealt). */
+  /** Map pickup: damage power surge (+50% damage dealt). */
   powerPickup: {
     id: "powerPickup",
     name: "Power Surge",
     polarity: "buff",
     mechanic: "empower",
-    durationMs: 6000,
-    damageDealtMul: 1.3,
+    durationMs: 10000,
+    damageDealtMul: 1.5,
     maxStacks: 1,
     stackRule: "refresh",
-    color: "#f97316",
+    color: "#ef4444",
     tag: "PWR",
   },
   /** Map pickup: absorb shield. `stacks` = remaining shield HP. */
@@ -1036,7 +1036,7 @@ export const STATUSES: Record<string, StatusDef> = {
     name: "Absorb Shield",
     polarity: "buff",
     mechanic: "shield",
-    durationMs: 8000,
+    durationMs: 12000,
     maxStacks: 9999,
     stackRule: "refresh",
     color: "#3b82f6",

@@ -3,6 +3,7 @@
 interface BattleBeastsDesktop {
   isElectron: boolean;
   gameServerUrl: string;
+  quit?: () => Promise<boolean>;
   openExternal?: (url: string) => Promise<boolean>;
   beginDesktopOAuth?: () => Promise<{ ok: boolean; redirectTo?: string; error?: string }>;
   cancelDesktopOAuth?: () => Promise<boolean>;

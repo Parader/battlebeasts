@@ -14,6 +14,7 @@ import {
   spawnPickupCollectFumes,
 } from "./pickupCollectFumes";
 import { registerSharedGeometry, registerSharedMaterial } from "./vfxDisposal";
+import { PICKUP_SIGIL_URLS } from "./vfxUrls";
 
 type PickupNet = {
   id: string;
@@ -34,9 +35,9 @@ type PickupTheme = {
 const THEMES: Record<string, PickupTheme> = {
   heal: { coreColor: "#14532d", glowColor: "#4ade80", smokeColor: "#86efac" },
   energy: { coreColor: "#713f12", glowColor: "#facc15", smokeColor: "#fde68a" },
-  absorb: { coreColor: "#1e3a8a", glowColor: "#60a5fa", smokeColor: "#93c5fd" },
-  speed: { coreColor: "#7c2d12", glowColor: "#fb923c", smokeColor: "#fdba74" },
-  power: { coreColor: "#7f1d1d", glowColor: "#f87171", smokeColor: "#fecaca" },
+  absorb: { coreColor: "#1e3a8a", glowColor: "#3b82f6", smokeColor: "#93c5fd" },
+  speed: { coreColor: "#155e75", glowColor: "#22d3ee", smokeColor: "#67e8f9" },
+  power: { coreColor: "#7f1d1d", glowColor: "#ef4444", smokeColor: "#fca5a5" },
   haste: { coreColor: "#3b0764", glowColor: "#c084fc", smokeColor: "#e9d5ff" },
 };
 
@@ -61,7 +62,8 @@ const WISP_SPECS = Array.from({ length: SMOKE_COUNT }, (_, i) => ({
 const GEO_CORE = new THREE.SphereGeometry(1, 12, 10);
 const GEO_GLOW = new THREE.SphereGeometry(1, 10, 8);
 const GEO_SHADOW = new THREE.CircleGeometry(0.32, 12);
-for (const geo of [GEO_CORE, GEO_GLOW, GEO_SHADOW]) {
+const GEO_SIGIL = new THREE.PlaneGeometry(2.35, 2.35);
+for (const geo of [GEO_CORE, GEO_GLOW, GEO_SHADOW, GEO_SIGIL]) {
   registerSharedGeometry(geo);
 }
 
@@ -78,9 +80,24 @@ type ThemeMats = {
   core: THREE.MeshBasicMaterial;
   glow: THREE.MeshBasicMaterial;
   smoke: THREE.ShaderMaterial;
+  sigil: THREE.MeshBasicMaterial | null;
 };
 
 const themeMats = new Map<string, ThemeMats>();
+const sigilTextures = new Map<string, THREE.Texture>();
+
+function sigilTextureFor(effect: string): THREE.Texture | null {
+  const url = PICKUP_SIGIL_URLS[effect];
+  if (!url) return null;
+  let tex = sigilTextures.get(effect);
+  if (!tex) {
+    tex = new THREE.TextureLoader().load(url);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    sigilTextures.set(effect, tex);
+  }
+  return tex;
+}
 
 function matsForEffect(effect: string): ThemeMats {
   let mats = themeMats.get(effect);
@@ -96,13 +113,32 @@ function matsForEffect(effect: string): ThemeMats {
     const glow = createEnergyBallMaterial(theme.glowColor, 0.28);
     const smoke = createSmokePointMaterial(theme.smokeColor);
     if (smoke.uniforms.uMap) smoke.uniforms.uMap.value = getSmokeTexture();
+    const sigilTex = sigilTextureFor(effect);
+    const sigil = sigilTex
+      ? new THREE.MeshBasicMaterial({
+          map: sigilTex,
+          color: theme.glowColor,
+          transparent: true,
+          opacity: 0.62,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+        })
+      : null;
     core.userData.shared = true;
     glow.userData.shared = true;
     smoke.userData.shared = true;
     registerSharedMaterial(core);
     registerSharedMaterial(glow);
     registerSharedMaterial(smoke);
-    mats = { core, glow, smoke };
+    if (sigil) {
+      sigil.userData.shared = true;
+      registerSharedMaterial(sigil);
+    }
+    mats = { core, glow, smoke, sigil };
     themeMats.set(effect, mats);
   }
   return mats;
@@ -124,6 +160,7 @@ function PickupOrbMesh({
   const glowRef = useRef<THREE.Mesh>(null);
   const smokeRef = useRef<THREE.Points>(null);
   const shadowRef = useRef<THREE.Mesh>(null);
+  const sigilRef = useRef<THREE.Mesh>(null);
   const pickup = room.state?.pickups?.get(id) as PickupNet | undefined;
   const currentScale = useRef(pickup?.available !== false ? 1 : 0);
   const hoverTime = useRef(Math.random() * 10);
@@ -142,6 +179,12 @@ function PickupOrbMesh({
     if (coreRef.current) coreRef.current.material = nextMats.core;
     if (glowRef.current) glowRef.current.material = nextMats.glow;
     if (smokeRef.current) smokeRef.current.material = nextMats.smoke;
+    if (sigilRef.current && nextMats.sigil) {
+      sigilRef.current.material = nextMats.sigil;
+      sigilRef.current.visible = true;
+    } else if (sigilRef.current) {
+      sigilRef.current.visible = false;
+    }
   };
 
   const smokePos = useMemo(() => new Float32Array(SMOKE_COUNT * 3), []);
@@ -224,8 +267,13 @@ function PickupOrbMesh({
       glowRef.current.scale.setScalar(0.34 + 0.03 * Math.sin(t * 3.1));
     }
     if (shadowRef.current) {
-      shadowRef.current.position.y = (p.y ?? 0) + 0.03 - bobY;
+      shadowRef.current.position.y = (p.y ?? 0) + 0.02 - bobY;
       shadowRef.current.scale.setScalar(Math.max(0.2, 1 - (bobY - baseY) * 0.8));
+    }
+    if (sigilRef.current) {
+      sigilRef.current.position.y = 0.05 - bobY;
+      const pulse = 0.94 + 0.07 * Math.sin(t * 1.65);
+      sigilRef.current.scale.setScalar(pulse);
     }
 
     for (let i = 0; i < SMOKE_COUNT; i++) {
@@ -256,6 +304,14 @@ function PickupOrbMesh({
         geometry={GEO_SHADOW}
         material={SHADOW_MAT}
         rotation={[-Math.PI / 2, 0, 0]}
+      />
+      <mesh
+        ref={sigilRef}
+        geometry={GEO_SIGIL}
+        material={mats.sigil ?? SHADOW_MAT}
+        rotation={[-Math.PI / 2, 0, 0]}
+        renderOrder={2}
+        visible={Boolean(mats.sigil)}
       />
     </group>
   );

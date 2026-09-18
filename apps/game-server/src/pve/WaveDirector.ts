@@ -4,8 +4,6 @@ import {
   PVE_ELITE_HP_MUL,
   PVE_ELITE_KIND,
   PVE_ELITE_SPEED_MUL,
-  PVE_ENEMY_APPROACH_MAX_M,
-  PVE_ENEMY_APPROACH_MIN_M,
   PVE_ENEMY_INGRESS_MIN_M,
   PVE_WAVE_ENEMY_HARD_CAP,
   PVE_WAVE_INTERVAL_MS,
@@ -23,6 +21,7 @@ import {
   pveEliteKit,
   pveElitePickAbility,
   pveEliteProjectileDamage,
+  pveUpgradeDraftDue,
   pveWaveDamage,
   pveWaveEnemyCount,
   pveWaveHp,
@@ -72,9 +71,13 @@ export class WaveDirector {
   private pendingReleaseAt = new Map<string, number>();
   private pendingAimYaw = new Map<string, number>();
   private pendingAbility = new Map<string, string>();
+  /** Per-spell cooldown: `${mobId}:${abilityId}` → ready-at ms. */
+  private eliteAbilityCd = new Map<string, number>();
+  private eliteLastAbility = new Map<string, string>();
   private pendingSpawns: PendingSpawn[] = [];
   private nextSpawnAt = 0;
   private waveGoal = 0;
+  private lastDraftWave = 0;
   private started = false;
   private readonly partySize: number;
 
@@ -85,6 +88,7 @@ export class WaveDirector {
     partySize = 1,
     private readonly ingress: ReadonlyArray<{ x: number; z: number }> = [],
     private holdout: { x: number; z: number } = { x: 0, z: 0 },
+    private readonly onDraftBeat?: (waveIndex: number) => void,
   ) {
     this.partySize = clampPvePartySize(partySize);
   }
@@ -123,8 +127,17 @@ export class WaveDirector {
     this.pendingReleaseAt.clear();
     this.pendingAimYaw.clear();
     this.pendingAbility.clear();
+    this.eliteAbilityCd.clear();
+    this.eliteLastAbility.clear();
+    this.lastDraftWave = 0;
     this.started = true;
     this.pushHud();
+  }
+
+  /** Called after a draft finishes so the paused wave clock can roll the next wave. */
+  beginPendingWave(now: number) {
+    if (!this.started || this.phase === "complete") return;
+    this.beginWave(now);
   }
 
   getWaveIndex() {
@@ -141,7 +154,15 @@ export class WaveDirector {
 
     if (this.phase !== "fighting") return;
 
-    if (this.nextWaveAt > 0 && now >= this.nextWaveAt) this.beginWave(now);
+    if (this.nextWaveAt > 0 && now >= this.nextWaveAt) {
+      const next = this.waveIndex + 1;
+      if (pveUpgradeDraftDue(next) && this.lastDraftWave !== next) {
+        this.lastDraftWave = next;
+        this.onDraftBeat?.(next);
+        return;
+      }
+      this.beginWave(now);
+    }
 
     this.drainSpawns(now);
     this.tickMobs(dt, now);
@@ -159,6 +180,10 @@ export class WaveDirector {
     this.pendingReleaseAt.delete(targetId);
     this.pendingAimYaw.delete(targetId);
     this.pendingAbility.delete(targetId);
+    this.eliteLastAbility.delete(targetId);
+    for (const key of [...this.eliteAbilityCd.keys()]) {
+      if (key.startsWith(`${targetId}:`)) this.eliteAbilityCd.delete(key);
+    }
   }
 
   private beginWave(now: number) {
@@ -249,15 +274,11 @@ export class WaveDirector {
       const dist = Math.hypot(dx, dz) || 1;
       const nx = dx / dist;
       const nz = dz / dist;
-      const approach = Math.min(
-        PVE_ENEMY_APPROACH_MAX_M,
-        Math.max(PVE_ENEMY_APPROACH_MIN_M, dist * 0.22),
-      );
       const j = (i * 0.37) % 1;
-      const side = ((i % 2 === 0 ? 1 : -1) * (1.1 + j * 2.4));
+      const side = (i % 2 === 0 ? 1 : -1) * (1.1 + j * 2.4);
       picks.push({
-        x: origin.x + nx * approach + -nz * side,
-        z: origin.z + nz * approach + nx * side,
+        x: s.x + -nz * side,
+        z: s.z + nx * side,
       });
     }
     return picks;
@@ -338,6 +359,21 @@ export class WaveDirector {
     return living.find((p) => p.id === focusId) ?? living[0]!;
   }
 
+  /** Stun/root stop feet; slow scales walk; silence/stun drop attacks. */
+  private mobCrowdControl(id: string): {
+    canMove: boolean;
+    canCast: boolean;
+    feared: boolean;
+    speedMul: number;
+  } {
+    return {
+      canMove: this.combat.statuses.canMove(id),
+      canCast: this.combat.statuses.canCast(id),
+      feared: Boolean(this.combat.getFearSource(id)),
+      speedMul: Math.max(0, this.combat.statuses.getMoveMul(id)),
+    };
+  }
+
   private tickZombie(
     id: string,
     t: { x: number; z: number; yaw: number; castAbilityId: string; castPhase: string; castLockUntil: number },
@@ -348,7 +384,19 @@ export class WaveDirector {
     dt: number,
     now: number,
   ) {
-    const speed = this.speedById.get(id) ?? 3;
+    const cc = this.mobCrowdControl(id);
+    if (!cc.canCast && t.castLockUntil && now < t.castLockUntil) {
+      t.castAbilityId = "";
+      t.castPhase = "";
+      t.castLockUntil = 0;
+    }
+    const speed = (this.speedById.get(id) ?? 3) * cc.speedMul;
+    if (cc.feared && cc.canMove) {
+      this.fleeElite(id, t, speed, dt);
+      return;
+    }
+    if (!cc.canMove) return;
+
     const attacking = Boolean(t.castLockUntil && now < t.castLockUntil);
     if (attacking) {
       // Hold feet during swing so the attack clip reads.
@@ -362,7 +410,7 @@ export class WaveDirector {
       const next = this.combat.moveWaveMob(id, from, desired);
       t.x = next.x;
       t.z = next.z;
-    } else {
+    } else if (cc.canCast) {
       const ready = (this.meleeCd.get(id) ?? 0) <= now;
       if (ready) {
         const dmg = this.damageById.get(id) ?? 8;
@@ -395,23 +443,26 @@ export class WaveDirector {
     dt: number,
     now: number,
   ) {
-    const kit = this.eliteKit.get(id) ?? [t.castAbilityId || "bolt"];
-    const abilityId = pveElitePickAbility(kit, dist);
+    const kit = this.eliteKit.get(id) ?? [t.castAbilityId || "iceLance"];
+    const lastId = this.eliteLastAbility.get(id) ?? null;
+    const readyIds = new Set(
+      kit.filter((spell) => (this.eliteAbilityCd.get(`${id}:${spell}`) ?? 0) <= now),
+    );
+    const abilityId = pveElitePickAbility(kit, dist, { readyIds, lastId });
     const def = ABILITIES[abilityId];
     const comfort = pveEliteComfortRange(abilityId);
     const from = { x: t.x, z: t.z };
     const to = { x: focus.x, z: focus.z };
     const los = this.combat.hasWorldLos(from, to);
-    const speed = this.speedById.get(id) ?? 2.4;
-    const casting = Boolean(t.castLockUntil && now < t.castLockUntil);
-    const pendingAt = this.pendingReleaseAt.get(id) ?? 0;
-    const feared = Boolean(this.combat.getFearSource(id));
-    const silenced = !this.combat.statuses.canCast(id);
+    const cc = this.mobCrowdControl(id);
+    const speed = (this.speedById.get(id) ?? 2.4) * cc.speedMul;
+    let pendingAt = this.pendingReleaseAt.get(id) ?? 0;
 
-    if (feared || silenced) {
+    if (cc.feared || !cc.canCast) {
       if (t.castAbilityId || pendingAt > 0) this.clearEliteCast(id, t);
-      if (feared) this.fleeElite(id, t, speed, dt);
-      return;
+      pendingAt = 0;
+      if (cc.feared && cc.canMove) this.fleeElite(id, t, speed, dt);
+      if (!cc.canMove || cc.feared) return;
     }
 
     if (
@@ -431,7 +482,8 @@ export class WaveDirector {
       this.advanceElitePhases(id, t, now);
     }
 
-    if (casting) return;
+    const casting = Boolean(t.castLockUntil && now < t.castLockUntil);
+    if (casting || !cc.canMove) return;
 
     const nx = dx / dist;
     const nz = dz / dist;
@@ -465,10 +517,12 @@ export class WaveDirector {
     }
 
     if (
+      cc.canCast &&
       los &&
       inCastRange &&
       pendingAt <= 0 &&
       (this.meleeCd.get(id) ?? 0) <= now &&
+      readyIds.has(abilityId) &&
       !t.castAbilityId &&
       def
     ) {
@@ -511,7 +565,7 @@ export class WaveDirector {
     const abilityId = this.pendingAbility.get(id) ?? t.castAbilityId;
     this.pendingReleaseAt.set(id, 0);
     const def = ABILITIES[abilityId];
-    const maxCast = pveEliteComfortRange(abilityId || "bolt").maxCast;
+    const maxCast = pveEliteComfortRange(abilityId || "iceLance").maxCast;
     if (!def || !los || dist > maxCast * 1.18) {
       this.meleeCd.set(id, now + 280);
       return;
@@ -534,7 +588,9 @@ export class WaveDirector {
       scaled != null ? { damage: scaled } : undefined,
     );
     t.castPhase = "impact";
-    this.meleeCd.set(id, now + pveEliteCooldownMs(abilityId, this.waveIndex));
+    this.meleeCd.set(id, now + 1100);
+    this.eliteAbilityCd.set(`${id}:${abilityId}`, now + pveEliteCooldownMs(abilityId, this.waveIndex));
+    this.eliteLastAbility.set(id, abilityId);
   }
 
   private advanceElitePhases(
@@ -607,7 +663,9 @@ export class WaveDirector {
         id,
         x: t.x,
         z: t.z,
-        locked: Boolean(t.castLockUntil && now < t.castLockUntil),
+        locked:
+          Boolean(t.castLockUntil && now < t.castLockUntil) ||
+          !this.combat.statuses.canMove(id),
       });
     });
     if (list.length < 2) return;

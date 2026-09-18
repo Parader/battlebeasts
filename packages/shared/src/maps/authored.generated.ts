@@ -4,9 +4,9 @@
 import { parseMapDoc } from "./mapDoc";
 import { registerMapDoc } from "./registry";
 
-import doc_arene_2 from "./arene_2.map.json";
+import doc_arena_1 from "./arena_1.map.json";
+import doc_arena_2 from "./arena_2.map.json";
 import doc_pve_infinite_waves_1 from "./pve_infinite_waves_1.map.json";
-import doc_test_arena from "./test_arena.map.json";
 import doc_village from "./village.map.json";
 
 /**
@@ -29,11 +29,11 @@ function register(id: string, raw: unknown): void {
  * and the client; safe to call twice, since registration is keyed by map id.
  */
 export function registerAuthoredMaps(): void {
-  register("arene_2", doc_arene_2);
+  register("arena_1", doc_arena_1);
+  register("arena_2", doc_arena_2);
   register("pve_infinite_waves_1", doc_pve_infinite_waves_1);
-  register("test_arena", doc_test_arena);
   register("village", doc_village);
 }
 
 /** Ids of the authored maps compiled into this build. */
-export const AUTHORED_MAP_IDS: readonly string[] = ["arene_2", "pve_infinite_waves_1", "test_arena", "village"];
+export const AUTHORED_MAP_IDS: readonly string[] = ["arena_1", "arena_2", "pve_infinite_waves_1", "village"];

@@ -2,6 +2,10 @@
   "version": 1,
   "id": "pve_infinite_waves_1",
   "name": "PVE - Infinite Waves - 1",
+  "active": true,
+  "modeIds": [
+    "dungeon"
+  ],
   "ground": {
     "kind": "painted",
     "sizeX": 250,

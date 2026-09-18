@@ -1,9 +1,8 @@
 /**
  * Groups prop families into browsable categories.
  *
- * The library spans 900+ families, and biome alone does not narrow it -- the
- * `kingdom` biome by itself is 578 families, most of them modular building
- * pieces. Family name alone is not enough either, because
+ * Biome alone does not narrow a kit -- `kingdom` still mixes buildings,
+ * rocks, furniture, and scatter. Family name alone is not enough either, because
  * `Castle_Roof_L_Corner_Half` and `House_Roof_Tile_Edge` are the same kind of
  * thing filed under different buildings.
  *

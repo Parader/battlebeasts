@@ -5,6 +5,7 @@
 
 import { ABILITIES } from "./abilities";
 import type { PvpModeId } from "./content";
+import { isPveRunMode } from "./content";
 import { COSMETIC_CATALOG } from "./cosmetics";
 import { EMOTES } from "./emotes";
 import {
@@ -601,7 +602,7 @@ export function resolveRewardMode(mode: string | undefined | null): MatchRewardM
   ) {
     return "battleground";
   }
-  if (mode.startsWith("pve") || mode === "stub") return "pve";
+  if (mode.startsWith("pve") || mode === "stub" || isPveRunMode(mode)) return "pve";
   return "unknown";
 }
 

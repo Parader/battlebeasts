@@ -85,6 +85,8 @@ export class PlayerState extends Schema {
   @type("string") role = "fighter";
   /** Dead for current round (fighters only). */
   @type("boolean") roundDead = false;
+  /** Epoch ms when battleground auto-respawn fires (0 = none). */
+  @type("number") respawnAt = 0;
   /** Match stats (arena). */
   @type("number") statKills = 0;
   @type("number") statDamageDealt = 0;
@@ -147,6 +149,10 @@ export class WorldTargetState extends Schema {
   @type("number") radius = 0;
   /** Signature / currently-cast ability for elites (empty on fodder). */
   @type("string") abilityId = "";
+  /** Visual scale for dungeon bosses (1 = dummy size). */
+  @type("number") scale = 1;
+  /** Dungeon boss aura id (infernal / plague / frost / void). */
+  @type("string") aura = "";
   /** Mirror of player cast fields for attack anim sync. */
   @type("string") castAbilityId = "";
   @type("string") castPhase = "";
@@ -395,6 +401,8 @@ export class BaseCityState extends Schema {
   @type("boolean") paused = false;
   /** Wave Assault: hunters can damage each other when true. Default off. */
   @type("boolean") pveFriendlyFire = false;
+  /** Dungeon instance: exit interact is live after the required boss dies. */
+  @type("boolean") dungeonExitUnlocked = false;
   /** "pvp_reconnect" | "pve_reconnect" | "resume_grace" | "" */
   @type("string") pauseReason = "";
   /** Server epoch ms when reconnect grace ends (0 if not paused). */

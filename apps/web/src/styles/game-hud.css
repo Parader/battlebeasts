@@ -2936,6 +2936,24 @@
   border-color: var(--bb-panel-accent);
 }
 
+.bb-slot-chip--edit {
+  cursor: text;
+  padding: 0.2rem 0.4rem;
+}
+
+.bb-slot-chip__input {
+  width: 7.25rem;
+  max-width: 100%;
+  margin: 0;
+  padding: 0.12rem 0.2rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  outline: none;
+}
+
 /* Spell Armoury ? loadout editor */
 .bb-loadout {
   display: grid;
@@ -4120,7 +4138,7 @@
 }
 
 .bb-nameplate {
-  max-width: 9rem;
+  max-width: 11rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5229,6 +5247,12 @@
 .bb-auth-google button,
 .bb-auth-google > * {
   width: 100%;
+}
+
+.bb-auth-quit {
+  display: block;
+  width: 100%;
+  margin-top: 1rem;
 }
 
 .bb-auth-warn {

@@ -6,14 +6,6 @@
       "offsetX": 0.026,
       "offsetZ": -0.128
     },
-    "beach/PP_Palm_08": {
-      "mode": "box",
-      "halfX": 1.17,
-      "halfZ": 0.6,
-      "yaw": 0,
-      "offsetX": 0.215,
-      "offsetZ": -0.044
-    },
     "cemetery/PP_Cemetery_Grass_03": {
       "mode": "none"
     },
@@ -86,12 +78,6 @@
       "offsetZ": -0.025,
       "blocksProjectiles": false
     },
-    "kingdom/PP_Big_Tree_01": {
-      "mode": "circle",
-      "radius": 2.289,
-      "offsetX": -0.103,
-      "offsetZ": 0.238
-    },
     "kingdom/PP_Cart_Fireworks_01_Preset": {
       "mode": "circle",
       "radius": 0.957,
@@ -127,14 +113,6 @@
       "halfZ": 4.775,
       "yaw": 0,
       "offsetZ": -0.566
-    },
-    "kingdom/PP_Preset_House_01_A": {
-      "mode": "box",
-      "halfX": 3.942,
-      "halfZ": 3.942,
-      "yaw": 0,
-      "offsetX": -0.681,
-      "offsetZ": 0.703
     },
     "kingdom/PP_Preset_House_02_A": {
       "mode": "box",
@@ -233,9 +211,6 @@
       "radius": 0.9265,
       "offsetX": -1.9100000000000001,
       "offsetZ": -0.151
-    },
-    "kingdom/PP_Tree_Pine_Cluster_04": {
-      "mode": "none"
     },
     "kingdom/PP_Tree_Thin_02": {
       "mode": "circle",

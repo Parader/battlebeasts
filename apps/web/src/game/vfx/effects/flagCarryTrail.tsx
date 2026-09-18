@@ -1,14 +1,15 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { createCirclePointMaterial } from "../materials/circlePoint";
 
-const MOTE_COUNT = 40;
-const STREAK_COUNT = 12;
-const EMIT_EVERY = 0.016;
-const MOTE_LIFE = 0.55;
-const STREAK_LIFE = 0.62;
-const SAMPLE_DIST = 0.14;
+const SAMPLES = 36;
+const MAX_PATH = 6.2;
+const MIN_STEP = 0.05;
+const MOVE_SPEED = 0.45;
+const HEAD_WIDTH = 0.048;
+const GLOW_WIDTH = 0.13;
+const FADE_IN = 6;
+const FADE_OUT = 3.4;
 
 export type FlagTrailPose = {
   x: number;
@@ -17,28 +18,7 @@ export type FlagTrailPose = {
   yaw: number;
 };
 
-type Mote = {
-  alive: boolean;
-  age: number;
-  life: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  size: number;
-};
-
-type Streak = {
-  alive: boolean;
-  age: number;
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-  len: number;
-};
+type Sample = { x: number; y: number; z: number };
 
 type Props = {
   color: string;
@@ -46,232 +26,261 @@ type Props = {
   getPose: () => FlagTrailPose | null;
 };
 
+const RIBBON_VERT = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const RIBBON_FRAG = /* glsl */ `
+uniform vec3 uColor;
+uniform float uOpacity;
+uniform float uSoft;
+varying vec2 vUv;
+void main() {
+  // uv.x: 0 at the faded tail, 1 at the carrier.
+  float along = vUv.x;
+  float edge = 1.0 - abs(vUv.y - 0.5) * 2.0;
+  edge = pow(max(edge, 0.0), uSoft);
+  float fade = pow(along, 1.15) * (1.0 - smoothstep(0.94, 1.0, along));
+  float a = edge * fade * uOpacity;
+  if (a < 0.012) discard;
+  gl_FragColor = vec4(uColor, a);
+}
+`;
+
+function createRibbonMaterial(hex: string, opacity: number, soft: number) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(hex) },
+      uOpacity: { value: opacity },
+      uSoft: { value: soft },
+    },
+    vertexShader: RIBBON_VERT,
+    fragmentShader: RIBBON_FRAG,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+}
+
+function makeRibbonGeometry(segments: number): THREE.BufferGeometry {
+  const verts = segments * 2;
+  const positions = new Float32Array(verts * 3);
+  const uvs = new Float32Array(verts * 2);
+  const indices: number[] = [];
+  for (let i = 0; i < segments; i++) {
+    const u = i / Math.max(1, segments - 1);
+    uvs[i * 4] = u;
+    uvs[i * 4 + 1] = 0;
+    uvs[i * 4 + 2] = u;
+    uvs[i * 4 + 3] = 1;
+    if (i === 0) continue;
+    const a = (i - 1) * 2;
+    const b = a + 1;
+    const c = i * 2;
+    const d = c + 1;
+    indices.push(a, c, b, b, c, d);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.setDrawRange(0, 0);
+  return geo;
+}
+
 /**
- * Soft cloth-wake behind a carried CTF flag — motes + additive streaks
- * in the flag's team color.
+ * Tapered additive ribbon that follows the carrier's path.
+ * Hidden while standing still; no particle motes or discrete planes.
  */
 export function FlagCarryTrail({ color, hot, getPose }: Props) {
   const root = useRef<THREE.Group>(null);
-  const points = useRef<THREE.Points>(null);
-  const streakMeshes = useRef<(THREE.Mesh | null)[]>([]);
-  const emitAcc = useRef(0);
-  const last = useRef<{ x: number; z: number } | null>(null);
-  const motes = useRef<Mote[]>(
-    Array.from({ length: MOTE_COUNT }, () => ({
-      alive: false,
-      age: 0,
-      life: MOTE_LIFE,
-      x: 0,
-      y: 0,
-      z: 0,
-      vx: 0,
-      vy: 0,
-      vz: 0,
-      size: 0.14,
-    })),
-  );
-  const streaks = useRef<Streak[]>(
-    Array.from({ length: STREAK_COUNT }, () => ({
-      alive: false,
-      age: 0,
-      x: 0,
-      y: 0,
-      z: 0,
-      yaw: 0,
-      len: 0.4,
-    })),
-  );
+  const coreMesh = useRef<THREE.Mesh>(null);
+  const glowMesh = useRef<THREE.Mesh>(null);
+  const path = useRef<Sample[]>([]);
+  const last = useRef<Sample | null>(null);
+  const shown = useRef(0);
+  const time = useRef(0);
 
-  const positions = useMemo(() => new Float32Array(MOTE_COUNT * 3), []);
-  const sizes = useMemo(() => new Float32Array(MOTE_COUNT), []);
-  const alphas = useMemo(() => new Float32Array(MOTE_COUNT), []);
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
-    return g;
-  }, [positions, sizes, alphas]);
-  const moteMat = useMemo(() => createCirclePointMaterial(hot), [hot]);
-  const streakMats = useMemo(() => {
-    const mk = (hex: string, opacity: number) =>
-      new THREE.MeshBasicMaterial({
-        color: hex,
-        transparent: true,
-        opacity,
-        depthWrite: false,
-        toneMapped: false,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-      });
-    return Array.from({ length: STREAK_COUNT }, (_, i) =>
-      mk(i % 2 === 0 ? color : hot, i % 2 === 0 ? 0.55 : 0.38),
-    );
-  }, [color, hot]);
-  const streakGeo = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+  const coreGeo = useMemo(() => makeRibbonGeometry(SAMPLES), []);
+  const glowGeo = useMemo(() => makeRibbonGeometry(SAMPLES), []);
+  const coreMat = useMemo(() => createRibbonMaterial(hot, 0.92, 1.7), [hot]);
+  const glowMat = useMemo(() => createRibbonMaterial(color, 0.38, 1.15), [color]);
 
   useEffect(() => {
     return () => {
-      geo.dispose();
-      moteMat.dispose();
-      for (const mat of streakMats) mat.dispose();
-      streakGeo.dispose();
+      coreGeo.dispose();
+      glowGeo.dispose();
+      coreMat.dispose();
+      glowMat.dispose();
     };
-  }, [geo, moteMat, streakMats, streakGeo]);
-
-  const spawnMote = (x: number, y: number, z: number, dx: number, dz: number) => {
-    const mote = motes.current.find((m) => !m.alive);
-    if (!mote) return;
-    const spd = Math.hypot(dx, dz);
-    const bx = spd > 1e-4 ? -dx / spd : 0;
-    const bz = spd > 1e-4 ? -dz / spd : 0;
-    const px = -bz;
-    const pz = bx;
-    const lateral = (Math.random() - 0.5) * 0.28;
-    mote.alive = true;
-    mote.age = 0;
-    mote.life = MOTE_LIFE * (0.7 + Math.random() * 0.5);
-    mote.x = x + px * lateral + bx * 0.08;
-    mote.y = y + (Math.random() - 0.25) * 0.35;
-    mote.z = z + pz * lateral + bz * 0.08;
-    mote.vx = bx * (0.55 + Math.random() * 1.1) + px * (Math.random() - 0.5) * 0.45;
-    mote.vy = 0.15 + Math.random() * 0.55;
-    mote.vz = bz * (0.55 + Math.random() * 1.1) + pz * (Math.random() - 0.5) * 0.45;
-    mote.size = 0.12 + Math.random() * 0.2;
-  };
-
-  const spawnStreak = (x: number, y: number, z: number, yaw: number, len: number) => {
-    const streak = streaks.current.find((s) => !s.alive);
-    if (!streak) return;
-    streak.alive = true;
-    streak.age = 0;
-    streak.x = x;
-    streak.y = y;
-    streak.z = z;
-    streak.yaw = yaw;
-    streak.len = len;
-  };
+  }, [coreGeo, glowGeo, coreMat, glowMat]);
 
   useFrame((_, dt) => {
     const g = root.current;
     if (!g) return;
-    const pose = getPose();
     const safeDt = Math.min(0.05, Math.max(0, dt));
+    time.current += safeDt;
+    const pose = getPose();
 
     if (!pose) {
       last.current = null;
-      emitAcc.current = 0;
+      shown.current = Math.max(0, shown.current - safeDt * FADE_OUT);
+      if (shown.current <= 0.01) {
+        path.current = [];
+        g.visible = false;
+        return;
+      }
     } else {
       const prev = last.current;
-      let dx = 0;
-      let dz = 0;
       if (!prev) {
-        last.current = { x: pose.x, z: pose.z };
+        last.current = { x: pose.x, y: pose.y, z: pose.z };
+        path.current = [{ x: pose.x, y: pose.y, z: pose.z }];
       } else {
-        dx = pose.x - prev.x;
-        dz = pose.z - prev.z;
-        last.current = { x: pose.x, z: pose.z };
-      }
-      const traveled = Math.hypot(dx, dz);
-      emitAcc.current += safeDt;
-      while (emitAcc.current >= EMIT_EVERY) {
-        emitAcc.current -= EMIT_EVERY;
-        spawnMote(pose.x, pose.y, pose.z, dx, dz);
-        if (traveled > 0.05) spawnMote(pose.x, pose.y, pose.z, dx, dz);
-      }
-      if (traveled >= SAMPLE_DIST) {
-        const face = Math.atan2(dx, dz);
-        spawnStreak(
-          (pose.x + (prev?.x ?? pose.x)) * 0.5,
-          pose.y * 0.55 + 0.2,
-          (pose.z + (prev?.z ?? pose.z)) * 0.5,
-          face,
-          0.34 + traveled * 0.6,
-        );
+        const dx = pose.x - prev.x;
+        const dz = pose.z - prev.z;
+        const traveled = Math.hypot(dx, dz);
+        const speed = safeDt > 1e-4 ? traveled / safeDt : 0;
+        last.current = { x: pose.x, y: pose.y, z: pose.z };
+        if (speed >= MOVE_SPEED) {
+          shown.current = Math.min(1, shown.current + safeDt * FADE_IN);
+          if (path.current.length === 0) {
+            path.current.push({ x: prev.x, y: prev.y, z: prev.z });
+          }
+          if (traveled >= MIN_STEP) {
+            path.current.push({ x: pose.x, y: pose.y, z: pose.z });
+          } else if (path.current.length > 0) {
+            const head = path.current[path.current.length - 1]!;
+            head.x = pose.x;
+            head.y = pose.y;
+            head.z = pose.z;
+          }
+        } else {
+          shown.current = Math.max(0, shown.current - safeDt * FADE_OUT);
+          if (path.current.length > 0) {
+            const head = path.current[path.current.length - 1]!;
+            head.x = pose.x;
+            head.y = pose.y;
+            head.z = pose.z;
+          }
+        }
+        trimPath(path.current, MAX_PATH);
       }
     }
 
-    let living = 0;
-    for (let i = 0; i < MOTE_COUNT; i++) {
-      const m = motes.current[i]!;
-      if (!m.alive) {
-        positions[i * 3 + 1] = -999;
-        sizes[i] = 0;
-        alphas[i] = 0;
-        continue;
-      }
-      m.age += safeDt;
-      if (m.age >= m.life) {
-        m.alive = false;
-        positions[i * 3 + 1] = -999;
-        sizes[i] = 0;
-        alphas[i] = 0;
-        continue;
-      }
-      const u = m.age / m.life;
-      m.x += m.vx * safeDt;
-      m.y += m.vy * safeDt;
-      m.z += m.vz * safeDt;
-      m.vy += 0.35 * safeDt;
-      m.vx *= 0.96;
-      m.vz *= 0.96;
-      positions[i * 3] = m.x;
-      positions[i * 3 + 1] = m.y;
-      positions[i * 3 + 2] = m.z;
-      const appear = Math.min(1, u / 0.1);
-      const fade = (1 - u) * (1 - u);
-      sizes[i] = m.size * appear * fade * 52;
-      alphas[i] = appear * fade * 0.95;
-      living++;
-    }
-    geo.attributes.position!.needsUpdate = true;
-    geo.attributes.aSize!.needsUpdate = true;
-    geo.attributes.aAlpha!.needsUpdate = true;
-    if (points.current) points.current.visible = living > 0;
+    const pts = path.current;
+    const live = shown.current > 0.02 && pts.length >= 2;
+    g.visible = live;
+    if (!live) return;
 
-    for (let i = 0; i < STREAK_COUNT; i++) {
-      const mesh = streakMeshes.current[i];
-      const s = streaks.current[i]!;
-      if (!mesh) continue;
-      if (!s.alive) {
-        mesh.visible = false;
-        continue;
-      }
-      s.age += safeDt;
-      if (s.age >= STREAK_LIFE) {
-        s.alive = false;
-        mesh.visible = false;
-        continue;
-      }
-      const u = s.age / STREAK_LIFE;
-      const fade = (1 - u) * (1 - u);
-      mesh.visible = fade > 0.03;
-      mesh.position.set(s.x, s.y, s.z);
-      mesh.rotation.set(-Math.PI / 2, 0, s.yaw);
-      mesh.scale.set(0.18 + (1 - u) * 0.14, s.len * (0.85 + fade * 0.2), 1);
-      const m = mesh.material as THREE.MeshBasicMaterial;
-      m.opacity = fade * (i % 2 === 0 ? 0.55 : 0.38);
-    }
-
-    g.visible = living > 0 || streaks.current.some((s) => s.alive);
+    writeRibbon(coreGeo, pts, HEAD_WIDTH, time.current, 1);
+    writeRibbon(glowGeo, pts, GLOW_WIDTH, time.current, 0.55);
+    const op = shown.current;
+    coreMat.uniforms.uOpacity!.value = 0.92 * op;
+    glowMat.uniforms.uOpacity!.value = 0.38 * op;
   });
 
   return (
     <group ref={root} visible={false}>
-      <points ref={points} geometry={geo} material={moteMat} frustumCulled={false} renderOrder={4} />
-      {Array.from({ length: STREAK_COUNT }, (_, i) => (
-        <mesh
-          key={i}
-          ref={(el) => {
-            streakMeshes.current[i] = el;
-          }}
-          geometry={streakGeo}
-          material={streakMats[i]}
-          frustumCulled={false}
-          renderOrder={3}
-          visible={false}
-        />
-      ))}
+      <mesh
+        ref={glowMesh}
+        geometry={glowGeo}
+        material={glowMat}
+        frustumCulled={false}
+        renderOrder={3}
+      />
+      <mesh
+        ref={coreMesh}
+        geometry={coreGeo}
+        material={coreMat}
+        frustumCulled={false}
+        renderOrder={4}
+      />
     </group>
   );
+}
+
+function trimPath(pts: Sample[], maxLen: number): void {
+  let len = 0;
+  for (let i = pts.length - 1; i > 0; i--) {
+    const a = pts[i]!;
+    const b = pts[i - 1]!;
+    len += Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    if (len > maxLen) {
+      pts.splice(0, i);
+      return;
+    }
+  }
+}
+
+function writeRibbon(
+  geo: THREE.BufferGeometry,
+  pts: Sample[],
+  headWidth: number,
+  t: number,
+  wave: number,
+): void {
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const n = SAMPLES;
+  const count = pts.length;
+  const lengths = new Float32Array(count);
+  let total = 0;
+  lengths[0] = 0;
+  for (let i = 1; i < count; i++) {
+    const a = pts[i - 1]!;
+    const b = pts[i]!;
+    total += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+    lengths[i] = total;
+  }
+  if (total < 1e-4) {
+    geo.setDrawRange(0, 0);
+    return;
+  }
+
+  let cursor = 0;
+  for (let i = 0; i < n; i++) {
+    const u = i / (n - 1);
+    const dist = u * total;
+    while (cursor < count - 2 && lengths[cursor + 1]! < dist) cursor++;
+    const i0 = cursor;
+    const i1 = Math.min(count - 1, cursor + 1);
+    const span = Math.max(1e-5, lengths[i1]! - lengths[i0]!);
+    const f = THREE.MathUtils.clamp((dist - lengths[i0]!) / span, 0, 1);
+    const a = pts[i0]!;
+    const b = pts[i1]!;
+    const x = a.x + (b.x - a.x) * f;
+    const y = a.y + (b.y - a.y) * f;
+    const z = a.z + (b.z - a.z) * f;
+
+    let tx = b.x - a.x;
+    let tz = b.z - a.z;
+    const tlen = Math.hypot(tx, tz);
+    if (tlen < 1e-5) {
+      const prev = pts[Math.max(0, i0 - 1)]!;
+      tx = a.x - prev.x;
+      tz = a.z - prev.z;
+    }
+    const tl = Math.hypot(tx, tz) || 1;
+    tx /= tl;
+    tz /= tl;
+    const sx = tz;
+    const sz = -tx;
+    const taper = Math.pow(u, 1.05);
+    const sway = Math.sin(t * 3.1 + u * 10.5) * 0.028 * (1 - u) * wave;
+    const w = Math.max(0.006, headWidth * taper);
+    const ox = sx * (w + sway);
+    const oz = sz * (w + sway);
+
+    const vi = i * 2;
+    pos.setXYZ(vi, x - ox, y, z - oz);
+    pos.setXYZ(vi + 1, x + ox, y, z + oz);
+  }
+  pos.needsUpdate = true;
+  geo.setDrawRange(0, (n - 1) * 6);
+  geo.computeBoundingSphere();
 }

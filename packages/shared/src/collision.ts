@@ -368,6 +368,60 @@ export function distPointToSegmentSq(
   return dx * dx + dz * dz;
 }
 
+/** Distance from a point to the outside of a collider. Inside / on surface → 0. */
+export function clearanceFromCollider(x: number, z: number, c: StaticCollider): number {
+  if (c.shape === "walls") {
+    let best = Infinity;
+    const segs = c.segs;
+    for (let i = 0; i < segs.length; i += 4) {
+      const d = Math.sqrt(distPointToSegmentSq(x, z, segs[i]!, segs[i + 1]!, segs[i + 2]!, segs[i + 3]!));
+      if (d < best) best = d;
+    }
+    return best;
+  }
+  if (c.shape === "box") {
+    const local = worldToLocalXZ(c.x, c.z, c.yaw, x, z);
+    const dx = Math.max(Math.abs(local.x) - c.halfX, 0);
+    const dz = Math.max(Math.abs(local.z) - c.halfZ, 0);
+    if (dx === 0 && dz === 0) return 0;
+    return Math.hypot(dx, dz);
+  }
+  if (c.shape === "mesh") {
+    let best = Infinity;
+    const segs = c.segs;
+    for (let i = 0; i < segs.length; i += 4) {
+      const ax = segs[i]!;
+      const az = segs[i + 1]!;
+      const bx = segs[i + 2]!;
+      const bz = segs[i + 3]!;
+      const a = localToWorldXZ(c.x, c.z, c.yaw, ax * c.scale, az * c.scale);
+      const b = localToWorldXZ(c.x, c.z, c.yaw, bx * c.scale, bz * c.scale);
+      const d = Math.sqrt(distPointToSegmentSq(x, z, a.x, a.z, b.x, b.z));
+      if (d < best) best = d;
+    }
+    return Number.isFinite(best) ? best : Infinity;
+  }
+  const radius = "radius" in c ? c.radius : 0;
+  const dist = Math.hypot(x - c.x, z - c.z) - radius;
+  return Math.max(0, dist);
+}
+
+export function clearanceFromColliders(
+  x: number,
+  z: number,
+  colliders: readonly StaticCollider[],
+  skipIds?: ReadonlySet<string>,
+): number {
+  let best = Infinity;
+  for (const c of colliders) {
+    if (skipIds?.has(c.id)) continue;
+    const d = clearanceFromCollider(x, z, c);
+    if (d < best) best = d;
+    if (best <= 0) return 0;
+  }
+  return best;
+}
+
 /** True if circle overlaps any segment of a wall polyline. */
 export function circleHitsWall(x: number, z: number, radius: number, wall: WallCollider): boolean {
   const r2 = radius * radius;
@@ -812,7 +866,7 @@ export function playerCollidersExcept(
 
 /** Practice dummies / world targets as live pose circles (opt-in; not used for hub walk). */
 export function targetColliders(
-  targets: Iterable<[string, { x: number; z: number; hp?: number; kind?: string }]>,
+  targets: Iterable<[string, { x: number; z: number; hp?: number; kind?: string; radius?: number }]>,
 ): CircleCollider[] {
   const out: CircleCollider[] = [];
   for (const [id, t] of targets) {
@@ -830,7 +884,7 @@ export function targetColliders(
       id,
       x: t.x,
       z: t.z,
-      radius: COLLISION.dummyRadius,
+      radius: t.radius && t.radius > 0 ? t.radius : COLLISION.dummyRadius,
     });
   }
   return out;

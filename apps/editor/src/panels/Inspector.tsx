@@ -1,7 +1,6 @@
 import {
   elementType,
-  PVE_CONTENTS,
-  PVP_MODES,
+  mapPlaySlots,
   type MapColliderSpec,
   type MapElement,
   type MapElementParamValue,
@@ -524,6 +523,7 @@ function GroupInspector({ ids }: { ids: string[] }) {
 function MapInspector() {
   const { doc } = useEditor();
   const tagged = new Set(doc.modeIds ?? []);
+  const slots = mapPlaySlots();
   const toggle = (modeId: string, on: boolean) => {
     docStore.edit((d) => {
       const next = new Set(d.modeIds ?? []);
@@ -536,32 +536,50 @@ function MapInspector() {
   return (
     <div className="section">
       <h3>Map</h3>
-      <span className="muted">
+      <span className="muted" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span
+          className={`dot ${doc.active === true ? "live" : "idle"}`}
+          title={doc.active === true ? "Live" : "Inactive"}
+        />
         {doc.name} · {doc.id}
       </span>
+      <label className="check" style={{ marginTop: 10 }}>
+        <input
+          type="checkbox"
+          checked={doc.active === true}
+          onChange={(e) =>
+            docStore.edit((d) => {
+              d.active = e.target.checked;
+            }, "active")
+          }
+        />
+        Active in live play
+      </label>
       <p className="muted" style={{ marginTop: 10, marginBottom: 6 }}>
-        Modes this map is tagged for. Tagged maps win over a mode&apos;s default arena.
+        Modes this map serves. Inactive maps stay in the editor and never enter a queue.
       </p>
-      {PVP_MODES.filter((m) => m.enabled).map((mode) => (
-        <label key={mode.id} className="check">
-          <input
-            type="checkbox"
-            checked={tagged.has(mode.id)}
-            onChange={(e) => toggle(mode.id, e.target.checked)}
-          />
-          {mode.label}
-        </label>
-      ))}
-      {PVE_CONTENTS.filter((c) => c.enabled).map((content) => (
-        <label key={content.id} className="check">
-          <input
-            type="checkbox"
-            checked={tagged.has(content.id)}
-            onChange={(e) => toggle(content.id, e.target.checked)}
-          />
-          {content.label}
-        </label>
-      ))}
+      {(["world", "pvp", "pve"] as const).map((group) => {
+        const groupSlots = slots.filter((s) => s.group === group);
+        if (groupSlots.length === 0) return null;
+        const heading = group === "world" ? "World" : group === "pvp" ? "PvP" : "PvE";
+        return (
+          <div key={group} style={{ marginBottom: 8 }}>
+            <span className="muted" style={{ display: "block", marginBottom: 4 }}>
+              {heading}
+            </span>
+            {groupSlots.map((slot) => (
+              <label key={slot.id} className="check">
+                <input
+                  type="checkbox"
+                  checked={tagged.has(slot.id)}
+                  onChange={(e) => toggle(slot.id, e.target.checked)}
+                />
+                {slot.label}
+              </label>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

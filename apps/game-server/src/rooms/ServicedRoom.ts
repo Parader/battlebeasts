@@ -62,6 +62,7 @@ import {
   ownsNonPlainAura,
   questPeriodKey,
   sanitizeTalentBuild,
+  sanitizeLoadoutPresetName,
   spendCoins,
   stripCosmeticsForBody,
   talentPointsRemoved,
@@ -144,6 +145,13 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
   /** Attach every player-service message. Call once from `onCreate`. */
   protected registerPlayerServices() {
+    const unknownTypes = new Set<string>();
+    this.onMessage("*", (_client, messageType: string) => {
+      if (typeof messageType !== "string" || unknownTypes.has(messageType)) return;
+      unknownTypes.add(messageType);
+      console.warn(`[room] no handler for "${messageType}" (further copies ignored)`);
+    });
+
     this.onMessage("set_color", (client, message: { color: string }) => {
       void this.handleSetColor(client, message.color);
     });
@@ -194,6 +202,10 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
 
     this.onMessage("select_loadout_preset", (client, message: { slotIndex?: number }) => {
       void this.handleSelectLoadoutPreset(client, message?.slotIndex ?? 0);
+    });
+
+    this.onMessage("rename_loadout_preset", (client, message: { slotIndex?: number; name?: string }) => {
+      void this.handleRenameLoadoutPreset(client, message?.slotIndex ?? 0, message?.name ?? "");
     });
 
     this.onMessage("set_emote_loadout", (client, message: { emoteSlots?: (string | null)[] }) => {
@@ -1383,7 +1395,7 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
             ?.find((p) => p.slotIndex === slotIndex)?.talentBuild ?? {});
 
     const row = this.upsertPresetInSession(client.sessionId, slotIndex, cleaned, {
-      name,
+      name: name !== undefined ? sanitizeLoadoutPresetName(name, slotIndex) : undefined,
       talentBuild,
     });
     const activeSlot = this.activeLoadoutSlotBySession.get(client.sessionId) ?? 0;
@@ -1404,6 +1416,44 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     }
     this.sendInventory(client, player);
     client.send("toast", { message: `Saved ${row.name}` });
+  }
+
+  protected async handleRenameLoadoutPreset(
+    client: Client,
+    slotIndexRaw: number,
+    nameRaw: string,
+  ) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const unlocks = this.unlocksOf(client.sessionId);
+    const slotIndex = Math.floor(slotIndexRaw);
+    if (slotIndex < 0 || slotIndex >= unlocks.loadoutSlotCount) {
+      client.send("toast", { message: "Loadout slot locked" });
+      return;
+    }
+
+    const name = sanitizeLoadoutPresetName(nameRaw, slotIndex);
+    const existing = this.loadoutPresetsBySession
+      .get(client.sessionId)
+      ?.find((p) => p.slotIndex === slotIndex);
+    if (existing?.name === name) return;
+
+    const abilityIds = existing?.abilityIds ?? [...EMPTY_LOADOUT];
+    const row = this.upsertPresetInSession(client.sessionId, slotIndex, abilityIds, {
+      name,
+      talentBuild: existing?.talentBuild,
+      flexAbilityIds: existing?.flexAbilityIds,
+    });
+
+    const identity = this.identities.get(client.sessionId);
+    if (identity && !identity.isGuest) {
+      await saveLoadoutPreset(identity.userId, slotIndex, abilityIds, {
+        name: row.name,
+        talentBuild: row.talentBuild,
+        flexAbilityIds: row.flexAbilityIds,
+      });
+    }
+    this.sendInventory(client, player);
   }
 
   protected async handleSelectLoadoutPreset(client: Client, slotIndexRaw: number) {

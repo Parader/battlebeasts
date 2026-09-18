@@ -203,13 +203,19 @@ export function editorApi(): Plugin {
               if (!file.endsWith(".map.json")) continue;
               const id = file.slice(0, -".map.json".length);
               let name = id;
+              let active = false;
+              let modeIds: string[] = [];
               try {
                 const doc = JSON.parse(await fs.readFile(path.join(MAPS_DIR, file), "utf8"));
                 if (typeof doc?.name === "string") name = doc.name;
+                active = doc?.active === true;
+                if (Array.isArray(doc?.modeIds)) {
+                  modeIds = doc.modeIds.filter((m: unknown) => typeof m === "string");
+                }
               } catch {
                 name = `${id} (unreadable)`;
               }
-              maps.push({ id, name });
+              maps.push({ id, name, active, modeIds });
             }
             send(res, 200, maps);
             return;

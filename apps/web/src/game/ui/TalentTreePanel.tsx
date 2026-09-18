@@ -44,6 +44,7 @@ import {
 
 import { primaryTalentNatureTag } from "./TalentNatureIcon";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { LoadoutPresetTabs } from "./LoadoutPresetTabs";
 import { loadStandMenuMemory, saveStandMenuMemory } from "../standMenuMemory";
 
 const NODE_SIZE = 36;
@@ -381,6 +382,7 @@ type Props = {
   activeLoadoutSlot: number;
   loadoutSlotCount: number;
   onSelectPreset: (slotIndex: number) => void;
+  onRenamePreset: (slotIndex: number, name: string) => void;
 };
 
 export function TalentTreePanel({
@@ -392,6 +394,7 @@ export function TalentTreePanel({
   activeLoadoutSlot,
   loadoutSlotCount,
   onSelectPreset,
+  onRenamePreset,
 }: Props) {
   const [focusTree, setFocusTree] = useState<TalentTreeId>(
     () => loadStandMenuMemory().talentTree,
@@ -901,24 +904,13 @@ export function TalentTreePanel({
           })}
         </div>
         <div className="bb-constel-hud__dock">
-          <div className="bb-loadout-presets" role="tablist" aria-label="Loadout presets">
-            {Array.from({ length: loadoutSlotCount }, (_, i) => i).map((i) => {
-              const preset = loadoutPresets.find((p) => p.slotIndex === i);
-              const active = activeLoadoutSlot === i;
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  className={["bb-slot-chip", active ? "bb-slot-chip--on" : ""].join(" ")}
-                  onClick={() => onSelectPreset(i)}
-                >
-                  {preset?.name ?? `Loadout ${i + 1}`}
-                </button>
-              );
-            })}
-          </div>
+          <LoadoutPresetTabs
+            loadoutPresets={loadoutPresets}
+            activeLoadoutSlot={activeLoadoutSlot}
+            loadoutSlotCount={loadoutSlotCount}
+            onSelectPreset={onSelectPreset}
+            onRenamePreset={onRenamePreset}
+          />
           <div className="bb-constel-hud__points">
             <span className="bb-talent-header-pts__label">Unspent</span>
             <span className="bb-talent-header-pts__value">{spendable}</span>

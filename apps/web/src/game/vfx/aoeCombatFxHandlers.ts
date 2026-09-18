@@ -209,7 +209,8 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
     const yaw = ownerYaw(msg, ctx);
     const beamDef = ABILITIES.healBeam;
     const ch = CHANNEL_VFX.healBeam;
-    const channelMs = ch.ticks * ch.tickMs + ch.lifePadMs;
+    const channelMs =
+      (beamDef?.channelDurationMs ?? DIVINE_BEAM_CAST.channelDurationMs) + ch.lifePadMs;
     spawnImpactEffect(
       msg.abilityId,
       { x: msg.x, z: msg.z, y: 1.1, yaw },
@@ -218,6 +219,10 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
         radius: beamDef?.range ?? DIVINE_BEAM_CAST.range,
         growMs: ch.growMs,
         followOwnerId: msg.ownerId,
+        followTargetId: msg.targetId,
+        originX: msg.x2,
+        originZ: msg.z2,
+        targetId: msg.targetId,
       },
     );
   },

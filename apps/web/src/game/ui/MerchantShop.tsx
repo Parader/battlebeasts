@@ -200,9 +200,13 @@ function cosmeticSubItems(sub: Exclude<CosmeticSub, null>): ShopItemDef[] {
   if (sub === "inks") return all.filter((i) => i.grant.kind === "pattern_color");
   if (sub === "auras") return all.filter((i) => i.grant.kind === "pattern");
   if (sub === "gear") return all.filter((i) => i.grant.kind === "cosmetic");
-  return all.filter(
-    (i) => i.grant.kind === "cosmetic" && getCosmeticItem(i.grant.itemId)?.slot === sub,
-  );
+  return all
+    .filter((i) => i.grant.kind === "cosmetic" && getCosmeticItem(i.grant.itemId)?.slot === sub)
+    .sort((a, b) => {
+      const ac = a.cost.kind === "coins" ? a.cost.copper : 0;
+      const bc = b.cost.kind === "coins" ? b.cost.copper : 0;
+      return ac - bc;
+    });
 }
 
 export function MerchantPanel({

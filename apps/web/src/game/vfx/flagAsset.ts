@@ -18,7 +18,7 @@ export const BG_FLAG_BLUE_URL = assetUrl(propUrlForKey(BG_FLAG_BLUE_PROP).replac
 export const BG_FLAG_RED_URL = assetUrl(propUrlForKey(BG_FLAG_RED_PROP).replace(/^\//, ""));
 
 export const BG_FLAG_STAND_HEIGHT = 2.45;
-export const BG_FLAG_CARRY_HEIGHT = 1.22;
+export const BG_FLAG_CARRY_HEIGHT = 0.95;
 
 /** Team A carries the red flag; team B the blue one. */
 export const FLAG_TEAM_A_HEX = "#e11d48";
@@ -61,11 +61,67 @@ function cloneStdMaterials(root: THREE.Object3D): void {
   });
 }
 
+function poleFootXZ(root: THREE.Object3D): { x: number; z: number } | null {
+  root.updateMatrixWorld(true);
+  const tmp = new THREE.Box3();
+  const size = new THREE.Vector3();
+  let bestScore = -1;
+  let bestX = 0;
+  let bestZ = 0;
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    tmp.setFromObject(mesh);
+    if (tmp.isEmpty()) return;
+    tmp.getSize(size);
+    const xz = Math.max(size.x * size.z, 1e-6);
+    if (size.y < size.x * 1.5 || size.y < size.z * 1.5) return;
+    const score = size.y / Math.sqrt(xz);
+    if (score > bestScore) {
+      bestScore = score;
+      bestX = (tmp.min.x + tmp.max.x) * 0.5;
+      bestZ = (tmp.min.z + tmp.max.z) * 0.5;
+    }
+  });
+  if (bestScore >= 0) return { x: bestX, z: bestZ };
+
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) return null;
+  const yCut = box.min.y + Math.max(0.04, (box.max.y - box.min.y) * 0.12);
+  const v = new THREE.Vector3();
+  let sx = 0;
+  let sz = 0;
+  let n = 0;
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    const pos = mesh.geometry.getAttribute("position");
+    if (!pos) return;
+    mesh.updateWorldMatrix(true, false);
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos as THREE.BufferAttribute, i).applyMatrix4(mesh.matrixWorld);
+      if (v.y > yCut) continue;
+      sx += v.x;
+      sz += v.z;
+      n += 1;
+    }
+  });
+  if (n < 6) return null;
+  return { x: sx / n, z: sz / n };
+}
+
 /**
  * Clone a Poly Pizza prop, keep authored quat/scale, plant on the ground,
  * and uniform-scale so world height equals `targetHeight`.
+ *
+ * XZ is centered on the pole foot (bottom verts), not the full cloth AABB,
+ * so CTF stands sit on the staff instead of the banner midpoint.
  */
-export function clonePlantedProp(src: THREE.Object3D, targetHeight: number): THREE.Group {
+export function clonePlantedProp(
+  src: THREE.Object3D,
+  targetHeight: number,
+  opts?: { center?: "box" | "pole" },
+): THREE.Group {
   const wrapper = new THREE.Group();
   wrapper.name = `${src.name || "prop"}_planted`;
   const clone = src.clone(true);
@@ -81,8 +137,9 @@ export function clonePlantedProp(src: THREE.Object3D, targetHeight: number): THR
   const center = new THREE.Vector3();
   box.getSize(size);
   box.getCenter(center);
-  clone.position.x -= center.x;
-  clone.position.z -= center.z;
+  const foot = opts?.center === "box" ? null : poleFootXZ(wrapper);
+  clone.position.x -= foot?.x ?? center.x;
+  clone.position.z -= foot?.z ?? center.z;
   clone.position.y -= box.min.y;
 
   const height = Math.max(size.y, 1e-4);
@@ -144,8 +201,8 @@ export function assembleBgFlag(
 ): AssembledFlag {
   const root = new THREE.Group();
   root.name = "bgFlag";
-  const pole = clonePlantedProp(poleScene, height);
-  const cloth = clonePlantedProp(clothScene, height);
+  const pole = clonePlantedProp(poleScene, height, { center: "pole" });
+  const cloth = clonePlantedProp(clothScene, height, { center: "box" });
   root.add(pole);
   root.add(cloth);
   return { root, clothMats: materialsOn(cloth) };

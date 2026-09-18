@@ -5,7 +5,12 @@ import type { SidecarPayload } from "../state/terrain";
 export const splatUrlFor = (id: string) => `assets/maps/${id}.splat.png`;
 export const heightUrlFor = (id: string) => `assets/maps/${id}.height.png`;
 
-export type MapListEntry = { id: string; name: string };
+export type MapListEntry = {
+  id: string;
+  name: string;
+  active: boolean;
+  modeIds: string[];
+};
 
 /**
  * Turn a display name into a map id: "Village Square" -> "village_square".

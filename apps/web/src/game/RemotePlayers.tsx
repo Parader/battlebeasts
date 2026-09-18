@@ -4,7 +4,7 @@ import { useGLTF } from "@react-three/drei";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { useRemotePlayerIds } from "./useColyseusMapKeys";
-import { MOVE_SPEED, type CosmeticsEquipped } from "@battlebeasts/shared";
+import { MOVE_SPEED, STARTER_COLORS, type CosmeticsEquipped } from "@battlebeasts/shared";
 import {
   CharacterAnimationController,
   heroAnimationConfig,
@@ -17,7 +17,7 @@ import {
   prepareCharacterScene,
   setCharacterOpacity,
   tintCharacterSurface,
-  warmCharacterOpacityVariants,
+  scheduleWarmCharacterOpacityVariants,
   disposeCharacterMaterials,
 } from "./characterVisual";
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
@@ -39,7 +39,7 @@ import { BloodRushChargeAura } from "./vfx/effects/bloodRushCharge";
 import { RiftArmRing } from "./vfx/effects/riftArmRing";
 import { registerCharacterRoot } from "./characterRoots";
 import { isRevengeVanished } from "./revengeVanishRuntime";
-import { getTeleportSlamOpacity, hasTeleportSlamFade } from "./teleportSlamFadeRuntime";
+import { getTeleportSlamOpacity } from "./teleportSlamFadeRuntime";
 import { sampleRemoteDashTravel } from "./dashTravelRuntime";
 
 useGLTF.preload(CHARACTER_URL);
@@ -94,11 +94,15 @@ function RemotePlayerAvatar({
   const vel = useRef(new THREE.Vector3());
   const zeroVel = useRef(new THREE.Vector3());
   const lastServer = useRef({ x: 0, z: 0, t: 0 });
-  const colorRef = useRef("#60a5fa");
+  const colorRef = useRef(STARTER_COLORS[0]!);
   const patternRef = useRef("plain");
   const patternColorRef = useRef("#1f2937");
   const cosmeticsKeyRef = useRef("");
   const [equipped, setEquipped] = useState<CosmeticsEquipped>({});
+  const [skinColor, setSkinColor] = useState(() => {
+    const p = room.state?.players?.get(sessionId) as { color?: string } | undefined;
+    return p?.color || STARTER_COLORS[0]!;
+  });
   const vessel = usePlayerVessel(room, sessionId);
   const seeded = useRef(false);
   const yawLocked = useRef(false);
@@ -127,22 +131,22 @@ function RemotePlayerAvatar({
     };
   }, [scene]);
 
+  useEffect(() => {
+    tintCharacterSurface(scene, skinColor, patternRef.current, patternColorRef.current);
+  }, [scene, vessel, skinColor]);
+
   /*
    * Warm this opponent's ghosted materials on sight rather than the first time
-   * they cloak or drop a decoy. Loadouts already compiled are skipped, so in
-   * practice this only costs anything for gear configurations new to the
-   * session. Deferred a frame so they are in the scene graph for gl.compile.
+   * they cloak, slam-fade, or drop a decoy. Loadouts already compiled are skipped.
    */
   const gl = useThree((s) => s.gl);
   const rootScene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
   const equippedKey = JSON.stringify(equipped);
-  useEffect(() => {
-    const id = requestAnimationFrame(() =>
-      warmCharacterOpacityVariants(gl, rootScene, camera, scene, equippedKey),
-    );
-    return () => cancelAnimationFrame(id);
-  }, [gl, rootScene, camera, scene, equippedKey]);
+  useEffect(
+    () => scheduleWarmCharacterOpacityVariants(gl, rootScene, camera, scene, equippedKey),
+    [gl, rootScene, camera, scene, equippedKey],
+  );
 
   useEffect(() => {
     const controller = new CharacterAnimationController(
@@ -195,10 +199,8 @@ function RemotePlayerAvatar({
       g.visible = false;
     } else {
       g.visible = slamOpacity > 0.02;
-      if (hasTeleportSlamFade(sessionId) || ghostOpacityRef.current !== slamOpacity) {
-        ghostOpacityRef.current = slamOpacity;
-        setCharacterOpacity(scene, slamOpacity);
-      }
+      ghostOpacityRef.current = slamOpacity;
+      setCharacterOpacity(scene, slamOpacity);
     }
 
     const now = performance.now();
@@ -216,6 +218,7 @@ function RemotePlayerAvatar({
         patternRef.current = p.pattern ?? "plain";
         patternColorRef.current = p.patternColor ?? "#1f2937";
         tintCharacterSurface(scene, p.color, patternRef.current, patternColorRef.current);
+        if (p.color !== skinColor) setSkinColor(p.color);
         cosmeticsKeyRef.current = cosmeticsKey(p);
         setEquipped(equippedFromPlayer(p));
       }
@@ -235,6 +238,7 @@ function RemotePlayerAvatar({
         patternRef.current,
         patternColorRef.current,
       );
+      if (colorRef.current !== skinColor) setSkinColor(colorRef.current);
     }
     const nextCosmetics = cosmeticsKey(p);
     if (nextCosmetics !== cosmeticsKeyRef.current) {
@@ -432,7 +436,7 @@ function RemotePlayerAvatar({
     <group ref={group}>
       <group ref={bodyRef}>
         <primitive object={scene} />
-        <VesselBody characterRoot={scene} body={vessel} color={colorRef.current} />
+        <VesselBody characterRoot={scene} body={vessel} color={skinColor} />
         <EquippedCosmetics characterRoot={scene} equipped={equipped} body={vessel} />
         <SpiritVesselFx
           characterRoot={scene}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "id": "arena_2",
+  "name": "Arena 2",
+  "active": false,
+  "ground": {
+    "kind": "painted",
+    "sizeX": 80,
+    "sizeZ": 80,
+    "resX": 256,
+    "resZ": 256,
+    "layers": [
+      "grass",
+      "dirt",
+      "rock",
+      "sand"
+    ],
+    "splatUrl": "assets/maps/arena_2.splat.png",
+    "heightScale": 0
+  },
+  "env": {},
+  "props": [],
+  "walls": [],
+  "elements": []
+}

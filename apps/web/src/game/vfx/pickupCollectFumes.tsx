@@ -14,7 +14,7 @@ export const PICKUP_FUME_COLOR: Record<string, string> = {
   heal: "#6EE7B7",
   energy: "#FACC15",
   absorb: "#60A5FA",
-  speed: "#FB923C",
+  speed: "#22D3EE",
   power: "#F87171",
   haste: "#C084FC",
   generic: "#6EE7B7",

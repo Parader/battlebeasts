@@ -1,5 +1,21 @@
 [
   {
+    "id": "2026-09-18-dungeon",
+    "title": "Dungeon instances",
+    "date": "2026-09-18",
+    "content": [
+      "Dungeon is a new PvE style, separate from Wave Assault: walk an authored map, pull packs, and clear a boss",
+      "Parties of 1–5 spawn at the entrance; difficulty scales with how many hunters showed up",
+      "Required packs sit still until aggro. Each run also picks one optional wing (side pack, hold, or extra boss)",
+      "Killing the end boss unlocks the exit. Interact there to complete; a wipe still ends the run",
+      "One run chest at the end — rarity rises with how deep you got (packs, optional wing, then boss). Guests skip",
+      "Plaza groups lock to Dungeon or Wave Assault separately so they never share a queue"
+    ],
+    "fixes": [
+      "Map-builder prop catalog keeps only assets that maps actually use"
+    ]
+  },
+  {
     "id": "2026-09-16-combat-stealth",
     "title": "Combat polish, rejoin, and stealth",
     "date": "2026-09-16",

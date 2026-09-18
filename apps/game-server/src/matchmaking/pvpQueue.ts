@@ -26,6 +26,8 @@ export type PvpPartyMember = {
   userId: string;
   seat: PvpSeat;
   hubOwnerId: string | null;
+  plazaId?: string | null;
+  groupId?: string | null;
 };
 
 export type PvpQueueEntry = {
@@ -352,6 +354,8 @@ async function createMatch(
           matchKind,
           seasonId: season?.id ?? null,
           hubOwnerId: member.hubOwnerId,
+          plazaId: member.plazaId ?? undefined,
+          groupId: member.groupId ?? undefined,
           team: assigned.team,
           role: assigned.role,
           spawnSlot: assigned.spawnSlot,

@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { listMaps, normalizeCosmeticBody, type CosmeticBodyId } from "@battlebeasts/shared";
+import {
+  listMaps,
+  normalizeCosmeticBody,
+  PVE_CONTENTS,
+  PVP_MODES,
+  type CosmeticBodyId,
+} from "@battlebeasts/shared";
 import { setAdminThirdPerson, useAdminThirdPerson } from "../adminThirdPerson";
 import { setAdminBindPose, useAdminBindPose } from "../adminBindPose";
 import { GamePanelShell } from "./GamePanelShell";
@@ -18,6 +24,8 @@ type Props = {
   onToggleAdminNoCooldown?: (enabled: boolean) => void;
   /** Drop into any registered map solo, for looking at authored maps. */
   onTpToMap?: (mapId: string) => void;
+  /** Jump straight into a live mode (KoTH / Domination / CTF / skirmish / Wave Assault). */
+  onEnterMode?: (modeId: string) => void;
   vessel?: string;
   onSetVessel?: (vessel: "female" | "male") => void;
 };
@@ -34,6 +42,7 @@ export function AdminPanel({
   adminNoCooldown = false,
   onToggleAdminNoCooldown,
   onTpToMap,
+  onEnterMode,
   vessel,
   onSetVessel,
 }: Props) {
@@ -45,8 +54,19 @@ export function AdminPanel({
     if (vessel) setAdminVessel(normalizeCosmeticBody(vessel));
   }, [vessel]);
   // Registration happens once at startup, so the list never changes at runtime.
-  const maps = useMemo(() => listMaps().sort((a, b) => a.name.localeCompare(b.name)), []);
+  const maps = useMemo(
+    () => listMaps().filter((m) => m.kind === "doc").sort((a, b) => a.name.localeCompare(b.name)),
+    [],
+  );
   const [mapId, setMapId] = useState(() => maps[0]?.id ?? "");
+  const modes = useMemo(
+    () => [
+      ...PVP_MODES.filter((m) => m.enabled).map((m) => ({ id: m.id, label: m.label })),
+      ...PVE_CONTENTS.filter((c) => c.enabled).map((c) => ({ id: c.id, label: c.label })),
+    ],
+    [],
+  );
+  const [modeId, setModeId] = useState(() => modes.find((m) => m.id === "bg_koth")?.id ?? modes[0]?.id ?? "");
   const thirdPerson = useAdminThirdPerson();
   const bindPose = useAdminBindPose();
 
@@ -151,6 +171,30 @@ export function AdminPanel({
               onClick={() => onTpToMap(mapId)}
             >
               Go to map
+            </button>
+          </div>
+        ) : null}
+        {onEnterMode && modes.length > 0 ? (
+          <div className="bb-list-row flex flex-wrap items-center gap-2">
+            <select
+              className="bb-input"
+              value={modeId}
+              aria-label="Game mode"
+              onChange={(e) => setModeId(e.target.value as (typeof modes)[number]["id"])}
+            >
+              {modes.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="bb-btn-brass"
+              disabled={!modeId}
+              onClick={() => onEnterMode(modeId)}
+            >
+              Enter mode
             </button>
           </div>
         ) : null}

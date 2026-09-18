@@ -627,6 +627,10 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
     if (preset) setDraftLoadout(normalizeLoadout(preset.abilityIds));
   };
 
+  const renamePreset = (slotIndex: number, name: string) => {
+    room?.send("rename_loadout_preset", { slotIndex, name });
+  };
+
   const armouryHeader =
     kind === "build"
       ? SpellArmouryHeaderExtras({
@@ -635,6 +639,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
           activeLoadoutSlot: economy.activeLoadoutSlot,
           loadoutSlotCount: unlocks.loadoutSlotCount,
           onSelectPreset: selectPreset,
+          onRenamePreset: renamePreset,
         })
       : null;
 
@@ -693,6 +698,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
         activeLoadoutSlot={economy.activeLoadoutSlot}
         loadoutSlotCount={unlocks.loadoutSlotCount}
         onSelectPreset={selectPreset}
+        onRenamePreset={renamePreset}
       />
     );
   } else if (kind === "shop") {

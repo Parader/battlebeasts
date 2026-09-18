@@ -338,6 +338,12 @@ if (!gotLock) {
     return true;
   });
 
+  ipcMain.handle("quit-app", async () => {
+    quitting = true;
+    app.quit();
+    return true;
+  });
+
   ipcMain.handle("auth-storage-get", async (_event, key) => {
     if (typeof key !== "string") return null;
     const store = loadAuthStorage();

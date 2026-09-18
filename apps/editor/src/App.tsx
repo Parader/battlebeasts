@@ -1,5 +1,5 @@
-import { emptyMapDoc, type MapDoc } from "@battlebeasts/shared";
-import { useCallback, useEffect, useState } from "react";
+import { emptyMapDoc, mapSlotLabel, type MapDoc } from "@battlebeasts/shared";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteMap,
   heightUrlFor,
@@ -59,6 +59,85 @@ function useMapList() {
   }, []);
   useEffect(refresh, [refresh]);
   return { maps, refresh };
+}
+
+function overlayOpenMap(maps: MapListEntry[], doc: MapDoc): MapListEntry[] {
+  const open: MapListEntry = {
+    id: doc.id,
+    name: maps.some((m) => m.id === doc.id) ? doc.name : `${doc.name} (unsaved)`,
+    active: doc.active === true,
+    modeIds: doc.modeIds ?? [],
+  };
+  if (!maps.some((m) => m.id === doc.id)) return [open, ...maps];
+  return maps.map((m) => (m.id === doc.id ? { ...m, ...open } : m));
+}
+
+function MapPicker({
+  maps,
+  doc,
+  onLoad,
+}: {
+  maps: MapListEntry[];
+  doc: MapDoc;
+  onLoad: (id: string) => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  const rows = overlayOpenMap(maps, doc);
+
+  return (
+    <div className="map-picker" ref={rootRef}>
+      <button
+        type="button"
+        className="map-picker-btn"
+        title={doc.active === true ? "Live in play" : "Inactive — editor only"}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className={`dot ${doc.active === true ? "live" : "idle"}`} />
+        <span className="map-picker-name">{doc.name}</span>
+      </button>
+      {open && (
+        <div className="map-picker-menu">
+          <div className="map-picker-hint">Green = live in play · Grey = editor only</div>
+          {rows.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className={m.id === doc.id ? "current" : undefined}
+              onClick={() => {
+                setOpen(false);
+                if (m.id !== doc.id) void onLoad(m.id);
+              }}
+            >
+              <span
+                className={`dot ${m.active ? "live" : "idle"}`}
+                title={m.active ? "Live in play" : "Inactive"}
+              />
+              <span className="map-picker-row-text">
+                <span>
+                  {m.name} <span className="muted">({m.id})</span>
+                </span>
+                {m.modeIds.length > 0 && (
+                  <span className="map-picker-modes">
+                    {m.modeIds.map(mapSlotLabel).join(" · ")}
+                  </span>
+                )}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ToolButtons() {
@@ -305,6 +384,7 @@ function TopBar({ onStatus }: { onStatus: (s: string) => void }) {
         ...source,
         id: picked.id,
         name: picked.name,
+        active: false,
         ground:
           source.ground.kind === "painted"
             ? {
@@ -369,26 +449,7 @@ function TopBar({ onStatus }: { onStatus: (s: string) => void }) {
     <div className="topbar">
       <span className="title">Map Editor</span>
 
-      <select
-        value={doc.id}
-        onChange={(e) => void onLoad(e.target.value)}
-        style={{ width: 190 }}
-      >
-        <option value="">— open map —</option>
-        {/*
-          A new map exists only in memory until it is saved, so it is absent
-          from the list. Without an option of its own the select would fall
-          back to the placeholder and New would look like it did nothing.
-        */}
-        {!maps.some((m) => m.id === doc.id) && (
-          <option value={doc.id}>{doc.name} (unsaved)</option>
-        )}
-        {maps.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name} ({m.id})
-          </option>
-        ))}
-      </select>
+      <MapPicker maps={maps} doc={doc} onLoad={onLoad} />
 
       <button onClick={() => void onNew()} disabled={busy}>
         New

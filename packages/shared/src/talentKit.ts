@@ -311,6 +311,19 @@ export type CombatSessionKit = {
   hasBastion: boolean;
   hasLivingFortress: boolean;
   hasPerfectDefense: boolean;
+
+  /** Wave Assault overlay — outgoing damage multiplier (1 = unchanged). */
+  damageDealtMul: number;
+  /** Wave Assault overlay — global cooldown mul baked into cooldownMulByAbility. */
+  cooldownMul: number;
+  /** Wave Assault overlay — extra range on all scaled ranges. */
+  rangeMul: number;
+  /** Wave Assault overlay — extra radius on all scaled radii. */
+  aoeMul: number;
+  /** Wave Assault overlay — fraction of max HP restored per second. */
+  regenPerSec: number;
+  /** Wave Assault overlay — fraction of damage dealt returned as heal. */
+  lifesteal: number;
 };
 
 export function emptyCombatSessionKit(): CombatSessionKit {
@@ -388,6 +401,12 @@ export function emptyCombatSessionKit(): CombatSessionKit {
     hasBastion: false,
     hasLivingFortress: false,
     hasPerfectDefense: false,
+    damageDealtMul: 1,
+    cooldownMul: 1,
+    rangeMul: 1,
+    aoeMul: 1,
+    regenPerSec: 0,
+    lifesteal: 0,
 
     disruptiveForceBonus: 0,
     lingeringControlBonus: 0,
@@ -894,6 +913,12 @@ export function resolveKit(
       : hasTalentRank(talentBuild, DOUBLE_STEP_TALENT_ID)
         ? 2500
         : 0,
+    damageDealtMul: 1,
+    cooldownMul: 1,
+    rangeMul: 1,
+    aoeMul: 1,
+    regenPerSec: 0,
+    lifesteal: 0,
   };
 }
 
@@ -921,6 +946,7 @@ export function kitRadiusMul(kit: CombatSessionKit | undefined, abilityId: strin
   if (isControlAoeAbility(def) && (kit?.controlAoeRadiusMul ?? 1) > 1) {
     mul *= kit!.controlAoeRadiusMul;
   }
+  mul *= kit?.aoeMul ?? 1;
   if (mul <= 1.001) return 1;
   return mul;
 }
@@ -949,6 +975,7 @@ export function kitScaledRange(
   if (def && isControlAbility(def) && (kit?.controlRangeMul ?? 1) > 1) {
     mul *= kit!.controlRangeMul;
   }
+  mul *= kit?.rangeMul ?? 1;
   return mul <= 1.001 ? base : base * mul;
 }
 
