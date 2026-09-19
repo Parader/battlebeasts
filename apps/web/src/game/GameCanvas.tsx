@@ -152,7 +152,7 @@ export const GameCanvas = memo(function GameCanvas({
                 {/* Inside Suspense so warm runs under remounted hub/content lights. */}
                 <VfxWarmup warmKey={isDungeon ? "dungeon" : isArena ? "arena" : "hub"} />
                 <GpuWarmDummies includeZombie={isDungeon} />
-                <HubPropShaderWarmup mapId={mapId} />
+                <HubPropShaderWarmup mapId={mapId} localSessionId={localSessionId} />
                 {inContent ? (
                     <ContentScene
                         room={room}

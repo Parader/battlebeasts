@@ -25,36 +25,26 @@ export function GameLoadingOverlay({ percent, statusLabel }: Props) {
 
   return (
     <div
-      className="bb-overlay-dim absolute inset-0 z-50 flex items-center justify-center p-4"
+      className="bb-splash"
       data-ui-overlay
       role="status"
       aria-live="polite"
       aria-busy="true"
       aria-label="Loading game assets"
     >
-      <div className="bb-parchment bb-book-panel w-full max-w-sm text-center">
-        <p className="bb-panel-title">Loading</p>
-        <p
-          className="mt-4 tabular-nums text-3xl text-[var(--bb-ink)]"
-          style={{ fontFamily: "var(--bb-font-display)" }}
-        >
-          {clamped}%
-        </p>
-        {statusLabel ? <p className="bb-panel-sub mt-2">{statusLabel}</p> : null}
-        <div className="mt-5 h-1.5 overflow-hidden rounded-sm border border-[var(--bb-panel-line)] bg-[rgba(6,18,32,0.9)]">
-          <div
-            className="h-full rounded-sm bg-[var(--bb-brass)] transition-[width] duration-200 ease-out"
-            style={{ width: `${clamped}%` }}
-          />
+      <img className="bb-splash__art" src="/brand/splash.png" alt="" />
+      <div className="bb-splash__veil" />
+      <div className="bb-splash__panel">
+        <p className="bb-splash__title">Loading</p>
+        <p className="bb-splash__pct">{clamped}%</p>
+        {statusLabel ? <p className="bb-splash__status">{statusLabel}</p> : null}
+        <div className="bb-splash__bar">
+          <div className="bb-splash__fill" style={{ width: `${clamped}%` }} />
         </div>
         {showReload ? (
-          <div className="mt-4">
-            <p className="bb-meta mb-2">Taking longer than expected.</p>
-            <button
-              type="button"
-              className="bb-btn-brass"
-              onClick={() => window.location.reload()}
-            >
+          <div className="bb-splash__reload">
+            <p>Taking longer than expected.</p>
+            <button type="button" className="bb-btn-brass" onClick={() => window.location.reload()}>
               Reload
             </button>
           </div>

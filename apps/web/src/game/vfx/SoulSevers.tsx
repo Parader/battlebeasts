@@ -186,24 +186,19 @@ function SoulSeverInstance({ room, id }: { room: Room; id: string }) {
 
 export function SoulSevers({ room }: { room: Room | null }) {
   const [ids, setIds] = useState<string[]>([]);
+  const prevKey = useRef("");
 
-  useEffect(() => {
-    if (!room?.state?.soulSevers) {
-      setIds([]);
-      return;
+  useFrame(() => {
+    if (!room?.state?.soulSevers) return;
+    const next: string[] = [];
+    room.state.soulSevers.forEach((_d: unknown, id: string) => next.push(id));
+    next.sort();
+    const key = next.join("|");
+    if (key !== prevKey.current) {
+      prevKey.current = key;
+      setIds(next);
     }
-    const sync = () => {
-      const next: string[] = [];
-      room.state.soulSevers.forEach((_d: unknown, id: string) => next.push(id));
-      setIds((prev) => {
-        if (prev.length === next.length && prev.every((v, i) => v === next[i])) return prev;
-        return next;
-      });
-    };
-    sync();
-    const iv = window.setInterval(sync, 200);
-    return () => window.clearInterval(iv);
-  }, [room]);
+  });
 
   if (!room) return null;
   return (

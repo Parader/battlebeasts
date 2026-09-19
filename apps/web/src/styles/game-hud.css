@@ -1893,6 +1893,11 @@
   font-family: var(--bb-font-body);
 }
 
+.bb-list-row--active {
+  border-color: rgba(196, 165, 116, 0.85);
+  background: rgba(126, 182, 216, 0.22);
+}
+
 .bb-list-row--stack {
   flex-direction: column;
   align-items: stretch;
@@ -5117,15 +5122,22 @@
   z-index: 0;
 }
 
+.bb-auth-backdrop__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 42%;
+}
+
 .bb-auth-backdrop__veil {
   pointer-events: none;
   position: absolute;
   inset: 0;
-  /* Keep spell FX / maps readable in the open arena while UI stays legible. */
   background:
-    radial-gradient(ellipse 72% 58% at 30% 44%, transparent 0%, rgba(6, 12, 20, 0.22) 52%, rgba(4, 8, 14, 0.78) 100%),
-    linear-gradient(90deg, rgba(6, 12, 20, 0.42) 0%, transparent 48%, rgba(6, 12, 20, 0.7) 100%),
-    linear-gradient(180deg, rgba(8, 14, 22, 0.18) 0%, transparent 38%, rgba(4, 8, 14, 0.86) 100%);
+    linear-gradient(90deg, rgba(4, 8, 14, 0.18) 0%, transparent 36%, rgba(4, 8, 14, 0.78) 100%),
+    linear-gradient(180deg, rgba(4, 8, 14, 0.22) 0%, transparent 42%, rgba(4, 8, 14, 0.82) 100%);
 }
 
 .bb-auth-backdrop__grain {
@@ -5164,6 +5176,8 @@
   justify-items: center;
   text-align: center;
   max-width: 44rem;
+  align-content: end;
+  padding-bottom: clamp(2rem, 8vh, 5rem);
 }
 
 .bb-auth-brand {
@@ -5176,44 +5190,13 @@
   align-items: center;
 }
 
-.bb-auth-brand__eyebrow {
-  margin: 0 0 0.45rem;
-  font-family: var(--bb-font-body);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--bb-panel-accent);
-}
-
-.bb-auth-brand__title {
-  margin: 0;
-  font-family: var(--bb-font-display);
-  font-size: clamp(2.6rem, 8vw, 4.6rem);
-  font-weight: 700;
-  line-height: 1.05;
-  letter-spacing: 0.04em;
-  color: #f3f7fb;
-  text-shadow:
-    0 2px 0 rgba(0, 0, 0, 0.45),
-    0 18px 40px rgba(0, 0, 0, 0.55);
-}
-
 .bb-auth-brand__tag {
-  margin: 0.85rem 0 0;
+  margin: 0;
   max-width: 28rem;
   font-size: clamp(0.95rem, 2.2vw, 1.1rem);
   line-height: 1.45;
   color: var(--bb-ink-soft);
-}
-
-.bb-auth-brand__rule {
-  margin-top: 1.15rem;
-  max-width: 14rem;
-}
-
-.bb-auth-shell--center .bb-auth-brand__rule {
-  width: 12rem;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.65);
 }
 
 .bb-auth-panel {
@@ -5339,9 +5322,23 @@
 }
 
 .bb-auth-quit {
-  display: block;
-  width: 100%;
-  margin-top: 1rem;
+  display: inline-flex;
+  width: auto;
+  margin-top: 0;
+  min-width: 9rem;
+  justify-content: center;
+}
+
+.bb-auth-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  grid-column: 1 / -1;
+}
+
+.bb-auth-shell--center .bb-auth-chrome {
+  justify-content: center;
 }
 
 .bb-auth-warn {
@@ -5516,4 +5513,86 @@
   .bb-pve-draft-card {
     animation: none;
   }
+}
+
+.bb-splash {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  background: #050814;
+}
+
+.bb-splash__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 40%;
+}
+
+.bb-splash__veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(4, 8, 14, 0.15) 0%, rgba(4, 8, 14, 0.35) 48%, rgba(4, 8, 14, 0.88) 100%);
+}
+
+.bb-splash__panel {
+  position: relative;
+  z-index: 1;
+  width: min(22rem, calc(100% - 2rem));
+  margin-bottom: clamp(1.5rem, 6vh, 3.5rem);
+  text-align: center;
+}
+
+.bb-splash__title {
+  margin: 0;
+  font-family: var(--bb-font-display);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #cfe8ff;
+}
+
+.bb-splash__pct {
+  margin: 0.35rem 0 0;
+  font-family: var(--bb-font-display);
+  font-size: 2rem;
+  color: #f3f7fb;
+  text-shadow: 0 0 18px rgba(80, 190, 255, 0.35);
+}
+
+.bb-splash__status {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: var(--bb-ink-soft);
+}
+
+.bb-splash__bar {
+  margin-top: 0.85rem;
+  height: 0.4rem;
+  overflow: hidden;
+  border: 1px solid rgba(90, 180, 255, 0.35);
+  background: rgba(6, 18, 32, 0.9);
+}
+
+.bb-splash__fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6d5cff, #4cc9ff);
+  transition: width 0.2s ease-out;
+}
+
+.bb-splash__reload {
+  margin-top: 1rem;
+}
+
+.bb-splash__reload p {
+  margin: 0 0 0.65rem;
+  font-size: 0.85rem;
+  color: var(--bb-ink-soft);
 }

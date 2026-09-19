@@ -1,6 +1,6 @@
 import { useFrame } from "@react-three/fiber";
-import { Room } from "colyseus.js";
 import { getAbilityVfxProfile } from "./profiles/registry";
+import type { VfxRoomLike } from "./vfxRoomLike";
 import { castEngines, type PlayerCastPose } from "./engines";
 import {
   cancelPlayerCastHandles,
@@ -58,7 +58,7 @@ function tickCaster(sessionId: string, raw: PlayerCastPose, now: number, live: S
  * Phase-driven cast VFX — routes each ability to a timing engine via AbilityVfxProfile.
  * Melee swoops (crescent) spawn from combat_fx instead.
  */
-export function SpellVfxBridge({ room }: { room: Room | null }) {
+export function SpellVfxBridge({ room }: { room: VfxRoomLike | null }) {
   useFrame(() => {
     if (!room?.state) return;
     const now = performance.now();
@@ -70,7 +70,7 @@ export function SpellVfxBridge({ room }: { room: Room | null }) {
 
     room.state.targets?.forEach((raw: PlayerCastPose & { kind?: string }, id: string) => {
       const kind = raw.kind;
-      if (kind !== "dummy" && kind !== "elite") return;
+      if (kind !== "dummy" && kind !== "elite" && kind !== "lab_copy") return;
       tickCaster(id, raw, now, live);
     });
 

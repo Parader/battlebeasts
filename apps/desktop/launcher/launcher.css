@@ -1,11 +1,12 @@
 :root {
-  --ink: #e8f2fa;
-  --ink-soft: #8aa4b8;
-  --brass: #c9b27a;
-  --accent: #7eb6d8;
+  --ink: #e8f4ff;
+  --ink-soft: #8eb0d4;
+  --brass: #7ad4ff;
+  --accent: #4cc9ff;
+  --violet: #6d5cff;
   --danger: #f87171;
-  --panel: #272c43;
-  --edge: #242424;
+  --panel: rgba(8, 14, 32, 0.72);
+  --edge: rgba(90, 180, 255, 0.28);
 }
 
 * {
@@ -15,49 +16,71 @@
 html,
 body {
   margin: 0;
-  min-height: 100%;
-  background: radial-gradient(ellipse 130% 100% at 50% -10%, #525681 0%, #313b51 34%, #272c43 78%, #242424 100%);
+  height: 100%;
   color: var(--ink);
   font-family: "Segoe UI", system-ui, sans-serif;
+  background: #050814;
 }
 
 body {
-  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 55% at 12% 88%, rgba(92, 32, 180, 0.28), transparent 58%),
+    radial-gradient(ellipse 70% 50% at 92% 18%, rgba(28, 90, 210, 0.22), transparent 55%),
+    radial-gradient(ellipse 50% 40% at 50% -10%, rgba(90, 200, 255, 0.16), transparent 50%),
+    linear-gradient(165deg, #0a142c 0%, #070b18 42%, #0c0820 100%);
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(76, 201, 255, 0.08), transparent 32%),
+    radial-gradient(circle at 82% 78%, rgba(109, 92, 255, 0.1), transparent 36%);
 }
 
 .shell {
-  min-height: 100vh;
+  position: relative;
+  z-index: 1;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 28px 32px 36px;
-  gap: 24px;
+  overflow: hidden;
+}
+
+.banner {
+  width: 100%;
+  margin: 0 auto;
+  display: block;
+  height: auto;
+  object-fit: contain;
+  object-position: center;
+  border: 1px solid var(--edge);
+  box-shadow: 0 0 40px rgba(40, 90, 180, 0.28);
 }
 
 .top {
   display: flex;
   justify-content: space-between;
   gap: 24px;
-  align-items: flex-end;
-  border-bottom: 1px solid rgba(180, 200, 230, 0.28);
-  padding-bottom: 20px;
-}
-
-.kicker {
-  margin: 0 0 4px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  font-size: 11px;
-  color: var(--brass);
-}
-
-h1 {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 600;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 16px 24px;
+  background: linear-gradient(180deg, rgba(6, 10, 22, 0.92), rgba(6, 10, 22, 0.78));
+  border-bottom: 1px solid var(--edge);
+  backdrop-filter: blur(12px);
 }
 
 .status {
-  margin: 8px 0 0;
+  margin: 0;
   color: var(--ink-soft);
   min-height: 1.4em;
 }
@@ -75,25 +98,34 @@ h1 {
 
 .btn {
   appearance: none;
-  border: 1px solid var(--brass);
-  background: color-mix(in srgb, var(--brass) 18%, transparent);
+  border: 1px solid rgba(120, 210, 255, 0.7);
+  background: linear-gradient(180deg, rgba(70, 160, 255, 0.28), rgba(40, 70, 180, 0.22));
   color: var(--ink);
   font: inherit;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   padding: 10px 22px;
   min-width: 108px;
   cursor: pointer;
+  box-shadow: 0 0 18px rgba(76, 201, 255, 0.18);
+}
+
+.btn:hover:not(:disabled) {
+  border-color: #b8ecff;
+  box-shadow: 0 0 28px rgba(76, 201, 255, 0.35);
 }
 
 .btn:disabled {
   opacity: 0.4;
   cursor: default;
+  box-shadow: none;
 }
 
 .btn.ghost {
-  border-color: rgba(180, 200, 230, 0.35);
-  background: transparent;
+  border-color: rgba(180, 210, 255, 0.28);
+  background: rgba(8, 14, 28, 0.45);
+  box-shadow: none;
 }
 
 .progress-wrap {
@@ -111,9 +143,10 @@ h1 {
 .progress-bar {
   height: 8px;
   width: 140px;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.45);
   position: relative;
   overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(90, 180, 255, 0.2);
 }
 
 .progress-bar::after {
@@ -121,16 +154,45 @@ h1 {
   position: absolute;
   inset: 0 auto 0 0;
   width: var(--pct, 0%);
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--violet), var(--accent));
 }
 
 .notes {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  flex: 1;
+}
+
+.scroll {
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(76, 201, 255, 0.55) rgba(8, 14, 32, 0.7);
+}
+
+.scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: rgba(8, 14, 32, 0.7);
+  border-left: 1px solid rgba(90, 180, 255, 0.12);
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(76, 201, 255, 0.7), rgba(109, 92, 255, 0.55));
+  border: 2px solid rgba(8, 14, 32, 0.7);
+}
+
+.scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(184, 236, 255, 0.9), rgba(124, 212, 255, 0.7));
 }
 
 .notes .placeholder {
@@ -139,8 +201,9 @@ h1 {
 }
 
 .note {
-  background: color-mix(in srgb, var(--panel) 80%, black);
-  border: 1px solid rgba(180, 200, 230, 0.18);
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(10px);
 }
 
 .note > summary {
@@ -177,7 +240,7 @@ h1 {
 .note-title {
   flex: 1;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .note time {
@@ -191,7 +254,7 @@ h1 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0;
-  border-top: 1px solid rgba(180, 200, 230, 0.12);
+  border-top: 1px solid rgba(90, 180, 255, 0.12);
 }
 
 .col {
@@ -210,7 +273,8 @@ h1 {
   margin: 0;
   padding-left: 1.1em;
   color: var(--ink);
-  line-height: 1.45;
+  font-size: 15px;
+  line-height: 1.5;
 }
 
 .col li + li {
@@ -222,5 +286,9 @@ h1 {
   .note-cols {
     display: flex;
     flex-direction: column;
+  }
+
+  .brand {
+    align-items: flex-start;
   }
 }

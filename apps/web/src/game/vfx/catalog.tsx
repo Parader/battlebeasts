@@ -1,6 +1,6 @@
 import { ABILITIES, abilityEffectKind, COMBAT_FX_VARIANT_WALL_HIT } from "@battlebeasts/shared";
 import type { MutableRefObject, ReactNode } from "react";
-import { Room } from "colyseus.js";
+import type { VfxRoomLike } from "./vfxRoomLike";
 import type { OneShotEffect } from "./types";
 import { BoltCastEffect } from "./effects/boltCast";
 import { BoltImpactEffect } from "./effects/boltImpact";
@@ -140,7 +140,7 @@ export type ImpactVfxId =
   | "magmaOrbs";
 
 export type VfxFollowContext = {
-  room: Room | null;
+  room: VfxRoomLike | null;
   localSessionId: string | null;
   /** Local predicted pose — smoother than schema for the local caster. */
   predictedRef?: MutableRefObject<{ x: number; z: number; yaw: number }>;

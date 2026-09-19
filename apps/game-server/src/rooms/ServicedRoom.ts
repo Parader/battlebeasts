@@ -236,6 +236,136 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
     this.onMessage("hub_open_chest", (client, message: { chestId?: string }) => {
       void this.handleHubOpenChest(client, message?.chestId);
     });
+
+    this.onMessage("hub_admin_no_cooldown", (client, message: { enabled?: boolean }) => {
+      this.handleAdminNoCooldown(client, message?.enabled);
+    });
+    this.onMessage("lab_spawn", (client, message: { kind?: string }) => {
+      this.handleLabSpawn(client, message?.kind);
+    });
+    this.onMessage("lab_clear", (client, message: { kind?: string }) => {
+      this.handleLabClear(client, message?.kind);
+    });
+    this.onMessage("lab_grant_all", (client) => {
+      void this.handleLabGrantAll(client);
+    });
+    this.onMessage("lab_equip", (client, message: { abilityId?: string }) => {
+      void this.handleLabEquip(client, message?.abilityId ?? "");
+    });
+  }
+
+  protected requireAdmin(client: Client): boolean {
+    const identity = this.identities.get(client.sessionId);
+    if (!identity || identity.isGuest || !isAdminEmail(identity.email)) {
+      client.send("toast", { message: "Not authorized" });
+      return false;
+    }
+    return true;
+  }
+
+  protected handleAdminNoCooldown(client: Client, enabledRaw: boolean | undefined): void {
+    if (!this.requireAdmin(client)) return;
+    const enabled = Boolean(enabledRaw);
+    const active = this.combat.setNoCooldowns(client.sessionId, enabled);
+    client.send("hub_admin_no_cooldown", { enabled: active });
+    client.send("toast", {
+      message: active ? "Cooldowns disabled" : "Cooldowns restored",
+    });
+  }
+
+  protected handleLabSpawn(client: Client, kindRaw: string | undefined): void {
+    if (!this.requireAdmin(client)) return;
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const kind =
+      kindRaw === "copy"
+        ? "lab_copy"
+        : kindRaw === "enemy"
+          ? "zombie"
+          : kindRaw === "chaser"
+            ? "lab_chaser"
+            : "dummy";
+    const dist = 5.2;
+    const side = (Math.random() - 0.5) * 1.6;
+    const fx = Math.sin(player.yaw);
+    const fz = Math.cos(player.yaw);
+    const x = player.x + fx * dist - fz * side;
+    const z = player.z + fz * dist + fx * side;
+    this.combat.spawnLabTarget(x, z, {
+      kind,
+      yaw: player.yaw + Math.PI,
+      ownerSessionId: client.sessionId,
+    });
+    client.send("toast", {
+      message:
+        kind === "lab_copy"
+          ? "Spawned a mimic"
+          : kind === "zombie"
+            ? "Spawned an enemy"
+            : kind === "lab_chaser"
+              ? "Spawned a moving enemy"
+              : "Spawned a dummy",
+    });
+  }
+
+  protected handleLabClear(client: Client, kindRaw: string | undefined): void {
+    if (!this.requireAdmin(client)) return;
+    const scope = kindRaw === "enemy" ? "enemy" : "all";
+    const n = this.combat.clearLabTargets(scope);
+    const label = scope === "enemy" ? "enemies" : "lab spawns";
+    client.send("toast", {
+      message: n > 0 ? `Cleared ${n} ${label}` : "Nothing to clear",
+    });
+  }
+
+  protected async handleLabGrantAll(client: Client): Promise<void> {
+    if (!this.requireAdmin(client)) return;
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    const unlocks = { ...this.unlocksOf(client.sessionId) };
+    unlocks.abilities = Object.keys(ABILITIES);
+    await this.persistUnlocks(client.sessionId, unlocks);
+    this.sendInventory(client, player);
+    client.send("toast", { message: "All spells unlocked" });
+  }
+
+  protected async handleLabEquip(client: Client, abilityId: string): Promise<void> {
+    if (!this.requireAdmin(client)) return;
+    const player = this.state.players.get(client.sessionId);
+    const def = ABILITIES[abilityId];
+    if (!player || !def) {
+      client.send("toast", { message: "Unknown spell" });
+      return;
+    }
+    const unlocks = { ...this.unlocksOf(client.sessionId) };
+    if (!unlocks.abilities.includes(abilityId)) {
+      unlocks.abilities = [...unlocks.abilities, abilityId];
+      await this.persistUnlocks(client.sessionId, unlocks);
+    }
+    const current = normalizeLoadout(player.loadout.split(","));
+    let slot =
+      def.defaultSlot && def.allowedSlots.includes(def.defaultSlot)
+        ? SPELL_SLOTS.findIndex((s) => s.id === def.defaultSlot)
+        : -1;
+    if (slot < 0) {
+      slot = SPELL_SLOTS.findIndex((s) => def.allowedSlots.includes(s.id));
+    }
+    if (slot < 0) slot = 0;
+    for (let i = 0; i < current.length; i++) {
+      if (current[i] === abilityId) current[i] = "";
+    }
+    current[slot] = abilityId;
+    player.loadout = current.join(",");
+    this.applyCombatKit(client.sessionId, player);
+    const talentBuild = this.talentBuildBySession.get(client.sessionId) ?? {};
+    try {
+      await this.persistActiveLoadoutPreset(client, current, talentBuild);
+    } catch (err) {
+      console.warn("[lab] persist loadout failed:", err);
+    }
+    this.sendInventory(client, player);
+    const key = SPELL_SLOTS[slot]?.label ?? "?";
+    client.send("toast", { message: `${def.name} → ${key}` });
   }
 
   // ---------------------------------------------------------------------

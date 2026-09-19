@@ -224,10 +224,6 @@ function launcherSpecFrom(raw) {
   };
 }
 
-function batQuote(value) {
-  return `"${String(value).replaceAll("%", "%%").replaceAll('"', '""')}"`;
-}
-
 function envPath(name) {
   const raw = process.env[name];
   if (typeof raw !== "string") return "";
@@ -272,83 +268,47 @@ function launcherStagingDir(userData) {
   return path.join(userData, "launcher-update");
 }
 
-function nextLauncherPath(swapTarget, spec, staging) {
-  const dir = path.dirname(swapTarget);
-  const beside = path.join(dir, `${path.basename(swapTarget)}.new`);
+function nextLauncherPath(_swapTarget, _spec, staging) {
+  return path.join(staging, "MageTrials-Launcher-update.exe");
+}
+
+function cleanLauncherStaging(staging, keepPath) {
+  let names = [];
   try {
-    fs.accessSync(dir, fs.constants.W_OK);
-    return beside;
+    names = fs.readdirSync(staging);
   } catch {
-    return path.join(staging, spec.name || `MageTrials-Launcher-${spec.version}.exe`);
+    return;
+  }
+  for (const name of names) {
+    const full = path.join(staging, name);
+    if (keepPath && path.resolve(full) === path.resolve(keepPath)) continue;
+    const lower = name.toLowerCase();
+    if (!lower.endsWith(".exe") && !lower.endsWith(".blockmap") && !lower.endsWith(".cmd")) continue;
+    try {
+      fs.rmSync(full, { force: true });
+    } catch {
+      // ignore
+    }
   }
 }
 
-function scheduleLauncherSwap(currentExe, nextExe, opts) {
-  const staging = launcherStagingDir(opts.userData);
-  fs.mkdirSync(staging, { recursive: true });
-  const bat = path.join(staging, `swap-${process.pid}.cmd`);
-  const log = batQuote(path.join(opts.userData, "launcher-update.log"));
-  const src = batQuote(nextExe);
-  const dest = batQuote(currentExe);
-  const electronPid = process.pid;
-  const parentPid =
-    envPath("PORTABLE_EXECUTABLE_FILE") && process.ppid && process.ppid !== process.pid
-      ? Number.parseInt(String(process.ppid), 10)
-      : 0;
-  fs.writeFileSync(
-    bat,
-    [
-      "@echo off",
-      "setlocal",
-      `>> ${log} echo %date% %time% swap-start dest=${dest}`,
-      "set w=0",
-      ":wait_e",
-      "ping 127.0.0.1 -n 2 >nul",
-      `tasklist /FI "PID eq ${electronPid}" /NH 2>nul | find "${electronPid}" >nul`,
-      "if errorlevel 1 goto unlocked",
-      "set /a w+=1",
-      "if %w% GEQ 20 goto unlocked",
-      "goto wait_e",
-      ":unlocked",
-      `>> ${log} echo %date% %time% electron-exited tries=%w%`,
-      parentPid > 0 ? `taskkill /F /PID ${parentPid} >nul 2>&1` : "rem no nsis parent",
-      `taskkill /F /PID ${electronPid} >nul 2>&1`,
-      "ping 127.0.0.1 -n 3 >nul",
-      "set tries=0",
-      ":copy",
-      `move /Y ${src} ${dest} >nul 2>&1`,
-      "if not errorlevel 1 goto launch_dest",
-      `copy /Y ${src} ${dest} >nul`,
-      "if not errorlevel 1 goto launch_dest",
-      "set /a tries+=1",
-      "if %tries% GEQ 45 goto launch_src",
-      "ping 127.0.0.1 -n 2 >nul",
-      "goto copy",
-      ":launch_dest",
-      `>> ${log} echo %date% %time% launch-dest tries=%tries%`,
-      `start "" ${dest}`,
-      `del /F /Q ${src} >nul 2>&1`,
-      "goto done",
-      ":launch_src",
-      `>> ${log} echo %date% %time% launch-src-fallback`,
-      `start "" ${src}`,
-      ":done",
-      "ping 127.0.0.1 -n 2 >nul",
-      "del /F /Q \"%~f0\" >nul 2>&1",
-    ].join("\r\n"),
-    "utf8",
-  );
-  // `start` breaks away from Electron's job object so this survives app.quit().
-  const child = spawn(
-    process.env.ComSpec || "cmd.exe",
-    ["/d", "/c", `start /min "MageTrialsUpdate" ${batQuote(bat)}`],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      cwd: staging,
-    },
-  );
+function unblockWindowsDownload(filePath) {
+  try {
+    fs.rmSync(`${filePath}:Zone.Identifier`, { force: true });
+  } catch {
+    // ignore
+  }
+}
+
+function startInstaller(installerPath, opts) {
+  logLauncher(opts.userData, `start-installer ${installerPath}`);
+  // `/S` is silent. `--force-run` is required: one-click NSIS skips launch after a silent install.
+  const child = spawn(installerPath, ["/S", "--force-run", "--updated"], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+    cwd: process.env.TEMP || path.dirname(installerPath),
+  });
   child.unref();
 }
 
@@ -359,6 +319,7 @@ async function applyLauncherUpdate(spec, opts) {
   const staging = launcherStagingDir(opts.userData);
   fs.mkdirSync(staging, { recursive: true });
   const dest = nextLauncherPath(swapTarget, spec, staging);
+  cleanLauncherStaging(staging, dest);
   logLauncher(
     opts.userData,
     `apply ${spec.version} dest=${dest} swapTarget=${swapTarget} execPath=${opts.execPath} portable=${envPath("PORTABLE_EXECUTABLE_FILE") || "-"} pid=${process.pid} ppid=${process.ppid}`,
@@ -372,6 +333,7 @@ async function applyLauncherUpdate(spec, opts) {
     }
   }
   await downloadFile(spec.url, dest, onProgress);
+  unblockWindowsDownload(dest);
   const downloaded = (await sha256File(dest)).toLowerCase();
   if (spec.sha256 && downloaded !== spec.sha256.toLowerCase()) {
     try {
@@ -393,9 +355,9 @@ async function applyLauncherUpdate(spec, opts) {
   }
   onStatus({
     phase: "updating",
-    message: "Restarting launcher… wait for it to reopen — don’t double-click.",
+    message: "Installing launcher update… wait for it to reopen.",
   });
-  scheduleLauncherSwap(swapTarget, dest, { userData: opts.userData });
+  startInstaller(dest, { userData: opts.userData });
   return true;
 }
 

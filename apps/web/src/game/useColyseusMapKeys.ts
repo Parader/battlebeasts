@@ -1,6 +1,7 @@
 import { getStateCallbacks } from "colyseus.js";
 import type { Room } from "colyseus.js";
 import { useEffect, useState } from "react";
+import type { VfxRoomLike } from "./vfx/vfxRoomLike";
 
 type StringMap = { forEach: (fn: (value: unknown, key: string) => void) => void };
 
@@ -96,7 +97,7 @@ export function useRemotePlayerIds(
 }
 
 export function useProjectileIds(
-  room: Room | null,
+  room: VfxRoomLike | null,
   onBoltCast?: (ownerSessionId: string) => void,
 ): string[] {
   const [keys, setKeys] = useState<string[]>([]);
@@ -108,18 +109,28 @@ export function useProjectileIds(
     const sync = () => syncMapKeys(setKeys, room.state?.projectiles as StringMap | undefined);
 
     sync();
-    return bindMapCollection(
-      room,
-      ($, state) => $(state).projectiles as {
-        onAdd: (cb: (v: unknown, k: string) => void) => () => void;
-        onRemove: (cb: (v: unknown, k: string) => void) => () => void;
-      },
-      sync,
-      (value) => {
-        const p = value as { abilityId?: string; ownerSessionId?: string };
-        if (p.abilityId === "bolt") onBoltCast?.(p.ownerSessionId || "");
-      },
-    );
+    const unsubLab = room.subscribeMaps?.(sync);
+    let unsubColy: (() => void) | undefined;
+    try {
+      unsubColy = bindMapCollection(
+        room as Room,
+        ($, state) => $(state).projectiles as {
+          onAdd: (cb: (v: unknown, k: string) => void) => () => void;
+          onRemove: (cb: (v: unknown, k: string) => void) => () => void;
+        },
+        sync,
+        (value) => {
+          const p = value as { abilityId?: string; ownerSessionId?: string };
+          if (p.abilityId === "bolt") onBoltCast?.(p.ownerSessionId || "");
+        },
+      );
+    } catch {
+      /* Local sim is not a Colyseus room. */
+    }
+    return () => {
+      unsubLab?.();
+      unsubColy?.();
+    };
   }, [room, room?.roomId, onBoltCast]);
 
   return keys;

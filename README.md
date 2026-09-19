@@ -19,6 +19,7 @@ pnpm dev
 - Dev game server: ws://127.0.0.1:2568 (`pnpm dev`)
 - Prod game server on this PC: ws://127.0.0.1:2567 (`pnpm prod:up`, Docker)
 - Map editor: `pnpm dev:editor` → http://localhost:5183
+- Spell lab: in the live game at http://localhost:5173/play?lab=1 (admin). Uses real HUD, keybinds, and combat. Spawn dummies/copies from the Spell lab HUD button.
 
 Launcher / shipping a patch: see [apps/desktop/README.md](apps/desktop/README.md).
 

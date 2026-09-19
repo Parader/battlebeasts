@@ -79,7 +79,7 @@ export function prepareGearMaterial(mat: THREE.Material, envMap: THREE.Texture |
   // Blender solid shows both sides of a thin hat shell. FrontSide leaves the
   // inner cone / visor lining un-drawn, so Mixamo fills that volume.
   std.side = THREE.DoubleSide;
-  std.transparent = false;
+  std.transparent = true;
   std.opacity = 1;
   std.depthWrite = true;
   // Pull gear in front of Mixamo where the meshes occupy the same pixels.

@@ -101,6 +101,7 @@ import {
 import { cosmeticsKey, equippedFromPlayer } from "./cosmeticAttach";
 import { EquippedCosmetics } from "./EquippedCosmetics";
 import { SpellbreakerProjectileOrbs } from "./vfx/SpellbreakerProjectileOrbs";
+import type { VfxRoomLike } from "./vfx/vfxRoomLike";
 
 function pveCorpseOpacity(deadForMs: number): number {
   const fadeStart = PVE_MOB_CORPSE_MS - PVE_MOB_CORPSE_FADE_MS;
@@ -128,7 +129,7 @@ const _zombieVel = new THREE.Vector3();
 /** Same grey as hub practice dummies. */
 const DUMMY_COLOR = "#9ca3af";
 
-function LegacyProjectileMesh({ room, id }: { room: Room; id: string }) {
+function LegacyProjectileMesh({ room, id }: { room: VfxRoomLike; id: string }) {
     const mesh = useRef<THREE.Mesh>(null);
     const color = useRef("#38bdf8");
     const renderPos = useRef(new THREE.Vector3());
@@ -220,7 +221,7 @@ function ProjectileRouter({
     id,
     knownAbilityId,
 }: {
-    room: Room;
+    room: VfxRoomLike;
     id: string;
     knownAbilityId?: string;
 }) {
@@ -233,9 +234,10 @@ function ProjectileRouter({
     }
     if (abilityId) {
         const render = PROJECTILE_RENDERERS[abilityId];
-        if (render) return <>{render({ room, id })}</>;
+        const colyseusRoom = room as Room;
+        if (render) return <>{render({ room: colyseusRoom, id })}</>;
         if (hasCatalogProjectile(abilityId)) {
-            return <BoltProjectileEffect room={room} id={id} />;
+            return <BoltProjectileEffect room={colyseusRoom} id={id} />;
         }
         if (import.meta.env.DEV) {
             console.warn(`[vfx] missing projectile renderer for abilityId=${abilityId}; using legacy sphere`);
@@ -248,7 +250,7 @@ function ProjectileRouter({
     return <LegacyProjectileMesh room={room} id={id} />;
 }
 
-export function Projectiles({ room }: { room: Room | null }) {
+export function Projectiles({ room }: { room: VfxRoomLike | null }) {
     const onBoltCast = useCallback((ownerSessionId: string) => {
         playBoltCastSfx(ownerSessionId);
     }, []);
@@ -268,7 +270,7 @@ export function Projectiles({ room }: { room: Room | null }) {
                     }
                 />
             ))}
-            <SpellbreakerProjectileOrbs room={room} />
+            <SpellbreakerProjectileOrbs room={room as Room} />
         </>
     );
 }
@@ -464,7 +466,7 @@ export function WorldTargets({ room }: { room: Room | null }) {
               : id.startsWith("boss_")
                 ? PVE_BOSS_KIND
                 : "dummy");
-        if (kind === PVE_ZOMBIE_KIND) {
+        if (kind === PVE_ZOMBIE_KIND || kind === "lab_chaser") {
           return <ZombieAvatar key={id} room={room} targetId={id} />;
         }
         if (kind === PVE_ELITE_KIND) {
@@ -475,6 +477,9 @@ export function WorldTargets({ room }: { room: Room | null }) {
         }
         if (kind === PROP_TARGET_KIND) {
           return <PropTargetBar key={id} room={room} targetId={id} />;
+        }
+        if (kind === "lab_copy") {
+          return <PracticeDummyAvatar key={id} room={room} targetId={id} copy />;
         }
         return <PracticeDummyAvatar key={id} room={room} targetId={id} />;
       })}
@@ -1091,11 +1096,13 @@ function PracticeDummyAvatar({
     targetId,
     elite = false,
     boss = false,
+    copy = false,
 }: {
     room: Room | null;
     targetId: string;
     elite?: boolean;
     boss?: boolean;
+    copy?: boolean;
 }) {
     const root = useRef<THREE.Group>(null);
     const body = useRef<THREE.Group>(null);
@@ -1106,6 +1113,11 @@ function PracticeDummyAvatar({
     const wasDeadRef = useRef(false);
     const deathSinkRef = useRef<DeathSinkState | null>(null);
     const diedAtMsRef = useRef(0);
+    const [copyVessel, setCopyVessel] = useState("female");
+    const [copyEquipped, setCopyEquipped] = useState<CosmeticsEquipped>({});
+    const [copyColor, setCopyColor] = useState<string>(STARTER_COLORS[0] ?? "#94a3b8");
+    const copyColorRef = useRef<string>(STARTER_COLORS[0] ?? "#94a3b8");
+    const copyCosmeticsKeyRef = useRef("");
     const gltf = useGLTF(CHARACTER_URL);
     const scene = useMemo(() => {
         const idle =
@@ -1120,16 +1132,18 @@ function PracticeDummyAvatar({
                 ? mesh.material.map((m) => m.clone())
                 : mesh.material.clone();
         });
-        tintCharacterSurface(
-            rootScene,
-            boss
-                ? dungeonAuraTint(undefined).body
-                : elite
-                  ? pveEliteTint(undefined)
-                  : DUMMY_COLOR,
-        );
+        if (!copy) {
+            tintCharacterSurface(
+                rootScene,
+                boss
+                    ? dungeonAuraTint(undefined).body
+                    : elite
+                      ? pveEliteTint(undefined)
+                      : DUMMY_COLOR,
+            );
+        }
         return rootScene;
-    }, [gltf.scene, gltf.animations, elite, boss]);
+    }, [gltf.scene, gltf.animations, elite, boss, copy]);
 
     useEffect(() => {
         const controller = new CharacterAnimationController(
@@ -1172,6 +1186,21 @@ function PracticeDummyAvatar({
                   statuses?: Parameters<typeof hasStatusId>[0];
               }
             | undefined;
+        if (copy && room?.sessionId) {
+            const me = room.state?.players?.get(room.sessionId);
+            const color = (me as { color?: string } | undefined)?.color;
+            if (color && color !== copyColorRef.current) {
+                copyColorRef.current = color;
+                setCopyColor(color);
+            }
+            const nextVessel = (me as { vessel?: string } | undefined)?.vessel ?? "female";
+            if (nextVessel !== copyVessel) setCopyVessel(nextVessel);
+            const nextCosmetics = cosmeticsKey(me);
+            if (nextCosmetics !== copyCosmeticsKeyRef.current) {
+                copyCosmeticsKeyRef.current = nextCosmetics;
+                setCopyEquipped(equippedFromPlayer(me));
+            }
+        }
         if (boss && t?.aura && tintedFor.current !== `aura:${t.aura}`) {
             tintedFor.current = `aura:${t.aura}`;
             tintCharacterSurface(scene, dungeonAuraTint(t.aura).body);
@@ -1284,7 +1313,7 @@ function PracticeDummyAvatar({
             <group ref={body}>
                 <OcclusionSilhouette
                     rootRef={body}
-                    color={AIM_RELATION_COLORS.enemy}
+                    color={copy ? AIM_RELATION_COLORS.self : AIM_RELATION_COLORS.enemy}
                     chestHeight={boss ? 2.05 : elite ? 1.55 : 1.15}
                     getEnabled={() => {
                         const t = room?.state?.targets?.get(targetId) as { hp?: number } | undefined;
@@ -1292,9 +1321,24 @@ function PracticeDummyAvatar({
                     }}
                 />
                 <primitive object={scene} />
+                {copy ? (
+                    <>
+                        <VesselBody
+                            characterRoot={scene}
+                            body={copyVessel}
+                            color={copyColor}
+                        />
+                        <EquippedCosmetics
+                            characterRoot={scene}
+                            equipped={copyEquipped}
+                            body={copyVessel}
+                        />
+                    </>
+                ) : null}
                 <SpiritVesselFx
                     characterRoot={scene}
                     getColor={() => {
+                        if (copy) return copyColorRef.current;
                         if (boss) {
                             const aura = (
                                 room?.state?.targets?.get(targetId) as { aura?: string } | undefined

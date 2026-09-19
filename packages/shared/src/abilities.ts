@@ -1677,7 +1677,7 @@ function poisonDartRecoveryWallMs(): number {
 }
 
 /**
- * Void Disc (LMB) — side-arm throw; disc flies out and back on the same line.
+ * Void Disc (LMB) — side-arm throw; disc flies to max range then homes back to you.
  * Anim: Right Hook (same clip as Poison Dart / Silence Sweep).
  */
 export const VOID_DISC_CAST = {
@@ -1690,9 +1690,9 @@ export const VOID_DISC_CAST = {
   radius: 0.55,
   maxActivePerCaster: 1,
   maxLifetimeMs: 2800,
-  /** Unused — the apex is an instant reverse, not a U-turn. */
+  /** Unused — return homes to the caster instead of a U-turn. */
   turnDelayMs: 0,
-  /** Straight outbound; return locks the reverse heading. */
+  /** Straight outbound; return steers toward the caster. */
   steerRadPerSec: 0,
   returnCatchRadius: 0.6,
   fps: POISON_DART_CAST.fps,
@@ -2642,14 +2642,14 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
   },
   /**
-   * Void Disc (LMB) — outbound pierce, reverse on the same line, return hit.
+   * Void Disc (LMB) — outbound pierce, then home back to the caster.
    * Anim: Right Hook (Poison Dart clip).
    */
   voidDisc: {
     id: "voidDisc",
     name: "Void Disc",
     description:
-      "Throw a disc of void energy that damages enemies on the way out, then flies straight back on the same line and can hit them again.",
+      "Throw a disc of void energy that damages enemies on the way out, then flies back to you and can hit them again.",
     allowedSlots: ["m1"],
     defaultSlot: "m1",
     unlockCostEssence: VOID_DISC_CAST.unlockCostEssence,

@@ -14,83 +14,38 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
 import type * as THREE from "three";
+import {
+  SPIKE_MS,
+  getExtraLine,
+  getPerfLatest,
+  isOverlayOn,
+  samplingActive,
+  setLatestSample,
+  setOverlayEnabled,
+  subscribePerfData,
+  subscribePerfToggle,
+} from "./perfHudRuntime";
 
 const WINDOW = 180;
-/** A frame slower than this reads as a hitch rather than a slow frame. */
-const SPIKE_MS = 33;
 /**
  * Frames longer than this are the tab being backgrounded, not the game being
  * slow. Counting them would let one alt-tab poison the peak for the session.
  */
 const THROTTLE_MS = 500;
 
-type Sample = {
-  fps: number;
-  avgMs: number;
-  p95Ms: number;
-  worstMs: number;
-  spikes: number;
-  calls: number;
-  triangles: number;
-  programs: number;
-  geometries: number;
-  textures: number;
-  /** Worst frame seen since the HUD was opened, with its draw call count. */
-  peakMs: number;
-  peakCalls: number;
-  /** Shader programs linked since the HUD was opened -- the hitch smoking gun. */
-  newPrograms: number;
-};
-
-const EMPTY: Sample = {
-  fps: 0, avgMs: 0, p95Ms: 0, worstMs: 0, spikes: 0,
-  calls: 0, triangles: 0, programs: 0, geometries: 0, textures: 0,
-  peakMs: 0, peakCalls: 0, newPrograms: 0,
-};
-
-/*
- * Samples live outside React on purpose. Re-rendering the overlay every frame
- * would make the profiler a meaningful part of what it is measuring; the DOM
- * side polls this a few times a second instead.
- */
-let latest: Sample = EMPTY;
-let enabled = false;
-
-/*
- * Two channels, because they fire at wildly different rates. Data lands ~5x a
- * second and only the overlay cares; toggling is rare but has to reconfigure
- * the renderer, so the probe has to see it.
- */
-const dataListeners = new Set<() => void>();
-const toggleListeners = new Set<() => void>();
-
-function setEnabled(next: boolean) {
-  enabled = next;
-  if (!next) latest = EMPTY;
-  for (const l of toggleListeners) l();
-  for (const l of dataListeners) l();
-}
-
 /** Subscribe to the on/off flag. Kept off the data channel to avoid 5 Hz churn. */
 function useEnabled(): boolean {
-  const [on, setOn] = useState(enabled);
-  useEffect(() => {
-    const l = () => setOn(enabled);
-    toggleListeners.add(l);
-    return () => void toggleListeners.delete(l);
-  }, []);
+  const [on, setOn] = useState(isOverlayOn);
+  useEffect(() => subscribePerfToggle(() => setOn(isOverlayOn())), []);
   return on;
 }
 
-/**
- * Per-frame sampler. Must live inside the Canvas.
- *
- * Reads `gl.info` before the frame is drawn, which means the numbers describe
- * the *previous* frame -- correct totals across every post-processing pass,
- * one frame stale. Taking manual control of the counter reset is what makes
- * that work: left on auto, the composer's passes each clobber the count and
- * you only ever see the last one.
- */
+function useSampling(): boolean {
+  const [on, setOn] = useState(samplingActive);
+  useEffect(() => subscribePerfToggle(() => setOn(samplingActive())), []);
+  return on;
+}
+
 /**
  * Find which material in the scene a freshly linked program belongs to.
  *
@@ -126,10 +81,11 @@ function describeProgram(
   return found;
 }
 
+/** Per-frame sampler. Must live inside the Canvas. */
 export function PerfProbe() {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
-  const on = useEnabled();
+  const on = useSampling();
   const frames = useRef<number[]>([]);
   const peak = useRef({ ms: 0, calls: 0 });
   const acc = useRef(0);
@@ -165,7 +121,7 @@ export function PerfProbe() {
   }, [gl, on]);
 
   useFrame((_, delta) => {
-    if (!enabled) return;
+    if (!samplingActive()) return;
 
     const ms = delta * 1000;
     const { render, memory, programs } = gl.info;
@@ -206,7 +162,7 @@ export function PerfProbe() {
     const sorted = [...buf].sort((a, b) => a - b);
     const sum = buf.reduce((t, v) => t + v, 0);
 
-    latest = {
+    setLatestSample({
       fps: buf.length / (sum / 1000),
       avgMs: sum / buf.length,
       p95Ms: sorted[Math.floor(sorted.length * 0.95)] ?? 0,
@@ -220,8 +176,7 @@ export function PerfProbe() {
       peakMs: peak.current.ms,
       peakCalls: peak.current.calls,
       newPrograms: newPrograms.current,
-    };
-    for (const l of dataListeners) l();
+    });
   });
 
   return null;
@@ -243,17 +198,13 @@ export function PerfOverlay() {
   const [, bump] = useState(0);
   const on = useEnabled();
 
-  useEffect(() => {
-    const rerender = () => bump((n) => n + 1);
-    dataListeners.add(rerender);
-    return () => void dataListeners.delete(rerender);
-  }, []);
+  useEffect(() => subscribePerfData(() => bump((n) => n + 1)), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "F9") return;
       e.preventDefault();
-      setEnabled(!enabled);
+      setOverlayEnabled(!isOverlayOn());
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -261,7 +212,8 @@ export function PerfOverlay() {
 
   if (!on) return null;
 
-  const s = latest;
+  const s = getPerfLatest();
+  const extraLine = getExtraLine();
   return (
     <div
       style={{
@@ -296,6 +248,12 @@ export function PerfOverlay() {
       <div style={{ height: 5 }} />
       <Row label="peak frame" value={`${s.peakMs.toFixed(0)} ms`} warn={s.peakMs > 60} />
       <Row label="peak @ calls" value={String(s.peakCalls)} />
+      {extraLine ? (
+        <>
+          <div style={{ height: 5 }} />
+          <Row label={extraLine.label} value={extraLine.value} warn={extraLine.warn} />
+        </>
+      ) : null}
     </div>
   );
 }

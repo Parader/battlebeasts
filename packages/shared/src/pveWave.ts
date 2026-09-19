@@ -76,15 +76,63 @@ export const PVE_WAVE_INTERVAL_MS = 16000;
 export const PVE_WAVE_SPAWN_STAGGER_MS = 650;
 
 /**
- * How far from the party an infinite-wave mob appears.
+ * How far from hunters an infinite-wave mob appears.
  *
- * Authored pads give *direction* (come from that side of the map). The actual
- * spawn sits on that ray, close enough that hunters can see and react.
+ * Distance is enforced against *every* living hunter, not the party centroid,
+ * so a runner on the front edge is not spawned on top of.
  */
-export const PVE_ENEMY_APPROACH_MIN_M = 18;
-export const PVE_ENEMY_APPROACH_MAX_M = 24;
+export const PVE_ENEMY_APPROACH_MIN_M = 24;
+export const PVE_ENEMY_APPROACH_MAX_M = 32;
+/** Min distance from any living hunter at the moment the mob appears. */
+export const PVE_ENEMY_PLAYER_CLEAR_M = 22;
 /** Pads closer than this are the holdout itself and are not ingress. */
-export const PVE_ENEMY_INGRESS_MIN_M = 14;
+export const PVE_ENEMY_INGRESS_MIN_M = 18;
+/** Party speed (m/s) above this counts as a kite — spawn ahead of that heading. */
+export const PVE_PARTY_RUN_SPEED_M = 1.35;
+
+/** Recycle if the nearest hunter is this far — they'd never close the gap. */
+export const PVE_MOB_WARP_FROM_M = 44;
+/** Recycle if the mob moved less than this while trying to close for this long. */
+export const PVE_MOB_STUCK_MOVE_M = 1.15;
+export const PVE_MOB_STUCK_MS = 5000;
+/** Land recycled mobs behind the kite, still off-screen. */
+export const PVE_MOB_WARP_APPROACH_MIN_M = 28;
+export const PVE_MOB_WARP_APPROACH_MAX_M = 36;
+export const PVE_MOB_WARP_COOLDOWN_MS = 8000;
+
+/** Boss wave cadence (waves 5, 10, 15, …). */
+export const PVE_WAVE_BOSS_EVERY = 5;
+export const PVE_WAVE_BOSS_HP_BASE = 2800;
+export const PVE_WAVE_BOSS_SCALE = 2;
+export const PVE_WAVE_BOSS_SPEED_MUL = 0.7;
+
+export function pveWaveIsBossWave(waveIndex: number): boolean {
+  return waveIndex >= PVE_WAVE_BOSS_EVERY && waveIndex % PVE_WAVE_BOSS_EVERY === 0;
+}
+
+export function pveWaveBossHp(waveIndex: number, partySize = 1): number {
+  const cycles = Math.max(0, Math.floor(waveIndex / PVE_WAVE_BOSS_EVERY) - 1);
+  return Math.round(PVE_WAVE_BOSS_HP_BASE * pvePartyHpMul(partySize) * (1 + cycles * 0.18));
+}
+
+/** Heading to cut off a kiting party: their run dir, else away from the current pack. */
+export function pveChaseInterceptDir(
+  run: { x: number; z: number },
+  origin: { x: number; z: number },
+  pack: { x: number; z: number } | null,
+): { x: number; z: number } {
+  const runLen = Math.hypot(run.x, run.z);
+  if (runLen >= PVE_PARTY_RUN_SPEED_M) {
+    return { x: run.x / runLen, z: run.z / runLen };
+  }
+  if (pack) {
+    const dx = origin.x - pack.x;
+    const dz = origin.z - pack.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 2) return { x: dx / d, z: dz / d };
+  }
+  return { x: 0, z: 1 };
+}
 
 /** Occupancy cell size for PvE pathing around map props. */
 export const PVE_MOB_NAV_CELL_M = 1;

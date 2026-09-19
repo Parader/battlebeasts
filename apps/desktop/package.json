@@ -1,8 +1,10 @@
 {
   "name": "@battlebeasts/desktop",
-  "version": "0.0.6",
+  "version": "0.0.13",
   "private": true,
-  "description": "Mage Trials desktop launcher (Electron) — game files download on first run",
+  "author": "Mage Trials",
+  "description": "Mage Trials desktop launcher",
+  "copyright": "Copyright © Mage Trials",
   "main": "main.cjs",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
@@ -19,6 +21,7 @@
   "build": {
     "appId": "com.battlebeasts.desktop",
     "productName": "Mage Trials",
+    "copyright": "Copyright © Mage Trials",
     "directories": {
       "output": "release-v5"
     },
@@ -26,18 +29,33 @@
       "main.cjs",
       "preload.cjs",
       "updater.cjs",
-      "launcher/**/*"
+      "launcher/**/*",
+      "build/icon.png"
     ],
     "asar": false,
+    "icon": "build/icon.png",
     "win": {
+      "requestedExecutionLevel": "asInvoker",
       "target": [
         {
-          "target": "portable",
+          "target": "nsis",
           "arch": ["x64"]
         }
       ]
     },
-    "portable": {
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "packElevateHelper": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mage Trials",
+      "uninstallDisplayName": "Mage Trials",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "differentialPackage": false,
       "artifactName": "MageTrials-Launcher-${version}.exe"
     },
     "protocols": {

@@ -815,7 +815,7 @@ export class ContentRoom extends ServicedRoom {
     }
     this.fillFighterHp();
     this.waveDirector.start(Date.now());
-    this.pveOrbNextAt = Date.now() + nextPveOrbDelay();
+    this.pveOrbNextAt = Date.now() + nextPveOrbRetry();
   }
 
   private armDungeonStart() {
@@ -1159,7 +1159,7 @@ export class ContentRoom extends ServicedRoom {
     this.pveDraft = null;
     for (const c of this.clients) this.sendPveUpgrades(c);
     if (isWaveAssaultMode(this.mode)) {
-      this.pveOrbNextAt = Date.now() + nextPveOrbDelay();
+      this.pveOrbNextAt = Date.now() + nextPveOrbRetry();
     }
     this.state.players.forEach((p, sessionId) => {
       this.applyCombatKit(sessionId, p);
@@ -1339,7 +1339,8 @@ export class ContentRoom extends ServicedRoom {
       return;
     }
     this.combat.spawnRuntimePickup(rollPveOrbSpec(), pos.x, pos.z, 0.45, PVE_ORB_RADIUS);
-    this.pveOrbNextAt = now + nextPveOrbDelay();
+    const remaining = PVE_ORB_COUNT - this.combat.countAvailableRuntimePickups();
+    this.pveOrbNextAt = now + (remaining > 0 ? nextPveOrbRetry() : nextPveOrbDelay());
   }
 
   private samplePveOrbPos(): { x: number; z: number } | null {

@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Navigate, useSearchParams } from "react-router";
 import { GameCanvas } from "@/game/GameCanvas";
 import { ThirdPersonLookOverlay } from "@/game/ui/ThirdPersonLookOverlay";
 import { useBaseCityRoom } from "@/game/useBaseCityRoom";
@@ -8,6 +8,7 @@ import { useVfxGpuReady } from "@/game/useVfxGpuReady";
 import { usePropShaderReady } from "@/game/usePropShaderReady";
 import { clearVfxGpuReady, markVfxGpuReady } from "@/game/vfx/vfxGpuReady";
 import { markPropShaderReady, resetPropShaderReady } from "@/game/propShaderReady";
+import { resetCharacterOpacityWarm } from "@/game/characterVisual";
 import { useGameMusic } from "@/game/useGameMusic";
 import { useGameAmbiance } from "@/game/useGameAmbiance";
 import { EnergyPips } from "@/ui/EnergyPips";
@@ -17,6 +18,7 @@ import { PortalPanel } from "@/game/ui/PortalPanel";
 import { FriendsPanel } from "@/game/ui/FriendsPanel";
 import { QuestsPanel } from "@/game/ui/QuestsPanel";
 import { AdminPanel } from "@/game/ui/AdminPanel";
+import { SpellLabPanel } from "@/game/ui/SpellLabPanel";
 import { VesselSetupPanel } from "@/game/ui/VesselSetupPanel";
 import { RankPanel } from "@/game/ui/RankPanel";
 import { ChestRevealPanel } from "@/game/ui/ChestRevealPanel";
@@ -165,6 +167,7 @@ export const PlayScreen = () => {
     const [friendsOpen, setFriendsOpen] = useState(false);
     const [questsOpen, setQuestsOpen] = useState(false);
     const [adminOpen, setAdminOpen] = useState(false);
+    const [spellLabOpen, setSpellLabOpen] = useState(false);
     const [rankOpen, setRankOpen] = useState(false);
     const [chestLocksInput, setChestLocksInput] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -234,6 +237,10 @@ export const PlayScreen = () => {
         refreshHubQuests,
         openHubChest,
         spawnHubChest,
+        labSpawn,
+        labClear,
+        labGrantAll,
+        labEquip,
         clearChestReveal,
         acknowledgeQuestAlerts,
         notifyFriendCodeRedeemed,
@@ -300,6 +307,10 @@ export const PlayScreen = () => {
         },
     });
 
+    const [searchParams] = useSearchParams();
+    const labMode = searchParams.get("lab") === "1";
+    const labBootstrapped = useRef(false);
+
     const inContent = phase === "content";
     const isAdmin = isHubAdmin || clientIsAdmin;
     const hubGroupSessionIds = useMemo(() => {
@@ -326,10 +337,18 @@ export const PlayScreen = () => {
     useEffect(() => {
         clearVfxGpuReady();
         resetPropShaderReady();
+        resetCharacterOpacityWarm();
     }, [inContent]);
 
     const roomReady = status === "connected" || status === "error";
     const playReady = assetsReady && roomReady && vfxGpuReady && propShaderReady;
+    useEffect(() => {
+        if (!labMode || !playReady || !room || !isAdmin || labBootstrapped.current) return;
+        labBootstrapped.current = true;
+        setSpellLabOpen(true);
+        labGrantAll();
+        setAdminNoCooldownEnabled(true);
+    }, [labMode, playReady, room, isAdmin, labGrantAll, setAdminNoCooldownEnabled]);
     useLayoutEffect(() => {
         setLoadingGate(!playReady);
     }, [playReady]);
@@ -339,7 +358,7 @@ export const PlayScreen = () => {
         const id = window.setTimeout(() => {
             markVfxGpuReady();
             markPropShaderReady();
-        }, 10000);
+        }, 16000);
         return () => window.clearTimeout(id);
     }, [playReady, assetsReady, inContent]);
 
@@ -402,6 +421,7 @@ export const PlayScreen = () => {
                 friendsOpen ||
                 questsOpen ||
                 adminOpen ||
+                spellLabOpen ||
                 rankOpen ||
                 helpOpen ||
                 menuOpen ||
@@ -415,6 +435,7 @@ export const PlayScreen = () => {
                 needsVesselSetup;
             if (overlayOpen) {
                 if (helpOpen) setHelpOpen(false);
+                if (spellLabOpen) setSpellLabOpen(false);
                 return;
             }
             e.preventDefault();
@@ -432,6 +453,7 @@ export const PlayScreen = () => {
         friendsOpen,
         questsOpen,
         adminOpen,
+        spellLabOpen,
         rankOpen,
         helpOpen,
         menuOpen,
@@ -833,6 +855,14 @@ export const PlayScreen = () => {
                                 }
                             />
                         )}
+                        {isAdmin && (
+                            <HudIconButton
+                                label="Spell lab"
+                                icon="fire-spell-cast"
+                                active={spellLabOpen}
+                                onClick={() => setSpellLabOpen(true)}
+                            />
+                        )}
                         {isAdmin && !inContent && (
                             <HudIconButton
                                 label="Admin"
@@ -1192,6 +1222,20 @@ export const PlayScreen = () => {
                     chests={hubChests}
                     onOpenChest={openHubChest}
                     pendingChestOpenId={pendingChestOpenId}
+                />
+            )}
+
+            {playReady && isAdmin && (
+                <SpellLabPanel
+                    open={spellLabOpen}
+                    onClose={() => setSpellLabOpen(false)}
+                    loadout={economy.loadout}
+                    adminNoCooldown={adminNoCooldown}
+                    onToggleNoCooldown={setAdminNoCooldownEnabled}
+                    onGrantAll={labGrantAll}
+                    onEquip={labEquip}
+                    onSpawn={labSpawn}
+                    onClear={labClear}
                 />
             )}
 

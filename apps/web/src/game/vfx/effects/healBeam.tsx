@@ -1,7 +1,7 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { coneRayMaxLength, isPveWaveMobKind } from "@battlebeasts/shared";
+import { coneRayMaxLength, isPveInstanceMobKind } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope, smooth01 } from "../easing";
@@ -59,7 +59,7 @@ function collectOccludeBodies(
     | undefined;
   targets?.forEach((t, id) => {
     if (excludeId && id === excludeId) return;
-    if (isPveWaveMobKind(t.kind)) return;
+    if (isPveInstanceMobKind(t.kind)) return;
     out.push({ id, x: t.x ?? 0, z: t.z ?? 0, hp: t.hp });
   });
   return out;

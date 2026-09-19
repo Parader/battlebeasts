@@ -1,7 +1,7 @@
-const titleEl = document.getElementById("title");
 const statusEl = document.getElementById("status");
 const playEl = document.getElementById("play");
 const retryEl = document.getElementById("retry");
+const quitEl = document.getElementById("quit");
 const notesEl = document.getElementById("notes");
 const progressWrap = document.getElementById("progressWrap");
 const progressBar = document.getElementById("progressBar");
@@ -62,7 +62,6 @@ function renderEntry(entry, open) {
 
 function renderNotes(payload) {
   if (!payload) return;
-  if (payload.title) titleEl.textContent = payload.title;
   const history =
     Array.isArray(payload.history) && payload.history.length > 0
       ? payload.history
@@ -113,7 +112,7 @@ if (api) {
     if (payload && payload.restartLauncher) {
       playEl.disabled = true;
       retryEl.classList.add("hidden");
-      setStatus("Restarting launcher… wait for it to reopen — don’t double-click.", false);
+      setStatus("Installing update… the launcher will reopen on its own.", false);
       return;
     }
     const canPlay = Boolean(payload && payload.canPlay);
@@ -136,6 +135,10 @@ if (api) {
     retryEl.classList.add("hidden");
     setStatus("Checking for updates…", false);
     void api.retry();
+  });
+
+  quitEl?.addEventListener("click", () => {
+    void window.battlebeasts?.quit?.();
   });
 } else {
   setStatus("Launcher API missing.", true);

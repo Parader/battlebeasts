@@ -1,5 +1,5 @@
 import { useFrame } from "@react-three/fiber";
-import { Room } from "colyseus.js";
+import type { VfxRoomLike } from "../vfxRoomLike";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { ABILITIES, channelChargeDistance, COLLISION, sampleTravel, sweepTravel } from "@battlebeasts/shared";
@@ -34,7 +34,7 @@ export function PortalLandingTelegraph({
   getPos,
   getYaw,
 }: {
-  room: Room;
+  room: VfxRoomLike;
   sessionId: string;
   /** Predicted local feet when available. */
   getPos: () => { x: number; z: number };
@@ -97,7 +97,7 @@ export function PortalChannelAura({
   room,
   sessionId,
 }: {
-  room: Room;
+  room: VfxRoomLike;
   sessionId: string;
 }) {
   const root = useRef<THREE.Group>(null);

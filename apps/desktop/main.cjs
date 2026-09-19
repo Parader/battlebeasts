@@ -415,15 +415,19 @@ if (!gotLock) {
     return true;
   });
 
-  function gameWindowOptions(gameServerUrl) {
+  const ICON_PATH = path.join(__dirname, "build", "icon.png");
+  const WINDOW_ICON = fs.existsSync(ICON_PATH) ? ICON_PATH : undefined;
+
+function gameWindowOptions(gameServerUrl) {
     return {
       width: 1280,
       height: 800,
       minWidth: 960,
       minHeight: 600,
       title: "Mage Trials",
-      backgroundColor: "#000000",
+      backgroundColor: "#050814",
       autoHideMenuBar: true,
+      icon: WINDOW_ICON,
       webPreferences: {
         preload: path.join(__dirname, "preload.cjs"),
         contextIsolation: true,
@@ -443,13 +447,14 @@ if (!gotLock) {
       return launcherWin;
     }
     launcherWin = new BrowserWindow({
-      width: 1100,
-      height: 720,
-      minWidth: 800,
-      minHeight: 520,
+      width: 1280,
+      height: 860,
+      minWidth: 900,
+      minHeight: 600,
       title: "Mage Trials",
-      backgroundColor: "#242424",
+      backgroundColor: "#050814",
       autoHideMenuBar: true,
+      icon: WINDOW_ICON,
       webPreferences: {
         preload: path.join(__dirname, "preload.cjs"),
         contextIsolation: true,
@@ -561,7 +566,7 @@ if (!gotLock) {
           stopUpdatePoll();
           sendToLauncher("updater:status", {
             phase: "updating",
-            message: "Restarting launcher… wait for it to reopen — don’t double-click.",
+            message: "Installing launcher update… it will reopen on its own.",
           });
           sendToLauncher("updater:ready", {
             canPlay: false,
@@ -609,6 +614,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    app.setAppUserModelId("com.battlebeasts.desktop");
     registerProtocolClient();
     if (isDev) {
       void createGameWindow(path.join(__dirname, "renderer"), resolveGameServerUrl());

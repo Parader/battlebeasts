@@ -289,10 +289,6 @@ export class BaseCityRoom extends ServicedRoom {
       void this.handleHubSoftResetCharacter(client);
     });
 
-    this.onMessage("hub_admin_no_cooldown", (client, message: { enabled?: boolean }) => {
-      this.handleHubAdminNoCooldown(client, message?.enabled);
-    });
-
     this.onMessage("hub_admin_tp_map", (client, message: { mapId?: string }) => {
       void this.handleHubAdminTpMap(client, message?.mapId);
     });
@@ -843,20 +839,6 @@ export class BaseCityRoom extends ServicedRoom {
     await setIntroCompleted(identity.userId, false);
     client.send("hub_intro_status", { completed: false, replay: true });
     client.send("toast", { message: "Intro ready to replay" });
-  }
-
-  private handleHubAdminNoCooldown(client: Client, enabledRaw: boolean | undefined) {
-    const identity = this.identities.get(client.sessionId);
-    if (!identity || identity.isGuest || !isAdminEmail(identity.email)) {
-      client.send("toast", { message: "Not authorized" });
-      return;
-    }
-    const enabled = Boolean(enabledRaw);
-    const active = this.combat.setNoCooldowns(client.sessionId, enabled);
-    client.send("hub_admin_no_cooldown", { enabled: active });
-    client.send("toast", {
-      message: active ? "Cooldowns disabled" : "Cooldowns restored",
-    });
   }
 
   /**

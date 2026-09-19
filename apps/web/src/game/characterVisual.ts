@@ -93,7 +93,8 @@ export function prepareCharacterScene(
       if ("side" in std) std.side = THREE.FrontSide;
       if ("envMapIntensity" in std) std.envMapIntensity = 1;
       if ("opacity" in std) {
-        std.transparent = false;
+        // Stay on the transparent program so cloak / slam fade never relinks.
+        std.transparent = true;
         std.opacity = 1;
         std.depthWrite = true;
       }
@@ -687,6 +688,24 @@ export function tintCharacterSurface(
   });
 }
 
+function isCharacterOpacityMesh(mesh: THREE.Mesh): boolean {
+  const name = mesh.name.toLowerCase();
+  const isHeroOutfit = mesh.name.startsWith("SM_Chr_");
+  const isMixamoSurface = name.includes("surface");
+  let isGear = isCosmeticMeshOrDescendant(mesh);
+  if (!isGear) {
+    let cur: THREE.Object3D | null = mesh;
+    while (cur) {
+      if (cur.userData.bbBoneSkin || cur.userData.bbVesselBody) {
+        isGear = true;
+        break;
+      }
+      cur = cur.parent;
+    }
+  }
+  return isHeroOutfit || isMixamoSurface || isGear;
+}
+
 /** Ghost opacity for self-cloaked; 1 = solid. Body surface + equipped gear. */
 export function setCharacterOpacity(scene: THREE.Object3D, opacity: number): void {
   const o = Math.max(0, Math.min(1, opacity));
@@ -694,34 +713,22 @@ export function setCharacterOpacity(scene: THREE.Object3D, opacity: number): voi
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material) return;
     // Include hidden gear so equipping mid-cloak still ghosts correctly when shown.
-    const name = mesh.name.toLowerCase();
-    const isHeroOutfit = mesh.name.startsWith("SM_Chr_");
-    const isMixamoSurface = name.includes("surface");
-    let isGear = isCosmeticMeshOrDescendant(mesh);
-    if (!isGear) {
-      let cur: THREE.Object3D | null = mesh;
-      while (cur) {
-        if (cur.userData.bbBoneSkin || cur.userData.bbVesselBody) {
-          isGear = true;
-          break;
-        }
-        cur = cur.parent;
-      }
-    }
-    if (!isHeroOutfit && !isMixamoSurface && !isGear) return;
+    if (!isCharacterOpacityMesh(mesh)) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
       const std = m as THREE.MeshStandardMaterial;
       if (!("opacity" in std)) continue;
-      const transparent = o < 0.999;
       const depthWrite = o >= 0.999;
-      if (std.transparent === transparent && std.opacity === o && std.depthWrite === depthWrite) {
+      const variantChanged = std.transparent !== true;
+      if (!variantChanged && std.opacity === o && std.depthWrite === depthWrite) {
         continue;
       }
-      std.transparent = transparent;
+      std.transparent = true;
       std.opacity = o;
       std.depthWrite = depthWrite;
-      std.needsUpdate = true;
+      // Opacity / depthWrite are GPU state. needsUpdate recompiles the program
+      // and was hitching every Teleport Slam / cloak fade frame.
+      if (variantChanged) std.needsUpdate = true;
     }
   });
 }
@@ -729,6 +736,28 @@ export function setCharacterOpacity(scene: THREE.Object3D, opacity: number): voi
 const warmedOpacityLoadouts = new Set<string>();
 const OPACITY_WARM_DUMMY = "OpacityWarmDummy";
 let opacityWarmQueue: Promise<void> = Promise.resolve();
+
+export function resetCharacterOpacityWarm(): void {
+  warmedOpacityLoadouts.clear();
+}
+
+function characterUsesFadeProgram(root: THREE.Object3D): boolean {
+  let found = false;
+  let allFade = true;
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    if (!isCharacterOpacityMesh(mesh)) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const std = m as THREE.MeshStandardMaterial;
+      if (!("opacity" in std)) continue;
+      found = true;
+      if (std.transparent !== true) allFade = false;
+    }
+  });
+  return found && allFade;
+}
 
 function cloneOpacityWarmDummy(source: THREE.Object3D): THREE.Object3D {
   const dummy = cloneSkinned(source) as THREE.Object3D;
@@ -747,24 +776,9 @@ function cloneOpacityWarmDummy(source: THREE.Object3D): THREE.Object3D {
 }
 
 /**
- * Compile the ghosted variant of the character's materials up front.
- *
- * `setCharacterOpacity` flips `transparent`, which three folds into the
- * program cache key (the `opaque` bit). So the first decoy, cloak, teleport
- * slam fade or spirit husk of a session relinks every hero and gear material
- * on the spot -- a visible spike.
- *
- * Never mutate the live avatar: compileAsync yields, overlapping loadout
- * warms (avatar + bone skins) used to snapshot each other at 0.32 and
- * restore players as permanent ghosts. A hidden clone carries the variants.
- *
- * `gl.compile` only queues programs; the GPU often finishes on first draw.
- * We compileAsync (Bloom linear + canvas) then actually render into a 1x1
- * probe so Teleport Slam's first vanish is a cache hit.
- *
- * Call this whenever a new loadout enters the scene: the local avatar, an
- * equipment change, or a remote player appearing. Repeats for a key already
- * seen are skipped.
+ * The live hero/gear already use the transparent fade program (cloak / slam
+ * only change opacity). Skip a full-scene recompile when that is true — that
+ * compile after the loading gate was itself a hitch.
  */
 export async function warmCharacterOpacityVariants(
   gl: THREE.WebGLRenderer,
@@ -774,6 +788,12 @@ export async function warmCharacterOpacityVariants(
   loadoutKey = "default",
 ): Promise<void> {
   if (warmedOpacityLoadouts.has(loadoutKey)) return;
+  // Live hero/gear already sit on the fade program — a full-scene compile
+  // here after the loading gate is the hitch this warmup was meant to avoid.
+  if (characterUsesFadeProgram(characterRoot)) {
+    warmedOpacityLoadouts.add(loadoutKey);
+    return;
+  }
   warmedOpacityLoadouts.add(loadoutKey);
 
   const dummy = cloneOpacityWarmDummy(characterRoot);

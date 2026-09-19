@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "id": "new_map",
+  "name": "New Map",
+  "ground": {
+    "kind": "painted",
+    "sizeX": 80,
+    "sizeZ": 80,
+    "resX": 256,
+    "resZ": 256,
+    "layers": [
+      "grass",
+      "dirt",
+      "rock",
+      "sand"
+    ],
+    "heightScale": 0,
+    "splatUrl": "assets/maps/new_map.splat.png"
+  },
+  "env": {},
+  "props": [],
+  "walls": [],
+  "elements": [],
+  "active": false
+}

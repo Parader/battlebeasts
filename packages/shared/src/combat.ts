@@ -1567,7 +1567,7 @@ export function tickProjectiles(
   return { removedIds: [...new Set(removedIds)], hits, slows, explodes, wallHits };
 }
 
-/** Advance returning projectiles (outbound pierce → reverse on the same line). */
+/** Advance returning projectiles (outbound pierce to marked range → home to caster). */
 export function tickReturningProjectiles(
   projectiles: ProjectileSim[],
   dt: number,
@@ -1584,19 +1584,13 @@ export function tickReturningProjectiles(
   const bodyById = new Map<string, CombatBody>();
   for (const b of bodies) bodyById.set(b.id, b);
 
-  const lockReturnHeading = (p: ProjectileSim, reverse: boolean) => {
+  const beginReturnToCaster = (p: ProjectileSim, owner: CombatBody, speed: number) => {
     p.returnPhase = "returning";
     p.mode = "returning";
     p.turnDelayRemaining = 0;
-    p.returnTraveled = p.returnTraveled ?? 0;
-    const spd = p.projectileSpeed ?? 15;
-    const len = Math.hypot(p.vx, p.vz);
-    if (len > 0.01) {
-      const nx = p.vx / len;
-      const nz = p.vz / len;
-      p.vx = (reverse ? -nx : nx) * spd;
-      p.vz = (reverse ? -nz : nz) * spd;
-    }
+    const dir = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
+    p.vx = dir.x * speed;
+    p.vz = dir.z * speed;
   };
 
   for (const p of projectiles) {
@@ -1617,8 +1611,7 @@ export function tickReturningProjectiles(
     const speed = p.projectileSpeed ?? 15;
 
     if (p.returnPhase === "turning") {
-      // Older shots still in the hooked U-turn: snap onto the reverse heading.
-      lockReturnHeading(p, true);
+      beginReturnToCaster(p, owner, speed);
     }
 
     const fromX = p.x;
@@ -1676,7 +1669,7 @@ export function tickReturningProjectiles(
             blockBubbleId: hitBubble.id,
           });
         }
-        lockReturnHeading(p, true);
+        beginReturnToCaster(p, owner, speed);
         continue;
       }
 
@@ -1691,7 +1684,7 @@ export function tickReturningProjectiles(
           }
           p.outboundTraveled = outboundCap;
         }
-        lockReturnHeading(p, true);
+        beginReturnToCaster(p, owner, speed);
       }
 
       for (const body of bodies) {
@@ -1718,18 +1711,19 @@ export function tickReturningProjectiles(
       continue;
     }
 
-    // --- Returning leg: hold the locked heading so the path is the outbound line. ---
+    // --- Returning leg: always steer toward the caster. ---
+    const home = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
+    p.vx = home.x * speed;
+    p.vz = home.z * speed;
     applyProjectileZoneSpeed(p);
     p.x += p.vx * dt;
     p.z += p.vz * dt;
-    p.returnTraveled = (p.returnTraveled ?? 0) + Math.hypot(p.x - fromX, p.z - fromZ);
 
     // Catch vs caster center only — do not add player hit radius (spawn sits
     // inside that inflated disc and would despawn on a near-spawn turnaround).
     const catchR = p.returnCatchRadius ?? 0.6;
     const toOwner = Math.hypot(p.x - owner.x, p.z - owner.z);
-    const backAlongThrow = (p.outboundTraveled ?? 0) + 1.2;
-    if (toOwner <= catchR || (p.returnTraveled ?? 0) >= backAlongThrow) {
+    if (toOwner <= catchR) {
       removedIds.push(p.id);
       continue;
     }

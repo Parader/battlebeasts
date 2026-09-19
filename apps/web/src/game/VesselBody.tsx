@@ -52,6 +52,14 @@ export function VesselBody({ characterRoot, body, color }: Props) {
           : mesh.material.clone();
         if (!Array.isArray(cloned)) owned.push(cloned);
         mesh.material = cloned;
+        const mats = Array.isArray(cloned) ? cloned : [cloned];
+        for (const m of mats) {
+          const std = m as THREE.MeshStandardMaterial;
+          if (!("opacity" in std)) continue;
+          std.transparent = true;
+          std.opacity = 1;
+          std.depthWrite = true;
+        }
       }
       const lower = mesh.name.toLowerCase();
       if (lower.includes("joint")) {

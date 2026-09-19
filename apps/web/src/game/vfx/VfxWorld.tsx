@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { renderOneShot } from "./catalog";
 import { vfxRuntime } from "./runtime";
@@ -8,6 +7,7 @@ import type { OneShotEffect } from "./types";
 import { PortalLandingTelegraph } from "./effects/portalChannel";
 import { CastAimTelegraph } from "./CastAimTelegraph";
 import { disposeVfxHierarchy } from "./vfxDisposal";
+import type { VfxRoomLike } from "./vfxRoomLike";
 
 function VfxOneShotContainer({ children }: { children: ReactNode }) {
   const rootRef = useRef<THREE.Group>(null);
@@ -20,7 +20,7 @@ function VfxOneShotContainer({ children }: { children: ReactNode }) {
 }
 
 type Props = {
-  room: Room | null;
+  room: VfxRoomLike | null;
   localSessionId: string | null;
   predictedRef?: MutableRefObject<{ x: number; z: number; yaw: number }>;
 };

@@ -1,10 +1,10 @@
 import { PICKUP_EFFECTS, type PickupSpec } from "./maps/elements";
 
 /** At most this many runtime Wave Assault orbs on the floor at once. */
-export const PVE_ORB_COUNT = 2;
+export const PVE_ORB_COUNT = 5;
 export const PVE_ORB_CLEARANCE_M = 4;
 export const PVE_ORB_PLAYER_CLEARANCE_M = 8;
-export const PVE_ORB_PEER_CLEARANCE_M = 10;
+export const PVE_ORB_PEER_CLEARANCE_M = 8;
 export const PVE_ORB_RADIUS = 1.25;
 
 /** Delay before the first orb of a run, and between later spawns (ms). */

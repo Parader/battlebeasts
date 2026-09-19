@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
-import { APP_DISPLAY_NAME, APP_TAGLINE } from "@/brand";
+import { APP_TAGLINE } from "@/brand";
+import { isDesktopApp, quitDesktopApp } from "@/lib/desktop";
 import { AuthBackdrop } from "./AuthBackdrop";
 
 type Props = {
@@ -19,17 +20,20 @@ export function AuthShell({
   showBack = false,
   layout = "split",
 }: Props) {
+  const desktop = isDesktopApp();
+
   return (
     <section className={`bb-auth-shell bb-auth-shell--${layout}`}>
       <AuthBackdrop />
 
       <div className="bb-auth-shell__content">
-        <header className="bb-auth-brand">
-          <p className="bb-auth-brand__eyebrow">Online arena</p>
-          <h1 className="bb-auth-brand__title">{APP_DISPLAY_NAME}</h1>
-          <p className="bb-auth-brand__tag">{subtitle}</p>
-          <div className="bb-brass-rule bb-auth-brand__rule" />
-        </header>
+        {layout === "center" ? (
+          <header className="bb-auth-brand">
+            <p className="bb-auth-brand__tag">{subtitle}</p>
+          </header>
+        ) : (
+          <div />
+        )}
 
         {layout === "center" ? (
           <div className="bb-auth-center-body">{children}</div>
@@ -37,11 +41,24 @@ export function AuthShell({
           <div className="bb-auth-panel bb-leather-frame">{children}</div>
         )}
 
-        {showBack && (
-          <Link to="/" className="bb-auth-back">
-            Back
-          </Link>
-        )}
+        <div className="bb-auth-chrome">
+          {showBack ? (
+            <Link to="/" className="bb-auth-back">
+              Back
+            </Link>
+          ) : (
+            <span />
+          )}
+          {desktop ? (
+            <button
+              type="button"
+              className="bb-btn-ink bb-auth-quit"
+              onClick={() => void quitDesktopApp()}
+            >
+              Quit game
+            </button>
+          ) : null}
+        </div>
       </div>
     </section>
   );

@@ -7,6 +7,7 @@
     "dev:web": "pnpm --filter @battlebeasts/web dev",
     "dev:server": "pnpm --filter @battlebeasts/game-server dev",
     "dev:editor": "pnpm --filter @battlebeasts/editor dev",
+    "dev:vfx": "pnpm --filter @battlebeasts/vfx-lab dev",
     "dev:desktop": "pnpm --filter @battlebeasts/desktop dev",
     "dist:desktop": "pnpm --filter @battlebeasts/desktop dist",
     "publish:launcher": "node ./apps/desktop/scripts/publish-launcher.mjs",

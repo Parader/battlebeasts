@@ -1,12 +1,25 @@
 import {
   ABILITIES,
   COLLISION,
+  DUNGEON_AURAS,
+  DUNGEON_BOSS_ENRAGE_CD_MUL,
+  DUNGEON_BOSS_ENRAGE_HP,
+  PVE_BOSS_KIND,
   PVE_ELITE_HP_MUL,
   PVE_ELITE_KIND,
   PVE_ELITE_SPEED_MUL,
   PVE_ENEMY_APPROACH_MAX_M,
   PVE_ENEMY_APPROACH_MIN_M,
   PVE_ENEMY_INGRESS_MIN_M,
+  PVE_ENEMY_PLAYER_CLEAR_M,
+  PVE_MOB_STUCK_MOVE_M,
+  PVE_MOB_STUCK_MS,
+  PVE_MOB_WARP_APPROACH_MAX_M,
+  PVE_MOB_WARP_APPROACH_MIN_M,
+  PVE_MOB_WARP_COOLDOWN_MS,
+  PVE_MOB_WARP_FROM_M,
+  PVE_WAVE_BOSS_SCALE,
+  PVE_WAVE_BOSS_SPEED_MUL,
   PVE_WAVE_ENEMY_HARD_CAP,
   PVE_WAVE_INTERVAL_MS,
   PVE_WAVE_SPAWN_STAGGER_MS,
@@ -16,9 +29,11 @@ import {
   PVE_MOB_PATH_COMMIT_MS,
   PVE_ZOMBIE_RETARGET_MS,
   clampPvePartySize,
+  dungeonBossHitRadius,
+  isPveInstanceMobKind,
   pickCommittedPveFocus,
-  isPveWaveMobKind,
   phaseDurationMs,
+  pveChaseInterceptDir,
   pveEliteComfortRange,
   pveEliteCooldownMs,
   pveEliteCount,
@@ -28,9 +43,11 @@ import {
   pveEliteProjectileSpeedMul,
   pveEliteStrafeDir,
   pveUpgradeDraftDue,
+  pveWaveBossHp,
   pveWaveDamage,
   pveWaveEnemyCount,
   pveWaveHp,
+  pveWaveIsBossWave,
   pveWaveSpeed,
   pveZombieSpeedMul,
   mobWalkYaw,
@@ -45,16 +62,18 @@ type WaveHud = {
   phase: WavePhase;
   alive: number;
   goal: number;
+  label?: string;
 };
 
 type PendingSpawn = {
-  x: number;
-  z: number;
   hp: number;
   dmg: number;
   speed: number;
   kind: string;
   kit: string[];
+  scale?: number;
+  aura?: string;
+  radius?: number;
 };
 
 type LivingPlayer = { id: string; x: number; z: number };
@@ -89,6 +108,15 @@ export class WaveDirector {
   private waveElapsedMs = 0;
   private started = false;
   private readonly partySize: number;
+  private partyVel = { x: 0, z: 0 };
+  private lastPartyOrigin = { x: 0, z: 0 };
+  private lastPartyAt = 0;
+  private stuckMs = new Map<string, number>();
+  private stuckOrigin = new Map<string, { x: number; z: number }>();
+  private lastMobPos = new Map<string, { x: number; z: number }>();
+  private warpReadyAt = new Map<string, number>();
+  private enraged = new Set<string>();
+  private nextWarpAt = 0;
 
   constructor(
     private readonly state: BaseCityState,
@@ -138,6 +166,15 @@ export class WaveDirector {
     this.pendingAbility.clear();
     this.eliteAbilityCd.clear();
     this.eliteLastAbility.clear();
+    this.stuckMs.clear();
+    this.stuckOrigin.clear();
+    this.lastMobPos.clear();
+    this.warpReadyAt.clear();
+    this.enraged.clear();
+    this.partyVel = { x: 0, z: 0 };
+    this.lastPartyOrigin = { x: 0, z: 0 };
+    this.lastPartyAt = 0;
+    this.nextWarpAt = 0;
     this.waveElapsedMs = 0;
     this.kills = 0;
     this.lastDraftKills = 0;
@@ -191,6 +228,11 @@ export class WaveDirector {
     this.pendingAimYaw.delete(targetId);
     this.pendingAbility.delete(targetId);
     this.eliteLastAbility.delete(targetId);
+    this.stuckMs.delete(targetId);
+    this.stuckOrigin.delete(targetId);
+    this.lastMobPos.delete(targetId);
+    this.warpReadyAt.delete(targetId);
+    this.enraged.delete(targetId);
     for (const key of [...this.eliteAbilityCd.keys()]) {
       if (key.startsWith(`${targetId}:`)) this.eliteAbilityCd.delete(key);
     }
@@ -205,21 +247,35 @@ export class WaveDirector {
   private beginWave(now: number) {
     this.waveIndex += 1;
     this.phase = "fighting";
-    const count = pveWaveEnemyCount(this.waveIndex, this.partySize);
-    this.waveGoal = count;
+    const bossWave = pveWaveIsBossWave(this.waveIndex);
+    const fodder = bossWave
+      ? Math.max(2, pveWaveEnemyCount(this.waveIndex, this.partySize) - 2)
+      : pveWaveEnemyCount(this.waveIndex, this.partySize);
+    this.waveGoal = fodder + (bossWave ? 1 : 0);
     const hp = pveWaveHp(this.waveIndex, this.partySize);
     const dmg = pveWaveDamage(this.waveIndex, this.partySize);
     const speed = pveWaveSpeed(this.waveIndex);
-    const eliteN = Math.min(pveEliteCount(this.waveIndex, this.partySize), count);
-    const spots = this.pickSpawns(count);
+    const eliteN = Math.min(pveEliteCount(this.waveIndex, this.partySize), fodder);
     const spawnOffset = this.pendingSpawns.length;
-    for (let i = 0; i < spots.length; i++) {
-      const spot = spots[i]!;
-      const isElite = i < eliteN;
-      const kit = isElite ? pveEliteKit(this.waveIndex, i) : [];
+    if (bossWave) {
+      const cycle = Math.max(0, Math.floor(this.waveIndex / 5) - 1);
+      const aura = DUNGEON_AURAS[cycle % DUNGEON_AURAS.length]!;
+      const scale = PVE_WAVE_BOSS_SCALE;
       this.pendingSpawns.push({
-        x: spot.x,
-        z: spot.z,
+        hp: pveWaveBossHp(this.waveIndex, this.partySize),
+        dmg: Math.round(dmg * 1.2),
+        speed: speed * PVE_WAVE_BOSS_SPEED_MUL,
+        kind: PVE_BOSS_KIND,
+        kit: pveEliteKit(this.waveIndex, 0),
+        scale,
+        aura,
+        radius: dungeonBossHitRadius(scale),
+      });
+    }
+    for (let i = 0; i < fodder; i++) {
+      const isElite = i < eliteN;
+      const kit = isElite ? pveEliteKit(this.waveIndex, i + 1) : [];
+      this.pendingSpawns.push({
         hp: isElite ? Math.round(hp * PVE_ELITE_HP_MUL) : hp,
         dmg,
         speed: isElite
@@ -231,31 +287,37 @@ export class WaveDirector {
     }
     this.waveElapsedMs = 0;
     if (this.nextSpawnAt < now) this.nextSpawnAt = now;
-    // First zombie immediately so the wave doesn't feel empty.
     this.drainSpawns(now);
     this.pushHud();
   }
 
   private drainSpawns(now: number) {
+    this.updatePartyMotion(now);
     while (this.pendingSpawns.length > 0 && now >= this.nextSpawnAt) {
-      if (this.countAlive() >= PVE_WAVE_ENEMY_HARD_CAP) {
-        // Hold the queue — overlapping waves must not skip remaining spawns.
+      const peek = this.pendingSpawns[0]!;
+      if (this.countAlive() >= PVE_WAVE_ENEMY_HARD_CAP && peek.kind !== PVE_BOSS_KIND) {
         break;
       }
       const spot = this.pendingSpawns.shift()!;
-      const prefix = spot.kind === PVE_ELITE_KIND ? "elite" : "zombie";
+      const pos = this.placeSpawn(now, "intercept");
+      const prefix =
+        spot.kind === PVE_BOSS_KIND ? "boss" : spot.kind === PVE_ELITE_KIND ? "elite" : "zombie";
       const id = `${prefix}_${this.nextId++}`;
       const origin = this.partyOrigin();
-      this.combat.spawnWaveMob(id, spot.x, spot.z, {
+      this.combat.spawnWaveMob(id, pos.x, pos.z, {
         kind: spot.kind,
         hp: spot.hp,
-        yaw: Math.atan2(origin.x - spot.x, origin.z - spot.z),
+        yaw: Math.atan2(origin.x - pos.x, origin.z - pos.z),
         abilityId: spot.kit[0],
+        scale: spot.scale,
+        aura: spot.aura,
+        radius: spot.radius,
       });
       this.speedById.set(id, spot.speed);
       this.damageById.set(id, spot.dmg);
       this.meleeCd.set(id, 0);
       if (spot.kit.length) this.eliteKit.set(id, spot.kit);
+      this.lastMobPos.set(id, { x: pos.x, z: pos.z });
       this.nextSpawnAt = now + PVE_WAVE_SPAWN_STAGGER_MS;
     }
   }
@@ -275,44 +337,129 @@ export class WaveDirector {
     return { x: x / n, z: z / n };
   }
 
-  private pickSpawns(count: number): Array<{ x: number; z: number }> {
+  private livingPlayers(): LivingPlayer[] {
+    const out: LivingPlayer[] = [];
+    this.state.players.forEach((p, id) => {
+      if (p.hp > 0 && !p.disconnected && p.role !== "spectator") {
+        out.push({ id, x: p.x, z: p.z });
+      }
+    });
+    return out;
+  }
+
+  private updatePartyMotion(now: number) {
     const origin = this.partyOrigin();
-    const raw = this.ingress.length > 0 ? this.ingress : [{ x: origin.x, z: origin.z + 20 }];
-    const dirs = raw.filter(
-      (s) => Math.hypot(s.x - origin.x, s.z - origin.z) >= PVE_ENEMY_INGRESS_MIN_M,
-    );
-    const pool = dirs.length > 0 ? dirs : raw;
-    const picks: Array<{ x: number; z: number }> = [];
-    for (let i = 0; i < count; i++) {
-      const s = pool[i % pool.length]!;
+    if (this.lastPartyAt > 0) {
+      const dt = (now - this.lastPartyAt) / 1000;
+      if (dt > 0.04 && dt < 1.2) {
+        const vx = (origin.x - this.lastPartyOrigin.x) / dt;
+        const vz = (origin.z - this.lastPartyOrigin.z) / dt;
+        this.partyVel.x = this.partyVel.x * 0.65 + vx * 0.35;
+        this.partyVel.z = this.partyVel.z * 0.65 + vz * 0.35;
+      }
+    }
+    this.lastPartyOrigin = origin;
+    this.lastPartyAt = now;
+  }
+
+  private mobCentroid(): { x: number; z: number } | null {
+    let x = 0;
+    let z = 0;
+    let n = 0;
+    this.state.targets.forEach((t) => {
+      if (!isPveInstanceMobKind(t.kind) || t.hp <= 0) return;
+      x += t.x;
+      z += t.z;
+      n += 1;
+    });
+    if (n === 0) return null;
+    return { x: x / n, z: z / n };
+  }
+
+  private interceptDir(origin: { x: number; z: number }): { x: number; z: number } {
+    return pveChaseInterceptDir(this.partyVel, origin, this.mobCentroid());
+  }
+
+  private minHunterDist(x: number, z: number, hunters: LivingPlayer[]): number {
+    let min = Infinity;
+    for (const p of hunters) {
+      const d = Math.hypot(p.x - x, p.z - z);
+      if (d < min) min = d;
+    }
+    return min;
+  }
+
+  private candidateHeadings(origin: { x: number; z: number }, intercept: { x: number; z: number }): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [
+      intercept,
+      { x: intercept.x * 0.94 - intercept.z * 0.34, z: intercept.z * 0.94 + intercept.x * 0.34 },
+      { x: intercept.x * 0.94 + intercept.z * 0.34, z: intercept.z * 0.94 - intercept.x * 0.34 },
+    ];
+    const raw = this.ingress.length > 0 ? this.ingress : [];
+    const scored: Array<{ d: number; x: number; z: number }> = [];
+    for (const s of raw) {
       const dx = s.x - origin.x;
       const dz = s.z - origin.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      const nx = dx / dist;
-      const nz = dz / dist;
-      const j = (i * 0.37) % 1;
-      const approach =
-        PVE_ENEMY_APPROACH_MIN_M +
-        j * (PVE_ENEMY_APPROACH_MAX_M - PVE_ENEMY_APPROACH_MIN_M);
-      const along = Math.min(dist, Math.max(PVE_ENEMY_INGRESS_MIN_M, approach));
-      const side = (i % 2 === 0 ? 1 : -1) * (1.1 + j * 2.4);
-      picks.push({
-        x: origin.x + nx * along + -nz * side,
-        z: origin.z + nz * along + nx * side,
-      });
+      const dist = Math.hypot(dx, dz);
+      if (dist < PVE_ENEMY_INGRESS_MIN_M) continue;
+      scored.push({ d: (dx / dist) * intercept.x + (dz / dist) * intercept.z, x: dx / dist, z: dz / dist });
     }
-    return picks;
+    scored.sort((a, b) => b.d - a.d);
+    for (const s of scored.slice(0, 3)) out.push({ x: s.x, z: s.z });
+    if (out.length === 0) out.push({ x: 0, z: 1 });
+    return out;
+  }
+
+  /** `intercept` = ahead of the kite. `recycle` = behind the kite, off-screen. */
+  private placeSpawn(now: number, mode: "intercept" | "recycle"): { x: number; z: number } {
+    const hunters = this.livingPlayers();
+    const origin = hunters.length ? this.partyOrigin() : this.holdout;
+    const intercept = this.interceptDir(origin);
+    const heading = mode === "recycle" ? { x: -intercept.x, z: -intercept.z } : intercept;
+    const dirs = mode === "recycle" ? [heading] : this.candidateHeadings(origin, intercept);
+    const minR = mode === "recycle" ? PVE_MOB_WARP_APPROACH_MIN_M : PVE_ENEMY_APPROACH_MIN_M;
+    const maxR = mode === "recycle" ? PVE_MOB_WARP_APPROACH_MAX_M : PVE_ENEMY_APPROACH_MAX_M;
+    const clear = PVE_ENEMY_PLAYER_CLEAR_M;
+    const salt = (now * 0.001 + this.nextId) % 1;
+    let best = { x: origin.x + heading.x * maxR, z: origin.z + heading.z * maxR };
+    let bestClear = -1;
+    for (let attempt = 0; attempt < 14; attempt++) {
+      const dir = dirs[attempt % dirs.length]!;
+      const t = (salt + attempt * 0.17) % 1;
+      const dist = minR + t * (maxR - minR);
+      const sideSpread = mode === "recycle" ? 2 + t * 5 : 0.8 + t * 2.2;
+      const side = (attempt % 2 === 0 ? 1 : -1) * sideSpread;
+      const x = origin.x + dir.x * dist + -dir.z * side;
+      const z = origin.z + dir.z * dist + dir.x * side;
+      const d = hunters.length ? this.minHunterDist(x, z, hunters) : dist;
+      if (d > bestClear) {
+        bestClear = d;
+        best = { x, z };
+      }
+      if (d >= clear) return { x, z };
+    }
+    if (bestClear < clear) {
+      let extra = Math.max(maxR, clear + 6);
+      for (let k = 0; k < 10; k++) {
+        best = { x: origin.x + heading.x * extra, z: origin.z + heading.z * extra };
+        const d = hunters.length ? this.minHunterDist(best.x, best.z, hunters) : extra;
+        if (d >= clear) break;
+        extra += 3;
+      }
+    }
+    return best;
   }
 
   private countAlive(): number {
     let n = 0;
     this.state.targets.forEach((t) => {
-      if (isPveWaveMobKind(t.kind) && t.hp > 0) n += 1;
+      if (isPveInstanceMobKind(t.kind) && t.hp > 0) n += 1;
     });
     return n;
   }
 
   private tickMobs(dt: number, now: number) {
+    this.updatePartyMotion(now);
     const living: LivingPlayer[] = [];
     this.state.players.forEach((p, id) => {
       if (p.hp > 0 && !p.disconnected && p.role !== "spectator" && !this.combat.isHiddenFromAutoTarget(id)) {
@@ -321,9 +468,9 @@ export class WaveDirector {
     });
     if (!living.length) {
       this.state.targets.forEach((t, id) => {
-        if (!isPveWaveMobKind(t.kind) || t.hp <= 0) return;
+        if (!isPveInstanceMobKind(t.kind) || t.hp <= 0) return;
         this.targetSession.delete(id);
-        if (t.kind === PVE_ELITE_KIND) this.clearEliteCast(id, t);
+        if (t.kind !== PVE_ZOMBIE_KIND) this.clearEliteCast(id, t);
       });
       return;
     }
@@ -331,17 +478,22 @@ export class WaveDirector {
     this.combat.refreshMobFlow(living, now);
 
     this.state.targets.forEach((t, id) => {
-      if (!isPveWaveMobKind(t.kind) || t.hp <= 0) return;
+      if (!isPveInstanceMobKind(t.kind) || t.hp <= 0) return;
 
+      if (t.kind === PVE_BOSS_KIND && t.hp / Math.max(1, t.maxHp) <= DUNGEON_BOSS_ENRAGE_HP) {
+        this.enraged.add(id);
+      }
+
+      const prev = this.lastMobPos.get(id) ?? { x: t.x, z: t.z };
       const focus = this.resolveFocus(id, t.x, t.z, living, now);
       const dx = focus.x - t.x;
       const dz = focus.z - t.z;
       const dist = Math.hypot(dx, dz) || 1;
 
-      if (t.kind === PVE_ELITE_KIND) {
-        this.tickElite(id, t, focus, dx, dz, dist, dt, now);
-      } else {
+      if (t.kind === PVE_ZOMBIE_KIND) {
         this.tickZombie(id, t, focus, dx, dz, dist, dt, now);
+      } else {
+        this.tickElite(id, t, focus, dx, dz, dist, dt, now);
       }
 
       if (t.castLockUntil && now >= t.castLockUntil) {
@@ -349,9 +501,55 @@ export class WaveDirector {
         t.castPhase = "";
         t.castLockUntil = 0;
       }
+
+      this.maybeRecycleMob(id, t, living, prev, dist, dt, now);
     });
 
     this.separateMobs();
+  }
+
+  private maybeRecycleMob(
+    id: string,
+    t: { kind: string; x: number; z: number; yaw: number; hp: number },
+    living: LivingPlayer[],
+    prev: { x: number; z: number },
+    dist: number,
+    dt: number,
+    now: number,
+  ) {
+    if (t.kind === PVE_BOSS_KIND) {
+      this.lastMobPos.set(id, { x: t.x, z: t.z });
+      return;
+    }
+    this.lastMobPos.set(id, { x: t.x, z: t.z });
+    const nearest = this.minHunterDist(t.x, t.z, living);
+    const trying = dist > PVE_ZOMBIE_MELEE_RANGE * 1.6 && this.combat.statuses.canMove(id);
+    if (trying) {
+      if (!this.stuckOrigin.has(id)) this.stuckOrigin.set(id, { x: prev.x, z: prev.z });
+      this.stuckMs.set(id, (this.stuckMs.get(id) ?? 0) + dt * 1000);
+    } else {
+      this.stuckMs.set(id, 0);
+      this.stuckOrigin.delete(id);
+    }
+    const origin = this.stuckOrigin.get(id);
+    const net = origin ? Math.hypot(t.x - origin.x, t.z - origin.z) : Number.POSITIVE_INFINITY;
+    const far = nearest >= PVE_MOB_WARP_FROM_M;
+    const stuck =
+      (this.stuckMs.get(id) ?? 0) >= PVE_MOB_STUCK_MS &&
+      net < PVE_MOB_STUCK_MOVE_M &&
+      nearest >= 16;
+    if (!far && !stuck) return;
+    if (now < (this.warpReadyAt.get(id) ?? 0) || now < this.nextWarpAt) return;
+    const dest = this.placeSpawn(now, "recycle");
+    const party = this.partyOrigin();
+    t.x = dest.x;
+    t.z = dest.z;
+    t.yaw = Math.atan2(party.x - dest.x, party.z - dest.z);
+    this.lastMobPos.set(id, { x: dest.x, z: dest.z });
+    this.stuckMs.set(id, 0);
+    this.stuckOrigin.delete(id);
+    this.warpReadyAt.set(id, now + PVE_MOB_WARP_COOLDOWN_MS);
+    this.nextWarpAt = now + 900;
   }
 
   private resolveFocus(
@@ -627,7 +825,9 @@ export class WaveDirector {
     );
     t.castPhase = "impact";
     this.meleeCd.set(id, now + 1100);
-    this.eliteAbilityCd.set(`${id}:${abilityId}`, now + pveEliteCooldownMs(abilityId, this.waveIndex));
+    let cd = pveEliteCooldownMs(abilityId, this.waveIndex);
+    if (this.enraged.has(id)) cd = Math.max(900, Math.round(cd * DUNGEON_BOSS_ENRAGE_CD_MUL));
+    this.eliteAbilityCd.set(`${id}:${abilityId}`, now + cd);
     this.eliteLastAbility.set(id, abilityId);
   }
 
@@ -697,7 +897,7 @@ export class WaveDirector {
     const list: Array<{ id: string; x: number; z: number; locked: boolean }> = [];
     const now = Date.now();
     this.state.targets.forEach((t, id) => {
-      if (!isPveWaveMobKind(t.kind) || t.hp <= 0) return;
+      if (!isPveInstanceMobKind(t.kind) || t.hp <= 0) return;
       list.push({
         id,
         x: t.x,
@@ -757,6 +957,10 @@ export class WaveDirector {
       phase: this.phase,
       alive: this.countAlive(),
       goal: this.waveGoal,
+      label:
+        this.waveIndex > 0 && pveWaveIsBossWave(this.waveIndex)
+          ? `Wave ${this.waveIndex} · Boss`
+          : undefined,
     });
   }
 }

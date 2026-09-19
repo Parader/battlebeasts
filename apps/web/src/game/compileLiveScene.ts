@@ -86,11 +86,54 @@ export async function compileLiveScene(
     gl.compile(scene, camera);
     gl.setRenderTarget(null);
     gl.compile(scene, camera);
+    try {
+      gl.finish();
+    } catch {
+      // finish is best-effort; some contexts reject it.
+    }
   } catch {
     // Best-effort — a missed warm costs an in-game hitch, not correctness.
   } finally {
     for (const obj of hidden) obj.visible = false;
     gl.setRenderTarget(previousTarget);
     probe.dispose();
+  }
+}
+
+function frames(n: number): Promise<void> {
+  return new Promise((resolve) => {
+    let left = n;
+    const tick = () => {
+      left -= 1;
+      if (left <= 0) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/**
+ * Keep the loading overlay up until live draws stop linking new programs.
+ * `compile()` only queues; the GPU often finishes on the first real frames.
+ */
+export async function settleLiveScene(gl: THREE.WebGLRenderer): Promise<void> {
+  let last = -1;
+  let stable = 0;
+  for (let i = 0; i < 90; i++) {
+    await frames(1);
+    if (i % 3 === 0) {
+      try {
+        gl.finish();
+      } catch {
+        // Same as compileLiveScene.
+      }
+    }
+    const n = gl.info.programs?.length ?? 0;
+    if (n === last) stable += 1;
+    else {
+      stable = 0;
+      last = n;
+    }
+    if (stable >= 8 && i >= 12) return;
   }
 }

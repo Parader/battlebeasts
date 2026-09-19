@@ -213,6 +213,9 @@ import {
   PVE_LIFESTEAL_EXTRA_HIT_FRAC,
   type PveUpgradeDef,
   PVE_MOB_CORPSE_MS,
+  PVE_ZOMBIE_BASE_SPEED,
+  PVE_ZOMBIE_MELEE_COOLDOWN_MS,
+  PVE_ZOMBIE_MELEE_RANGE,
 } from "@battlebeasts/shared";
 import {
   runEffectKindFire,
@@ -841,6 +844,10 @@ export class CombatSystem {
   private orbitingWispTargetPhase = new Map<string, number>();
   /** Original spawn pose for practice dummies (respawn here on death). */
   private targetSpawns = new Map<string, { x: number; z: number }>();
+  /** Lab copies that recast with this owner session. */
+  private labMimicOwners = new Map<string, string>();
+  private labChasers = new Set<string>();
+  private labChaserMeleeCd = new Map<string, number>();
   private nextId = 1;
   private hooks: CombatRoomHooks;
   private staticColliders: StaticCollider[] = [];
@@ -1614,6 +1621,256 @@ export class CombatSystem {
     this.room.state.targets.set(t.id, t);
   }
 
+  /** Lab sandbox dummy / mimic / zombie in front of the caster. */
+  spawnLabTarget(
+    x: number,
+    z: number,
+    opts: { kind: string; hp?: number; yaw?: number; ownerSessionId?: string },
+  ): string {
+    const id = `lab_${opts.kind}_${this.nextId++}`;
+    if (opts.kind === "zombie" || opts.kind === "lab_chaser") {
+      this.spawnWaveMob(id, x, z, {
+        kind: opts.kind,
+        hp: Math.max(1, opts.hp ?? 380),
+        yaw: opts.yaw ?? 0,
+      });
+      if (opts.kind === "lab_chaser") this.labChasers.add(id);
+      return id;
+    }
+    this.ensurePracticeDummy(x, z, id, opts.yaw ?? 0);
+    const spawned = this.room.state.targets.get(id);
+    if (spawned) spawned.kind = opts.kind || "dummy";
+    if (opts.kind === "lab_copy" && opts.ownerSessionId) {
+      this.labMimicOwners.set(id, opts.ownerSessionId);
+    }
+    return id;
+  }
+
+  clearLabTargets(scope: "all" | "enemy" = "all"): number {
+    const ids: string[] = [];
+    this.room.state.targets.forEach((t, id) => {
+      if (!id.startsWith("lab_")) return;
+      if (scope === "enemy" && t.kind !== "zombie" && t.kind !== "lab_chaser") return;
+      ids.push(id);
+    });
+    this.targetSpawns.forEach((_spawn, id) => {
+      if (!id.startsWith("lab_") || ids.includes(id)) return;
+      if (scope === "enemy" && !this.labChasers.has(id) && !id.includes("zombie")) return;
+      ids.push(id);
+    });
+    for (const id of ids) {
+      this.forgetLabTarget(id);
+      this.targetSpawns.delete(id);
+      this.room.state.targets.delete(id);
+    }
+    return ids.length;
+  }
+
+  private forgetLabTarget(id: string): void {
+    this.labMimicOwners.delete(id);
+    this.labChasers.delete(id);
+    this.labChaserMeleeCd.delete(id);
+  }
+
+  private tickLabSandbox(dt: number, now: number): void {
+    this.syncAllLabMimicCasts();
+    this.tickLabChasers(dt, now);
+  }
+
+  private syncAllLabMimicCasts(): void {
+    for (const [id, ownerId] of this.labMimicOwners) {
+      const t = this.room.state.targets.get(id);
+      const player = this.room.state.players.get(ownerId);
+      if (!t || t.hp <= 0 || !player) {
+        if (t && t.hp <= 0) {
+          t.castAbilityId = "";
+          t.castPhase = "";
+          t.castLockUntil = 0;
+        }
+        continue;
+      }
+      this.applyMimicCastPose(t, player, ownerId);
+    }
+  }
+
+  private applyMimicCastPose(
+    t: { x: number; z: number; yaw: number; castAbilityId: string; castPhase: string; castLockUntil: number },
+    player: PlayerState,
+    ownerId: string,
+  ): void {
+    const cast = this.casts.get(ownerId);
+    const aimX = cast?.aimX;
+    const aimZ = cast?.aimZ;
+    if (
+      aimX != null &&
+      aimZ != null &&
+      Number.isFinite(aimX) &&
+      Number.isFinite(aimZ)
+    ) {
+      const dx = aimX - t.x;
+      const dz = aimZ - t.z;
+      if (dx * dx + dz * dz > 0.04) t.yaw = Math.atan2(dx, dz);
+    } else {
+      t.yaw = player.yaw;
+    }
+    t.castAbilityId = player.castAbilityId;
+    t.castPhase = player.castPhase;
+    t.castLockUntil = player.castLockUntil;
+  }
+
+  private echoLabMimicFire(sessionId: string, player: PlayerState, def: AbilityDef, now: number): void {
+    if (this.labMimicOwners.size === 0) return;
+    const travel = resolveTravel(def);
+    if (travel.mode !== "none") return;
+    if (def.shape !== "projectile" && def.shape !== "melee" && def.shape !== "aoe") return;
+    const cast = this.casts.get(sessionId);
+    const aim =
+      cast?.aimX != null &&
+      cast?.aimZ != null &&
+      Number.isFinite(cast.aimX) &&
+      Number.isFinite(cast.aimZ)
+        ? { x: cast.aimX, z: cast.aimZ }
+        : null;
+    for (const [id, ownerId] of this.labMimicOwners) {
+      if (ownerId !== sessionId) continue;
+      const t = this.room.state.targets.get(id);
+      if (!t || t.hp <= 0) continue;
+      const yaw =
+        aim != null
+          ? Math.atan2(aim.x - t.x, aim.z - t.z)
+          : player.yaw;
+      const body = {
+        id,
+        x: t.x,
+        z: t.z,
+        yaw,
+        hp: t.hp,
+        maxHp: t.maxHp,
+        vulnerable: t.hp > 0,
+      };
+      if (def.shape === "projectile") {
+        this.fireProjectileFrom(sessionId, body, def.id);
+        continue;
+      }
+      if (def.shape === "melee") {
+        const center = meleeCenter(body, def);
+        const radius = this.talentRadius(sessionId, def.id, def.radius ?? def.range);
+        this.fx({
+          kind: "melee",
+          abilityId: def.id,
+          x: center.x,
+          z: center.z,
+          radius,
+          ownerId: sessionId,
+        });
+        this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+        continue;
+      }
+      let center = { x: t.x, z: t.z };
+      if (def.range > 0) {
+        const aimed = clampGroundAim(
+          { x: t.x, z: t.z, yaw },
+          aim ?? undefined,
+          this.talentRange(sessionId, def.id, def.range),
+        );
+        center = clampTargetBeforeWalls(
+          { x: t.x, z: t.z },
+          aimed,
+          0.35,
+          this.wallColliders,
+          this.circleColliders,
+          this.boxColliders,
+        );
+      }
+      const radius = this.talentRadius(sessionId, def.id, def.radius ?? 3);
+      this.fx({
+        kind: "aoe",
+        abilityId: def.id,
+        x: center.x,
+        z: center.z,
+        radius,
+        ownerId: sessionId,
+      });
+      const delayMs = Math.max(0, def.delayedImpactMs ?? 0);
+      if (delayMs > 0) {
+        this.pendingDelayedAoes.push({
+          explodeAt: now + delayMs,
+          x: center.x,
+          z: center.z,
+          radius,
+          damage: def.damage,
+          ownerId: sessionId,
+          abilityId: def.id,
+        });
+      } else {
+        this.applyInstant(center, radius, def.damage, sessionId, def.id, now);
+      }
+    }
+  }
+
+  private tickLabChasers(dt: number, now: number): void {
+    if (this.labChasers.size === 0) return;
+    const living: Array<{ id: string; x: number; z: number }> = [];
+    this.room.state.players.forEach((p, id) => {
+      if (p.hp > 0 && !p.disconnected && p.role !== "spectator" && !this.isHiddenFromAutoTarget(id)) {
+        living.push({ id, x: p.x, z: p.z });
+      }
+    });
+    for (const id of [...this.labChasers]) {
+      const t = this.room.state.targets.get(id);
+      if (!t || t.hp <= 0) {
+        this.labChaserMeleeCd.delete(id);
+        continue;
+      }
+      if (t.castLockUntil && now >= t.castLockUntil) {
+        t.castAbilityId = "";
+        t.castPhase = "";
+        t.castLockUntil = 0;
+      }
+      if (!living.length || !this.statuses.canMove(id)) continue;
+      let best = living[0]!;
+      let bestD = Infinity;
+      for (const p of living) {
+        const d = Math.hypot(p.x - t.x, p.z - t.z);
+        if (d < bestD) {
+          bestD = d;
+          best = p;
+        }
+      }
+      const dx = best.x - t.x;
+      const dz = best.z - t.z;
+      const dist = Math.hypot(dx, dz) || 1;
+      const attacking = Boolean(t.castLockUntil && now < t.castLockUntil);
+      if (attacking) {
+        t.yaw = Math.atan2(dx, dz);
+        continue;
+      }
+      if (dist > PVE_ZOMBIE_MELEE_RANGE * 0.85) {
+        const speed = PVE_ZOMBIE_BASE_SPEED;
+        const step = Math.min(dist - 0.4, speed * dt);
+        const from = { x: t.x, z: t.z };
+        const desired = {
+          x: t.x + (dx / dist) * step,
+          z: t.z + (dz / dist) * step,
+        };
+        const next = this.moveWaveMob(id, from, desired);
+        t.yaw = Math.atan2(next.x - from.x || dx, next.z - from.z || dz);
+        t.x = next.x;
+        t.z = next.z;
+      } else if (this.statuses.canCast(id)) {
+        t.yaw = Math.atan2(dx, dz);
+        const ready = (this.labChaserMeleeCd.get(id) ?? 0) <= now;
+        if (ready) {
+          this.npcStrikePlayer(id, best.id, 8, "zombie_melee");
+          this.labChaserMeleeCd.set(id, now + PVE_ZOMBIE_MELEE_COOLDOWN_MS);
+          t.castAbilityId = "zombie_melee";
+          t.castPhase = "impact";
+          t.castLockUntil = now + 700;
+        }
+      }
+    }
+  }
+
   /**
    * Turn an authored map prop into something players can hit.
    *
@@ -1870,6 +2127,7 @@ export class CombatSystem {
       this.corpseUntil.delete(id);
       this.knockbacks.delete(id);
       this.targetSpawns.delete(id);
+      this.forgetLabTarget(id);
       this.room.state.targets.delete(id);
     }
   }
@@ -3625,6 +3883,7 @@ export class CombatSystem {
     this.statuses.tick(now);
     this.tickPveRegen(dt, now);
     this.despawnPveCorpses(now);
+    this.tickLabSandbox(dt, now);
 
     // Periodic sweep for expired transient combat maps so long-running hub rooms don't leak entries
     if (this.exposedAngleTargets.size > 0) {
@@ -4833,6 +5092,8 @@ export class CombatSystem {
     if (!this.lastFireCommitted) {
       return false;
     }
+
+    this.echoLabMimicFire(sessionId, player, def, now);
 
     if (def.id === "barrier") {
       this.finalizeBarrierCast(sessionId, now);
@@ -12764,7 +13025,7 @@ export class CombatSystem {
         // Practice targets refill; wave mobs are removed. Attackable map props
         // are practice targets: their model and collider are part of the
         // authored map, so they have nowhere to go and nothing to rebuild.
-        if (target.kind === "dummy" || target.kind === PROP_TARGET_KIND) {
+        if (target.kind === "dummy" || target.kind === "lab_copy" || target.kind === PROP_TARGET_KIND) {
           target.hp = target.maxHp;
           target.statuses.clear();
           this.knockbacks.delete(targetId);

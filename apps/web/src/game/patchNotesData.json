@@ -1,5 +1,17 @@
 [
   {
+    "id": "2026-09-19-brand-splash",
+    "title": "Mage Trials key art",
+    "date": "2026-09-19",
+    "content": [
+      "Login, loading, and the launcher use the new Mage Trials key art",
+      "Quit game is on the login screen and the launcher"
+    ],
+    "highlights": [],
+    "balance": [],
+    "fixes": []
+  },
+  {
     "id": "2026-09-19-revive-launcher",
     "title": "Ally revive, launcher updates, and PvE combat",
     "date": "2026-09-19",

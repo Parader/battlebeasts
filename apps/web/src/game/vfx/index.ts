@@ -4,6 +4,7 @@ export { spawnCastEffect, spawnImpactEffect, cancelFollowOwnerVfx, vfxRuntime } 
 export { spawnTrail } from "./spawnTrail";
 export { VfxWorld } from "./VfxWorld";
 export { SpellVfxBridge } from "./SpellVfxBridge";
+export type { VfxRoomLike, VfxWorldState, VfxActorLike, VfxProjectileLike } from "./vfxRoomLike";
 export { VfxWarmup } from "./VfxWarmup";
 export { warmSpellMaterials } from "./preloadVfx";
 export {

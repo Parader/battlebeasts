@@ -146,7 +146,7 @@ fs.writeFileSync(feedPath, `${JSON.stringify(feed, null, 2)}\n`);
 const notesPath = path.join(outDir, "RELEASE_NOTES.md");
 fs.writeFileSync(
   notesPath,
-  `# Mage Trials Launcher ${version}\n\nSelf-updating portable launcher. Game content still comes from the latest game release.\n`,
+  `# Mage Trials Launcher ${version}\n\nPer-user installer. Game content still comes from the latest game release.\n`,
 );
 
 const exists = runCapture("gh", ["release", "view", TAG, "--json", "tagName"]).status === 0;

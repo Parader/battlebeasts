@@ -1,5 +1,5 @@
 import { useFrame } from "@react-three/fiber";
-import { Room } from "colyseus.js";
+import type { VfxRoomLike } from "./vfxRoomLike";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { CAST_AIM_COLOR, CAST_AIM_HOT, castAimRuntime } from "../castAimRuntime";
@@ -94,7 +94,7 @@ export function CastAimTelegraph({
   getPos,
   getYaw,
 }: {
-  room: Room;
+  room: VfxRoomLike;
   sessionId: string;
   getPos: () => { x: number; z: number };
   getYaw: () => number;

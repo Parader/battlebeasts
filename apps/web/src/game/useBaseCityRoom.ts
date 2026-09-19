@@ -2397,6 +2397,10 @@ export function useBaseCityRoom(options: Options) {
                 return;
             }
             if (inputLockedRef.current) return;
+            const typedIn =
+                e.target instanceof HTMLElement &&
+                (e.target.closest("input, textarea, select") || e.target.isContentEditable);
+            if (typedIn) return;
             if (e.repeat && down) return;
 
             // WASD / Esc while the emote pie is open — dismiss without casting
@@ -3803,6 +3807,19 @@ export function useBaseCityRoom(options: Options) {
         roomRef.current?.send("hub_spawn_chest", { quality });
     }, []);
 
+    const labSpawn = useCallback((kind: "dummy" | "copy" | "enemy" | "chaser") => {
+        roomRef.current?.send("lab_spawn", { kind });
+    }, []);
+    const labClear = useCallback((scope?: "enemy") => {
+        roomRef.current?.send("lab_clear", { kind: scope ?? "all" });
+    }, []);
+    const labGrantAll = useCallback(() => {
+        roomRef.current?.send("lab_grant_all");
+    }, []);
+    const labEquip = useCallback((abilityId: string) => {
+        roomRef.current?.send("lab_equip", { abilityId });
+    }, []);
+
     const setAdminNoCooldownEnabled = useCallback((enabled: boolean) => {
         roomRef.current?.send("hub_admin_no_cooldown", { enabled });
     }, []);
@@ -3934,6 +3951,10 @@ export function useBaseCityRoom(options: Options) {
         refreshHubQuests,
         openHubChest,
         spawnHubChest,
+        labSpawn,
+        labClear,
+        labGrantAll,
+        labEquip,
         clearChestReveal,
         acknowledgeQuestAlerts,
         notifyFriendCodeRedeemed,

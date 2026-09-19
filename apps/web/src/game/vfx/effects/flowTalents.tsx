@@ -2,7 +2,6 @@ import { useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { Room } from "colyseus.js";
 import {
   MOVE_SPEED,
   STARTER_COLORS,
@@ -21,8 +20,9 @@ import {
 import { cosmeticsKey, equippedFromPlayer } from "../../cosmeticAttach";
 import { EquippedCosmetics } from "../../EquippedCosmetics";
 import { VesselBody } from "../../VesselBody";
+import type { VfxRoomLike } from "../vfxRoomLike";
 
-type Follow = { room: Room | null };
+type Follow = { room: VfxRoomLike | null };
 
 type OwnerLook = {
   color?: string;
