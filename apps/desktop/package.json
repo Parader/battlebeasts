@@ -1,6 +1,6 @@
 {
   "name": "@battlebeasts/desktop",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "private": true,
   "description": "Mage Trials desktop launcher (Electron) — game files download on first run",
   "main": "main.cjs",

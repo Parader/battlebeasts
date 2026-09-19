@@ -522,11 +522,14 @@ export function RemotePlayers({
   relation = "ally",
   /** When set, remotes use team vs localTeam for aim color. */
   localTeam,
+  /** Village group members use a yellow ground ring. */
+  partySessionIds,
 }: {
   room: Room | null;
   localSessionId: string | null;
   relation?: AimRelation;
   localTeam?: string;
+  partySessionIds?: ReadonlySet<string>;
 }) {
   const remoteIds = useRemotePlayerIds(room, localSessionId);
 
@@ -536,7 +539,9 @@ export function RemotePlayers({
     <>
       {remoteIds.map((id) => {
         const p = room.state?.players?.get(id) as { team?: string } | undefined;
-        const rel = resolveAimRelation(localTeam, p?.team, relation);
+        const rel = partySessionIds?.has(id)
+          ? "party"
+          : resolveAimRelation(localTeam, p?.team, relation);
         return (
           <RemotePlayerAvatar
             key={id}

@@ -219,6 +219,8 @@ const launcherName =
   typeof launcherFeed?.name === "string" && launcherFeed.name.trim()
     ? launcherFeed.name.trim()
     : "MageTrials-Launcher.exe";
+const prevLauncher =
+  prevFeed && prevFeed.launcher && typeof prevFeed.launcher === "object" ? prevFeed.launcher : null;
 const launcher =
   launcherFeed && launcherFeed.version
     ? {
@@ -231,10 +233,19 @@ const launcher =
             ? launcherFeed.url.trim()
             : `https://github.com/${REPO}/releases/download/launcher/${launcherName}`,
       }
-    : null;
+    : prevLauncher && prevLauncher.version
+      ? prevLauncher
+      : null;
+if (!launcherFeed?.version) {
+  console.warn(
+    launcher
+      ? "Launcher feed missing — reusing launcher metadata from previous game feed"
+      : "Launcher feed missing — latest.json will not advertise a launcher update",
+  );
+}
 const latest = {
   contentVersion: notes.contentVersion,
-  minLauncher: launcher ? launcher.version : "0.0.2",
+  minLauncher: launcher ? launcher.version : "",
   gameServerUrl: DEFAULT_GAME_SERVER_URL,
   title: notes.title,
   date: notes.date,

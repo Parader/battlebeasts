@@ -1102,17 +1102,16 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
         unlocksChanged = true;
         const slotIndex = grant.toCount - 1;
         const abilityIds = normalizeLoadout(player.loadout.split(","));
-        const talentBuild = this.talentBuildBySession.get(client.sessionId) ?? {};
         this.upsertPresetInSession(client.sessionId, slotIndex, abilityIds, {
           name: `Loadout ${grant.toCount}`,
-          talentBuild,
+          talentBuild: {},
           flexAbilityIds: normalizeFlexLoadout(player.flexLoadout.split(",")),
         });
         const identity = this.identities.get(client.sessionId);
         if (identity && !identity.isGuest) {
           await saveLoadoutPreset(identity.userId, slotIndex, abilityIds, {
             name: `Loadout ${grant.toCount}`,
-            talentBuild,
+            talentBuild: {},
             flexAbilityIds: normalizeFlexLoadout(player.flexLoadout.split(",")),
           });
         }
@@ -1527,6 +1526,10 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
       flexAbilityIds: flex,
     });
     this.applyCombatKit(client.sessionId, player);
+    this.sendInventory(client, player);
+    client.send("toast", {
+      message: `${preset?.name ?? `Loadout ${slotIndex + 1}`} selected (spells + talents)`,
+    });
 
     const identity = this.identities.get(client.sessionId);
     if (identity && !identity.isGuest) {
@@ -1539,10 +1542,6 @@ export abstract class ServicedRoom extends Room<BaseCityState> {
         flexAbilityIds: flex,
       });
     }
-    this.sendInventory(client, player);
-    client.send("toast", {
-      message: `${preset?.name ?? `Loadout ${slotIndex + 1}`} selected (spells + talents)`,
-    });
     await this.maybeGrantFirstBuildChest(client, player);
   }
 

@@ -498,6 +498,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data, error } = await supabase.rpc("claim_display_name", { desired_name });
         if (error) {
             const detail = [error.message, error.details, error.hint].filter(Boolean).join(" — ");
+            if (/already taken/i.test(detail)) {
+                throw new Error(
+                    "That hunter name is already claimed. If it was yours, sign out and log in with the same Google or email — don't create a new account.",
+                );
+            }
             throw new Error(detail || "Could not save name");
         }
         const next = data as Profile;

@@ -26,6 +26,9 @@ type Props = {
   zClass?: string;
   ariaLabel?: string;
   role?: "dialog" | "alertdialog";
+  /** Blocks the panel while a server persist is in flight. */
+  busy?: boolean;
+  busyLabel?: string;
 };
 
 /** Shared modal shell — header / type / footer match arena lobby. */
@@ -46,6 +49,8 @@ export function GamePanelShell({
   zClass = "z-40",
   ariaLabel,
   role = "dialog",
+  busy = false,
+  busyLabel = "Loading…",
 }: Props) {
   const width = fullBleed
     ? "max-w-none"
@@ -140,6 +145,12 @@ export function GamePanelShell({
 
           {footer ? <footer className="bb-panel-footer shrink-0">{footer}</footer> : null}
         </div>
+        {busy ? (
+          <div className="bb-panel-busy" role="status" aria-live="polite" aria-busy="true">
+            <div className="bb-panel-busy__spin" aria-hidden />
+            <p className="bb-panel-busy__label">{busyLabel}</p>
+          </div>
+        ) : null}
       </div>
     </div>
   );

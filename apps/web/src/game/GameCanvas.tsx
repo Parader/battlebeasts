@@ -24,6 +24,8 @@ type Props = {
     suspended?: boolean;
     /** Camera-only death spectate target (content). */
     spectateTargetId?: string | null;
+    /** Village groupmates get a yellow ground ring. */
+    partySessionIds?: ReadonlySet<string>;
 };
 
 const pitch = (CAMERA.pitchDeg * Math.PI) / 180;
@@ -110,6 +112,7 @@ export const GameCanvas = memo(function GameCanvas({
     /** Freeze the main WebGL loop (e.g. while a second preview Canvas is open). */
     suspended = false,
     spectateTargetId = null,
+    partySessionIds,
 }: Props) {
     const inContent = phase === "content";
     const isDungeon = inContent && isPveRunMode(contentMode);
@@ -163,6 +166,7 @@ export const GameCanvas = memo(function GameCanvas({
                         room={room}
                         localSessionId={localSessionId}
                         predictedRef={predictedRef}
+                        partySessionIds={partySessionIds}
                     />
                 )}
             </Suspense>

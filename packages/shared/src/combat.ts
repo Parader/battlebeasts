@@ -1,5 +1,5 @@
 import { ABILITIES, MAGMA_ORBS_CAST, travelDistance, type AbilityDef } from "./abilities";
-import { length2, normalize2, shortestYawDelta, stepYawToward } from "./sim";
+import { length2, normalize2, stepYawToward } from "./sim";
 import type { Vec2 } from "./protocol";
 import type { WallCollider, ProtectionBubbleCollider, CircleCollider, BoxCollider } from "./collision";
 import {
@@ -130,6 +130,8 @@ export type ProjectileSim = {
   maxOutboundRange?: number;
   /** Distance traveled this outbound leg. */
   outboundTraveled?: number;
+  /** Distance traveled on the locked return heading. */
+  returnTraveled?: number;
   /** Countdown while paused at max range before return (seconds). */
   turnDelayRemaining?: number;
   /** Failsafe age limit (seconds). */
@@ -163,8 +165,10 @@ export type ProjectileSim = {
   /** World spawn position (distance-scaled damage / pierce travel). */
   spawnX?: number;
   spawnZ?: number;
-  /** Continue after body hits (once per target). Walls still stop the shot. */
+  /** Continue after body hits (once per target). Walls still stop unless `passThroughWorld`. */
   pierce?: boolean;
+  /** Ignore map walls / props. Protection discs still stop the shot. */
+  passThroughWorld?: boolean;
   /**
    * Ally-heal pierce: contact uses `canHeal` instead of `canHurt`.
    * `damage` carries the heal amount for hit events.
@@ -199,6 +203,8 @@ export type CombatFxEvent = {
   /** For cast_phase events. */
   phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
   phaseEndsAt?: number;
+  /** Dash / charge slide length in ms. Clients interpolate with this, not wall-clock remaining. */
+  durationMs?: number;
   /**
    * When set, clients should start this ability's cooldown for `cooldownMs`.
    * Used for combo abilities (CD after final hit / early stop) and as an
@@ -482,6 +488,7 @@ export function createProjectile(
     spawnX: spawn.x,
     spawnZ: spawn.z,
     pierce: def.pierce === true || healAllies,
+    passThroughWorld: def.passThroughWorld === true,
     healAllies,
     ...(usesDistanceScale
       ? {
@@ -511,6 +518,9 @@ export function createReturningProjectile(
   const spawnDist = def.spawnOffset ?? 0.32;
   const spawn = pointInFront(owner, owner.yaw, spawnDist);
   const maxRange = def.range > 0 ? def.range : 9;
+  // Preview is range from the caster. Spawn is already in front, so outbound
+  // budget is the remaining distance to that tip.
+  const outboundBudget = Math.max(0.5, maxRange - spawnDist);
   const hitRadius = def.radius ?? COMBAT.projectileHitRadius;
   const turnDelayMs = cfg.turnDelayMs ?? 70;
   const maxLifetimeMs = cfg.maxLifetimeMs ?? 2200;
@@ -526,7 +536,7 @@ export function createReturningProjectile(
     zoneSpeedMul: 1,
     damage: def.damage,
     hitRadius,
-    life: maxRange / speed,
+    life: outboundBudget / speed,
     hitIds: new Set(),
     returnHitIds: new Set(),
     aura: false,
@@ -546,7 +556,7 @@ export function createReturningProjectile(
     returnPhase: "outbound",
     returnDamage: cfg.returnDamage,
     projectileSpeed: speed,
-    maxOutboundRange: maxRange,
+    maxOutboundRange: outboundBudget,
     outboundTraveled: 0,
     turnDelayRemaining: 0,
     turnDelaySec: turnDelayMs / 1000,
@@ -1391,6 +1401,7 @@ export function tickProjectiles(
     }
 
     const hitWall =
+      !p.passThroughWorld &&
       (walls.length > 0 || circles.length > 0 || boxes.length > 0) &&
       projectileHitsSolids(fromX, fromZ, p.x, p.z, p.wallRadius, walls, circles, boxes);
     const hitBubble =
@@ -1556,7 +1567,7 @@ export function tickProjectiles(
   return { removedIds: [...new Set(removedIds)], hits, slows, explodes, wallHits };
 }
 
-/** Advance returning projectiles (outbound pierce → turn → homing return). */
+/** Advance returning projectiles (outbound pierce → reverse on the same line). */
 export function tickReturningProjectiles(
   projectiles: ProjectileSim[],
   dt: number,
@@ -1573,16 +1584,18 @@ export function tickReturningProjectiles(
   const bodyById = new Map<string, CombatBody>();
   for (const b of bodies) bodyById.set(b.id, b);
 
-  const beginTurn = (p: ProjectileSim) => {
-    p.returnPhase = "turning";
-    p.mode = "turning";
-    p.turnDelayRemaining = p.turnDelaySec ?? 0.07;
-    // Keep travel speed — a halt at the apex reads as the disc getting stuck.
+  const lockReturnHeading = (p: ProjectileSim, reverse: boolean) => {
+    p.returnPhase = "returning";
+    p.mode = "returning";
+    p.turnDelayRemaining = 0;
+    p.returnTraveled = p.returnTraveled ?? 0;
     const spd = p.projectileSpeed ?? 15;
     const len = Math.hypot(p.vx, p.vz);
     if (len > 0.01) {
-      p.vx = (p.vx / len) * spd;
-      p.vz = (p.vz / len) * spd;
+      const nx = p.vx / len;
+      const nz = p.vz / len;
+      p.vx = (reverse ? -nx : nx) * spd;
+      p.vz = (reverse ? -nz : nz) * spd;
     }
   };
 
@@ -1604,84 +1617,8 @@ export function tickReturningProjectiles(
     const speed = p.projectileSpeed ?? 15;
 
     if (p.returnPhase === "turning") {
-      p.turnDelayRemaining = Math.max(0, (p.turnDelayRemaining ?? 0) - dt);
-      const desired = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
-      const turnWindow = Math.max(0.02, p.turnDelaySec ?? 0.07);
-      const curYaw = Math.atan2(p.vx, p.vz);
-      const wantYaw = Math.atan2(desired.x, desired.z);
-      const nextYaw = stepYawToward(curYaw, wantYaw, Math.PI / turnWindow, dt);
-      const face = facingVector(nextYaw);
-      p.vx = face.x * speed;
-      p.vz = face.z * speed;
-
-      const fromX = p.x;
-      const fromZ = p.z;
-      p.x += p.vx * dt;
-      p.z += p.vz * dt;
-
-      const hitWall =
-        (walls.length > 0 || circles.length > 0 || boxes.length > 0) &&
-        projectileHitsSolids(fromX, fromZ, p.x, p.z, p.wallRadius, walls, circles, boxes);
-      const hitBubble =
-        !hitWall && protectionBubbles.length > 0
-          ? projectileHitsProtectionBubbles(
-              fromX,
-              fromZ,
-              p.x,
-              p.z,
-              p.wallRadius,
-              protectionBubbles,
-              p.passBubbleIds,
-            )
-          : null;
-      if (hitWall || hitBubble) {
-        p.x = fromX;
-        p.z = fromZ;
-        p.returnPhase = "returning";
-        p.mode = "returning";
-        p.vx = desired.x * speed;
-        p.vz = desired.z * speed;
-        if (hitBubble?.id) {
-          wallHits.push({
-            projectileId: p.id,
-            ownerId: p.ownerId,
-            abilityId: p.abilityId,
-            x: fromX,
-            z: fromZ,
-            blockBubbleId: hitBubble.id,
-          });
-        }
-        continue;
-      }
-
-      const aligned = Math.abs(shortestYawDelta(nextYaw, wantYaw)) < 0.15;
-      if (p.turnDelayRemaining <= 0 || aligned) {
-        p.returnPhase = "returning";
-        p.mode = "returning";
-      }
-
-      for (const body of bodies) {
-        if (body.id === p.ownerId) continue;
-        if (p.hitIds.has(body.id)) continue;
-        if (body.vulnerable === false || body.hp <= 0) continue;
-        if (!canHurt(p.ownerId, body.id)) continue;
-        if (!circlesOverlap(p.x, p.z, p.hitRadius, body.x, body.z, hitRadiusOf(body))) {
-          continue;
-        }
-        p.hitIds.add(body.id);
-        const hpAfter = Math.max(0, body.hp - p.damage);
-        hits.push({
-          projectileId: p.id,
-          ownerId: p.ownerId,
-          abilityId: p.abilityId,
-          targetId: body.id,
-          damage: p.damage,
-          hpAfter,
-          x: body.x,
-          z: body.z,
-        });
-      }
-      continue;
+      // Older shots still in the hooked U-turn: snap onto the reverse heading.
+      lockReturnHeading(p, true);
     }
 
     const fromX = p.x;
@@ -1739,18 +1676,22 @@ export function tickReturningProjectiles(
             blockBubbleId: hitBubble.id,
           });
         }
-        beginTurn(p);
+        lockReturnHeading(p, true);
         continue;
       }
 
-      if (p.life <= 0 || (p.outboundTraveled ?? 0) >= (p.maxOutboundRange ?? 9)) {
-        beginTurn(p);
-      } else if ((p.outboundTraveled ?? 0) >= 1.2) {
-        const home = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
-        const vlen = Math.hypot(p.vx, p.vz);
-        if (vlen > 0.01 && (p.vx * home.x + p.vz * home.z) / vlen > 0.45) {
-          beginTurn(p);
+      const outboundCap = p.maxOutboundRange ?? 9;
+      if (p.life <= 0 || (p.outboundTraveled ?? 0) >= outboundCap) {
+        const extra = (p.outboundTraveled ?? 0) - outboundCap;
+        if (extra > 0) {
+          const step = Math.hypot(p.vx, p.vz);
+          if (step > 1e-6) {
+            p.x -= (p.vx / step) * extra;
+            p.z -= (p.vz / step) * extra;
+          }
+          p.outboundTraveled = outboundCap;
         }
+        lockReturnHeading(p, true);
       }
 
       for (const body of bodies) {
@@ -1777,18 +1718,18 @@ export function tickReturningProjectiles(
       continue;
     }
 
-    // --- Returning leg ---
-    const dir = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
-    p.vx = dir.x * speed;
-    p.vz = dir.z * speed;
+    // --- Returning leg: hold the locked heading so the path is the outbound line. ---
+    applyProjectileZoneSpeed(p);
     p.x += p.vx * dt;
     p.z += p.vz * dt;
+    p.returnTraveled = (p.returnTraveled ?? 0) + Math.hypot(p.x - fromX, p.z - fromZ);
 
     // Catch vs caster center only — do not add player hit radius (spawn sits
     // inside that inflated disc and would despawn on a near-spawn turnaround).
     const catchR = p.returnCatchRadius ?? 0.6;
     const toOwner = Math.hypot(p.x - owner.x, p.z - owner.z);
-    if (toOwner <= catchR) {
+    const backAlongThrow = (p.outboundTraveled ?? 0) + 1.2;
+    if (toOwner <= catchR || (p.returnTraveled ?? 0) >= backAlongThrow) {
       removedIds.push(p.id);
       continue;
     }

@@ -55,6 +55,8 @@ export const PVP_RECONNECT_GRACE_MS = 45_000;
 export const PVE_RECONNECT_GRACE_MS = 90_000;
 /** After a successful reconnect, stay paused this long before match resumes (ms). */
 export const RECONNECT_RESUME_GRACE_MS = 3_000;
+/** After a hunter hits Resume in Wave Assault / Dungeon, countdown before the sim runs again. */
+export const PVE_RESUME_GRACE_MS = 3_000;
 /** Disconnected hunters may rejoin a still-running match for this long. */
 export const MATCH_REJOIN_MS = 15 * 60_000;
 /** Hub group keeps a logged-out hunter this long, then drops them (and disbands if fewer than 2 remain). */

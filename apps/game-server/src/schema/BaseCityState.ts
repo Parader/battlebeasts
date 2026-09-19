@@ -250,6 +250,20 @@ export class WorldTreeState extends Schema {
   @type("number") expiresAt = 0;
 }
 
+/** PvE coop revive circle — living allies standing in it charge a 50% HP rez. */
+export class PveReviveZoneState extends Schema {
+  @type("string") id = "";
+  /** Fallen hunter this circle belongs to. */
+  @type("string") sessionId = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+  @type("number") radius = 3;
+  /** 0..1 fill. Holds when empty (no decay). */
+  @type("number") charge = 0;
+  /** Living allies currently inside the radius. */
+  @type("number") occupants = 0;
+}
+
 /** Fixed protection dome — blocks inbound projectiles only. */
 export class ProtectionBubbleState extends Schema {
   @type("string") id = "";
@@ -430,6 +444,7 @@ export class BaseCityState extends Schema {
   @type({ map: RockWallState }) rockWalls = new MapSchema<RockWallState>();
   @type({ map: WorldTreeState }) worldTrees = new MapSchema<WorldTreeState>();
   @type({ map: ProtectionBubbleState }) protectionBubbles = new MapSchema<ProtectionBubbleState>();
+  @type({ map: PveReviveZoneState }) pveReviveZones = new MapSchema<PveReviveZoneState>();
   @type({ map: ShroomState }) shrooms = new MapSchema<ShroomState>();
   @type({ map: RiftPortalState }) riftPortals = new MapSchema<RiftPortalState>();
   @type({ map: OrbitingWispState }) orbitingWisps = new MapSchema<OrbitingWispState>();

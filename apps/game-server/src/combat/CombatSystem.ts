@@ -208,6 +208,9 @@ import {
   type PickupSpec,
   resolvePickupRoll,
   applyPveUpgradeOverlay,
+  PVE_LIFESTEAL_AOE_WINDOW_MS,
+  PVE_LIFESTEAL_BURST_CAP_FRAC,
+  PVE_LIFESTEAL_EXTRA_HIT_FRAC,
   type PveUpgradeDef,
   PVE_MOB_CORPSE_MS,
 } from "@battlebeasts/shared";
@@ -859,6 +862,11 @@ export class CombatSystem {
   /** Accumulated regen HP waiting for the next 1s popup. */
   private pveRegenAcc = new Map<string, number>();
   private pveRegenEmitAt = new Map<string, number>();
+  /** Blood Drink burst: first hit in the window is full; extras are weaker + capped. */
+  private pveLifestealBurst = new Map<
+    string,
+    { windowStart: number; hits: number; healed: number }
+  >();
   /** Epoch ms when a slain PvE mob should leave the world. */
   private corpseUntil = new Map<string, number>();
   /** Last loadout bake args so overlay picks can rebake without a room call. */
@@ -1118,6 +1126,7 @@ export class CombatSystem {
     this.pvePicks.delete(sessionId);
     this.pveRegenAcc.delete(sessionId);
     this.pveRegenEmitAt.delete(sessionId);
+    this.pveLifestealBurst.delete(sessionId);
     this.rebakeSessionKit(sessionId);
   }
 
@@ -1126,6 +1135,7 @@ export class CombatSystem {
     this.pvePicks.clear();
     this.pveRegenAcc.clear();
     this.pveRegenEmitAt.clear();
+    this.pveLifestealBurst.clear();
     for (const id of ids) this.rebakeSessionKit(id);
   }
 
@@ -1147,6 +1157,7 @@ export class CombatSystem {
     move(this.pvePicks);
     move(this.pveRegenAcc);
     move(this.pveRegenEmitAt);
+    move(this.pveLifestealBurst);
     move(this.kitBakeArgs);
     move(this.cds);
     move(this.casts);
@@ -1155,10 +1166,18 @@ export class CombatSystem {
     move(this.engageBySession);
     move(this.fifthSpellBySession);
     move(this.energyLimiters);
+    move(this.blinkIframeUntil);
     this.statuses.rebindTarget(fromId, toId);
     this.room.state.orbitingWisps.forEach((w) => {
       if (w.ownerSessionId === fromId) w.ownerSessionId = toId;
     });
+    const revive = this.room.state.pveReviveZones.get(fromId);
+    if (revive) {
+      this.room.state.pveReviveZones.delete(fromId);
+      revive.id = toId;
+      revive.sessionId = toId;
+      this.room.state.pveReviveZones.set(toId, revive);
+    }
   }
 
   /** Scale authored radii for Widened Elements (elemental AoE only) and Ascendant Form melee reach. */
@@ -1703,8 +1722,12 @@ export class CombatSystem {
   }
 
   /** Desired step toward a goal, detouring around map props when the ray is blocked. */
-  steerWaveMob(from: Vec2, goal: Vec2, step: number): Vec2 {
-    return steerMobStep(from, goal, step, this.mobNav);
+  steerWaveMob(from: Vec2, goal: Vec2, step: number, preferFlow = false): Vec2 {
+    return steerMobStep(from, goal, step, this.mobNav, preferFlow);
+  }
+
+  hasMobWalkLos(from: Vec2, to: Vec2): boolean {
+    return this.mobNav?.hasWalkLos(from, to) ?? true;
   }
 
   /**
@@ -1785,7 +1808,23 @@ export class CombatSystem {
     const kit = this.kits.get(attackerSessionId);
     const frac = kit?.lifesteal ?? 0;
     if (!(frac > 0)) return;
-    const heal = Math.max(1, Math.round(dealt * frac));
+    const now = Date.now();
+    let burst = this.pveLifestealBurst.get(attackerSessionId);
+    if (!burst || now - burst.windowStart > PVE_LIFESTEAL_AOE_WINDOW_MS) {
+      burst = { windowStart: now, hits: 0, healed: 0 };
+    }
+    const maxHp = this.room.state.players.get(attackerSessionId)?.maxHp ?? 0;
+    const cap = Math.max(1, Math.round(maxHp * PVE_LIFESTEAL_BURST_CAP_FRAC));
+    const remaining = Math.max(0, cap - burst.healed);
+    if (remaining <= 0) {
+      this.pveLifestealBurst.set(attackerSessionId, burst);
+      return;
+    }
+    const usedFrac = burst.hits === 0 ? frac : frac * PVE_LIFESTEAL_EXTRA_HIT_FRAC;
+    const heal = Math.min(remaining, Math.max(1, Math.round(dealt * usedFrac)));
+    burst.hits += 1;
+    burst.healed += heal;
+    this.pveLifestealBurst.set(attackerSessionId, burst);
     this.applyHealAmount(attackerSessionId, heal, attackerSessionId, "pve_lifesteal", {
       skipHarmonyHooks: true,
       noCrit: true,
@@ -2304,6 +2343,7 @@ export class CombatSystem {
     this.room.state.rockWalls.clear();
     this.room.state.worldTrees.clear();
     this.room.state.protectionBubbles.clear();
+    this.room.state.pveReviveZones.clear();
     this.room.state.orbitingWisps.clear();
     this.orbitingWispTargetPhase.clear();
     this.clearAllAstralChains("silent");
@@ -6528,6 +6568,15 @@ export class CombatSystem {
     return this.statuses.getFearSource(targetId);
   }
 
+  /** Dash / charge / leap — not a Dread Aura “cast inside” trigger. */
+  private isDreadAuraMovement(def: AbilityDef | undefined, sessionId?: string): boolean {
+    if (sessionId && this.travels.has(sessionId)) return true;
+    if (!def) return false;
+    if (isFlowMovementAbility(def) || isFlowTravelAbility(def)) return true;
+    const travel = resolveTravel(def);
+    return travel.mode === "translate" || travel.mode === "instant";
+  }
+
   /** True while winding up, in impact, or holding a channel (Life Leech). */
   private hasActiveCastOrChannel(sessionId: string, player: PlayerState): boolean {
     const cast = this.casts.get(sessionId);
@@ -6590,6 +6639,8 @@ export class CombatSystem {
         if (player.disconnected || player.hp <= 0) return;
         if (a.triggeredIds.has(sessionId)) return;
         if (!this.hasActiveCastOrChannel(sessionId, player)) return;
+        const movingId = this.casts.get(sessionId)?.abilityId || player.castAbilityId;
+        if (this.isDreadAuraMovement(ABILITIES[movingId], sessionId)) return;
         if (this.checkDreadAuraTriggerTarget(sessionId, player.x, player.z, now)) {
           this.interruptCast(sessionId);
         }
@@ -6656,14 +6707,7 @@ export class CombatSystem {
     now: number,
   ): boolean {
     if (this.pendingDreadAuras.length === 0) return false;
-    if (
-      (def.timing?.anticipationMs ?? 0) === 0 &&
-      (def.timing?.castMs ?? 0) === 0 &&
-      def.shape === "dash" &&
-      def.id === "dash"
-    ) {
-      return false;
-    }
+    if (this.isDreadAuraMovement(def, sessionId)) return false;
 
     if (this.checkDreadAuraTriggerTarget(sessionId, player.x, player.z, now)) {
       this.softInterruptCast(sessionId, player, now);
@@ -10086,7 +10130,7 @@ export class CombatSystem {
     const cast = this.casts.get(sessionId);
     const yaw = cast?.yaw ?? player.yaw;
     const dist = BULWARK_CHARGE_CAST.distance;
-    const dur = BULWARK_CHARGE_CAST.travelDurationMs;
+    const dur = travelDurationMs(def) || BULWARK_CHARGE_CAST.travelDurationMs;
     this.statuses.apply(sessionId, "bulwarkCharging", sessionId, now, {
       durationMs: dur + 80,
     });
@@ -13241,6 +13285,19 @@ export class CombatSystem {
     return this.statuses.has(sessionId, "rebirthPending");
   }
 
+  /** Grant timed walk-i-frames (ally revive, blinks). */
+  grantBlinkIframes(sessionId: string, durationMs: number) {
+    const player = this.room.state.players.get(sessionId);
+    if (!player) return;
+    const now = Date.now();
+    this.blinkIframeUntil.set(sessionId, now + Math.max(40, durationMs));
+    this.syncInvulnerable(sessionId, player, now);
+  }
+
+  emitCombatFx(event: CombatFxEvent) {
+    this.fx(event);
+  }
+
   private commitGuardianAngel(
     sessionId: string,
     player: PlayerState,
@@ -13669,6 +13726,13 @@ export class CombatSystem {
   }
 
   private fx(event: CombatFxEvent) {
+    if (
+      event.kind === "dash" &&
+      event.durationMs == null &&
+      typeof event.phaseEndsAt === "number"
+    ) {
+      event.durationMs = Math.max(16, event.phaseEndsAt - Date.now());
+    }
     this.room.broadcast("combat_fx", event);
   }
 
@@ -14423,6 +14487,16 @@ export class CombatSystem {
     }
     bag.set(abilityId, now + cooldownMs);
     return cooldownMs;
+  }
+
+  /** Push ability ready-times forward so a sim pause does not burn cooldowns. */
+  shiftReadyTimes(deltaMs: number): void {
+    if (!(deltaMs > 0)) return;
+    for (const bag of this.cds.values()) {
+      for (const [abilityId, until] of bag) {
+        if (until > 0) bag.set(abilityId, until + deltaMs);
+      }
+    }
   }
 
   /** Admin: skip ability cooldowns for this session (hub practice). */

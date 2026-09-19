@@ -275,7 +275,7 @@ export type ReturningProjectileConfig = {
   maxActivePerCaster?: number;
   /** Failsafe despawn (ms). */
   maxLifetimeMs?: number;
-  /** Pause at max range before homing return (ms). */
+  /** Pause at max range before return (ms). Unused when the apex is an instant reverse. */
   turnDelayMs?: number;
   /** How fast the disc yaws toward the caster's live facing while outbound (rad/s). */
   steerRadPerSec?: number;
@@ -402,9 +402,13 @@ export interface AbilityDef {
   healAllies?: boolean;
   /**
    * Contact projectile continues after hitting a body (once per target via hitIds).
-   * Still stops on walls / protection discs.
+   * Still stops on walls / protection discs unless `passThroughWorld`.
    */
   pierce?: boolean;
+  /**
+   * Projectile ignores map walls / props. Protection discs still stop it.
+   */
+  passThroughWorld?: boolean;
   /** Instant heal amount per tick (self-centered AoE support spells). */
   heal?: number;
   /** Temporary absorb shield HP (Bulwark Charge completion). */
@@ -440,7 +444,7 @@ export interface AbilityDef {
   /** Soul Mark: bonus damage when rupturing a fully marked target. */
   ruptureDamage?: number;
   /**
-   * Returning projectile (Void Disc, boomerangs, …) — outbound pierce + homing return.
+   * Returning projectile (Void Disc, boomerangs, …) — outbound pierce + same-line return.
    * Requires `effectKind: "returningProjectile"`.
    */
   returningProjectile?: ReturningProjectileConfig;
@@ -1420,15 +1424,15 @@ export const WORLD_TREE_CAST = {
 
 /**
  * Phantom Rush (F) — rapid chained mobility attack through up to 4 enemies/props.
- * Shorter range (~4.5m) and lands on the opposite side of targets.
+ * Lands on the opposite side of targets.
  * Solo target: a second pass through the same foe when nobody else is in chain range.
  */
 export const PHANTOM_RUSH_CAST = {
   unlockCostEssence: 160,
   cooldownMs: 26000,
-  range: 4.5,
+  range: 6.5,
   maxTargets: 4,
-  chainRadius: 7.5,
+  chainRadius: 8.5,
   damagePerTarget: combatMag(10), // 100
   rushDurationPerTargetMs: 140,
   finalOffsetFromTarget: 1.4,
@@ -1673,7 +1677,7 @@ function poisonDartRecoveryWallMs(): number {
 }
 
 /**
- * Void Disc (LMB) — side-arm throw; disc returns to the caster's live position.
+ * Void Disc (LMB) — side-arm throw; disc flies out and back on the same line.
  * Anim: Right Hook (same clip as Poison Dart / Silence Sweep).
  */
 export const VOID_DISC_CAST = {
@@ -1686,10 +1690,10 @@ export const VOID_DISC_CAST = {
   radius: 0.55,
   maxActivePerCaster: 1,
   maxLifetimeMs: 2800,
-  /** Time to rotate 180° while still flying — not a pause at the apex. */
-  turnDelayMs: 120,
-  /** Fast enough to hook a full turnaround inside the 9m outbound. */
-  steerRadPerSec: 6.2,
+  /** Unused — the apex is an instant reverse, not a U-turn. */
+  turnDelayMs: 0,
+  /** Straight outbound; return locks the reverse heading. */
+  steerRadPerSec: 0,
   returnCatchRadius: 0.6,
   fps: POISON_DART_CAST.fps,
   releaseFrame: POISON_DART_CAST.releaseFrame,
@@ -2570,7 +2574,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: ARC_THREAD_CAST.unlockCostEssence,
     name: "Arc Thread",
     description:
-      "Fire a short magical tether. On contact, deal a hit and hold the link briefly — if it survives, unleash a second electrical discharge and slow the target.",
+      `Fire a 7.5m magical tether. On contact, deal ${combatMag(5.5)} damage and hold the link for 0.45s — if it survives, unleash a second ${combatMag(7.5)} discharge and slow the target for 0.7s.`,
     cooldownMs: ARC_THREAD_CAST.cooldownMs,
     range: ARC_THREAD_CAST.range,
     shape: "projectile",
@@ -2609,7 +2613,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: SOUL_MARK_CAST.unlockCostEssence,
     name: "Soul Mark",
     description:
-      "Fire a soul projectile that marks the target. At 3 stacks, the next hit consumes the marks for a Soul Rupture burst.",
+      `Fire a soul projectile that deals ${combatMag(5.5)} damage and marks the target for 4s. At 3 stacks, the next hit consumes the marks for a ${combatMag(17.5)} Soul Rupture burst.`,
     cooldownMs: SOUL_MARK_CAST.cooldownMs,
     range: SOUL_MARK_CAST.range,
     shape: "projectile",
@@ -2638,14 +2642,14 @@ export const ABILITIES: Record<string, AbilityDef> = {
     },
   },
   /**
-   * Void Disc (LMB) — outbound pierce, hooked U-turn at speed, homing return hit.
+   * Void Disc (LMB) — outbound pierce, reverse on the same line, return hit.
    * Anim: Right Hook (Poison Dart clip).
    */
   voidDisc: {
     id: "voidDisc",
     name: "Void Disc",
     description:
-      "Throw a disc of void energy that damages enemies on the way out. Turn to steer it, then it returns to you and can hit them again.",
+      "Throw a disc of void energy that damages enemies on the way out, then flies straight back on the same line and can hit them again.",
     allowedSlots: ["m1"],
     defaultSlot: "m1",
     unlockCostEssence: VOID_DISC_CAST.unlockCostEssence,
@@ -2653,7 +2657,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     range: VOID_DISC_CAST.range,
     shape: "projectile",
     effectKind: "returningProjectile",
-    tags: ["Projectile", "Damage", "MultiHit", "Movement", "Cast", "Pierce"],
+    tags: ["Projectile", "Damage", "MultiHit", "Cast", "Pierce"],
     damage: combatMag(9),
     speed: VOID_DISC_CAST.speed,
     spawnOffset: VOID_DISC_CAST.spawnOffset,
@@ -2736,7 +2740,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "orbitingWisp",
     name: "Orbiting Wisp",
     description:
-      "Summon a magical wisp that orbits around you and damages the first enemy it touches. Up to 4 wisps can be active at once.",
+      `Summon a magical wisp that orbits you for 9s and deals ${combatMag(11)} damage to the first enemy it touches. Up to 4 wisps can be active at once.`,
     allowedSlots: ["m1"],
     defaultSlot: "m1",
     unlockCostEssence: ORBITING_WISP_CAST.unlockCostEssence,
@@ -2862,7 +2866,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 80,
     name: "Crescent",
     description:
-      "Close-range slash combo — three quick hits. Chain swings or stop early to start cooldown.",
+      `Close-range slash combo — three hits (${combatMag(6)} / ${combatMag(6)} / ${combatMag(10)}). Chain swings or stop early to start cooldown.`,
     cooldownMs: 550,
     range: 2.2,
     shape: "melee",
@@ -2892,7 +2896,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "smash",
     name: "Jump Slam",
     description:
-      "Leap toward your cursor and slam the ground — shorter hops when you aim close, up to max range. Airborne iframes; stuns enemies on landing.",
+      `Leap toward your cursor and slam the ground — shorter hops when you aim close, up to 4m. Airborne iframes; deals ${combatMag(12)} damage and stuns for 1s on landing.`,
     cooldownMs: 9000,
     range: 4.0,
     shape: "aoe",
@@ -2964,7 +2968,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 100,
     name: "Frost Ball",
     description:
-      "Slow drifting frost orb with a ground aura. Ticks damage and refreshes slow on anyone standing in the disc until it expires.",
+      `Slow drifting frost orb with a ground aura. Ticks ${combatMag(3)} damage every 0.25s and refreshes a 1.2s slow on anyone standing in the disc until the orb expires.`,
     cooldownMs: 7000,
     range: 12.5,
     shape: "projectile",
@@ -3003,7 +3007,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "astralChain",
     name: "Astral Chain",
     description:
-      "Launch an astral chain that tethers you to an enemy. They cannot move farther away than the connection distance, and walking away at max range lightly pulls them toward you. Your movement is slowed while the tether lasts.",
+      "Launch an astral chain that tethers you to an enemy for 3s. They cannot move farther away than the connection distance, and walking away at max range tugs them toward you. You move 25% slower while the tether lasts.",
     allowedSlots: ["m2"],
     defaultSlot: "m2",
     unlockCostEssence: ASTRAL_CHAIN_CAST.unlockCostEssence,
@@ -3048,7 +3052,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "undergroundPulse",
     name: "Underground Pulse",
     description:
-      "Erupt magical vines at the targeted location, damaging and slowing enemies caught in the burst.",
+      `Erupt magical vines at the targeted location, dealing ${combatMag(7)} damage and slowing enemies for 1.3s.`,
     allowedSlots: ["m2"],
     defaultSlot: "m2",
     unlockCostEssence: UNDERGROUND_PULSE_CAST.unlockCostEssence,
@@ -3089,7 +3093,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "slipstream",
     name: "Slipstream",
     description:
-      "Create a short stream of magical wind. Moving through it accelerates you and empowers your next damaging spell.",
+      "Create a 9m wind lane that lasts 3s. While inside, gain +50% move speed. After 0.25s in the lane, exiting grants Tailwind: 25% faster windup on your next damaging spell.",
     allowedSlots: ["m2"],
     defaultSlot: "m2",
     unlockCostEssence: SLIPSTREAM_CAST.unlockCostEssence,
@@ -3131,7 +3135,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "soulRelay",
     name: "Soul Relay",
     description:
-      "Bind your soul to yourself or an ally with a small heal. Your next successful damaging spell heals the linked target for the damage you dealt.",
+      `Bind your soul to yourself or an ally for 3.5s, healing ${combatMag(4)} HP. Your next successful damaging spell heals the linked target for 100% of the damage you dealt.`,
     allowedSlots: ["m2"],
     defaultSlot: "m2",
     unlockCostEssence: SOUL_RELAY_CAST.unlockCostEssence,
@@ -3173,7 +3177,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "crushingSigil",
     name: "Crushing Sigil",
     description:
-      "Place a volatile sigil at the target location. After a short delay, it collapses and erupts for heavy damage.",
+      `Place a volatile sigil at the target location. After 0.8s it collapses and erupts for ${combatMag(21)} damage.`,
     allowedSlots: ["m2"],
     defaultSlot: "m2",
     unlockCostEssence: CRUSHING_SIGIL_CAST.unlockCostEssence,
@@ -3216,7 +3220,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 80,
     name: "Poison Dart",
     description:
-      "Snap a venomous dart with a right hook. Light impact, then Poisoned (stacks up to 3, shared with Spikes).",
+      `Snap a venomous dart with a right hook. Deals ${combatMag(4)} damage, then Poisoned (stacks up to 3, shared with Spikes).`,
     cooldownMs: 4500,
     range: 11,
     shape: "projectile",
@@ -3288,7 +3292,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "surge",
     unlockCostEssence: 80,
     name: "Surge",
-    description: "Crackling self-buff — burst of move speed. Can interrupt your other casts.",
+    description: "Crackling self-buff — +60% move speed for 4s. Can interrupt your other casts.",
     cooldownMs: 10000,
     range: 0,
     shape: "buff",
@@ -3324,7 +3328,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: SPIRIT_FORM_CAST.unlockCostEssence,
     name: "Spirit Form",
     description:
-      "Split from your body — leave a husk behind and rush forward as a spirit with bonus move speed. The link between you and your husk stuns enemies that pass through it. Recast Space or wait for the timer to snap back to your husk.",
+      "Split from your body — leave a husk behind and rush forward as a spirit with +35% move speed for 3.5s. The link between you and your husk stuns enemies for 0.7s. Recast Space or wait for the timer to snap back to your husk.",
     cooldownMs: SPIRIT_FORM_CAST.cooldownMs,
     range: SPIRIT_FORM_CAST.splitForward,
     shape: "buff",
@@ -3553,7 +3557,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 60,
     name: "Dash",
     description:
-      "Dive toward your cursor — shorter rolls when you aim close, up to max range. Brief iframes, then a short haste. Cuts other casts.",
+      "Dive toward your cursor — shorter rolls when you aim close, up to 5m. 0.52s iframes, then +25% move speed for 0.9s. Cuts other casts.",
     cooldownMs: 10000,
     range: 5,
     shape: "dash",
@@ -3597,7 +3601,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 120,
     name: "Teleport",
     description:
-      "Hold Space to plant and channel. A landing marker slides farther with charge — release to blink there. At max range you have a second to confirm or the cast cancels. Cooldown starts on any successful blink.",
+      "Hold Space to plant and channel. A landing marker slides farther with charge — release to blink there. At max range you have 1s to confirm or the cast cancels. Cooldown starts on any successful blink.",
     cooldownMs: 11000,
     range: 10,
     shape: "dash",
@@ -3640,7 +3644,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "verdantLeap",
     name: "Verdant Leap",
     description:
-      "Leap to an ally or practice dummy — heal both and share a brief speed boost. Alone, heal yourself and still gain the speed boost.",
+      `Leap to an ally or practice dummy — heal both for ${combatMag(15)} HP and share +20% move speed for 1.8s. Alone, heal yourself and still gain the speed boost.`,
     allowedSlots: ["space"],
     defaultSlot: "space",
     unlockCostEssence: VERDANT_LEAP_CAST.unlockCostEssence,
@@ -3674,7 +3678,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "bulwarkCharge",
     name: "Bulwark Charge",
     description:
-      "Sprint forward while resisting control and displacement. Block all damage from your front half during the charge, shoulder enemies aside, then gain a temporary shield when it ends.",
+      `Sprint 6m while resisting control and displacement (hard CC lasts 75% less). Block all damage from your front half during the charge, shoulder enemies aside, then gain a ${combatMag(12)} shield for 2.2s.`,
     allowedSlots: ["space"],
     defaultSlot: "space",
     unlockCostEssence: BULWARK_CHARGE_CAST.unlockCostEssence,
@@ -3687,6 +3691,12 @@ export const ABILITIES: Record<string, AbilityDef> = {
     shield: BULWARK_CHARGE_CAST.shield,
     shieldDurationMs: BULWARK_CHARGE_CAST.shieldDurationMs,
     interruptible: true,
+    // Buff-shaped, so resolveTravel needs this or the caster snaps instead of sliding.
+    travel: {
+      mode: "translate",
+      durationMs: authoredForWallMs(BULWARK_CHARGE_CAST.travelDurationMs),
+      distance: BULWARK_CHARGE_CAST.distance,
+    },
     timing: {
       anticipationMs: 75,
       castMs: 90,
@@ -3708,7 +3718,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "predatorStep",
     name: "Predator Step",
     description:
-      "Briefly vanish like Decoy and gain movement speed. Offensive actions end the cloak.",
+      "Vanish like Decoy for 0.7s and gain +60% move speed for 0.7s. Offensive actions end the cloak.",
     allowedSlots: ["space"],
     defaultSlot: "space",
     unlockCostEssence: PREDATOR_STEP_CAST.unlockCostEssence,
@@ -3774,7 +3784,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "teleportSlam",
     name: "Teleport Slam",
     description:
-      "Slam the ground around you, damaging and stunning nearby enemies, then shift a short distance toward your aim.",
+      `Slam the ground around you, dealing ${TELEPORT_SLAM_CAST.damage} damage and stunning nearby enemies for 0.75s, then blink 4.5m toward your aim.`,
     allowedSlots: ["space"],
     defaultSlot: "space",
     unlockCostEssence: TELEPORT_SLAM_CAST.unlockCostEssence,
@@ -3812,7 +3822,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 100,
     name: "Decoy",
     description:
-      "Spawn an identical clone that walks to your aim point (or stands still), then cloak for a short time. Invisible to enemies / ghost to yourself. Casting or interacting reveals you; you can still take damage.",
+      "Spawn an identical clone that walks to your aim point (or stands still), then cloak for 2s. Invisible to enemies / ghost to yourself. Casting or interacting reveals you; you can still take damage.",
     cooldownMs: 14000,
     range: 0,
     shape: "buff",
@@ -3843,7 +3853,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 80,
     name: "Push Back",
     description:
-      "Circular push wave at your feet. Knocks enemies outward, then slows them briefly.",
+      `Circular push wave at your feet. Deals ${combatMag(12)} damage, knocks enemies outward, then slows them for 1s.`,
     cooldownMs: 10000,
     range: 0,
     shape: "aoe",
@@ -3879,7 +3889,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "purgePulse",
     name: "Purge Pulse",
     description:
-      "Release a cleansing pulse around you, stripping negative effects from nearby allies (stun, root, bleed, curse, and more) and removing one positive effect from nearby enemies.",
+      "Release a 3.5m cleansing pulse, stripping all dispellable negative effects from nearby allies (stun, root, bleed, curse) and removing 1 positive effect from nearby enemies.",
     allowedSlots: ["q"],
     defaultSlot: "q",
     unlockCostEssence: PURGE_PULSE_CAST.unlockCostEssence,
@@ -3911,7 +3921,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "rockWall",
     name: "Rock Wall",
     description:
-      "Raise a short rock wall at the target location. It blocks movement and projectiles and can be destroyed by attacks.",
+      "Raise a 3m-wide rock wall at the target location for 5s. It blocks movement and projectiles and breaks after 3 hits.",
     allowedSlots: ["q"],
     defaultSlot: "q",
     unlockCostEssence: ROCK_WALL_CAST.unlockCostEssence,
@@ -3944,7 +3954,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "hexAnchor",
     name: "Hex Anchor",
     description:
-      "Hex an enemy. If they cast any spell while marked, the anchor triggers — dealing damage and briefly rooting them.",
+      `Hex an enemy for 3s. If they cast any spell while marked, the anchor triggers — dealing ${combatMag(20)} damage and rooting them for 0.85s.`,
     allowedSlots: ["q"],
     defaultSlot: "q",
     unlockCostEssence: HEX_ANCHOR_CAST.unlockCostEssence,
@@ -3975,7 +3985,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "ironGuard",
     name: "Iron Guard",
     description:
-      "Brace yourself with a small shield, negate 65% of incoming damage, and become immune to displacement at the cost of movement speed.",
+      `Brace for 2.6s: gain a ${combatMag(10)} shield, negate 65% of incoming damage, and become immune to displacement. Move 60% slower while bracing.`,
     allowedSlots: ["q"],
     defaultSlot: "q",
     unlockCostEssence: IRON_GUARD_CAST.unlockCostEssence,
@@ -4014,7 +4024,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "spellbreaker",
     name: "Spellbreaker",
     description:
-      "Shatter hostile projectiles around you. Each destroyed projectile banks a yellow orb (up to 3) that rides your next damaging spell for bonus damage.",
+      `Shatter hostile projectiles around you. Each destroyed projectile banks a yellow orb (up to 3, 8s) that adds ${combatMag(5)} damage to your next damaging spell.`,
     allowedSlots: ["q"],
     defaultSlot: "q",
     unlockCostEssence: SPELLBREAKER_CAST.unlockCostEssence,
@@ -4048,7 +4058,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 80,
     name: "Grasp",
     description:
-      "Stretch a dark hand forward and yank an enemy toward you. Light damage, then slows them briefly.",
+      `Stretch a dark hand forward and yank an enemy toward you. Deals ${combatMag(5)} damage, then slows them for 2s.`,
     cooldownMs: 10000,
     range: 12,
     shape: "projectile",
@@ -4086,7 +4096,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 100,
     name: "Life Leech",
     description:
-      "Hold to channel a short red–green drain stream. Enemies in the line take damage each tick; you heal for 40% of damage dealt. Release to end — cooldown starts then.",
+      `Hold to channel a 7.5m red–green drain stream. Enemies in the line take ${combatMag(4)} damage every 0.4s; you heal for 40% of damage dealt. Release to end — cooldown starts then.`,
     cooldownMs: 0,
     range: LIFE_LEECH_CAST.range,
     shape: "aoe",
@@ -4122,7 +4132,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 100,
     name: "Chain Hook",
     description:
-      "Fling a chain hook forward. On hit, leap to the enemy and bind them in chains for half a second.",
+      "Fling a chain hook forward. On hit, leap to the enemy and bind them in chains for 0.5s.",
     cooldownMs: 10000,
     range: 12,
     shape: "projectile",
@@ -4247,7 +4257,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "gravityWell",
     name: "Gravity Well",
     description:
-      "Create a compact gravity singularity that pulls nearby enemies toward its center, roots them for 1s, and deals light damage.",
+      `Create a gravity singularity that detonates after 0.3s, pulling nearby enemies toward its center, rooting them for 1s, and dealing ${combatMag(8)} damage.`,
     allowedSlots: ["e"],
     defaultSlot: "e",
     unlockCostEssence: GRAVITY_WELL_CAST.unlockCostEssence,
@@ -4294,7 +4304,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "prismLance",
     name: "Prism Lance",
     description:
-      "Fire a razor-thin lance of condensed magic. It deals more damage the farther it travels before striking an enemy.",
+      `Fire a razor-thin lance of condensed magic. Damage scales with travel from ${PRISM_LANCE_CAST.minDamage} at 3m to ${PRISM_LANCE_CAST.maxDamage} at 20m.`,
     allowedSlots: ["e"],
     defaultSlot: "e",
     unlockCostEssence: PRISM_LANCE_CAST.unlockCostEssence,
@@ -4343,7 +4353,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "soulSever",
     name: "Soul Sever",
     description:
-      "Sever an enemy's soul from their position. After a short delay, the severed soul snaps back, dealing more damage the farther the target moved.",
+      `Sever an enemy's soul from their position. After 2.2s, the severed soul snaps back, dealing ${SOUL_SEVER_CAST.severMinDamage}–${SOUL_SEVER_CAST.severMaxDamage} damage based on how far the target moved (max at 7m).`,
     allowedSlots: ["e"],
     defaultSlot: "e",
     unlockCostEssence: SOUL_SEVER_CAST.unlockCostEssence,
@@ -4389,7 +4399,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "arcBlade",
     name: "Arc Blade",
     description:
-      "Spin a blade of condensed magic around yourself three times, striking nearby enemies on each pass.",
+      `Spin a blade of condensed magic around yourself three times (${combatMag(8)} / ${combatMag(8)} / ${combatMag(10)}), striking nearby enemies on each pass.`,
     allowedSlots: ["e"],
     defaultSlot: "e",
     unlockCostEssence: ARC_BLADE_CAST.unlockCostEssence,
@@ -4427,7 +4437,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "bloomingPath",
     name: "Blooming Path",
     description:
-      "Send a living vine slowly forward along the ground. You and allies standing in the path receive small healing ticks while it lasts.",
+      `Send a living vine slowly forward along the ground. You and allies standing in the path heal ${combatMag(2)} HP every 0.5s. The path lingers 4.5s after the tip arrives.`,
     allowedSlots: ["e"],
     defaultSlot: "e",
     unlockCostEssence: BLOOMING_PATH_CAST.unlockCostEssence,
@@ -4454,6 +4464,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     radius: BLOOMING_PATH_CAST.radius,
     spawnOffset: BLOOMING_PATH_CAST.spawnOffset,
     pierce: true,
+    passThroughWorld: true,
     interruptible: true,
     timing: {
       anticipationMs: 75,
@@ -4477,7 +4488,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: SILENCE_SWEEP_CAST.unlockCostEssence,
     name: "Silence",
     description:
-      "Hook a crescent of cursed shadow across the field in front of you. Enemies caught in the sweep are Silenced — casts interrupt and stay blocked briefly.",
+      "Hook a crescent of cursed shadow across the field in front of you. Enemies caught in the sweep are Silenced for 2s — casts interrupt and stay blocked.",
     cooldownMs: SILENCE_SWEEP_CAST.cooldownMs,
     range: SILENCE_SWEEP_CAST.range,
     shape: "aoe",
@@ -4607,7 +4618,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 120,
     name: "Firewall",
     description:
-      "Crack the earth and raise a wall of flame. Ignites at the climax of the cast — cancel anytime before then. The wall draws from its center to both edges and scorches anyone who stands in it.",
+      `Crack the earth and raise a wall of flame. Ignites at the climax of the cast — cancel anytime before then. The wall lasts 7.5s, draws from its center to both edges, and deals ${combatMag(4)} damage every 0.4s to anyone who stands in it.`,
     cooldownMs: 14000,
     /** Full wall length (center → each edge = half). */
     range: 13,
@@ -4649,7 +4660,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: FIREBALL_CAST.unlockCostEssence,
     name: "Fireball",
     description:
-      "Gather a fireball (F). Charge grows until release — press F or LMB early to throw a smaller blast, or wait for full power. Explodes on enemies or walls and leaves a burning circle.",
+      `Gather a fireball (F). Charge grows until release — press F or LMB early to throw (${combatMag(14)}–${combatMag(38)} damage). Explodes on enemies or walls and leaves a burning circle for 1.7s.`,
     cooldownMs: FIREBALL_CAST.cooldownMs,
     range: FIREBALL_CAST.range,
     shape: "projectile",
@@ -4711,7 +4722,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: 140,
     name: "Volcano",
     description:
-      "Crack the earth at your aim and raise a volcano. It shoves bodies aside as it emerges, burns anyone pressed against it, blocks the ground while active, and rains flaming rocks that shatter on impact and leave foes burning.",
+      `Crack the earth at your aim and raise a volcano for 10s. It shoves bodies aside as it emerges, burns anyone pressed against it, blocks the ground while active, and rains flaming rocks (${combatMag(14)} each) that shatter on impact and leave foes burning.`,
     cooldownMs: 26000,
     /** Max place distance from caster. */
     range: 10,
@@ -4749,7 +4760,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: PROTECTION_BUBBLE_CAST.unlockCostEssence,
     name: "Protection Bubble",
     description:
-      "Weave a large dome at your feet. While it stands, enemy projectiles shatter on the outside and you and allies inside gain absorb over time — you can still cast out from within. Locked cast; the shield forms where you started the spell.",
+      `Weave a 4.75m dome at your feet for 7s. Enemy projectiles shatter on the outside. You and allies inside gain ${combatMag(2)} absorb every 0.25s (cap ${combatMag(30)}) and can still cast out from within. Locked cast; the shield forms where you started the spell.`,
     cooldownMs: PROTECTION_BUBBLE_CAST.cooldownMs,
     range: 0,
     shape: "aoe",
@@ -4782,7 +4793,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: BLOOD_RUSH_CAST.unlockCostEssence,
     name: "Blood Rush",
     description:
-      "Drop into a crouch for a second, then explode forward in a low sprint. Enemies you pass through take a small hit and start bleeding. Executes foes at or below 25% health.",
+      `Drop into a crouch for 1s, then explode forward in a low sprint. Enemies you pass through take ${combatMag(6)} damage and start bleeding. Executes foes at or below 20% health.`,
     cooldownMs: BLOOD_RUSH_CAST.cooldownMs,
     range: BLOOD_RUSH_CAST.range,
     shape: "dash",
@@ -4940,7 +4951,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "gravityField",
     name: "Gravity Field",
     description:
-      "Create a gravitational shroud around you. Enemies moving through its outer ring are heavily slowed, while the center remains clear.",
+      "Create a 5s gravitational shroud around you. Enemies in the outer ring (3.5–7m) move 45% slower; the center remains clear.",
     allowedSlots: ["r"],
     defaultSlot: "r",
     unlockCostEssence: GRAVITY_FIELD_CAST.unlockCostEssence,
@@ -4973,7 +4984,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "timeFreeze",
     name: "Time Freeze",
     description:
-      "Create a temporal field that dramatically slows hostile projectiles passing through it.",
+      "Create a 4.5s temporal field that slows hostile projectiles to 12% speed while they pass through it.",
     allowedSlots: ["r"],
     defaultSlot: "r",
     unlockCostEssence: TIME_FREEZE_CAST.unlockCostEssence,
@@ -5006,7 +5017,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "bloodPact",
     name: "Blood Pact",
     description:
-      "Sacrifice part of your current health to empower yourself and nearby allies with increased damage.",
+      "Sacrifice 12% of your current health. You and allies within 4.5m deal 35% more damage for 5s.",
     allowedSlots: ["r"],
     defaultSlot: "r",
     unlockCostEssence: BLOOD_PACT_CAST.unlockCostEssence,
@@ -5038,7 +5049,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "chainLightning",
     name: "Chain Lightning",
     description:
-      "Unleash lightning that jumps between nearby players. Enemies take damage while allies are briefly empowered.",
+      `Unleash lightning that jumps between nearby players. Enemies take ${combatMag(16)} damage. Allies gain +15% move speed and 12% faster casts for 4s.`,
     allowedSlots: ["r"],
     defaultSlot: "r",
     unlockCostEssence: CHAIN_LIGHTNING_CAST.unlockCostEssence,
@@ -5101,7 +5112,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "cycloneKick",
     name: "Cyclone Kick",
     description:
-      "Spin violently for 4 seconds, dealing rapid continuous damage each tick to nearby enemies.",
+      `Spin for 4s, dealing ${combatMag(5)} damage every 0.25s to enemies within 2.75m and pulling foes within 4.25m.`,
     allowedSlots: ["f"],
     defaultSlot: "f",
     unlockCostEssence: CYCLONE_KICK_CAST.unlockCostEssence,
@@ -5135,7 +5146,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "worldTree",
     name: "World Tree",
     description:
-      "Summon a magical tree that periodically sends healing seeds to the lowest-health nearby ally.",
+      `Summon a tree for 6.5s that sends a ${combatMag(10)} HP seed every 1s to the lowest-health ally within 7m.`,
     allowedSlots: ["f"],
     defaultSlot: "f",
     unlockCostEssence: WORLD_TREE_CAST.unlockCostEssence,
@@ -5173,7 +5184,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "phantomRush",
     name: "Phantom Rush",
     description:
-      "Rush through nearby enemies in rapid succession, striking each once and landing on their far side. If only one foe is in reach, dash through them twice.",
+      `Rush through up to 4 enemies within ${PHANTOM_RUSH_CAST.range}m, dealing ${combatMag(10)} to each and landing on their far side. If only one foe is in reach, dash through them twice.`,
     allowedSlots: ["f"],
     defaultSlot: "f",
     unlockCostEssence: PHANTOM_RUSH_CAST.unlockCostEssence,
@@ -5210,7 +5221,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "ascendantForm",
     name: "Ascendant Form",
     description:
-      "Grow into an empowered form, reducing CC durations and damage taken while damaging nearby enemies.",
+      `Grow for 5.5s: take 22% less damage, CC lasts 50% less, melee reach +15%, and deal ${combatMag(4)} damage every 1s to enemies within 2.5m.`,
     allowedSlots: ["f"],
     defaultSlot: "f",
     unlockCostEssence: ASCENDANT_FORM_CAST.unlockCostEssence,
@@ -5248,7 +5259,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "dreadAura",
     name: "Dread Aura",
     description:
-      "Surround yourself with a terrifying sigil. Enemies who cast or channel inside are feared away from you.",
+      "Surround yourself with a 4.25m sigil for 2.6s. Enemies who cast or channel inside are feared for 2.5s.",
     allowedSlots: ["f"],
     defaultSlot: "f",
     unlockCostEssence: DREAD_AURA_CAST.unlockCostEssence,
@@ -5284,7 +5295,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "elementalOverload",
     name: "Elemental Overload",
     description:
-      "Call a lightning strike onto a targeted enemy. The bolt is a direct hit that consumes all active elemental statuses (Fire, Poison, Frost, Shock) for heavy bonus burst damage per stack, plus an explosive detonation if Shocked.",
+      `Call a lightning strike onto a targeted enemy. Direct hit for ${combatMag(20)} damage, plus ${combatMag(7)} per consumed Fire, Poison, Frost, or Shock stack, and a ${combatMag(12)} explosion if Shocked.`,
     allowedSlots: ["e", "r"],
     defaultSlot: "e",
     talentTreeUnlock: {
@@ -5368,7 +5379,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "bindingSigil",
     name: "Binding Sigil",
     description:
-      "Place a binding rune at the target location. After a short arming delay it activates and binds enemies who stand inside.",
+      "Place a binding rune at the target location. After 0.75s it activates and roots enemies inside for 1.25s. The rune lasts 4s.",
     allowedSlots: ["q", "e"],
     defaultSlot: "e",
     talentTreeUnlock: {
@@ -5412,7 +5423,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "massSilence",
     name: "Mass Silence",
     description:
-      "Release a wide pulse that silences everyone nearby — enemies, allies, and yourself. Movement is unaffected.",
+      "Release a 13m pulse that silences everyone nearby for 4s — enemies, allies, and yourself. Movement is unaffected.",
     allowedSlots: ["f"],
     defaultSlot: "f",
     talentTreeUnlock: {
@@ -5496,7 +5507,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "guardianAngel",
     name: "Guardian Angel",
     description:
-      "Sacrifice a large portion of your current health to restore a large percentage of an ally's maximum health.",
+      "Sacrifice 40% of your current health (cannot go below 10% HP) to heal an ally for 35% of their maximum health.",
     allowedSlots: ["q", "e", "r"],
     defaultSlot: "q",
     talentTreeUnlock: {
@@ -5531,7 +5542,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "lastingGrace",
     name: "Lasting Grace",
     description:
-      "Bless an ally so they cannot be reduced below 1 health for a short duration.",
+      "Bless an ally so they cannot be reduced below 1 health for 3s.",
     allowedSlots: ["q", "e", "r"],
     defaultSlot: "e",
     talentTreeUnlock: {
@@ -5566,7 +5577,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "rebirth",
     name: "Rebirth",
     description:
-      "Bless an ally. If they die while blessed, they resurrect after a short delay with part of their health restored.",
+      "Bless an ally for 5s. If they die while blessed, they resurrect after 2.8s with 40% of their health.",
     allowedSlots: ["f"],
     defaultSlot: "f",
     unlockCostEssence: REBIRTH_CAST.unlockCostEssence,

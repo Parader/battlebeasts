@@ -318,6 +318,10 @@ export class LocalPredictor {
     this.travel = null;
   }
 
+  isTraveling(): boolean {
+    return this.travel != null;
+  }
+
   predict(input: PlayerInput): PredictedState {
     this.pending.push(input);
     if (this.pending.length > 128) this.pending.shift();

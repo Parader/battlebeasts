@@ -60,7 +60,7 @@ function formatCooldown(ms: number): string {
 
 export function SettingsPanel({ open, onClose }: Props) {
   const { settings, setMaster, setMusic, setAmbiance, setEffects } = useAudioSettings();
-  const { profile, claimDisplayName } = useAuth();
+  const { profile, claimDisplayName, signOut } = useAuth();
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -214,6 +214,20 @@ export function SettingsPanel({ open, onClose }: Props) {
                 }}
               >
                 {unseen ? "View patch notes · New" : "View patch notes"}
+              </button>
+            </div>
+
+            <div>
+              <p className="bb-section-label">Account</p>
+              <p className="bb-meta mb-2">
+                Quitting the game keeps you signed in. Use this only to switch Google or email.
+              </p>
+              <button
+                type="button"
+                className="bb-btn-ink w-full"
+                onClick={() => void signOut()}
+              >
+                Sign out
               </button>
             </div>
           </div>

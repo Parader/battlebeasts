@@ -286,19 +286,26 @@ export async function loadEconomy(userId: string): Promise<EconomySnapshot> {
       row.talent_build && typeof row.talent_build === "object" ? row.talent_build : {},
       talentPoints,
     );
+    const slotIndex = row.slot_index as number;
+    // Slot 0 empty builds inherit the account tree (legacy rows). Extra slots
+    // stay empty until the player spends points on that loadout.
+    const talentBuild =
+      Object.keys(fromPreset).length > 0
+        ? fromPreset
+        : slotIndex === 0
+          ? accountTalentBuild
+          : {};
     return {
-      slotIndex: row.slot_index as number,
-      name: (row.name as string) || `Loadout ${(row.slot_index as number) + 1}`,
+      slotIndex,
+      name: (row.name as string) || `Loadout ${slotIndex + 1}`,
       abilityIds: filterOwnedAbilityIds(
         normalizeLoadout(
           Array.isArray(row.ability_ids) ? (row.ability_ids as string[]) : null,
         ),
         unlocks.abilities,
-        Object.keys(fromPreset).length > 0 ? fromPreset : accountTalentBuild,
+        talentBuild,
       ),
-      // Empty preset builds inherit the account build so old rows stay playable.
-      talentBuild:
-        Object.keys(fromPreset).length > 0 ? fromPreset : accountTalentBuild,
+      talentBuild,
       flexAbilityIds: decodeFlexColumn(row.flex_ability_ids),
     };
   });

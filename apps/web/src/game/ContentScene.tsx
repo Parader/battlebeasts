@@ -15,6 +15,7 @@ import {
   RockWalls,
   WorldTrees,
   ProtectionBubbles,
+  PveReviveZones,
   OrbitingWisps,
   AstralChains,
   SoulSevers,
@@ -228,6 +229,7 @@ export function ContentScene({
       <RockWalls room={room} />
       <WorldTrees room={room} />
       <ProtectionBubbles room={room} />
+      <PveReviveZones room={room} />
       <OrbitingWisps room={room} localSessionId={localSessionId} predictedRef={predictedRef} />
       <AstralChains room={room} />
       <SoulSevers room={room} />

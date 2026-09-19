@@ -4,13 +4,15 @@ import * as THREE from "three";
 /** Facing-ring colors by unit relation to the local player. */
 export const AIM_RELATION_COLORS = {
   ally: "#4ade80",
+  /** Village groupmates — yellow so they read apart from other hub players. */
+  party: "#facc15",
   enemy: "#f87171",
   neutral: "#9ca3af",
   /** Local player — always green. */
   self: "#4ade80",
 } as const;
 
-export type AimRelation = "ally" | "enemy" | "neutral";
+export type AimRelation = "ally" | "party" | "enemy" | "neutral";
 
 /** Same non-empty team = ally; any other team letter = enemy (FFA inclusive). */
 export function resolveAimRelation(

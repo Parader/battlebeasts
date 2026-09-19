@@ -13,8 +13,10 @@ import {
   PVE_ZOMBIE_KIND,
   PVE_ZOMBIE_MELEE_COOLDOWN_MS,
   PVE_ZOMBIE_MELEE_RANGE,
+  PVE_MOB_PATH_COMMIT_MS,
   PVE_ZOMBIE_RETARGET_MS,
   clampPvePartySize,
+  pickCommittedPveFocus,
   isPveWaveMobKind,
   phaseDurationMs,
   pveEliteComfortRange,
@@ -69,6 +71,7 @@ export class WaveDirector {
   private meleeCd = new Map<string, number>();
   private retargetAt = new Map<string, number>();
   private targetSession = new Map<string, string>();
+  private flowUntil = new Map<string, number>();
   private speedById = new Map<string, number>();
   private damageById = new Map<string, number>();
   private eliteKit = new Map<string, string[]>();
@@ -126,6 +129,7 @@ export class WaveDirector {
     this.meleeCd.clear();
     this.retargetAt.clear();
     this.targetSession.clear();
+    this.flowUntil.clear();
     this.speedById.clear();
     this.damageById.clear();
     this.eliteKit.clear();
@@ -179,6 +183,7 @@ export class WaveDirector {
     this.meleeCd.delete(targetId);
     this.retargetAt.delete(targetId);
     this.targetSession.delete(targetId);
+    this.flowUntil.delete(targetId);
     this.speedById.delete(targetId);
     this.damageById.delete(targetId);
     this.eliteKit.delete(targetId);
@@ -356,23 +361,28 @@ export class WaveDirector {
     living: LivingPlayer[],
     now: number,
   ): LivingPlayer {
-    let focusId = this.targetSession.get(id);
+    const currentId = this.targetSession.get(id);
     const due = (this.retargetAt.get(id) ?? 0) <= now;
-    if (!focusId || due || !living.some((p) => p.id === focusId)) {
-      let best = living[0]!;
-      let bestD = Infinity;
-      for (const p of living) {
-        const d = Math.hypot(p.x - x, p.z - z);
-        if (d < bestD) {
-          bestD = d;
-          best = p;
-        }
-      }
-      focusId = best.id;
-      this.targetSession.set(id, focusId);
+    const focusId = pickCommittedPveFocus(living, { x, z }, currentId, due);
+    if (focusId !== currentId) this.targetSession.set(id, focusId);
+    if (!currentId || due || focusId !== currentId) {
       this.retargetAt.set(id, now + PVE_ZOMBIE_RETARGET_MS);
     }
     return living.find((p) => p.id === focusId) ?? living[0]!;
+  }
+
+  private steerToward(
+    id: string,
+    from: { x: number; z: number },
+    goal: { x: number; z: number },
+    step: number,
+    now: number,
+  ) {
+    if (!this.combat.hasMobWalkLos(from, goal)) {
+      this.flowUntil.set(id, now + PVE_MOB_PATH_COMMIT_MS);
+    }
+    const preferFlow = (this.flowUntil.get(id) ?? 0) > now;
+    return this.combat.steerWaveMob(from, goal, step, preferFlow);
   }
 
   /** Stun/root stop feet; slow scales walk; silence/stun drop attacks. */
@@ -419,7 +429,7 @@ export class WaveDirector {
     } else if (dist > PVE_ZOMBIE_MELEE_RANGE * 0.85) {
       const step = Math.min(dist - 0.4, speed * dt);
       const from = { x: t.x, z: t.z };
-      const desired = this.combat.steerWaveMob(from, { x: focus.x, z: focus.z }, step);
+      const desired = this.steerToward(id, from, { x: focus.x, z: focus.z }, step, now);
       const next = this.combat.moveWaveMob(id, from, desired);
       t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, dx, dz, dt, false);
       t.x = next.x;
@@ -516,7 +526,7 @@ export class WaveDirector {
       const fromPos = from;
       let desired: { x: number; z: number };
       if (!los || tooFar) {
-        desired = this.combat.steerWaveMob(fromPos, { x: focus.x, z: focus.z }, step);
+        desired = this.steerToward(id, fromPos, { x: focus.x, z: focus.z }, step, now);
       } else {
         desired = {
           x: t.x + -nx * step,

@@ -9,6 +9,8 @@ class AbilityHudRuntime {
   flashId: string | null = null;
   /** Last Flow-movement the local player committed (Double Step / Motion Echo). */
   lastFlowMoveId: string | null = null;
+  /** Wall clock when the sim paused; HUD remaining uses this instead of Date.now(). */
+  clockPausedAt = 0;
   private listeners = new Set<Listener>();
   private emitRaf = 0;
 
@@ -33,10 +35,35 @@ class AbilityHudRuntime {
     this.scheduleEmit();
   }
 
+  hudNow(): number {
+    return this.clockPausedAt > 0 ? this.clockPausedAt : Date.now();
+  }
+
+  pauseClock(): void {
+    if (this.clockPausedAt > 0) return;
+    this.clockPausedAt = Date.now();
+    this.scheduleEmit();
+  }
+
+  resumeClock(): void {
+    if (this.clockPausedAt <= 0) return;
+    const delta = Date.now() - this.clockPausedAt;
+    this.clockPausedAt = 0;
+    if (delta > 0) {
+      const next: Record<string, number> = {};
+      for (const [id, until] of Object.entries(this.cooldownUntil)) {
+        next[id] = until > 0 ? until + delta : until;
+      }
+      this.cooldownUntil = next;
+    }
+    this.scheduleEmit();
+  }
+
   clear(): void {
     this.cooldownUntil = {};
     this.flashId = null;
     this.lastFlowMoveId = null;
+    this.clockPausedAt = 0;
     this.scheduleEmit();
   }
 

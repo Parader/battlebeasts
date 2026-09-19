@@ -18,12 +18,53 @@ export const PVE_ZOMBIE_BASE_SPEED = 2.55;
 export const PVE_ZOMBIE_MELEE_RANGE = 1.35;
 export const PVE_ZOMBIE_MELEE_DAMAGE = 32;
 export const PVE_ZOMBIE_MELEE_COOLDOWN_MS = 900;
-export const PVE_ZOMBIE_RETARGET_MS = 200;
+export const PVE_ZOMBIE_RETARGET_MS = 1800;
+/** Only abandon a living focus if another hunter is this much closer. */
+export const PVE_ZOMBIE_RETARGET_SWITCH_M = 3.5;
+
+/** Stick to a hunter instead of snapping to whoever is nearest every tick. */
+export function pickCommittedPveFocus(
+  living: ReadonlyArray<{ id: string; x: number; z: number }>,
+  from: { x: number; z: number },
+  currentId: string | undefined,
+  retargetDue: boolean,
+): string {
+  let nearest = living[0]!;
+  let nearestD = Infinity;
+  let current: { id: string; x: number; z: number } | undefined;
+  let currentD = Infinity;
+  for (const p of living) {
+    const d = Math.hypot(p.x - from.x, p.z - from.z);
+    if (d < nearestD) {
+      nearestD = d;
+      nearest = p;
+    }
+    if (p.id === currentId) {
+      current = p;
+      currentD = d;
+    }
+  }
+  if (!current) return nearest.id;
+  if (!retargetDue) return current.id;
+  if (nearest.id !== current.id && nearestD < currentD - PVE_ZOMBIE_RETARGET_SWITCH_M) {
+    return nearest.id;
+  }
+  return current.id;
+}
 
 /** Keep slain wave/dungeon mobs in the world for a death clip + sink before despawn. */
 export const PVE_MOB_CORPSE_MS = 4500;
 /** Fade the corpse during the last second of linger. */
 export const PVE_MOB_CORPSE_FADE_MS = 1000;
+
+/** Ground circle around a fallen hunter. Living allies standing in it charge a revive. */
+export const PVE_ALLY_REVIVE_RADIUS = 3;
+/** One ally fills the circle in this many ms; N allies charge N× as fast. */
+export const PVE_ALLY_REVIVE_CHARGE_MS = 4500;
+/** HP restored on ally revive (fraction of max). */
+export const PVE_ALLY_REVIVE_HP_FRAC = 0.5;
+/** Brief i-frames after an ally revive. */
+export const PVE_ALLY_REVIVE_IFRAME_MS = 1500;
 
 /** Legacy clear-beat; waves now roll on a fixed clock (`PVE_WAVE_INTERVAL_MS`). */
 export const PVE_WAVE_CLEAR_MS = 2500;
@@ -40,15 +81,17 @@ export const PVE_WAVE_SPAWN_STAGGER_MS = 650;
  * Authored pads give *direction* (come from that side of the map). The actual
  * spawn sits on that ray, close enough that hunters can see and react.
  */
-export const PVE_ENEMY_APPROACH_MIN_M = 9;
-export const PVE_ENEMY_APPROACH_MAX_M = 13;
+export const PVE_ENEMY_APPROACH_MIN_M = 18;
+export const PVE_ENEMY_APPROACH_MAX_M = 24;
 /** Pads closer than this are the holdout itself and are not ingress. */
-export const PVE_ENEMY_INGRESS_MIN_M = 8;
+export const PVE_ENEMY_INGRESS_MIN_M = 14;
 
 /** Occupancy cell size for PvE pathing around map props. */
 export const PVE_MOB_NAV_CELL_M = 1;
 /** Rebuild the shared flow field at most this often. */
-export const PVE_MOB_NAV_FLOW_MS = 220;
+export const PVE_MOB_NAV_FLOW_MS = 650;
+/** Hold a detour after LOS is blocked so kiting doesn't flip the path every step. */
+export const PVE_MOB_PATH_COMMIT_MS = 1000;
 /** If the walk ray to the focus is clear, skip the flow field and go straight. */
 export const PVE_MOB_NAV_LOS_M = 12;
 /** Turn onto the walk heading (~515°/s) so packs don't snap every frame. */

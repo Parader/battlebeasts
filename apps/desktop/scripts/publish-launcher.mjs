@@ -73,6 +73,57 @@ function findBuiltExe(version) {
   throw new Error(`Missing ${named} — run pnpm dist:desktop first`);
 }
 
+function stampLauncherOnLatestJson(latestPath, launcherFeed) {
+  const latest = JSON.parse(fs.readFileSync(latestPath, "utf8"));
+  latest.launcher = {
+    version: launcherFeed.version,
+    name: launcherFeed.name,
+    sha256: launcherFeed.sha256,
+    size: launcherFeed.size,
+    url: launcherFeed.url,
+  };
+  latest.minLauncher = launcherFeed.version;
+  fs.writeFileSync(latestPath, `${JSON.stringify(latest, null, 2)}\n`);
+  return latest.releaseTag || null;
+}
+
+function updateLatestGameFeed(launcherFeed) {
+  const tmp = path.join(outDir, "latest.json");
+  const view = runCapture("gh", [
+    "release",
+    "view",
+    "--repo",
+    REPO,
+    "--json",
+    "tagName",
+  ]);
+  if (view.status !== 0) {
+    console.warn("No latest game release — skip stamping launcher onto latest.json");
+    return;
+  }
+  const tag = JSON.parse(view.stdout || "{}").tagName;
+  if (!tag) return;
+  const dl = runCapture("gh", [
+    "release",
+    "download",
+    tag,
+    "--repo",
+    REPO,
+    "--pattern",
+    "latest.json",
+    "--dir",
+    outDir,
+    "--clobber",
+  ]);
+  if (dl.status !== 0 || !fs.existsSync(tmp)) {
+    console.warn(`Could not download ${tag} latest.json — launcher EXE is up, game feed still stale`);
+    return;
+  }
+  stampLauncherOnLatestJson(tmp, launcherFeed);
+  run("gh", ["release", "upload", tag, tmp, "--repo", REPO, "--clobber"]);
+  console.log(`Stamped launcher ${launcherFeed.version} onto ${tag}/latest.json`);
+}
+
 const pkg = JSON.parse(fs.readFileSync(path.join(desktop, "package.json"), "utf8"));
 const version = String(pkg.version);
 const built = findBuiltExe(version);
@@ -119,4 +170,5 @@ if (exists) {
   ]);
 }
 
+updateLatestGameFeed(feed);
 console.log(`Published launcher ${version} → ${feed.url}`);

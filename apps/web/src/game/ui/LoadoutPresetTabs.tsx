@@ -15,6 +15,7 @@ type Props = {
   loadoutSlotCount: number;
   onSelectPreset: (slotIndex: number) => void;
   onRenamePreset: (slotIndex: number, name: string) => void;
+  disabled?: boolean;
   className?: string;
 };
 
@@ -25,6 +26,7 @@ export function LoadoutPresetTabs({
   loadoutSlotCount,
   onSelectPreset,
   onRenamePreset,
+  disabled = false,
   className,
 }: Props) {
   const [editing, setEditing] = useState<number | null>(null);
@@ -112,9 +114,12 @@ export function LoadoutPresetTabs({
             type="button"
             role="tab"
             aria-selected={active}
+            aria-disabled={disabled}
+            disabled={disabled}
             title={active ? "Click to rename" : label}
             className={["bb-slot-chip", active ? "bb-slot-chip--on" : ""].join(" ")}
             onClick={() => {
+              if (disabled) return;
               if (active) beginRename(i, label);
               else onSelectPreset(i);
             }}

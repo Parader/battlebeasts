@@ -6,7 +6,8 @@ import { BLOOMING_PATH_CAST } from "@battlebeasts/shared";
 import { getBloomingVineStreakTexture } from "../bloomingVineTexture";
 import { makeBloomingVineRibbonGeo } from "./bloomingPathRibbon";
 import {
-  BLOOMING_CORE,
+  BLOOMING_BALL,
+  BLOOMING_BALL_GLOW,
   BLOOMING_HARMONY,
   BLOOMING_MAIN,
   BLOOMING_WARM,
@@ -72,8 +73,8 @@ export function BloomingPathProjectileEffect({ room, id }: { room: Room; id: str
     return {
       ribbon: mkMap(BLOOMING_MAIN, 0.75),
       ribbonGlow: mkMap(BLOOMING_HARMONY, 0.42),
-      tip: mk(BLOOMING_CORE, 0.95),
-      tipGlow: mk(BLOOMING_WARM, 0.55),
+      tip: mk(BLOOMING_BALL, 0.98),
+      tipGlow: mk(BLOOMING_BALL_GLOW, 0.7),
       streaks: Array.from({ length: STREAK_COUNT }, () => mk(BLOOMING_WARM, 0.7)),
     };
   }, [vineTex]);
@@ -170,14 +171,14 @@ export function BloomingPathProjectileEffect({ room, id }: { room: Room; id: str
         lookTarget.set(renderPos.current.x + vx, TIP_Y, renderPos.current.z + vz);
         tip.current.lookAt(lookTarget);
       }
-      mats.tip.opacity = 0.95;
+      mats.tip.opacity = 0.98;
     }
     if (tipGlow.current) {
       const pulse = 0.85 + Math.sin(age.current * 12) * 0.15;
       tipGlow.current.visible = true;
       tipGlow.current.position.copy(renderPos.current);
-      tipGlow.current.scale.setScalar(0.42 * pulse);
-      mats.tipGlow.opacity = 0.55 * pulse;
+      tipGlow.current.scale.setScalar(0.48 * pulse);
+      mats.tipGlow.opacity = 0.72 * pulse;
     }
 
     const dx = renderPos.current.x - spawn.current.x;

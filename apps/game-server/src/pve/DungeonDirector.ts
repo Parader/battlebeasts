@@ -11,7 +11,9 @@ import {
   PVE_ZOMBIE_MELEE_COOLDOWN_MS,
   PVE_ZOMBIE_MELEE_DAMAGE,
   PVE_ZOMBIE_MELEE_RANGE,
+  PVE_MOB_PATH_COMMIT_MS,
   PVE_ZOMBIE_RETARGET_MS,
+  pickCommittedPveFocus,
   PVE_ZOMBIE_BASE_HP,
   clampInstancePartySize,
   dungeonAggroRadius,
@@ -110,6 +112,7 @@ export class DungeonDirector {
   private meleeCd = new Map<string, number>();
   private retargetAt = new Map<string, number>();
   private targetSession = new Map<string, string>();
+  private flowUntil = new Map<string, number>();
   private speedById = new Map<string, number>();
   private damageById = new Map<string, number>();
   private eliteKit = new Map<string, string[]>();
@@ -508,23 +511,28 @@ export class DungeonDirector {
     living: LivingPlayer[],
     now: number,
   ): LivingPlayer {
-    let focusId = this.targetSession.get(id);
-    const until = this.retargetAt.get(id) ?? 0;
-    if (!focusId || until <= now || !living.some((p) => p.id === focusId)) {
-      let best = living[0]!;
-      let bestD = Infinity;
-      for (const p of living) {
-        const d = Math.hypot(p.x - t.x, p.z - t.z);
-        if (d < bestD) {
-          bestD = d;
-          best = p;
-        }
-      }
-      focusId = best.id;
-      this.targetSession.set(id, focusId);
+    const currentId = this.targetSession.get(id);
+    const due = (this.retargetAt.get(id) ?? 0) <= now;
+    const focusId = pickCommittedPveFocus(living, { x: t.x, z: t.z }, currentId, due);
+    if (focusId !== currentId) this.targetSession.set(id, focusId);
+    if (!currentId || due || focusId !== currentId) {
       this.retargetAt.set(id, now + PVE_ZOMBIE_RETARGET_MS);
     }
     return living.find((p) => p.id === focusId) ?? living[0]!;
+  }
+
+  private steerToward(
+    id: string,
+    from: { x: number; z: number },
+    goal: { x: number; z: number },
+    step: number,
+    now: number,
+  ) {
+    if (!this.combat.hasMobWalkLos(from, goal)) {
+      this.flowUntil.set(id, now + PVE_MOB_PATH_COMMIT_MS);
+    }
+    const preferFlow = (this.flowUntil.get(id) ?? 0) > now;
+    return this.combat.steerWaveMob(from, goal, step, preferFlow);
   }
 
   private mobCrowdControl(id: string): {
@@ -569,7 +577,7 @@ export class DungeonDirector {
     } else if (dist > PVE_ZOMBIE_MELEE_RANGE * 0.85) {
       const step = Math.min(dist - 0.4, speed * dt);
       const from = { x: t.x, z: t.z };
-      const desired = this.combat.steerWaveMob(from, { x: focus.x, z: focus.z }, step);
+      const desired = this.steerToward(id, from, { x: focus.x, z: focus.z }, step, now);
       const next = this.combat.moveWaveMob(id, from, desired);
       t.yaw = mobWalkYaw(t.yaw, next.x - from.x, next.z - from.z, dx, dz, dt, false);
       t.x = next.x;
@@ -664,7 +672,7 @@ export class DungeonDirector {
       const step = speed * dt;
       let desired: { x: number; z: number };
       if (!los || tooFar) {
-        desired = this.combat.steerWaveMob(from, { x: focus.x, z: focus.z }, step);
+        desired = this.steerToward(id, from, { x: focus.x, z: focus.z }, step, now);
       } else {
         desired = {
           x: t.x + -nx * step,
@@ -934,6 +942,7 @@ export class DungeonDirector {
     this.meleeCd.delete(id);
     this.retargetAt.delete(id);
     this.targetSession.delete(id);
+    this.flowUntil.delete(id);
     this.speedById.delete(id);
     this.damageById.delete(id);
     this.eliteKit.delete(id);

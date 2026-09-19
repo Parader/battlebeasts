@@ -112,6 +112,7 @@ export { Volcanoes } from "./vfx/Volcanoes";
 export { RockWalls } from "./vfx/RockWalls";
 export { WorldTrees } from "./vfx/WorldTrees";
 export { ProtectionBubbles } from "./vfx/ProtectionBubbles";
+export { PveReviveZones } from "./vfx/PveReviveZones";
 export { OrbitingWisps } from "./vfx/OrbitingWisps";
 export { AstralChains } from "./vfx/AstralChains";
 export { SoulSevers } from "./vfx/SoulSevers";

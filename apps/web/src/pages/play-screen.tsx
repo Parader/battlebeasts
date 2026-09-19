@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router";
 import { GameCanvas } from "@/game/GameCanvas";
 import { ThirdPersonLookOverlay } from "@/game/ui/ThirdPersonLookOverlay";
@@ -29,6 +29,7 @@ import { HubRoster } from "@/game/ui/HubRoster";
 import { GroupBox, isLiveGroup } from "@/game/ui/GroupBox";
 import { ArenaMatchHud } from "@/game/ui/ArenaMatchHud";
 import { WaveAssaultHud } from "@/game/ui/WaveAssaultHud";
+import { PvePauseOverlay } from "@/game/ui/PvePauseOverlay";
 import { PveUpgradeDraft } from "@/game/ui/PveUpgradeDraft";
 import { WaveRunRecapPanel } from "@/game/ui/WaveRunRecapPanel";
 import { MatchRecapPanel } from "@/game/ui/MatchRecapPanel";
@@ -61,6 +62,7 @@ import {
     isLoadoutReady,
     TUTORIAL_CHEST_SOURCE,
 } from "@battlebeasts/shared";
+import { isDesktopApp, quitDesktopApp } from "@/lib/desktop";
 import { useAuth } from "@/providers/auth-provider";
 import { useFriends } from "@/hooks/use-friends";
 import { LoadingIndicator } from "@/components/application/loading-indicator/loading-indicator";
@@ -238,6 +240,7 @@ export const PlayScreen = () => {
         arenaHud,
         waveHud,
         pvePaused,
+        pveResumeUntil,
         setPvePaused,
         pveUpgradeDraft,
         pvePicks,
@@ -299,6 +302,10 @@ export const PlayScreen = () => {
 
     const inContent = phase === "content";
     const isAdmin = isHubAdmin || clientIsAdmin;
+    const hubGroupSessionIds = useMemo(() => {
+        if (!isLiveGroup(party, room?.sessionId ?? null) || !party) return undefined;
+        return new Set(party.members.map((m) => m.sessionId));
+    }, [party, room?.sessionId]);
 
     useEffect(() => {
         if (!friendsOpen) return;
@@ -519,7 +526,7 @@ export const PlayScreen = () => {
     const isHubOwner = effectiveHubOwnerId === userId;
     const leavePlay = () => {
         void (async () => {
-            if (user) await signOut();
+            if (await quitDesktopApp()) return;
             window.location.assign("/");
         })();
     };
@@ -545,6 +552,7 @@ export const PlayScreen = () => {
                 contentMode={contentMode}
                 suspended={suspendGameGl}
                 spectateTargetId={deathSpectate ? spectateTargetId : null}
+                partySessionIds={inContent ? undefined : hubGroupSessionIds}
             />
             {playReady && isAdmin ? (
                 <ThirdPersonLookOverlay
@@ -628,7 +636,9 @@ export const PlayScreen = () => {
                     respawnMs={BG_RESPAWN_MS}
                     onSpectate={!arenaAllowRespawn ? beginDeathSpectate : undefined}
                     fallenHint={
-                        isPveRun ? "No respawn — the run ends when all hunters fall." : undefined
+                        isPveRun
+                            ? "Allies can revive you — they stand in your circle to charge it. The run ends when all hunters fall."
+                            : undefined
                     }
                 />
             )}
@@ -649,7 +659,16 @@ export const PlayScreen = () => {
                     waiting={pveUpgradeDraft.waiting}
                     localSessionId={room?.sessionId ?? null}
                     picked={pveUpgradeDraft.picked}
+                    canPick={localHp.hp > 0 && diedAt == null}
                     onPick={pickPveUpgrade}
+                />
+            )}
+
+            {playReady && isPveRun && inContent && pvePaused && !pveUpgradeDraft && !waveRunRecap && (
+                <PvePauseOverlay
+                    until={pveResumeUntil}
+                    onResume={() => setPvePaused(false)}
+                    onHold={() => setPvePaused(true)}
                 />
             )}
 
@@ -657,7 +676,10 @@ export const PlayScreen = () => {
                 <WaveAssaultHud
                     hud={waveHud}
                     paused={pvePaused}
-                    onTogglePause={() => setPvePaused(!pvePaused)}
+                    resuming={pveResumeUntil > Date.now()}
+                    onTogglePause={() =>
+                        setPvePaused(pveResumeUntil > Date.now() ? true : !pvePaused)
+                    }
                     onReturnHub={returnToHub}
                     room={room}
                     localSessionId={room?.sessionId ?? null}
@@ -732,11 +754,7 @@ export const PlayScreen = () => {
                                         ? { current: hubRoster.length, cap: plazaState.walkInCap }
                                         : null
                                 }
-                                groupSessionIds={
-                                    isLiveGroup(party, room?.sessionId ?? null)
-                                        ? new Set(party.members.map((m) => m.sessionId))
-                                        : undefined
-                                }
+                                groupSessionIds={hubGroupSessionIds}
                                 canInviteToGroup={
                                     !party ||
                                     !isLiveGroup(party, room?.sessionId ?? null) ||
@@ -840,7 +858,7 @@ export const PlayScreen = () => {
                             onClick={() => setHelpOpen((v) => !v)}
                         />
                         <HudIconButton
-                            label="Leave"
+                            label="Quit game"
                             icon="exit-door"
                             onClick={() => {
                                 void leavePlay();
@@ -1088,6 +1106,7 @@ export const PlayScreen = () => {
                             : undefined
                     }
                     onLeave={leavePlay}
+                    leaveLabel={isDesktopApp() ? "Quit game" : "Exit to title"}
                 />
             )}
 

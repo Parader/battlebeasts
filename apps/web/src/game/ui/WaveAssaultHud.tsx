@@ -24,6 +24,7 @@ type PvePick = {
 type Props = {
   hud: WaveHud | null;
   paused: boolean;
+  resuming?: boolean;
   onTogglePause: () => void;
   onReturnHub: () => void;
   room: Room | null;
@@ -78,6 +79,7 @@ function teamName(rows: LiveRow[]): string {
 export function WaveAssaultHud({
   hud,
   paused,
+  resuming = false,
   onTogglePause,
   onReturnHub,
   room,
@@ -118,9 +120,13 @@ export function WaveAssaultHud({
         ) : null}
         {hud && hud.phase === "complete" ? <span className="bb-meta">Exit unlocked</span> : null}
         {hud && hud.phase === "intro" ? <span className="bb-meta">Get ready…</span> : null}
-        {paused ? <span className="text-sm text-[var(--bb-brass)]">Paused</span> : null}
+        {resuming ? (
+          <span className="text-sm text-[var(--bb-brass)]">Resuming</span>
+        ) : paused ? (
+          <span className="text-sm text-[var(--bb-brass)]">Paused</span>
+        ) : null}
         <button type="button" className="bb-btn-ink" onClick={onTogglePause}>
-          {paused ? "Resume" : "Pause"}
+          {resuming ? "Pause" : paused ? "Resume" : "Pause"}
         </button>
         <button
           type="button"

@@ -28,6 +28,7 @@ type Props = {
   waiting: PveDraftWaiting[];
   localSessionId: string | null;
   picked: boolean;
+  canPick?: boolean;
   onPick: (offerId: string) => void;
 };
 
@@ -42,6 +43,7 @@ export function PveUpgradeDraft({
   waiting,
   localSessionId,
   picked,
+  canPick = true,
   onPick,
 }: Props) {
   const draftKey = offers.map((offer) => offer.offerId).join("|");
@@ -61,15 +63,19 @@ export function PveUpgradeDraft({
     picked ||
     waiting.some((row) => row.sessionId === localSessionId && row.picked);
 
-  const hint = !selectable
-    ? "Cards are appearing…"
-    : localReady
-      ? others.length > 0
-        ? "Waiting for your party — click another card to change."
-        : "Locked in."
-      : others.length > 0
-        ? "Pick one — you can change until everyone is ready."
-        : "Pick one when you’re ready.";
+  const hint = !canPick
+    ? others.length > 0
+      ? "You're down — the living hunters are choosing."
+      : "You're down — this draft will pass you by."
+    : !selectable
+      ? "Cards are appearing…"
+      : localReady
+        ? others.length > 0
+          ? "Waiting for your party — click another card to change."
+          : "Locked in."
+        : others.length > 0
+          ? "Pick one — you can change until everyone is ready."
+          : "Pick one when you’re ready.";
 
   return (
     <div
@@ -95,9 +101,9 @@ export function PveUpgradeDraft({
               <button
                 key={offer.offerId}
                 type="button"
-                disabled={!selectable}
+                disabled={!selectable || !canPick}
                 onClick={() => {
-                  if (!selectable || selectedOfferId === offer.offerId) return;
+                  if (!canPick || !selectable || selectedOfferId === offer.offerId) return;
                   setSelectedOfferId(offer.offerId);
                   onPick(offer.offerId);
                 }}

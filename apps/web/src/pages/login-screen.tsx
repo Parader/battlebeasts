@@ -2,15 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router";
 import { SocialButton } from "@/components/base/buttons/social-button";
 import { APP_DISPLAY_NAME } from "@/brand";
+import { isDesktopApp } from "@/lib/desktop";
 import { useAuth } from "@/providers/auth-provider";
 import { AuthShell } from "./auth/AuthShell";
-
-function isDesktopApp() {
-    return (
-        typeof window !== "undefined" &&
-        (window.battlebeasts?.isElectron === true || window.location.protocol === "file:")
-    );
-}
 
 export const LoginScreen = () => {
     const { ready, configured, user, signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth();
@@ -112,7 +106,9 @@ export const LoginScreen = () => {
                 {mode === "signin" ? "Enter the trials" : "Create your account"}
             </h2>
             <p className="bb-auth-panel__lead">
-                Sign in to play, add friends, and join ranked matches.
+                {mode === "signin"
+                    ? "Sign in with the same Google or email as last time. Quitting the game does not delete your hunter — names are not logins."
+                    : "Create an account with email or Google. Your hunter name is claimed after this, on the next screen."}
             </p>
 
             {!configured && (

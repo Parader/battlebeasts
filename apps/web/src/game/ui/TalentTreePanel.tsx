@@ -76,8 +76,6 @@ type TipState =
   | {
       kind: "talent";
       talent: CatalogTalentDef;
-      rank: number;
-      nodeState: "locked" | "available" | "learned";
       anchor: DOMRect;
     }
   | {
@@ -162,7 +160,25 @@ function TalentTooltipBody({
   );
 }
 
-function TalentFloatingTip({ tip }: { tip: TipState | null }) {
+function talentNodeState(
+  build: TalentBuild,
+  talentId: string,
+  owned: number,
+): "locked" | "available" | "learned" {
+  const rank = talentRank(build, talentId);
+  if (rank > 0) return "learned";
+  return canInvestTalent(build, talentId, owned) ? "available" : "locked";
+}
+
+function TalentFloatingTip({
+  tip,
+  build,
+  owned,
+}: {
+  tip: TipState | null;
+  build: TalentBuild;
+  owned: number;
+}) {
   const tipRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<CSSProperties>({
     position: "fixed",
@@ -203,7 +219,7 @@ function TalentFloatingTip({ tip }: { tip: TipState | null }) {
     place();
     const raf = requestAnimationFrame(place);
     return () => cancelAnimationFrame(raf);
-  }, [tip]);
+  }, [tip, tip?.kind === "talent" ? talentRank(build, tip.talent.id) : 0]);
 
   if (!tip || typeof document === "undefined") return null;
 
@@ -215,7 +231,11 @@ function TalentFloatingTip({ tip }: { tip: TipState | null }) {
       style={pos}
     >
       {tip.kind === "talent" ? (
-        <TalentTooltipBody talent={tip.talent} rank={tip.rank} state={tip.nodeState} />
+        <TalentTooltipBody
+          talent={tip.talent}
+          rank={talentRank(build, tip.talent.id)}
+          state={talentNodeState(build, tip.talent.id, owned)}
+        />
       ) : tip.kind === "spell" ? (
         <>
           <div className="bb-talent-tip__name">{tip.spell.label}</div>
@@ -383,6 +403,7 @@ type Props = {
   loadoutSlotCount: number;
   onSelectPreset: (slotIndex: number) => void;
   onRenamePreset: (slotIndex: number, name: string) => void;
+  loadoutBusy?: boolean;
 };
 
 export function TalentTreePanel({
@@ -395,6 +416,7 @@ export function TalentTreePanel({
   loadoutSlotCount,
   onSelectPreset,
   onRenamePreset,
+  loadoutBusy = false,
 }: Props) {
   const [focusTree, setFocusTree] = useState<TalentTreeId>(
     () => loadStandMenuMemory().talentTree,
@@ -582,7 +604,7 @@ export function TalentTreePanel({
         onConfirm={commitSave}
         onCancel={() => setConfirmSaveRespec(false)}
       />
-      <TalentFloatingTip tip={hoverTip} />
+      <TalentFloatingTip tip={hoverTip} build={build} owned={owned} />
 
       <div className="bb-constel-stage">
       <div
@@ -756,8 +778,6 @@ export function TalentTreePanel({
                       setHoverTip({
                         kind: "talent",
                         talent,
-                        rank,
-                        nodeState: state,
                         anchor: e.currentTarget.getBoundingClientRect(),
                       })
                     }
@@ -766,8 +786,6 @@ export function TalentTreePanel({
                       setHoverTip({
                         kind: "talent",
                         talent,
-                        rank,
-                        nodeState: state,
                         anchor: e.currentTarget.getBoundingClientRect(),
                       })
                     }
@@ -814,8 +832,6 @@ export function TalentTreePanel({
                     setHoverTip({
                       kind: "talent",
                       talent,
-                      rank,
-                      nodeState: state,
                       anchor: e.currentTarget.getBoundingClientRect(),
                     })
                   }
@@ -824,8 +840,6 @@ export function TalentTreePanel({
                     setHoverTip({
                       kind: "talent",
                       talent,
-                      rank,
-                      nodeState: state,
                       anchor: e.currentTarget.getBoundingClientRect(),
                     })
                   }
@@ -910,6 +924,7 @@ export function TalentTreePanel({
             loadoutSlotCount={loadoutSlotCount}
             onSelectPreset={onSelectPreset}
             onRenamePreset={onRenamePreset}
+            disabled={loadoutBusy}
           />
           <div className="bb-constel-hud__points">
             <span className="bb-talent-header-pts__label">Unspent</span>

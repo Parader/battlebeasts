@@ -15,7 +15,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   prismLance: "#E9E3FF",
   soulSever: "#FF3B3B",
   arcBlade: "#38BDF8",
-  bloomingPath: "#6EE7B7",
+  bloomingPath: "#22C55E",
   verdantLeap: "#A9D978",
   bulwarkCharge: "#60a5fa",
   predatorStep: "#EF4444",

@@ -561,7 +561,7 @@ if (!gotLock) {
           stopUpdatePoll();
           sendToLauncher("updater:status", {
             phase: "updating",
-            message: "Restarting launcher…",
+            message: "Restarting launcher… wait for it to reopen — don’t double-click.",
           });
           sendToLauncher("updater:ready", {
             canPlay: false,
@@ -569,7 +569,7 @@ if (!gotLock) {
             error: null,
             stale: false,
           });
-          setTimeout(() => app.quit(), 800);
+          setTimeout(() => app.exit(0), 1500);
           return result;
         }
         sendToLauncher("updater:ready", {

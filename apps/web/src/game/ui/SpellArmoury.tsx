@@ -344,6 +344,7 @@ export function SpellArmouryHeaderExtras({
   loadoutSlotCount,
   onSelectPreset,
   onRenamePreset,
+  disabled,
 }: {
   essence: number;
   loadoutPresets: LoadoutPreset[];
@@ -351,6 +352,7 @@ export function SpellArmouryHeaderExtras({
   loadoutSlotCount: number;
   onSelectPreset: (slotIndex: number) => void;
   onRenamePreset: (slotIndex: number, name: string) => void;
+  disabled?: boolean;
 }): { titleAside: ReactNode; headerActions: ReactNode } {
   return {
     titleAside: (
@@ -361,6 +363,7 @@ export function SpellArmouryHeaderExtras({
         loadoutSlotCount={loadoutSlotCount}
         onSelectPreset={onSelectPreset}
         onRenamePreset={onRenamePreset}
+        disabled={disabled}
       />
     ),
     headerActions: (

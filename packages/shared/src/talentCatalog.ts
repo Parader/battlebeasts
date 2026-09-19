@@ -706,7 +706,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     maxRank: 3,
     affectedTags: ["Defense", "Shield"] as const,
     exactEffect:
-      "Successfully blocking an attack with a blocking ability grants you a temporary shield equal to 6% of your max HP for 3s (2.5s internal cooldown).",
+      "Successfully blocking an attack with a blocking ability grants you a shield equal to 6% of your max HP for 3s (2.5s internal cooldown).",
     balanceNote:
       "2% / 4% / 6% max HP shield across ranks from ACTIVE_BLOCK (Hand Shield, Wall, Bubble, Bulwark).",
     status: "catalog",
@@ -741,7 +741,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     maxRank: 1,
     affectedTags: ["Movement", "Shield", "Ally", "Defense"] as const,
     exactEffect:
-      "After using a movement ability, nearby allies gain a temporary shield equal to 5% of their max HP for 3s (6s internal cooldown).",
+      "After using a movement ability, nearby allies gain a shield equal to 5% of their max HP for 3s (6s internal cooldown).",
     balanceNote: "Movement ability trigger; 5% max HP shield for 3s to allies within 8m.",
     status: "catalog",
     implemented: true,
@@ -874,7 +874,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     maxRank: 1,
     affectedTags: ["Defense", "Shield"] as const,
     exactEffect:
-      "When an attack is intercepted by one of your blocking abilities, gain a temporary shield equal to 6% of your max HP for 3s (3s internal cooldown).",
+      "When an attack is intercepted by one of your blocking abilities, gain a shield equal to 6% of your max HP for 3s (3s internal cooldown).",
     balanceNote:
       "ACTIVE_BLOCK trigger only. Combines with Guard Discipline into one refreshed shield.",
     status: "catalog",
@@ -1011,7 +1011,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     maxRank: 1,
     affectedTags: ["Defense", "Buff"] as const,
     exactEffect:
-      "Successfully blocking an attack temporarily grants +25% passive block chance for 4s (6s internal cooldown, cannot refresh while active).",
+      "Successfully blocking an attack grants +25% passive block chance for 4s (6s internal cooldown, cannot refresh while active).",
     balanceNote:
       "Triggers on ACTIVE_BLOCK or PASSIVE_BLOCK. +25% block chance for 4s. 6s ICD.",
     status: "catalog",
@@ -1568,7 +1568,7 @@ export const TALENT_CATALOG: Record<string, CatalogTalentDef> = {
     maxRank: 1,
     affectedTags: ["Movement"] as const,
     exactEffect:
-      "Using a movement ability leaves a brief afterimage at your start position for 1.5 seconds. Visual only — cannot be targeted or hit.",
+      "Using a movement ability leaves an afterimage at your start position for 1.5 seconds. Visual only — cannot be targeted or hit.",
     balanceNote: "Shared decoy ladder with False Trail and Phantom Chain.",
     status: "catalog",
     implemented: true,

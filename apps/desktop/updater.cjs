@@ -234,10 +234,37 @@ function envPath(name) {
   return raw.trim().replace(/^"(.*)"$/, "$1");
 }
 
-/** Portable builds extract to %TEMP%; execPath is that copy, not the file the user clicked. */
+function logLauncher(userData, line) {
+  try {
+    fs.appendFileSync(
+      path.join(userData, "launcher-update.log"),
+      `${new Date().toISOString()} ${line}\n`,
+    );
+  } catch {
+    // ignore
+  }
+}
+
+async function hashIfFile(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return "";
+    const st = fs.statSync(filePath);
+    if (!st.isFile() || st.size < 1024 * 1024) return "";
+    return (await sha256File(filePath)).toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** Portable NSIS stub stays running (ExecWait); execPath is the unpacked copy in %TEMP%. */
 function resolveUserLauncherExe(execPath) {
   const portable = envPath("PORTABLE_EXECUTABLE_FILE");
-  if (portable && portable.toLowerCase().endsWith(".exe")) return portable;
+  if (portable && portable.toLowerCase().endsWith(".exe") && fs.existsSync(portable)) return portable;
+  const dir = envPath("PORTABLE_EXECUTABLE_DIR");
+  if (dir) {
+    const named = path.join(dir, "MageTrials-Launcher.exe");
+    if (fs.existsSync(named)) return named;
+  }
   return execPath;
 }
 
@@ -245,45 +272,83 @@ function launcherStagingDir(userData) {
   return path.join(userData, "launcher-update");
 }
 
-function scheduleLauncherSwap(currentExe, nextExe) {
-  const bat = path.join(path.dirname(nextExe), `swap-${process.pid}.cmd`);
-  const pid = process.pid;
+function nextLauncherPath(swapTarget, spec, staging) {
+  const dir = path.dirname(swapTarget);
+  const beside = path.join(dir, `${path.basename(swapTarget)}.new`);
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+    return beside;
+  } catch {
+    return path.join(staging, spec.name || `MageTrials-Launcher-${spec.version}.exe`);
+  }
+}
+
+function scheduleLauncherSwap(currentExe, nextExe, opts) {
+  const staging = launcherStagingDir(opts.userData);
+  fs.mkdirSync(staging, { recursive: true });
+  const bat = path.join(staging, `swap-${process.pid}.cmd`);
+  const log = batQuote(path.join(opts.userData, "launcher-update.log"));
   const src = batQuote(nextExe);
   const dest = batQuote(currentExe);
+  const electronPid = process.pid;
+  const parentPid =
+    envPath("PORTABLE_EXECUTABLE_FILE") && process.ppid && process.ppid !== process.pid
+      ? Number.parseInt(String(process.ppid), 10)
+      : 0;
   fs.writeFileSync(
     bat,
     [
       "@echo off",
       "setlocal",
-      ":wait",
+      `>> ${log} echo %date% %time% swap-start dest=${dest}`,
+      "set w=0",
+      ":wait_e",
       "ping 127.0.0.1 -n 2 >nul",
-      `tasklist /FI "PID eq ${pid}" /NH 2>nul | find "${pid}" >nul`,
-      "if not errorlevel 1 goto wait",
+      `tasklist /FI "PID eq ${electronPid}" /NH 2>nul | find "${electronPid}" >nul`,
+      "if errorlevel 1 goto unlocked",
+      "set /a w+=1",
+      "if %w% GEQ 20 goto unlocked",
+      "goto wait_e",
+      ":unlocked",
+      `>> ${log} echo %date% %time% electron-exited tries=%w%`,
+      parentPid > 0 ? `taskkill /F /PID ${parentPid} >nul 2>&1` : "rem no nsis parent",
+      `taskkill /F /PID ${electronPid} >nul 2>&1`,
+      "ping 127.0.0.1 -n 3 >nul",
       "set tries=0",
       ":copy",
+      `move /Y ${src} ${dest} >nul 2>&1`,
+      "if not errorlevel 1 goto launch_dest",
       `copy /Y ${src} ${dest} >nul`,
       "if not errorlevel 1 goto launch_dest",
       "set /a tries+=1",
-      "if %tries% GEQ 40 goto launch_src",
+      "if %tries% GEQ 45 goto launch_src",
       "ping 127.0.0.1 -n 2 >nul",
       "goto copy",
       ":launch_dest",
+      `>> ${log} echo %date% %time% launch-dest tries=%tries%`,
       `start "" ${dest}`,
       `del /F /Q ${src} >nul 2>&1`,
       "goto done",
       ":launch_src",
+      `>> ${log} echo %date% %time% launch-src-fallback`,
       `start "" ${src}`,
       ":done",
-      `(goto) 2>nul & del /F /Q "%~f0"`,
+      "ping 127.0.0.1 -n 2 >nul",
+      "del /F /Q \"%~f0\" >nul 2>&1",
     ].join("\r\n"),
     "utf8",
   );
-  const child = spawn(process.env.ComSpec || "cmd.exe", ["/d", "/c", bat], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-    cwd: path.dirname(nextExe),
-  });
+  // `start` breaks away from Electron's job object so this survives app.quit().
+  const child = spawn(
+    process.env.ComSpec || "cmd.exe",
+    ["/d", "/c", `start /min "MageTrialsUpdate" ${batQuote(bat)}`],
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      cwd: staging,
+    },
+  );
   child.unref();
 }
 
@@ -293,47 +358,82 @@ async function applyLauncherUpdate(spec, opts) {
   const onProgress = opts.onProgress;
   const staging = launcherStagingDir(opts.userData);
   fs.mkdirSync(staging, { recursive: true });
-  const dest = path.join(staging, spec.name || `MageTrials-Launcher-${spec.version}.exe`);
+  const dest = nextLauncherPath(swapTarget, spec, staging);
+  logLauncher(
+    opts.userData,
+    `apply ${spec.version} dest=${dest} swapTarget=${swapTarget} execPath=${opts.execPath} portable=${envPath("PORTABLE_EXECUTABLE_FILE") || "-"} pid=${process.pid} ppid=${process.ppid}`,
+  );
   onStatus({ phase: "updating", message: "Updating launcher…" });
-  await downloadFile(spec.url, dest, onProgress);
-  if (spec.sha256) {
-    const hash = await sha256File(dest);
-    if (hash.toLowerCase() !== spec.sha256.toLowerCase()) {
-      try {
-        fs.rmSync(dest, { force: true });
-      } catch {
-        // ignore
-      }
-      throw new Error("Launcher checksum mismatch");
+  if (fs.existsSync(dest)) {
+    try {
+      fs.rmSync(dest, { force: true });
+    } catch {
+      // ignore
     }
   }
-  onStatus({ phase: "updating", message: "Restarting launcher…" });
-  scheduleLauncherSwap(swapTarget, dest);
+  await downloadFile(spec.url, dest, onProgress);
+  const downloaded = (await sha256File(dest)).toLowerCase();
+  if (spec.sha256 && downloaded !== spec.sha256.toLowerCase()) {
+    try {
+      fs.rmSync(dest, { force: true });
+    } catch {
+      // ignore
+    }
+    throw new Error("Launcher checksum mismatch");
+  }
+  const currentHash = await hashIfFile(swapTarget);
+  if (currentHash && currentHash === downloaded) {
+    try {
+      fs.rmSync(dest, { force: true });
+    } catch {
+      // ignore
+    }
+    logLauncher(opts.userData, `skip swap — already have ${downloaded}`);
+    return false;
+  }
+  onStatus({
+    phase: "updating",
+    message: "Restarting launcher… wait for it to reopen — don’t double-click.",
+  });
+  scheduleLauncherSwap(swapTarget, dest, { userData: opts.userData });
   return true;
 }
 
 async function resolveLauncherSpec(feed) {
-  const fromFeed = launcherSpecFrom(feed && feed.launcher);
-  if (fromFeed) return fromFeed;
+  const fromGame = launcherSpecFrom(feed && feed.launcher);
+  let fromHub = null;
   try {
-    return launcherSpecFrom(await fetchJson(DEFAULT_LAUNCHER_FEED));
+    fromHub = launcherSpecFrom(await fetchJson(DEFAULT_LAUNCHER_FEED));
   } catch {
-    return null;
+    fromHub = null;
   }
+  if (fromGame && fromHub) {
+    return cmpVersion(fromHub.version, fromGame.version) > 0 ? fromHub : fromGame;
+  }
+  return fromHub || fromGame;
 }
 
 async function tryLauncherUpdate(opts, ctx) {
   if (!opts.packaged || !opts.execPath || process.platform !== "win32") return null;
   if (path.basename(opts.execPath).toLowerCase() === "electron.exe") return null;
   const spec = await resolveLauncherSpec(ctx.feed);
-  if (!spec || cmpVersion(spec.version, String(opts.launcherVersion || "")) <= 0) return null;
+  if (!spec) return null;
+  const swapTarget = resolveUserLauncherExe(opts.execPath);
+  const currentHash = await hashIfFile(swapTarget);
+  const specHash = (spec.sha256 || "").toLowerCase();
+  if (specHash && currentHash && specHash === currentHash) {
+    logLauncher(opts.userData, `skip ${spec.version} — sha matches ${swapTarget}`);
+    return null;
+  }
+  if (cmpVersion(spec.version, String(opts.launcherVersion || "")) <= 0) return null;
   try {
-    await applyLauncherUpdate(spec, {
+    const swapped = await applyLauncherUpdate(spec, {
       execPath: opts.execPath,
       userData: opts.userData,
       onStatus: opts.onStatus,
       onProgress: opts.onProgress,
     });
+    if (!swapped) return null;
     return {
       ok: true,
       canPlay: false,
@@ -346,6 +446,7 @@ async function tryLauncherUpdate(opts, ctx) {
     };
   } catch (err) {
     console.warn("[updater] launcher self-update failed", err);
+    logLauncher(opts.userData, `fail ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }

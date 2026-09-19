@@ -1,5 +1,32 @@
 [
   {
+    "id": "2026-09-19-revive-launcher",
+    "title": "Ally revive, launcher updates, and PvE combat",
+    "date": "2026-09-19",
+    "content": [
+      "When an ally falls in Wave Assault or Dungeon, a 3m circle appears. Living hunters standing in it charge a revive (4.5s, faster with more people). They return at 50% HP with 1.5s of i-frames",
+      "Quit game (Esc or the door) closes the desktop app and keeps you signed in. Sign out lives in Settings",
+      "The launcher replaces itself when a newer EXE is out",
+      "Spell tooltips list the real numbers (damage, range, durations)",
+      "A new loadout starts with an empty talent tree. Spell unlocks follow the loadout you have selected",
+      "Wave Assault / Dungeon Resume starts a 3s countdown so the party is ready"
+    ],
+    "highlights": [
+      "Blooming Path goes through map walls and props (Hand Shield and bubbles still stop it), and the orb is greener"
+    ],
+    "balance": [
+      "Phantom Rush dash 4.5m → 6.5m",
+      "Blood Drink heals 1.8% / 2.8% / 3.8% / 5.2% / 7% of damage (was 3–14%). Extra hits in an AoE burst heal 28% of that, capped at 10% max HP per burst",
+      "Wave Assault packs enter from 18–24m out (was 9–13m) so you can see them coming"
+    ],
+    "fixes": [
+      "Leaving the game no longer signs you out or makes your hunter name look taken",
+      "Void Disc travels to the marked range and returns on the same line",
+      "Hand Shield blocks PvE melee and close contact, not only projectiles",
+      "Wave Assault lifesteal and regen pop as heals (green), not damage"
+    ]
+  },
+  {
     "id": "2026-09-18-menu-vis",
     "title": "Escape menu & visibility fixes",
     "date": "2026-09-18",

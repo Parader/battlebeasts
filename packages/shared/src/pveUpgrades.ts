@@ -64,8 +64,15 @@ const STAT_MAG: Record<PveUpgradeStat, readonly number[]> = {
   range: [0.06, 0.09, 0.13, 0.18, 0.25],
   aoe: [0.08, 0.12, 0.16, 0.22, 0.3],
   regen: [0.004, 0.006, 0.009, 0.013, 0.02],
-  lifesteal: [0.03, 0.05, 0.07, 0.1, 0.14],
+  lifesteal: [0.018, 0.028, 0.038, 0.052, 0.07],
 };
+
+/** Extra AoE victims in this window leech at `PVE_LIFESTEAL_EXTRA_HIT_FRAC`. */
+export const PVE_LIFESTEAL_AOE_WINDOW_MS = 120;
+/** Multiplier on Blood Drink for hits after the first in the burst. */
+export const PVE_LIFESTEAL_EXTRA_HIT_FRAC = 0.28;
+/** Max heal from Blood Drink in one burst, as a fraction of max HP. */
+export const PVE_LIFESTEAL_BURST_CAP_FRAC = 0.1;
 
 const STAT_LABEL: Record<PveUpgradeStat, string> = {
   move: "Swift Feet",
@@ -107,7 +114,7 @@ function hintFor(stat: PveUpgradeStat, mag: number): string {
     case "regen":
       return `+${formatPct(mag)} max HP / sec`;
     case "lifesteal":
-      return `${formatPct(mag)} of damage dealt as heal`;
+      return `${formatPct(mag)} of damage as heal (weaker on extra AoE hits)`;
   }
 }
 

@@ -2930,9 +2930,9 @@
       "y": -0.002,
       "z": 12.25,
       "yaw": 6.021385919380436,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.677,
@@ -2946,9 +2946,9 @@
       "y": -0.002,
       "z": 2.25,
       "yaw": 2.617993877991494,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.677,
@@ -2962,9 +2962,9 @@
       "y": -0.0020000000000071055,
       "z": -5.25,
       "yaw": 2.617993877991494,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.677,
@@ -2978,9 +2978,9 @@
       "y": -0.0020000000000071055,
       "z": -20,
       "yaw": 5.497787143782138,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.677,
@@ -2994,9 +2994,9 @@
       "y": -0.002,
       "z": -17.25,
       "yaw": 2.356194490192345,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.677,
@@ -3010,9 +3010,9 @@
       "y": -0.0020000000000071055,
       "z": -8.25,
       "yaw": 0.2617993877991494,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.677,
@@ -3026,9 +3026,9 @@
       "y": -0.002,
       "z": 10.25,
       "yaw": 5.759586531581287,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.677,
@@ -3042,98 +3042,13 @@
       "y": -0.002,
       "z": 13.25,
       "yaw": 0.7853981633974483,
+      "scale": 1,
       "pivotX": -0.018,
       "pivotZ": -0.025,
-      "scale": 1,
       "collider": {
         "mode": "circle",
         "radius": 0.677,
         "blocksProjectiles": false
-      }
-    },
-    {
-      "id": "p210",
-      "prop": "kingdom/PP_Tree_Large_02",
-      "x": 46.5,
-      "y": 0.25,
-      "z": 1.25,
-      "yaw": 2.0943951023931957,
-      "pivotX": 2.015,
-      "pivotZ": 0.298,
-      "scale": 1,
-      "collider": {
-        "mode": "circle",
-        "radius": 0.9265,
-        "offsetX": -1.9100000000000001,
-        "offsetZ": -0.151
-      }
-    },
-    {
-      "id": "p211",
-      "prop": "kingdom/PP_Tree_Large_02",
-      "x": 29,
-      "y": 0.25,
-      "z": -13.75,
-      "yaw": -2.617993877991495,
-      "pivotX": 2.015,
-      "pivotZ": 0.298,
-      "scale": 1,
-      "collider": {
-        "mode": "circle",
-        "radius": 0.9265,
-        "offsetX": -1.9100000000000001,
-        "offsetZ": -0.151
-      }
-    },
-    {
-      "id": "p212",
-      "prop": "kingdom/PP_Tree_Large_01",
-      "x": 62,
-      "y": 0.5,
-      "z": 10.25,
-      "yaw": 0.7853981633974483,
-      "pivotX": -0.922,
-      "pivotZ": 0.774,
-      "scale": 1,
-      "collider": {
-        "mode": "circle",
-        "radius": 1.7085,
-        "offsetX": 0.8130000000000001,
-        "offsetZ": -0.48800000000000004
-      }
-    },
-    {
-      "id": "p213",
-      "prop": "kingdom/PP_Tree_Large_01",
-      "x": 65.5,
-      "y": 0.5,
-      "z": -27.25,
-      "yaw": 2.0943951023931953,
-      "pivotX": -0.922,
-      "pivotZ": 0.774,
-      "scale": 1,
-      "collider": {
-        "mode": "circle",
-        "radius": 1.7085,
-        "offsetX": 0.8130000000000001,
-        "offsetZ": -0.48800000000000004
-      }
-    },
-    {
-      "id": "p214",
-      "prop": "kingdom/PP_Tree_Large_01",
-      "x": 79.5,
-      "y": 0.5,
-      "z": 19,
-      "yaw": 6.021385919380436,
-      "pivotX": -0.922,
-      "pivotZ": 0.774,
-      "scale": 1,
-      "collider": {
-        "mode": "circle",
-        "radius": 1.7085,
-        "offsetX": 0.8130000000000001,
-        "offsetZ": -0.48800000000000004
       }
     }
   ],

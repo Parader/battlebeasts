@@ -384,6 +384,7 @@ export function steerMobStep(
   goal: Vec2,
   step: number,
   nav: MobNavGrid | null,
+  preferFlow = false,
 ): Vec2 {
   const dx = goal.x - from.x;
   const dz = goal.z - from.z;
@@ -396,7 +397,7 @@ export function steerMobStep(
   }
   const probe = Math.min(dist, PVE_MOB_NAV_LOS_M);
   const losTo: Vec2 = { x: from.x + nx * probe, z: from.z + nz * probe };
-  if (nav.hasWalkLos(from, losTo)) {
+  if (!preferFlow && nav.hasWalkLos(from, losTo)) {
     return { x: from.x + nx * step, z: from.z + nz * step };
   }
   const flow = nav.sampleDir(from.x, from.z);

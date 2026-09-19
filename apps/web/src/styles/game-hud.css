@@ -3291,6 +3291,43 @@
   backdrop-filter: blur(2px);
 }
 
+.bb-panel-busy {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  background: rgba(4, 10, 18, 0.58);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+.bb-panel-busy__spin {
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 3px solid rgba(201, 178, 122, 0.22);
+  border-top-color: var(--bb-brass);
+  border-radius: 50%;
+  animation: bb-spin 0.65s linear infinite;
+}
+
+.bb-panel-busy__label {
+  margin: 0;
+  font-family: var(--bb-font-body);
+  font-size: 0.95rem;
+  color: #f4f6fa;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+
+@keyframes bb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Talent constellation — full-bleed pan/zoom map */
 .bb-talent-panel {
   display: flex;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, Room } from "colyseus.js";
-import { ABILITIES, ASTRAL_CHAIN_CAST, COMBAT_ENGAGE_LINGER_MS, EMPTY_FLEX_LOADOUT, flexCost, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, baseCityStaticColliders, mapCollidersFor, mapDocFor, mapElementsOfType, mapIdForMode, mapNpcsFor, dungeonExitInteractId, HUB_NPCS, npcElementIdFrom, npcInteractId, NPC_INTERACT_RADIUS, type NpcPlacement, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, castBarShowsChannel, castBarShowsWindup, castWindupMs, phaseDurationMs, combineStatusMoveMul, getStatus, isFlowMovementAbility, isRepeatableFlowMovement, normalizeFlexLoadout, normalizeLoadout, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, rockWallColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, formatRankLabel, normalizeRankSnapshot, type FlexLoadout, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
+import { ABILITIES, ASTRAL_CHAIN_CAST, COMBAT_ENGAGE_LINGER_MS, EMPTY_FLEX_LOADOUT, flexCost, fireballChargeWindowWallMs, HAND_SHIELD_CAST, PLAYER_BASE_MAX_HP, ROOM, baseCityStaticColliders, mapCollidersFor, mapDocFor, mapElementsOfType, mapIdForMode, mapNpcsFor, dungeonExitInteractId, HUB_NPCS, npcElementIdFrom, npcInteractId, NPC_INTERACT_RADIUS, type NpcPlacement, canInterruptOtherCast, canPlayerCancelCast, channelChargeDistance, castBarShowsChannel, castBarShowsWindup, castWindupMs, phaseDurationMs, travelDurationMs, combineStatusMoveMul, getStatus, isFlowMovementAbility, isRepeatableFlowMovement, normalizeFlexLoadout, normalizeLoadout, stepYawToward, totalShieldAbsorb, unitCollidersExcept, riftPortalColliders, volcanoColliders, rockWallColliders, slotIndexForInput, HUB_STANDS, HUB_PORTALS, HUB_PRACTICE_DUMMIES, pointInInteractZone, interactZoneDist, EMOTE_PIE_SLOT_COUNT, emptyEmoteSlots, angleToEmoteSlotIndex, getEmote, formatRankLabel, normalizeRankSnapshot, type FlexLoadout, type MatchRecapRow, type PartySnapshot, type PlayerInput, type PvpSeat, type RankSnapshot } from "@battlebeasts/shared";
 import { PLAZA_WALK_IN_CAP, nextPlazaId, parsePlazaId } from "@battlebeasts/shared";
 import { clearContentRejoin, clearHubRejoin, clearPreferredHub, loadContentRejoin, loadHubRejoin, loadPreferredHub, saveContentRejoin, saveHubRejoin, savePreferredHub, saveLastPlaza, loadLastPlaza, saveLastSocial } from "./contentRejoin";
 import { recordWaveBestRun } from "./waveBestRun";
@@ -204,6 +204,8 @@ function clientCanCombat(opts: {
 /**
  * Mirrors ContentRoom.canMove — spectators always move;
  * living fighters can walk during round_end celebrate window.
+ * Fear must not go through clientCanCombat: that rejects feared casters and
+ * the loop then wipes WASD, so a held direction dies until you repress.
  */
 function clientCanMove(opts: {
     hp?: number;
@@ -212,12 +214,11 @@ function clientCanMove(opts: {
     matchPhase?: string;
 }): boolean {
     if (opts.role === "spectator") return true;
-    if (opts.matchPhase === "round_end") {
-        if (typeof opts.hp === "number" && opts.hp <= 0) return false;
-        if (opts.roundDead) return false;
-        return true;
-    }
-    return clientCanCombat(opts);
+    if (typeof opts.hp === "number" && opts.hp <= 0) return false;
+    if (opts.roundDead) return false;
+    const phase = opts.matchPhase ?? "";
+    if (phase === "countdown" || phase === "match_end") return false;
+    return true;
 }
 
 export type MatchRecapState = {
@@ -368,6 +369,7 @@ export function useBaseCityRoom(options: Options) {
         label?: string;
     } | null>(null);
     const [pvePaused, setPvePausedLocal] = useState(false);
+    const [pveResumeUntil, setPveResumeUntil] = useState(0);
     const [pveUpgradeDraft, setPveUpgradeDraft] = useState<{
         wave: number;
         kills: number;
@@ -540,6 +542,8 @@ export function useBaseCityRoom(options: Options) {
     const castingAbilityRef = useRef<string | null>(null);
     const castPhaseRef = useRef<string>("");
     const cooldownUntilRef = useRef<Record<string, number>>({});
+    /** Detect countdown entry so survivor CDs wipe even when the round number repeats. */
+    const lastMatchPhaseRef = useRef("");
     const loadoutRef = useRef<string[]>([]);
     const flexLoadoutRef = useRef<FlexLoadout>(EMPTY_FLEX_LOADOUT);
     const castFlashTimerRef = useRef(0);
@@ -650,6 +654,7 @@ export function useBaseCityRoom(options: Options) {
             setMatchPause(null);
             setWaveHud(null);
             setPvePausedLocal(false);
+            setPveResumeUntil(0);
             setPveUpgradeDraft(null);
             setPvePicks([]);
             setPlazaState(null);
@@ -807,8 +812,20 @@ export function useBaseCityRoom(options: Options) {
                     });
                 },
             );
-            joined.onMessage("pve_pause", (msg: { paused?: boolean; reason?: string }) => {
-                setPvePausedLocal(Boolean(msg?.paused) && msg?.reason !== "pve_upgrade");
+            joined.onMessage("pve_pause", (msg: { paused?: boolean; reason?: string; until?: number }) => {
+                const reason = msg?.reason ?? "";
+                const hold =
+                    Boolean(msg?.paused) &&
+                    reason !== "pve_upgrade" &&
+                    reason !== "pve_run_end";
+                setPvePausedLocal(hold);
+                if (hold && reason === "pve_resume_grace") {
+                    setPveResumeUntil(Math.max(0, Number(msg?.until) || Date.now() + 3000));
+                } else {
+                    setPveResumeUntil(0);
+                }
+                if (msg?.paused) abilityHudRuntime.pauseClock();
+                else abilityHudRuntime.resumeClock();
                 if (!msg?.paused) setPveUpgradeDraft(null);
             });
             joined.onMessage(
@@ -943,6 +960,7 @@ export function useBaseCityRoom(options: Options) {
                 setWaveHud(null);
                 setDiedAt(null);
                 setPvePausedLocal(false);
+                setPveResumeUntil(0);
                 setPveUpgradeDraft(null);
                 setPvePicks([]);
                 clearLocalCombatCastStateRef.current();
@@ -1270,6 +1288,7 @@ export function useBaseCityRoom(options: Options) {
                     phase?: "anticipation" | "cast" | "impact" | "recovery" | "cancel" | "interrupt" | "idle";
                     phaseEndsAt?: number;
                     cooldownMs?: number;
+                    durationMs?: number;
                     comboHit?: number;
                 }) => {
                     const isLocal = msg.ownerId === sessionIdRef.current;
@@ -1384,22 +1403,31 @@ export function useBaseCityRoom(options: Options) {
                     ) {
                         const landX = msg.x2 ?? msg.x;
                         const landZ = msg.z2 ?? msg.z;
+                        const def = ABILITIES[msg.abilityId];
                         const dur =
-                            typeof msg.phaseEndsAt === "number"
-                                ? Math.max(16, msg.phaseEndsAt - Date.now())
-                                : 280;
-                        predictorRef.current.beginPointTravel(landX, landZ, dur, {
-                            ignoreCollision: msg.abilityId === "spiritForm",
-                            abilityId: msg.abilityId,
-                        });
-                        predictedRef.current = { ...predictorRef.current.state };
+                            typeof msg.durationMs === "number" && msg.durationMs > 0
+                                ? msg.durationMs
+                                : def
+                                  ? Math.max(16, travelDurationMs(def) || 280)
+                                  : 280;
+                        // Impact already started an optimistic slide — don't restart it.
+                        if (!predictorRef.current.isTraveling()) {
+                            predictorRef.current.beginPointTravel(landX, landZ, dur, {
+                                ignoreCollision: msg.abilityId === "spiritForm",
+                                abilityId: msg.abilityId,
+                            });
+                            predictedRef.current = { ...predictorRef.current.state };
+                        }
                         awaitingCastAckRef.current = false;
                         pendingCastRef.current = undefined;
-                        castPhaseRef.current = "";
-                        castingAbilityRef.current = null;
-                        schemaCastSeenRef.current = false;
-                        castAimRuntime.clear();
-                        predictorRef.current.clearMoveMul();
+                        // Charge impact *is* the slide — keep the clip; schema still owns the phase.
+                        if (msg.abilityId !== "bulwarkCharge") {
+                            castPhaseRef.current = "";
+                            castingAbilityRef.current = null;
+                            schemaCastSeenRef.current = false;
+                            castAimRuntime.clear();
+                            predictorRef.current.clearMoveMul();
+                        }
                     } else if (
                         msg.kind === "dash" &&
                         !isLocal &&
@@ -1407,20 +1435,21 @@ export function useBaseCityRoom(options: Options) {
                         typeof msg.x2 === "number" &&
                         typeof msg.z2 === "number"
                     ) {
-                        const remaining =
-                            typeof msg.phaseEndsAt === "number"
-                                ? msg.phaseEndsAt - Date.now()
-                                : 280;
-                        if (remaining >= 48) {
-                            beginRemoteDashTravel(msg.ownerId, {
-                                fromX: msg.x,
-                                fromZ: msg.z,
-                                toX: msg.x2,
-                                toZ: msg.z2,
-                                durationMs: remaining,
-                                abilityId: msg.abilityId,
-                            });
-                        }
+                        const def = ABILITIES[msg.abilityId];
+                        const dur =
+                            typeof msg.durationMs === "number" && msg.durationMs > 0
+                                ? msg.durationMs
+                                : def
+                                  ? Math.max(16, travelDurationMs(def) || 280)
+                                  : 280;
+                        beginRemoteDashTravel(msg.ownerId, {
+                            fromX: msg.x,
+                            fromZ: msg.z,
+                            toX: msg.x2,
+                            toZ: msg.z2,
+                            durationMs: dur,
+                            abilityId: msg.abilityId,
+                        });
                     }
 
                     if (
@@ -1680,16 +1709,31 @@ export function useBaseCityRoom(options: Options) {
             };
             state.listen?.("paused", (paused) => {
                 if (!paused) {
+                    abilityHudRuntime.resumeClock();
                     setMatchPause(null);
                     setPvePausedLocal(false);
+                    setPveResumeUntil(0);
                     return;
                 }
+                abilityHudRuntime.pauseClock();
                 syncPauseFromState(state);
-                setPvePausedLocal(state.pauseReason === "pve_manual");
+                const reason = state.pauseReason;
+                const hold = reason === "pve_manual" || reason === "pve_resume_grace";
+                setPvePausedLocal(hold);
+                setPveResumeUntil(
+                    reason === "pve_resume_grace" ? (state.reconnectUntil ?? 0) : 0,
+                );
             });
             state.listen?.("pauseReason", () => {
                 if (state.paused) syncPauseFromState(state);
-                setPvePausedLocal(Boolean(state.paused) && state.pauseReason === "pve_manual");
+                const reason = state.pauseReason;
+                const hold =
+                    Boolean(state.paused) &&
+                    (reason === "pve_manual" || reason === "pve_resume_grace");
+                setPvePausedLocal(hold);
+                setPveResumeUntil(
+                    reason === "pve_resume_grace" ? (state.reconnectUntil ?? 0) : 0,
+                );
             });
             state.listen?.("reconnectUntil", () => {
                 if (state.paused) syncPauseFromState(state);
@@ -3126,13 +3170,16 @@ export function useBaseCityRoom(options: Options) {
 
                 if (serverMe && predictor.isSeeded && serverMe.lastInputSeq !== lastAckRef.current) {
                     lastAckRef.current = serverMe.lastInputSeq;
-                    predictor.reconcile(
-                        serverMe.x,
-                        serverMe.z,
-                        serverMe.yaw,
-                        serverMe.lastInputSeq,
-                    );
-                    predictedRef.current = { ...predictor.state };
+                    // Don't snap over an in-flight charge / leap — schema patches jump.
+                    if (!predictor.isTraveling()) {
+                        predictor.reconcile(
+                            serverMe.x,
+                            serverMe.z,
+                            serverMe.yaw,
+                            serverMe.lastInputSeq,
+                        );
+                        predictedRef.current = { ...predictor.state };
+                    }
                 }
 
                 const st = r.state as { matchPhase?: string; paused?: boolean } | undefined;
@@ -3557,7 +3604,15 @@ export function useBaseCityRoom(options: Options) {
                         if (st.matchPhase === "countdown" || st.matchPhase === "fighting") {
                             setMatchRecap(null);
                         }
+                        if (
+                            st.matchPhase === "countdown" &&
+                            lastMatchPhaseRef.current !== "countdown"
+                        ) {
+                            clearLocalCombatCastStateRef.current();
+                        }
+                        lastMatchPhaseRef.current = st.matchPhase;
                     } else if (phaseRef.current !== "content") {
+                        lastMatchPhaseRef.current = "";
                         setArenaHud(null);
                     }
                 }
@@ -3603,12 +3658,16 @@ export function useBaseCityRoom(options: Options) {
     const returnToHub = useCallback(() => {
         setWaveHud(null);
         setPvePausedLocal(false);
+        setPveResumeUntil(0);
         setWaveRunRecap(null);
         roomRef.current?.send("return_hub");
     }, []);
 
     const setPvePaused = useCallback((paused: boolean) => {
-        setPvePausedLocal(paused);
+        if (paused) {
+            setPvePausedLocal(true);
+            setPveResumeUntil(0);
+        }
         roomRef.current?.send("pve_pause", { paused: Boolean(paused) });
     }, []);
 
@@ -3644,6 +3703,10 @@ export function useBaseCityRoom(options: Options) {
     }, []);
 
     const pickPveUpgrade = useCallback((offerId: string) => {
+        const me = roomRef.current?.state?.players?.get(sessionIdRef.current ?? "") as
+            | { hp?: number }
+            | undefined;
+        if ((me?.hp ?? 0) <= 0) return;
         setPveUpgradeDraft((prev) => {
             if (!prev) return prev;
             return { ...prev, picked: true };
@@ -3878,6 +3941,7 @@ export function useBaseCityRoom(options: Options) {
         arenaHud,
         waveHud,
         pvePaused,
+        pveResumeUntil,
         setPvePaused,
         pveUpgradeDraft,
         pvePicks,

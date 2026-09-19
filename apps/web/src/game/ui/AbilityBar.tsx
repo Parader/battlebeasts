@@ -384,6 +384,7 @@ export function AbilityBar({
   const [cooldownUntil, setCooldownUntil] = useState(() => abilityHudRuntime.cooldownUntil);
   const [flashId, setFlashId] = useState(() => abilityHudRuntime.flashId);
   const [lastFlowMoveId, setLastFlowMoveId] = useState(() => abilityHudRuntime.lastFlowMoveId);
+  const [clockPausedAt, setClockPausedAt] = useState(() => abilityHudRuntime.clockPausedAt);
 
   const kit = useMemo(
     () => resolveKit(slots.filter(Boolean).join(","), talentIds, talentBuild),
@@ -395,6 +396,7 @@ export function AbilityBar({
       setCooldownUntil(abilityHudRuntime.cooldownUntil);
       setFlashId(abilityHudRuntime.flashId);
       setLastFlowMoveId(abilityHudRuntime.lastFlowMoveId);
+      setClockPausedAt(abilityHudRuntime.clockPausedAt);
     });
   }, []);
 
@@ -403,12 +405,16 @@ export function AbilityBar({
   }, []);
 
   const statusIds = readStatusIds(room, sessionId);
-  const riftArming = riftSecondPlantReady(room, sessionId, Date.now());
+  const hudNow = abilityHudRuntime.hudNow();
+  const riftArming = riftSecondPlantReady(room, sessionId, hudNow);
+  const clockFrozen = clockPausedAt > 0;
   const needsTick =
-    Object.values(cooldownUntil).some((t) => t > Date.now() - 50) ||
-    statusIdsNeedSlotTick(statusIds) ||
-    riftArming;
-  const now = useNow(needsTick);
+    !clockFrozen &&
+    (Object.values(cooldownUntil).some((t) => t > Date.now() - 50) ||
+      statusIdsNeedSlotTick(statusIds) ||
+      riftArming);
+  const liveNow = useNow(needsTick);
+  const now = clockFrozen ? hudNow : liveNow;
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex items-end justify-center px-3">

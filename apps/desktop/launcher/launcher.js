@@ -113,7 +113,7 @@ if (api) {
     if (payload && payload.restartLauncher) {
       playEl.disabled = true;
       retryEl.classList.add("hidden");
-      setStatus("Restarting launcher…", false);
+      setStatus("Restarting launcher… wait for it to reopen — don’t double-click.", false);
       return;
     }
     const canPlay = Boolean(payload && payload.canPlay);

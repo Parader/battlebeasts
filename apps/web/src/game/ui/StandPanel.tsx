@@ -573,6 +573,7 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
     toCount: number;
     cost: number;
   } | null>(null);
+  const [pendingLoadoutSlot, setPendingLoadoutSlot] = useState<number | null>(null);
 
   const serverLoadoutKey = normalizeLoadout(economy.loadout).join(",");
   useEffect(() => {
@@ -587,6 +588,27 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
     setDraftFlex(normalizeFlexLoadout(economy.flexLoadout));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional key-based sync
   }, [serverFlexKey, economy.activeLoadoutSlot]);
+
+  useEffect(() => {
+    if (pendingLoadoutSlot === null) return;
+    if (economy.activeLoadoutSlot === pendingLoadoutSlot) {
+      setPendingLoadoutSlot(null);
+    }
+  }, [economy.activeLoadoutSlot, pendingLoadoutSlot]);
+
+  useEffect(() => {
+    if (pendingLoadoutSlot === null) return;
+    const timeout = window.setTimeout(() => setPendingLoadoutSlot(null), 8000);
+    return () => window.clearTimeout(timeout);
+  }, [pendingLoadoutSlot]);
+
+  const displayedLoadoutSlot = pendingLoadoutSlot ?? economy.activeLoadoutSlot;
+  const loadoutBusy = pendingLoadoutSlot !== null;
+  const displayedTalentBuild =
+    pendingLoadoutSlot === null
+      ? economy.talentBuild
+      : (economy.loadoutPresets.find((p) => p.slotIndex === pendingLoadoutSlot)?.talentBuild ??
+        {});
 
   const assignFlex = (abilityId: string | null) => {
     if (selectedFlex === null) return;
@@ -622,6 +644,9 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
   };
 
   const selectPreset = (slotIndex: number) => {
+    if (pendingLoadoutSlot !== null) return;
+    if (slotIndex === economy.activeLoadoutSlot) return;
+    setPendingLoadoutSlot(slotIndex);
     room?.send("select_loadout_preset", { slotIndex });
     const preset = economy.loadoutPresets.find((p) => p.slotIndex === slotIndex);
     if (preset) setDraftLoadout(normalizeLoadout(preset.abilityIds));
@@ -636,10 +661,11 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
       ? SpellArmouryHeaderExtras({
           essence: economy.essence,
           loadoutPresets: economy.loadoutPresets,
-          activeLoadoutSlot: economy.activeLoadoutSlot,
+          activeLoadoutSlot: displayedLoadoutSlot,
           loadoutSlotCount: unlocks.loadoutSlotCount,
           onSelectPreset: selectPreset,
           onRenamePreset: renamePreset,
+          disabled: loadoutBusy,
         })
       : null;
 
@@ -693,12 +719,13 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
         room={room}
         essence={economy.essence}
         talentPoints={economy.talentPoints}
-        talentBuild={economy.talentBuild}
+        talentBuild={displayedTalentBuild}
         loadoutPresets={economy.loadoutPresets}
-        activeLoadoutSlot={economy.activeLoadoutSlot}
+        activeLoadoutSlot={displayedLoadoutSlot}
         loadoutSlotCount={unlocks.loadoutSlotCount}
         onSelectPreset={selectPreset}
         onRenamePreset={renamePreset}
+        loadoutBusy={loadoutBusy}
       />
     );
   } else if (kind === "shop") {
@@ -804,6 +831,8 @@ export function StandPanel({ kind, onClose, room, economy, localSessionId, onLoa
               : "max-h-[min(92dvh,54rem)]"
       }
       footer={footer}
+      busy={loadoutBusy}
+      busyLabel="Switching loadout…"
     >
       {body}
     </GamePanelShell>

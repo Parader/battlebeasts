@@ -8,6 +8,7 @@ type Props = {
   inContent: boolean;
   onReturnHub?: () => void;
   onLeave: () => void;
+  leaveLabel?: string;
 };
 
 export function GameMenuPanel({
@@ -18,6 +19,7 @@ export function GameMenuPanel({
   inContent,
   onReturnHub,
   onLeave,
+  leaveLabel = "Quit game",
 }: Props) {
   if (!open) return null;
 
@@ -42,7 +44,7 @@ export function GameMenuPanel({
           Remounts the 3D view and HUD without leaving the room. Handy if a visual glitch sticks.
         </p>
         <button type="button" className="bb-btn-ink w-full" onClick={onLeave}>
-          Leave
+          {leaveLabel}
         </button>
       </div>
     </GamePanelShell>

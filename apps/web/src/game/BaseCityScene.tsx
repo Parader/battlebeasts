@@ -32,6 +32,7 @@ type Props = {
     room: Room | null;
     localSessionId: string | null;
     predictedRef: MutableRefObject<PredictedPose>;
+    partySessionIds?: ReadonlySet<string>;
 };
 
 function PortalMarker({
@@ -440,7 +441,7 @@ function HubPushBalls({ room }: { room: Room | null }) {
     );
 }
 
-export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
+export function BaseCityScene({ room, localSessionId, predictedRef, partySessionIds }: Props) {
     const localPos = useRef(new THREE.Vector3(0, 0, 0));
     const cameraYaw = useRef(0);
     const aimNdc = useRef(new THREE.Vector2(0, 0));
@@ -567,7 +568,12 @@ export function BaseCityScene({ room, localSessionId, predictedRef }: Props) {
                 localSessionId={localSessionId}
                 color={localColor}
             />
-            <RemotePlayers room={room} localSessionId={localSessionId} relation="ally" />
+            <RemotePlayers
+                room={room}
+                localSessionId={localSessionId}
+                relation="ally"
+                partySessionIds={partySessionIds}
+            />
             <Projectiles room={room} />
             <CombatFxMeshes />
             <DamagePopups />

@@ -25,6 +25,7 @@ import {
   rollDungeonRunChestQuality,
   PVP_RECONNECT_GRACE_MS,
   MATCH_REJOIN_MS,
+  PVE_RESUME_GRACE_MS,
   RECONNECT_RESUME_GRACE_MS,
   RESPAWN_LOCK_MS,
   ROOM,
@@ -51,6 +52,10 @@ import {
   pointInClosedWall,
   clearanceFromColliders,
   PLAYER_BASE_MAX_HP,
+  PVE_ALLY_REVIVE_CHARGE_MS,
+  PVE_ALLY_REVIVE_HP_FRAC,
+  PVE_ALLY_REVIVE_IFRAME_MS,
+  PVE_ALLY_REVIVE_RADIUS,
   PVE_ORB_CLEARANCE_M,
   PVE_ORB_COUNT,
   PVE_ORB_PEER_CLEARANCE_M,
@@ -101,7 +106,7 @@ import {
   getActiveMatch,
 } from "../matchmaking/activeMatches.js";
 import { ServicedRoom } from "./ServicedRoom.js";
-import { BaseCityState, PlayerState } from "../schema/BaseCityState.js";
+import { BaseCityState, PlayerState, PveReviveZoneState } from "../schema/BaseCityState.js";
 
 export type ContentJoinOptions = AuthJoinOptions & {
   mode?: string;
@@ -182,6 +187,9 @@ export class ContentRoom extends ServicedRoom {
     /** Tentative offerId per hunter — can change until the party is fully in. */
     choiceBySession: Map<string, string>;
   } | null = null;
+  /** Wall clock when `state.paused` flipped on — thaw shifts ability CDs by this gap. */
+  private clockPausedAt = 0;
+  private pveResumeClear: (() => void) | null = null;
 
   private emptyDisposeClear: (() => void) | null = null;
 
@@ -324,9 +332,14 @@ export class ContentRoom extends ServicedRoom {
       if (this.pveDraft) return;
       if (!this.state.players.has(client.sessionId)) return;
       const pause = Boolean(message?.paused);
-      this.state.paused = pause;
-      this.state.pauseReason = pause ? "pve_manual" : "";
-      this.broadcast("pve_pause", { paused: pause });
+      if (pause) {
+        this.holdPveManualPause();
+        return;
+      }
+      if (!this.state.paused) return;
+      if (this.state.pauseReason === "pve_resume_grace") return;
+      if (this.state.pauseReason && this.state.pauseReason !== "pve_manual") return;
+      this.beginPveResumeGrace();
     });
 
     this.onMessage("pve_upgrade_pick", (client, message: { offerId?: string }) => {
@@ -665,7 +678,7 @@ export class ContentRoom extends ServicedRoom {
   private beginPause(reason: "pvp_reconnect" | "pve_reconnect", graceMs: number, playerName: string) {
     this.clearResumeGrace();
     const until = Date.now() + graceMs;
-    this.state.paused = true;
+    this.applyPauseFlag(true);
     this.state.pauseReason = reason;
     this.state.reconnectUntil = until;
     this.broadcast("match_pause", { reason, until, playerName });
@@ -676,7 +689,7 @@ export class ContentRoom extends ServicedRoom {
     if (!this.state.paused) return;
     this.clearResumeGrace();
     const until = Date.now() + RECONNECT_RESUME_GRACE_MS;
-    this.state.paused = true;
+    this.applyPauseFlag(true);
     this.state.pauseReason = "resume_grace";
     this.state.reconnectUntil = until;
     this.broadcast("match_pause", { reason: "resume_grace", until });
@@ -702,7 +715,7 @@ export class ContentRoom extends ServicedRoom {
   private forceResume() {
     if (!this.canResume() || !this.state.paused) return;
     this.clearResumeGrace();
-    this.state.paused = false;
+    this.applyPauseFlag(false);
     this.state.pauseReason = "";
     this.state.reconnectUntil = 0;
     this.broadcast("match_resume", {});
@@ -717,6 +730,7 @@ export class ContentRoom extends ServicedRoom {
     this.spawnBySession.delete(sessionId);
     this.spawnSlotBySession.delete(sessionId);
     this.diedAtBySession.delete(sessionId);
+    this.state.pveReviveZones.delete(sessionId);
     this.clearPlayerServices(sessionId);
     this.emoteUntilBySession.delete(sessionId);
     this.returnHubBySession.delete(sessionId);
@@ -871,7 +885,97 @@ export class ContentRoom extends ServicedRoom {
       this.diedAtBySession.set(sessionId, Date.now());
     }
     if (isPveRunMode(this.mode)) {
+      if (this.countLivingFighters() >= 1) this.spawnPveReviveZone(sessionId, player);
       this.checkPveWipe();
+      if (this.pveDraft) {
+        this.broadcast("pve_upgrade_waiting", { waiting: this.pveDraftWaiting() });
+        this.tryFinishPveUpgradeDraft();
+      }
+    }
+  }
+
+  private countLivingFighters(): number {
+    let living = 0;
+    this.state.players.forEach((p) => {
+      if (p.disconnected || p.role === "spectator") return;
+      if (this.isFighterLiving(p)) living += 1;
+    });
+    return living;
+  }
+
+  private spawnPveReviveZone(sessionId: string, player: PlayerState) {
+    if (this.state.pveReviveZones.has(sessionId)) return;
+    const zone = new PveReviveZoneState();
+    zone.id = sessionId;
+    zone.sessionId = sessionId;
+    zone.x = player.x;
+    zone.z = player.z;
+    zone.radius = PVE_ALLY_REVIVE_RADIUS;
+    zone.charge = 0;
+    zone.occupants = 0;
+    this.state.pveReviveZones.set(sessionId, zone);
+  }
+
+  private tickPveReviveZones(dtMs: number) {
+    if (this.kind !== "pve" || !isPveRunMode(this.mode) || this.pveRunEnded) return;
+    if (this.state.pveReviveZones.size === 0) return;
+    const stale: string[] = [];
+    const ready: string[] = [];
+    this.state.pveReviveZones.forEach((zone, id) => {
+      const owner = this.state.players.get(zone.sessionId);
+      if (!owner || this.isFighterLiving(owner)) {
+        stale.push(id);
+        return;
+      }
+      let occupants = 0;
+      this.state.players.forEach((p, sid) => {
+        if (sid === zone.sessionId) return;
+        if (p.disconnected || p.role === "spectator") return;
+        if (!this.isFighterLiving(p)) return;
+        if (Math.hypot(p.x - zone.x, p.z - zone.z) <= zone.radius) occupants += 1;
+      });
+      zone.occupants = occupants;
+      if (occupants > 0) {
+        zone.charge = Math.min(1, zone.charge + (occupants * dtMs) / PVE_ALLY_REVIVE_CHARGE_MS);
+      }
+      if (zone.charge >= 1) ready.push(id);
+    });
+    for (const id of stale) this.state.pveReviveZones.delete(id);
+    for (const id of ready) {
+      if (!this.state.pveReviveZones.has(id)) continue;
+      this.completePveAllyRevive(id);
+    }
+  }
+
+  private completePveAllyRevive(zoneId: string) {
+    const zone = this.state.pveReviveZones.get(zoneId);
+    this.state.pveReviveZones.delete(zoneId);
+    if (!zone || this.pveRunEnded) return;
+    const sessionId = zone.sessionId;
+    const player = this.state.players.get(sessionId);
+    if (!player || this.isFighterLiving(player)) return;
+
+    this.applyCombatKit(sessionId, player);
+    player.hp = Math.max(1, Math.round(player.maxHp * PVE_ALLY_REVIVE_HP_FRAC));
+    player.roundDead = false;
+    player.respawnAt = 0;
+    player.invulnerable = false;
+    player.statuses.clear();
+    this.diedAtBySession.delete(sessionId);
+    this.combat.grantBlinkIframes(sessionId, PVE_ALLY_REVIVE_IFRAME_MS);
+    this.combat.emitCombatFx({
+      kind: "aoe",
+      abilityId: "rebirth",
+      x: player.x,
+      z: player.z,
+      ownerId: sessionId,
+      targetId: sessionId,
+      radius: zone.radius,
+      variant: 2,
+    });
+    if (this.pveDraft) {
+      this.broadcast("pve_upgrade_waiting", { waiting: this.pveDraftWaiting() });
+      this.tryFinishPveUpgradeDraft();
     }
   }
 
@@ -885,7 +989,7 @@ export class ContentRoom extends ServicedRoom {
       fighters += 1;
       if (this.isFighterLiving(p)) living += 1;
     });
-    // Wipe when every present fighter is dead (no ally revive in v1).
+    // Wipe when every present fighter is dead (nobody left to charge a revive).
     if (fighters > 0 && living === 0) {
       this.finishPveRun(false);
     }
@@ -912,7 +1016,8 @@ export class ContentRoom extends ServicedRoom {
       ? (this.dungeonDirector?.chestDepth() ?? "none")
       : "none";
     this.pveRunEnded = true;
-    this.state.paused = true;
+    this.clearPveResumeGrace();
+    this.applyPauseFlag(true);
     this.state.pauseReason = "pve_run_end";
     this.waveDirector?.stop();
     this.dungeonDirector?.stop();
@@ -1022,7 +1127,7 @@ export class ContentRoom extends ServicedRoom {
     if (total === 0 || ready < total) return;
 
     this.pveRunEnded = false;
-    this.state.paused = false;
+    this.applyPauseFlag(false);
     this.state.pauseReason = "";
     this.state.dungeonExitUnlocked = false;
     this.rematchIndex += 1;
@@ -1064,6 +1169,57 @@ export class ContentRoom extends ServicedRoom {
     this.broadcast("pve_pause", { paused: false });
   }
 
+  private clearPveResumeGrace() {
+    this.pveResumeClear?.();
+    this.pveResumeClear = null;
+  }
+
+  private holdPveManualPause() {
+    this.clearPveResumeGrace();
+    this.applyPauseFlag(true);
+    this.state.pauseReason = "pve_manual";
+    this.state.reconnectUntil = 0;
+    this.broadcast("pve_pause", { paused: true, reason: "pve_manual" });
+  }
+
+  private beginPveResumeGrace() {
+    this.clearPveResumeGrace();
+    const until = Date.now() + PVE_RESUME_GRACE_MS;
+    this.applyPauseFlag(true);
+    this.state.pauseReason = "pve_resume_grace";
+    this.state.reconnectUntil = until;
+    this.broadcast("pve_pause", { paused: true, reason: "pve_resume_grace", until });
+    const timeout = this.clock.setTimeout(() => {
+      this.pveResumeClear = null;
+      this.finishPveResumeGrace();
+    }, PVE_RESUME_GRACE_MS);
+    this.pveResumeClear = () => {
+      timeout.clear();
+      this.pveResumeClear = null;
+    };
+  }
+
+  private finishPveResumeGrace() {
+    this.clearPveResumeGrace();
+    if (this.pveRunEnded || this.pveDraft) return;
+    this.applyPauseFlag(false);
+    this.state.pauseReason = "";
+    this.state.reconnectUntil = 0;
+    this.broadcast("pve_pause", { paused: false });
+  }
+
+  private applyPauseFlag(paused: boolean) {
+    const was = this.state.paused;
+    this.state.paused = paused;
+    if (paused && !was) {
+      if (this.clockPausedAt <= 0) this.clockPausedAt = Date.now();
+    } else if (!paused && was && this.clockPausedAt > 0) {
+      const delta = Date.now() - this.clockPausedAt;
+      this.clockPausedAt = 0;
+      if (delta > 0) this.combat.shiftReadyTimes(delta);
+    }
+  }
+
   private pveFighterSessions(): string[] {
     const ids: string[] = [];
     this.state.players.forEach((p, id) => {
@@ -1073,10 +1229,17 @@ export class ContentRoom extends ServicedRoom {
     return ids;
   }
 
+  private pveDraftSessions(): string[] {
+    return this.pveFighterSessions().filter((id) => {
+      const p = this.state.players.get(id);
+      return Boolean(p && this.isFighterLiving(p));
+    });
+  }
+
   private pveDraftWaiting() {
     const draft = this.pveDraft;
     if (!draft) return [];
-    return this.pveFighterSessions().map((sessionId) => {
+    return this.pveDraftSessions().map((sessionId) => {
       const p = this.state.players.get(sessionId);
       return {
         sessionId,
@@ -1088,7 +1251,7 @@ export class ContentRoom extends ServicedRoom {
 
   private beginPveUpgradeDraft(wave: number, kills = 0) {
     if (this.pveRunEnded || this.pveDraft) return;
-    const fighters = this.pveFighterSessions();
+    const fighters = this.pveDraftSessions();
     if (fighters.length === 0) return;
     const beat = pveUpgradeDraftBeat(kills);
     const offersBySession = new Map<string, PveUpgradeOffer[]>();
@@ -1096,7 +1259,8 @@ export class ContentRoom extends ServicedRoom {
       offersBySession.set(id, rollPveUpgradeOffers(beat));
     }
     this.pveDraft = { wave, offersBySession, choiceBySession: new Map() };
-    this.state.paused = true;
+    this.clearPveResumeGrace();
+    this.applyPauseFlag(true);
     this.state.pauseReason = "pve_upgrade";
     this.broadcast("pve_pause", { paused: true, reason: "pve_upgrade" });
     const waiting = this.pveDraftWaiting();
@@ -1110,6 +1274,8 @@ export class ContentRoom extends ServicedRoom {
   private handlePveUpgradePick(client: Client, offerId: string) {
     const draft = this.pveDraft;
     if (!draft || this.pveRunEnded) return;
+    const picker = this.state.players.get(client.sessionId);
+    if (!picker || !this.isFighterLiving(picker)) return;
     const offers = draft.offersBySession.get(client.sessionId);
     if (!offers) return;
     const offer = offers.find((o) => o.offerId === offerId);
@@ -1134,7 +1300,7 @@ export class ContentRoom extends ServicedRoom {
   private tryFinishPveUpgradeDraft() {
     const draft = this.pveDraft;
     if (!draft) return;
-    const fighters = this.pveFighterSessions();
+    const fighters = this.pveDraftSessions();
     for (const sessionId of fighters) {
       if (draft.choiceBySession.has(sessionId)) continue;
       const p = this.state.players.get(sessionId);
@@ -1156,7 +1322,7 @@ export class ContentRoom extends ServicedRoom {
       }
     }
     this.pveDraft = null;
-    this.state.paused = false;
+    this.applyPauseFlag(false);
     this.state.pauseReason = "";
     this.broadcast("pve_pause", { paused: false });
     for (const client of this.clients) this.sendPveUpgrades(client);
@@ -1312,7 +1478,6 @@ export class ContentRoom extends ServicedRoom {
       p.z = spawn.z;
       p.yaw = spawn.yaw;
       this.spawnBySession.set(sessionId, { x: spawn.x, z: spawn.z, yaw: spawn.yaw });
-      p.hp = p.maxHp;
       // No carry between rounds. Openings are then always played on the base
       // kit, and the payoff moments land late in a round once someone has
       // earned them.
@@ -1328,6 +1493,8 @@ export class ContentRoom extends ServicedRoom {
       p.invulnerable = false;
       this.diedAtBySession.delete(sessionId);
       this.combat.clearSession(sessionId);
+      this.applyCombatKit(sessionId, p);
+      p.hp = p.maxHp;
     });
 
     if (this.mapId) {
@@ -2039,6 +2206,7 @@ export class ContentRoom extends ServicedRoom {
       this.tickPveOrbs(now);
     }
     if (this.kind === "pve" && isPveRunMode(this.mode)) {
+      this.tickPveReviveZones(dtMs);
       this.checkPveWipe();
     }
   }
