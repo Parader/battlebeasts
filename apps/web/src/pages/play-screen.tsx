@@ -21,6 +21,7 @@ import { VesselSetupPanel } from "@/game/ui/VesselSetupPanel";
 import { RankPanel } from "@/game/ui/RankPanel";
 import { ChestRevealPanel } from "@/game/ui/ChestRevealPanel";
 import { SettingsPanel } from "@/game/ui/SettingsPanel";
+import { GameMenuPanel } from "@/game/ui/GameMenuPanel";
 import { PatchNotesPanel } from "@/game/ui/PatchNotesPanel";
 import { hasUnseenPatchNotes } from "@/game/patchNotes";
 import { DeathOverlay } from "@/game/ui/DeathOverlay";
@@ -165,6 +166,8 @@ export const PlayScreen = () => {
     const [rankOpen, setRankOpen] = useState(false);
     const [chestLocksInput, setChestLocksInput] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [uiEpoch, setUiEpoch] = useState(0);
     const [updatesOpen, setUpdatesOpen] = useState(false);
     const [confirmReturnHub, setConfirmReturnHub] = useState(false);
     /** True until hub/arena assets + room are ready (locks combat input). */
@@ -283,6 +286,7 @@ export const PlayScreen = () => {
             adminOpen ||
             rankOpen ||
             settingsOpen ||
+            menuOpen ||
             updatesOpen ||
             loadingGate ||
             chestLocksInput ||
@@ -372,6 +376,68 @@ export const PlayScreen = () => {
     useGameMusic(playReady ? (inContent ? "arena" : "village") : null);
     useGameAmbiance(playReady ? (inContent ? "arena" : "village") : null);
 
+    useEffect(() => {
+        if (!playReady || introPlaying) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== "Escape" || e.repeat) return;
+            const target = e.target;
+            if (
+                target instanceof HTMLElement &&
+                (target.closest("input, textarea, select") || target.isContentEditable)
+            ) {
+                return;
+            }
+            const overlayOpen =
+                confirmReturnHub ||
+                confirmSoftReset ||
+                settingsOpen ||
+                updatesOpen ||
+                friendsOpen ||
+                questsOpen ||
+                adminOpen ||
+                rankOpen ||
+                helpOpen ||
+                menuOpen ||
+                Boolean(activeUi) ||
+                Boolean(npcDialogue) ||
+                Boolean(chestReveal) ||
+                Boolean(waveRunRecap) ||
+                Boolean(matchRecap) ||
+                Boolean(pveUpgradeDraft) ||
+                emotePieOpen ||
+                needsVesselSetup;
+            if (overlayOpen) {
+                if (helpOpen) setHelpOpen(false);
+                return;
+            }
+            e.preventDefault();
+            setMenuOpen(true);
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [
+        playReady,
+        introPlaying,
+        confirmReturnHub,
+        confirmSoftReset,
+        settingsOpen,
+        updatesOpen,
+        friendsOpen,
+        questsOpen,
+        adminOpen,
+        rankOpen,
+        helpOpen,
+        menuOpen,
+        activeUi,
+        npcDialogue,
+        chestReveal,
+        waveRunRecap,
+        matchRecap,
+        pveUpgradeDraft,
+        emotePieOpen,
+        needsVesselSetup,
+    ]);
+
     const loadingStatusLabel = !assetsReady
         ? inContent
             ? "Preparing arena"
@@ -451,6 +517,16 @@ export const PlayScreen = () => {
     const shieldPct = Math.max(0, Math.min(100, (localHp.shield / hpMax) * 100));
     const shieldLeft = Math.min(hpPct, Math.max(0, 100 - shieldPct));
     const isHubOwner = effectiveHubOwnerId === userId;
+    const leavePlay = () => {
+        void (async () => {
+            if (user) await signOut();
+            window.location.assign("/");
+        })();
+    };
+    const reloadUi = () => {
+        setMenuOpen(false);
+        setUiEpoch((n) => n + 1);
+    };
     // Appearance + Merchant + chest reveal each spin up a second WebGL Canvas; pause the game
     // view so dual contexts don't fight (gear mesh compile was crashing the tab).
     const suspendGameGl =
@@ -460,7 +536,7 @@ export const PlayScreen = () => {
         (playReady && needsVesselSetup && !introPlaying);
 
     return (
-        <div className="relative h-dvh w-full overflow-hidden bg-black">
+        <div key={uiEpoch} className="relative h-dvh w-full overflow-hidden bg-black">
             <GameCanvas
                 room={room}
                 localSessionId={room?.sessionId ?? null}
@@ -480,6 +556,7 @@ export const PlayScreen = () => {
                         questsOpen ||
                         rankOpen ||
                         settingsOpen ||
+                        menuOpen ||
                         updatesOpen ||
                         introPlaying ||
                         suspendGameGl
@@ -766,10 +843,7 @@ export const PlayScreen = () => {
                             label="Leave"
                             icon="exit-door"
                             onClick={() => {
-                                void (async () => {
-                                    if (user) await signOut();
-                                    window.location.assign("/");
-                                })();
+                                void leavePlay();
                             }}
                         />
                     </div>
@@ -857,8 +931,9 @@ export const PlayScreen = () => {
                         <li>Space can interrupt other casts (missile keeps flying if already fired)</li>
                         <li>In a shop / stand zone, Space opens the menu instead of casting</li>
                         <li>Walk into a portal to open its menu (slot every key first — flex is optional)</li>
+                        <li>Esc — open / close menu</li>
                         <li>
-                            C / Esc / mouse side buttons — cancel (Bolt: until projectile fires; others:
+                            C / mouse side buttons — cancel (Bolt: until projectile fires; others:
                             anticipation)
                         </li>
                         {!inContent && (
@@ -991,6 +1066,28 @@ export const PlayScreen = () => {
                     onCancel={cancelParty}
                     onLeave={leaveParty}
                     onClose={() => setActiveUi(null)}
+                />
+            )}
+
+            {playReady && (
+                <GameMenuPanel
+                    open={menuOpen}
+                    onClose={() => setMenuOpen(false)}
+                    onOpenSettings={() => {
+                        setMenuOpen(false);
+                        setSettingsOpen(true);
+                    }}
+                    onReloadUi={reloadUi}
+                    inContent={inContent}
+                    onReturnHub={
+                        inContent
+                            ? () => {
+                                  setMenuOpen(false);
+                                  setConfirmReturnHub(true);
+                              }
+                            : undefined
+                    }
+                    onLeave={leavePlay}
                 />
             )}
 

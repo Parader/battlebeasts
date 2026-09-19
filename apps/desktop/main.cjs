@@ -569,7 +569,7 @@ if (!gotLock) {
             error: null,
             stale: false,
           });
-          setTimeout(() => app.quit(), 400);
+          setTimeout(() => app.quit(), 800);
           return result;
         }
         sendToLauncher("updater:ready", {

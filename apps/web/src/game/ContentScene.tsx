@@ -228,7 +228,7 @@ export function ContentScene({
       <RockWalls room={room} />
       <WorldTrees room={room} />
       <ProtectionBubbles room={room} />
-      <OrbitingWisps room={room} />
+      <OrbitingWisps room={room} localSessionId={localSessionId} predictedRef={predictedRef} />
       <AstralChains room={room} />
       <SoulSevers room={room} />
       <RiftPortals room={room} />

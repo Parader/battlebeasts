@@ -228,8 +228,25 @@ function batQuote(value) {
   return `"${String(value).replaceAll("%", "%%").replaceAll('"', '""')}"`;
 }
 
+function envPath(name) {
+  const raw = process.env[name];
+  if (typeof raw !== "string") return "";
+  return raw.trim().replace(/^"(.*)"$/, "$1");
+}
+
+/** Portable builds extract to %TEMP%; execPath is that copy, not the file the user clicked. */
+function resolveUserLauncherExe(execPath) {
+  const portable = envPath("PORTABLE_EXECUTABLE_FILE");
+  if (portable && portable.toLowerCase().endsWith(".exe")) return portable;
+  return execPath;
+}
+
+function launcherStagingDir(userData) {
+  return path.join(userData, "launcher-update");
+}
+
 function scheduleLauncherSwap(currentExe, nextExe) {
-  const bat = `${nextExe}.swap.cmd`;
+  const bat = path.join(path.dirname(nextExe), `swap-${process.pid}.cmd`);
   const pid = process.pid;
   const src = batQuote(nextExe);
   const dest = batQuote(currentExe);
@@ -240,19 +257,23 @@ function scheduleLauncherSwap(currentExe, nextExe) {
       "setlocal",
       ":wait",
       "ping 127.0.0.1 -n 2 >nul",
-      `tasklist /FI "PID eq ${pid}" 2>nul | findstr /I /C:"No tasks" >nul`,
-      "if errorlevel 1 goto wait",
+      `tasklist /FI "PID eq ${pid}" /NH 2>nul | find "${pid}" >nul`,
+      "if not errorlevel 1 goto wait",
       "set tries=0",
       ":copy",
       `copy /Y ${src} ${dest} >nul`,
-      "if not errorlevel 1 goto launch",
+      "if not errorlevel 1 goto launch_dest",
       "set /a tries+=1",
-      "if %tries% GEQ 40 goto launch",
+      "if %tries% GEQ 40 goto launch_src",
       "ping 127.0.0.1 -n 2 >nul",
       "goto copy",
-      ":launch",
+      ":launch_dest",
       `start "" ${dest}`,
       `del /F /Q ${src} >nul 2>&1`,
+      "goto done",
+      ":launch_src",
+      `start "" ${src}`,
+      ":done",
       `(goto) 2>nul & del /F /Q "%~f0"`,
     ].join("\r\n"),
     "utf8",
@@ -261,18 +282,18 @@ function scheduleLauncherSwap(currentExe, nextExe) {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
+    cwd: path.dirname(nextExe),
   });
   child.unref();
 }
 
 async function applyLauncherUpdate(spec, opts) {
-  const execPath = opts.execPath;
+  const swapTarget = resolveUserLauncherExe(opts.execPath);
   const onStatus = opts.onStatus;
   const onProgress = opts.onProgress;
-  const dest = path.join(
-    path.dirname(execPath),
-    `.${path.basename(execPath, ".exe")}.${spec.version}.new.exe`,
-  );
+  const staging = launcherStagingDir(opts.userData);
+  fs.mkdirSync(staging, { recursive: true });
+  const dest = path.join(staging, spec.name || `MageTrials-Launcher-${spec.version}.exe`);
   onStatus({ phase: "updating", message: "Updating launcher…" });
   await downloadFile(spec.url, dest, onProgress);
   if (spec.sha256) {
@@ -287,7 +308,7 @@ async function applyLauncherUpdate(spec, opts) {
     }
   }
   onStatus({ phase: "updating", message: "Restarting launcher…" });
-  scheduleLauncherSwap(execPath, dest);
+  scheduleLauncherSwap(swapTarget, dest);
   return true;
 }
 
@@ -309,6 +330,7 @@ async function tryLauncherUpdate(opts, ctx) {
   try {
     await applyLauncherUpdate(spec, {
       execPath: opts.execPath,
+      userData: opts.userData,
       onStatus: opts.onStatus,
       onProgress: opts.onProgress,
     });

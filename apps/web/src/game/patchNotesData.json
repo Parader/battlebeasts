@@ -1,5 +1,20 @@
 [
   {
+    "id": "2026-09-18-menu-vis",
+    "title": "Escape menu & visibility fixes",
+    "date": "2026-09-18",
+    "content": [
+      "Esc opens an in-game menu (press again or Resume to close)",
+      "Reload UI remounts the 3D view and HUD without leaving the room",
+      "Map builder cemetery catalog has more props (barrels, ruins, trees, walls, and the rest of the set)"
+    ],
+    "fixes": [
+      "Orbiting Wisp is visible to the hunter who cast it",
+      "Walking into the shop no longer leaves you stuck with a green silhouette",
+      "Void Disc steers with you on the way out instead of locking the first heading"
+    ]
+  },
+  {
     "id": "2026-09-18-pve-pathing",
     "title": "Wave Assault pathing & scenery",
     "date": "2026-09-18",

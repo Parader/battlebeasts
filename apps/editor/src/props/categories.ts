@@ -28,7 +28,7 @@ const RULES: Category[] = [
   {
     id: "wall",
     label: "Walls & Fences",
-    words: ["wall", "walls", "walledge", "battlement", "battlements", "hoarding", "fence", "fences", "railing", "palisade", "corbel", "corbels", "arrowslit"],
+    words: ["wall", "walls", "walledge", "battlement", "battlements", "hoarding", "fence", "fences", "railing", "palisade", "corbel", "corbels", "arrowslit", "barricade"],
   },
   {
     id: "floor",
@@ -56,13 +56,13 @@ const RULES: Category[] = [
   {
     id: "rock",
     label: "Rocks & Terrain",
-    words: ["rock", "rocks", "stone", "boulder", "cliff", "mountain", "mountains", "hill", "canyon", "dune", "plateau", "pebble", "pebbles", "menhir", "iceberg", "ice", "icicle", "crystal", "ore", "sandstone", "sand", "sandcastle", "snowdrift", "volcano", "lava"],
+    words: ["rock", "rocks", "stone", "boulder", "cliff", "mountain", "mountains", "hill", "canyon", "dune", "plateau", "pebble", "pebbles", "menhir", "iceberg", "ice", "icicle", "crystal", "ore", "sandstone", "sand", "sandcastle", "snowdrift", "volcano", "lava", "dirt"],
   },
   { id: "water", label: "Water", words: ["water", "river", "riverbed", "lake", "fountain", "pool", "well", "waterfall", "floe", "puddle"] },
 
   { id: "light", label: "Lighting & Fire", words: ["torch", "lamp", "lantern", "lanturn", "candle", "candlestand", "candlestick", "brazier", "campfire", "firepit", "fireplace", "fire", "flame", "chandelier", "forge"] },
   { id: "sign", label: "Signs, Flags & Market", words: ["sign", "banner", "flag", "bunting", "poster", "board", "label", "awning", "market", "weathervane", "direction", "quest"] },
-  { id: "container", label: "Containers & Planters", words: ["barrel", "crate", "chest", "sack", "basket", "bucket", "pot", "cauldron", "box", "planter", "planterbox", "bag", "bindle", "kettle", "vase", "vases"] },
+  { id: "container", label: "Containers & Planters", words: ["barrel", "barrels", "crate", "chest", "sack", "basket", "bucket", "pot", "cauldron", "box", "boxes", "planter", "planterbox", "bag", "bindle", "kettle", "vase", "vases"] },
   {
     id: "furniture",
     label: "Furniture & Workstations",

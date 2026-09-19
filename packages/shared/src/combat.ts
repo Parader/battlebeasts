@@ -146,6 +146,8 @@ export type ProjectileSim = {
   ageSec?: number;
   /** Turn pause duration when entering turning phase (seconds). */
   turnDelaySec?: number;
+  /** Outbound yaw steer toward the caster's live facing (rad/s). 0 = straight. */
+  steerRadPerSec?: number;
   /** Runic Shard fragment — smaller crystal from a shatter. */
   isRunicFragment?: boolean;
   /**
@@ -548,6 +550,7 @@ export function createReturningProjectile(
     outboundTraveled: 0,
     turnDelayRemaining: 0,
     turnDelaySec: turnDelayMs / 1000,
+    steerRadPerSec: cfg.steerRadPerSec ?? 0,
     maxLifetimeSec: maxLifetimeMs / 1000,
     returnCatchRadius: cfg.returnCatchRadius ?? 0.6,
     ageSec: 0,
@@ -1685,6 +1688,14 @@ export function tickReturningProjectiles(
     const fromZ = p.z;
 
     if (p.returnPhase === "outbound") {
+      const steerRate = p.steerRadPerSec ?? 0;
+      if (steerRate > 0 && p.armingIn <= 0) {
+        const curYaw = Math.atan2(p.vx, p.vz);
+        const nextYaw = stepYawToward(curYaw, owner.yaw, steerRate, dt);
+        const face = facingVector(nextYaw);
+        p.vx = face.x * speed;
+        p.vz = face.z * speed;
+      }
       applyProjectileZoneSpeed(p);
       p.x += p.vx * dt;
       p.z += p.vz * dt;
@@ -1734,6 +1745,12 @@ export function tickReturningProjectiles(
 
       if (p.life <= 0 || (p.outboundTraveled ?? 0) >= (p.maxOutboundRange ?? 9)) {
         beginTurn(p);
+      } else if ((p.outboundTraveled ?? 0) >= 1.2) {
+        const home = dirFromTo({ x: p.x, z: p.z }, { x: owner.x, z: owner.z });
+        const vlen = Math.hypot(p.vx, p.vz);
+        if (vlen > 0.01 && (p.vx * home.x + p.vz * home.z) / vlen > 0.45) {
+          beginTurn(p);
+        }
       }
 
       for (const body of bodies) {

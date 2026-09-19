@@ -1,10 +1,11 @@
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
-import { ORBITING_WISP_CAST } from "@battlebeasts/shared";
+import { ORBITING_WISP_CAST, orbitingWispWorldPos } from "@battlebeasts/shared";
 import { createEnergyBallMaterial } from "./materials/energyBall";
 import { createCirclePointMaterial } from "./materials/circlePoint";
+import type { PredictedPose } from "../useBaseCityRoom";
 
 const CORE = "#0c1a2e";
 const BLUE = "#2563eb";
@@ -39,7 +40,37 @@ type Fleck = {
   size: number;
 };
 
-function WispMesh({ room, id }: { room: Room; id: string }) {
+function ownerPose(
+  room: Room,
+  ownerSessionId: string | undefined,
+  localSessionId: string | null,
+  predictedRef?: MutableRefObject<PredictedPose>,
+): { x: number; z: number } | null {
+  if (
+    ownerSessionId &&
+    localSessionId &&
+    ownerSessionId === localSessionId &&
+    predictedRef?.current
+  ) {
+    return { x: predictedRef.current.x, z: predictedRef.current.z };
+  }
+  if (!ownerSessionId) return null;
+  const p = room.state?.players?.get(ownerSessionId) as { x?: number; z?: number } | undefined;
+  if (typeof p?.x !== "number" || typeof p?.z !== "number") return null;
+  return { x: p.x, z: p.z };
+}
+
+function WispMesh({
+  room,
+  id,
+  localSessionId,
+  predictedRef,
+}: {
+  room: Room;
+  id: string;
+  localSessionId: string | null;
+  predictedRef?: MutableRefObject<PredictedPose>;
+}) {
   const group = useRef<THREE.Group>(null);
   const core = useRef<THREE.Mesh>(null);
   const glow = useRef<THREE.Mesh>(null);
@@ -107,24 +138,54 @@ function WispMesh({ room, id }: { room: Room; id: string }) {
       seeded.current = false;
       return;
     }
+    const owner = ownerPose(room, w.ownerSessionId, localSessionId, predictedRef);
+    const schemaOk =
+      Number.isFinite(w.x) &&
+      Number.isFinite(w.z) &&
+      (w.x !== 0 || w.z !== 0 || (owner != null && Math.hypot(owner.x, owner.z) < 2));
+    if (!owner && !schemaOk) {
+      g.visible = false;
+      return;
+    }
     g.visible = true;
 
     const safeDt = Math.min(0.05, Math.max(0, dt));
-    const nowServer = Date.now();
-    const left = (w.expiresAt ?? nowServer + 1000) - nowServer;
-    const fadeOut = left < FADE_MS ? Math.max(0, left / FADE_MS) : 1;
-    const armAge = performance.now() - spawnLocal.current;
+    const nowMs = performance.now();
+    if (!seeded.current) {
+      spawnLocal.current = nowMs;
+    }
+    const armAge = nowMs - spawnLocal.current;
     const spawnIn = Math.min(1, armAge / Math.max(1, ARMING_MS));
     const appear = spawnIn * spawnIn * (3 - 2 * spawnIn);
+    // Never use Date.now() vs schema expiresAt — a 0 default or clock skew
+    // makes left hugely negative and the caster sees nothing.
+    const duration =
+      w.expiresAt && w.spawnedAt && w.expiresAt > w.spawnedAt
+        ? w.expiresAt - w.spawnedAt
+        : ORBITING_WISP_CAST.durationMs;
+    const left = duration - armAge;
+    const fadeOut = left < FADE_MS ? Math.max(0, left / FADE_MS) : 1;
     const opacity = appear * fadeOut;
 
-    const tx = w.x;
-    const tz = w.z;
-    const ty = w.y ?? ORBITING_WISP_CAST.height;
+    let tx = w.x;
+    let tz = w.z;
+    let ty = w.y ?? ORBITING_WISP_CAST.height;
+    if (owner) {
+      const pos = orbitingWispWorldPos(
+        owner.x,
+        owner.z,
+        w.orbitPhase ?? 0,
+        Date.now(),
+        ORBITING_WISP_CAST,
+      );
+      const ease = spawnIn;
+      tx = owner.x + (pos.x - owner.x) * ease;
+      tz = owner.z + (pos.z - owner.z) * ease;
+      ty = ORBITING_WISP_CAST.height;
+    }
     if (!seeded.current) {
       renderPos.current.set(tx, ty, tz);
       seeded.current = true;
-      spawnLocal.current = performance.now();
     } else {
       renderPos.current.x = THREE.MathUtils.damp(renderPos.current.x, tx, 18, safeDt);
       renderPos.current.z = THREE.MathUtils.damp(renderPos.current.z, tz, 18, safeDt);
@@ -150,7 +211,7 @@ function WispMesh({ room, id }: { room: Room; id: string }) {
       spawnAcc.current = 0;
       const slot = flecks.current.find((f) => !f.alive);
       if (slot) {
-        const ang = (w.orbitPhase ?? 0) + (nowServer / 1000) * ORBITING_WISP_CAST.angularSpeed;
+        const ang = (w.orbitPhase ?? 0) + (Date.now() / 1000) * ORBITING_WISP_CAST.angularSpeed;
         const txDir = Math.sin(ang);
         const tzDir = -Math.cos(ang);
         slot.alive = true;
@@ -195,11 +256,11 @@ function WispMesh({ room, id }: { room: Room; id: string }) {
   });
 
   return (
-    <group ref={group}>
-      <mesh ref={core} material={coreMat} renderOrder={6}>
+    <group ref={group} frustumCulled={false}>
+      <mesh ref={core} material={coreMat} renderOrder={6} frustumCulled={false}>
         <sphereGeometry args={[0.11, 10, 10]} />
       </mesh>
-      <mesh ref={glow} material={glowMat} renderOrder={5}>
+      <mesh ref={glow} material={glowMat} renderOrder={5} frustumCulled={false}>
         <sphereGeometry args={[0.2, 10, 10]} />
       </mesh>
       <points geometry={geo} material={pointMat} renderOrder={7} frustumCulled={false} />
@@ -208,7 +269,15 @@ function WispMesh({ room, id }: { room: Room; id: string }) {
 }
 
 /** Schema-synced orbiting wisps. */
-export function OrbitingWisps({ room }: { room: Room | null }) {
+export function OrbitingWisps({
+  room,
+  localSessionId = null,
+  predictedRef,
+}: {
+  room: Room | null;
+  localSessionId?: string | null;
+  predictedRef?: MutableRefObject<PredictedPose>;
+}) {
   const [ids, setIds] = useState<string[]>([]);
   const prevKey = useRef("");
 
@@ -228,7 +297,13 @@ export function OrbitingWisps({ room }: { room: Room | null }) {
   return (
     <>
       {ids.map((id) => (
-        <WispMesh key={id} room={room} id={id} />
+        <WispMesh
+          key={id}
+          room={room}
+          id={id}
+          localSessionId={localSessionId}
+          predictedRef={predictedRef}
+        />
       ))}
     </>
   );

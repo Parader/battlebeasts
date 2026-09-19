@@ -277,6 +277,8 @@ export type ReturningProjectileConfig = {
   maxLifetimeMs?: number;
   /** Pause at max range before homing return (ms). */
   turnDelayMs?: number;
+  /** How fast the disc yaws toward the caster's live facing while outbound (rad/s). */
+  steerRadPerSec?: number;
   /** Despawn when within this distance of the live caster (world units). */
   returnCatchRadius?: number;
 };
@@ -1686,6 +1688,8 @@ export const VOID_DISC_CAST = {
   maxLifetimeMs: 2800,
   /** Time to rotate 180° while still flying — not a pause at the apex. */
   turnDelayMs: 120,
+  /** Fast enough to hook a full turnaround inside the 9m outbound. */
+  steerRadPerSec: 6.2,
   returnCatchRadius: 0.6,
   fps: POISON_DART_CAST.fps,
   releaseFrame: POISON_DART_CAST.releaseFrame,
@@ -2641,7 +2645,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "voidDisc",
     name: "Void Disc",
     description:
-      "Throw a disc of void energy that damages enemies on the way out, then returns to your current position and can hit them again.",
+      "Throw a disc of void energy that damages enemies on the way out. Turn to steer it, then it returns to you and can hit them again.",
     allowedSlots: ["m1"],
     defaultSlot: "m1",
     unlockCostEssence: VOID_DISC_CAST.unlockCostEssence,
@@ -2659,6 +2663,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
       maxActivePerCaster: VOID_DISC_CAST.maxActivePerCaster,
       maxLifetimeMs: VOID_DISC_CAST.maxLifetimeMs,
       turnDelayMs: VOID_DISC_CAST.turnDelayMs,
+      steerRadPerSec: VOID_DISC_CAST.steerRadPerSec,
       returnCatchRadius: VOID_DISC_CAST.returnCatchRadius,
     },
     interruptible: true,

@@ -1,7 +1,7 @@
 {
   "version": 4,
-  "generatedAt": "2026-09-18T20:45:24.541Z",
-  "sourceHash": "ab6601889d00",
+  "generatedAt": "2026-09-19T00:04:40.690Z",
+  "sourceHash": "7daf2c853793",
   "props": [
     {
       "key": "beach/PP_Beach_Rocks_01",
@@ -85,6 +85,57 @@
       "hidden": false
     },
     {
+      "key": "cemetery/PP_Barrels_01",
+      "url": "/assets/props/cemetery/PP_Barrels_01.glb",
+      "biome": "cemetery",
+      "family": "Barrels",
+      "label": "Barrels",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.79,
+        "hz": 0.765,
+        "height": 1.22,
+        "baseY": 0,
+        "baseHx": 0.753,
+        "baseHz": 0.733,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.022,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.743,
+        "offsetX": 0.022
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Boxes_01",
+      "url": "/assets/props/cemetery/PP_Boxes_01.glb",
+      "biome": "cemetery",
+      "family": "Boxes",
+      "label": "Boxes",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.802,
+        "hz": 0.619,
+        "height": 1.485,
+        "baseY": 0,
+        "baseHx": 0.802,
+        "baseHz": 0.611,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.707
+      },
+      "hidden": false
+    },
+    {
       "key": "cemetery/PP_Broken_Fireplace_01",
       "url": "/assets/props/cemetery/PP_Broken_Fireplace_01.glb",
       "biome": "cemetery",
@@ -159,6 +210,33 @@
       "defaultCollider": {
         "mode": "circle",
         "radius": 1.543
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Cart_01",
+      "url": "/assets/props/cemetery/PP_Cart_01.glb",
+      "biome": "cemetery",
+      "family": "Cart",
+      "label": "Cart",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.771,
+        "hz": 1.486,
+        "height": 1.688,
+        "baseY": 0,
+        "baseHx": 1.157,
+        "baseHz": 1.289,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.161,
+        "baseCz": -0.057
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.223,
+        "offsetX": 0.161,
+        "offsetZ": -0.057
       },
       "hidden": false
     },
@@ -837,6 +915,63 @@
       "hidden": false
     },
     {
+      "key": "cemetery/PP_Crumbled_Wall_Stone_01",
+      "url": "/assets/props/cemetery/PP_Crumbled_Wall_Stone_01.glb",
+      "biome": "cemetery",
+      "family": "Crumbled_Wall_Stone",
+      "label": "Crumbled Wall Stone",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.149,
+        "hz": 0.813,
+        "height": 3.663,
+        "baseY": 0,
+        "baseHx": 1.389,
+        "baseHz": 0.776,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.548,
+        "baseCz": 0.036
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.389,
+        "halfZ": 0.776,
+        "yaw": 0,
+        "offsetX": 0.548,
+        "offsetZ": 0.036
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Dead_Small_Tree_01",
+      "url": "/assets/props/cemetery/PP_Dead_Small_Tree_01.glb",
+      "biome": "cemetery",
+      "family": "Dead_Small_Tree",
+      "label": "Dead Small Tree",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.444,
+        "hz": 0.261,
+        "height": 0.777,
+        "baseY": 0,
+        "baseHx": 0.388,
+        "baseHz": 0.261,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.039,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 0.388,
+        "halfZ": 0.261,
+        "yaw": 0,
+        "offsetX": 0.039
+      },
+      "hidden": false
+    },
+    {
       "key": "cemetery/PP_Dead_Tree_01",
       "url": "/assets/props/cemetery/PP_Dead_Tree_01.glb",
       "biome": "cemetery",
@@ -859,6 +994,60 @@
         "mode": "circle",
         "radius": 2.401,
         "offsetX": -0.267
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Dead_Tree_02",
+      "url": "/assets/props/cemetery/PP_Dead_Tree_02.glb",
+      "biome": "cemetery",
+      "family": "Dead_Tree",
+      "label": "Dead Tree",
+      "variant": 2,
+      "bounds": {
+        "hx": 1.953,
+        "hz": 1.502,
+        "height": 4.145,
+        "baseY": 0,
+        "baseHx": 1.816,
+        "baseHz": 1.502,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.138,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.659,
+        "offsetX": 0.138
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Dead_Tree_03",
+      "url": "/assets/props/cemetery/PP_Dead_Tree_03.glb",
+      "biome": "cemetery",
+      "family": "Dead_Tree",
+      "label": "Dead Tree",
+      "variant": 3,
+      "bounds": {
+        "hx": 0.396,
+        "hz": 0.274,
+        "height": 0.636,
+        "baseY": 0,
+        "baseHx": 0.377,
+        "baseHz": 0.268,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.015,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 0.377,
+        "halfZ": 0.268,
+        "yaw": 0,
+        "offsetX": 0.015
       },
       "hidden": false
     },
@@ -910,6 +1099,81 @@
       "defaultCollider": {
         "mode": "circle",
         "radius": 1.333
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Destroyed_Wall_01",
+      "url": "/assets/props/cemetery/PP_Destroyed_Wall_01.glb",
+      "biome": "cemetery",
+      "family": "Destroyed_Wall",
+      "label": "Destroyed Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.097,
+        "hz": 1.972,
+        "height": 4.148,
+        "baseY": 0,
+        "baseHx": 2.097,
+        "baseHz": 1.972,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.034
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Dirt_01",
+      "url": "/assets/props/cemetery/PP_Dirt_01.glb",
+      "biome": "cemetery",
+      "family": "Dirt",
+      "label": "Dirt",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.457,
+        "hz": 0.491,
+        "height": 0.444,
+        "baseY": 0,
+        "baseHx": 0.457,
+        "baseHz": 0.491,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.474
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Fire_01",
+      "url": "/assets/props/cemetery/PP_Fire_01.glb",
+      "biome": "cemetery",
+      "family": "Fire",
+      "label": "Fire",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.852,
+        "hz": 0.934,
+        "height": 0.766,
+        "baseY": 0,
+        "baseHx": 0.852,
+        "baseHz": 0.934,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.893
       },
       "hidden": false
     },
@@ -1547,6 +1811,33 @@
       "hidden": false
     },
     {
+      "key": "cemetery/PP_Rock_And_Wall_01",
+      "url": "/assets/props/cemetery/PP_Rock_And_Wall_01.glb",
+      "biome": "cemetery",
+      "family": "Rock_And_Wall",
+      "label": "Rock And Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 3.002,
+        "hz": 3.287,
+        "height": 4.444,
+        "baseY": 0,
+        "baseHx": 2.973,
+        "baseHz": 3.169,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.03,
+        "baseCz": 0.118
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 3.071,
+        "offsetX": 0.03,
+        "offsetZ": 0.118
+      },
+      "hidden": false
+    },
+    {
       "key": "cemetery/PP_Rock_Pile_01",
       "url": "/assets/props/cemetery/PP_Rock_Pile_01.glb",
       "biome": "cemetery",
@@ -1595,6 +1886,232 @@
         "radius": 1.128,
         "offsetX": -0.12,
         "offsetZ": 0.213
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rock_Wall_01",
+      "url": "/assets/props/cemetery/PP_Rock_Wall_01.glb",
+      "biome": "cemetery",
+      "family": "Rock_Wall",
+      "label": "Rock Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.951,
+        "hz": 1.833,
+        "height": 3.351,
+        "baseY": 0,
+        "baseHx": 1.794,
+        "baseHz": 1.813,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.157,
+        "baseCz": 0.02
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.803,
+        "offsetX": -0.157,
+        "offsetZ": 0.02
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rock_Well_01",
+      "url": "/assets/props/cemetery/PP_Rock_Well_01.glb",
+      "biome": "cemetery",
+      "family": "Rock_Well",
+      "label": "Rock Well",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.263,
+        "hz": 1.107,
+        "height": 2.744,
+        "baseY": 0,
+        "baseHx": 1.263,
+        "baseHz": 1.107,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.185
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rocks_01",
+      "url": "/assets/props/cemetery/PP_Rocks_01.glb",
+      "biome": "cemetery",
+      "family": "Rocks",
+      "label": "Rocks",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.492,
+        "hz": 0.78,
+        "height": 0.118,
+        "baseY": 0,
+        "baseHx": 0.492,
+        "baseHz": 0.78,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "none"
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rocks_02",
+      "url": "/assets/props/cemetery/PP_Rocks_02.glb",
+      "biome": "cemetery",
+      "family": "Rocks",
+      "label": "Rocks",
+      "variant": 2,
+      "bounds": {
+        "hx": 1.588,
+        "hz": 1.418,
+        "height": 2.566,
+        "baseY": 0,
+        "baseHx": 1.588,
+        "baseHz": 1.418,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.503
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rocks_03",
+      "url": "/assets/props/cemetery/PP_Rocks_03.glb",
+      "biome": "cemetery",
+      "family": "Rocks",
+      "label": "Rocks",
+      "variant": 3,
+      "bounds": {
+        "hx": 0.492,
+        "hz": 0.528,
+        "height": 0.505,
+        "baseY": 0,
+        "baseHx": 0.492,
+        "baseHz": 0.528,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.51
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rocks_04",
+      "url": "/assets/props/cemetery/PP_Rocks_04.glb",
+      "biome": "cemetery",
+      "family": "Rocks",
+      "label": "Rocks",
+      "variant": 4,
+      "bounds": {
+        "hx": 0.418,
+        "hz": 0.494,
+        "height": 0.572,
+        "baseY": 0,
+        "baseHx": 0.418,
+        "baseHz": 0.494,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.456
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rocks_05",
+      "url": "/assets/props/cemetery/PP_Rocks_05.glb",
+      "biome": "cemetery",
+      "family": "Rocks",
+      "label": "Rocks",
+      "variant": 5,
+      "bounds": {
+        "hx": 0.625,
+        "hz": 0.607,
+        "height": 0.707,
+        "baseY": 0,
+        "baseHx": 0.625,
+        "baseHz": 0.607,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.616
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rocks_And_Wood_01",
+      "url": "/assets/props/cemetery/PP_Rocks_And_Wood_01.glb",
+      "biome": "cemetery",
+      "family": "Rocks_And_Wood",
+      "label": "Rocks And Wood",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.01,
+        "hz": 1.064,
+        "height": 1.299,
+        "baseY": 0,
+        "baseHx": 1.01,
+        "baseHz": 1.064,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.037
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Rocks_Stalagmite_01",
+      "url": "/assets/props/cemetery/PP_Rocks_Stalagmite_01.glb",
+      "biome": "cemetery",
+      "family": "Rocks_Stalagmite",
+      "label": "Rocks Stalagmite",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.679,
+        "hz": 1.781,
+        "height": 3.467,
+        "baseY": 0,
+        "baseHx": 1.679,
+        "baseHz": 1.781,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.73
       },
       "hidden": false
     },
@@ -1804,6 +2321,196 @@
       "defaultCollider": {
         "mode": "circle",
         "radius": 1.446
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Small_Tree_01",
+      "url": "/assets/props/cemetery/PP_Small_Tree_01.glb",
+      "biome": "cemetery",
+      "family": "Small_Tree",
+      "label": "Small Tree",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.034,
+        "hz": 0.826,
+        "height": 1.989,
+        "baseY": 0,
+        "baseHx": 1.004,
+        "baseHz": 0.826,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.03,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.915,
+        "offsetX": -0.03
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Stand_01",
+      "url": "/assets/props/cemetery/PP_Stand_01.glb",
+      "biome": "cemetery",
+      "family": "Stand",
+      "label": "Stand",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.823,
+        "hz": 1.3,
+        "height": 2.734,
+        "baseY": 0,
+        "baseHx": 1.604,
+        "baseHz": 1.284,
+        "centreX": -2.741,
+        "centreZ": -0.872,
+        "baseCx": -2.96,
+        "baseCz": -0.889
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.444,
+        "offsetX": -0.219,
+        "offsetZ": -0.017
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Stone_And_Wood_Wall_01",
+      "url": "/assets/props/cemetery/PP_Stone_And_Wood_Wall_01.glb",
+      "biome": "cemetery",
+      "family": "Stone_And_Wood_Wall",
+      "label": "Stone And Wood Wall",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.742,
+        "hz": 0.696,
+        "height": 3.625,
+        "baseY": 0,
+        "baseHx": 2.728,
+        "baseHz": 0.696,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.015,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 2.728,
+        "halfZ": 0.696,
+        "yaw": 0,
+        "offsetX": 0.015
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Stone_Door_01",
+      "url": "/assets/props/cemetery/PP_Stone_Door_01.glb",
+      "biome": "cemetery",
+      "family": "Stone_Door",
+      "label": "Stone Door",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.812,
+        "hz": 0.89,
+        "height": 4.138,
+        "baseY": 0,
+        "baseHx": 2.812,
+        "baseHz": 0.89,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 2.812,
+        "halfZ": 0.89,
+        "yaw": 0
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Stone_Stair_01",
+      "url": "/assets/props/cemetery/PP_Stone_Stair_01.glb",
+      "biome": "cemetery",
+      "family": "Stone_Stair",
+      "label": "Stone Stair",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.65,
+        "hz": 2.225,
+        "height": 2.314,
+        "baseY": 0,
+        "baseHx": 1.637,
+        "baseHz": 2.225,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.014,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 1.637,
+        "halfZ": 2.225,
+        "yaw": 0,
+        "offsetX": 0.014
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Table_01",
+      "url": "/assets/props/cemetery/PP_Table_01.glb",
+      "biome": "cemetery",
+      "family": "Table",
+      "label": "Table",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.957,
+        "hz": 0.655,
+        "height": 0.867,
+        "baseY": 0,
+        "baseHx": 0.901,
+        "baseHz": 0.625,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0.035,
+        "baseCz": 0.029
+      },
+      "defaultCollider": {
+        "mode": "box",
+        "halfX": 0.901,
+        "halfZ": 0.625,
+        "yaw": 0,
+        "offsetX": 0.035,
+        "offsetZ": 0.029
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Tent_01",
+      "url": "/assets/props/cemetery/PP_Tent_01.glb",
+      "biome": "cemetery",
+      "family": "Tent",
+      "label": "Tent",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.408,
+        "hz": 1.593,
+        "height": 2.252,
+        "baseY": 0,
+        "baseHx": 1.408,
+        "baseHz": 1.593,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.5
       },
       "hidden": false
     },
@@ -2126,6 +2833,81 @@
       "hidden": false
     },
     {
+      "key": "cemetery/PP_Tree_Stump_01",
+      "url": "/assets/props/cemetery/PP_Tree_Stump_01.glb",
+      "biome": "cemetery",
+      "family": "Tree_Stump",
+      "label": "Tree Stump",
+      "variant": 1,
+      "bounds": {
+        "hx": 0.842,
+        "hz": 0.98,
+        "height": 0.973,
+        "baseY": 0,
+        "baseHx": 0.842,
+        "baseHz": 0.98,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.911
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Tree_Stump_02",
+      "url": "/assets/props/cemetery/PP_Tree_Stump_02.glb",
+      "biome": "cemetery",
+      "family": "Tree_Stump",
+      "label": "Tree Stump",
+      "variant": 2,
+      "bounds": {
+        "hx": 0.564,
+        "hz": 0.647,
+        "height": 0.621,
+        "baseY": 0,
+        "baseHx": 0.564,
+        "baseHz": 0.647,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 0.606
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Watch_Tower_01",
+      "url": "/assets/props/cemetery/PP_Watch_Tower_01.glb",
+      "biome": "cemetery",
+      "family": "Watch_Tower",
+      "label": "Watch Tower",
+      "variant": 1,
+      "bounds": {
+        "hx": 2.674,
+        "hz": 2.112,
+        "height": 7.84,
+        "baseY": 0,
+        "baseHx": 2.674,
+        "baseHz": 2.112,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": 0,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 2.393
+      },
+      "hidden": false
+    },
+    {
       "key": "cemetery/PP_Wood_Rock_Pile_01",
       "url": "/assets/props/cemetery/PP_Wood_Rock_Pile_01.glb",
       "biome": "cemetery",
@@ -2149,6 +2931,32 @@
         "radius": 0.985,
         "offsetX": 0.15,
         "offsetZ": 0.158
+      },
+      "hidden": false
+    },
+    {
+      "key": "cemetery/PP_Wooden_Barricade_01",
+      "url": "/assets/props/cemetery/PP_Wooden_Barricade_01.glb",
+      "biome": "cemetery",
+      "family": "Wooden_Barricade",
+      "label": "Wooden Barricade",
+      "variant": 1,
+      "bounds": {
+        "hx": 1.81,
+        "hz": 1.32,
+        "height": 3.307,
+        "baseY": 0,
+        "baseHx": 1.749,
+        "baseHz": 1.32,
+        "centreX": 0,
+        "centreZ": 0,
+        "baseCx": -0.034,
+        "baseCz": 0
+      },
+      "defaultCollider": {
+        "mode": "circle",
+        "radius": 1.535,
+        "offsetX": -0.034
       },
       "hidden": false
     },

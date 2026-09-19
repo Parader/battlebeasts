@@ -2458,8 +2458,13 @@ export function useBaseCityRoom(options: Options) {
                     }
                     break;
                 case "KeyC":
-                case "Escape":
                     if (down) {
+                        e.preventDefault();
+                        queueCancelCast();
+                    }
+                    break;
+                case "Escape":
+                    if (down && castingAbilityRef.current) {
                         e.preventDefault();
                         queueCancelCast();
                     }

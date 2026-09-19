@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 type Props = {
   title: string;
@@ -54,6 +54,17 @@ export function GamePanelShell({
     ? "h-[min(100dvh-1rem,100%)] max-h-[min(100dvh-1rem,100%)]"
     : maxHeightClass;
 
+  useEffect(() => {
+    if (!onClose) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat) return;
+      e.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const header = (
     <header
       className={[
@@ -94,9 +105,6 @@ export function GamePanelShell({
       data-ui-overlay
       onClick={(e) => {
         if (e.target === e.currentTarget && onClose) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && onClose) onClose();
       }}
       role="presentation"
     >

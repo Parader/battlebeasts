@@ -111,6 +111,7 @@ export function OcclusionSilhouette({
     if (!root || !mat) return;
 
     if (!enabled || !root.visible || (getEnabled && !getEnabled())) {
+      lastHitAt.current = 0;
       if (shown.current) {
         for (const g of ghosts.current) g.visible = false;
         shown.current = false;
@@ -125,7 +126,12 @@ export function OcclusionSilhouette({
       sources.current = next;
     }
 
-    const now = state.clock.elapsedTime * 1000;
+    // Wall clock — R3F's clock resets when the shop / appearance Canvas
+    // suspends the game frameloop, which would pin this overlay on forever.
+    const now = performance.now();
+    if (lastRayAt.current > 0 && now - lastRayAt.current > 500) {
+      lastHitAt.current = 0;
+    }
     if (now - lastRayAt.current >= RAY_EVERY_MS) {
       lastRayAt.current = now;
       root.getWorldPosition(_chest);
@@ -144,7 +150,7 @@ export function OcclusionSilhouette({
       }
     }
 
-    const want = now - lastHitAt.current < HIDE_HOLD_MS;
+    const want = lastHitAt.current > 0 && now - lastHitAt.current < HIDE_HOLD_MS;
     if (want === shown.current) return;
     shown.current = want;
     for (const g of ghosts.current) g.visible = want;
