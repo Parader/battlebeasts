@@ -1,5 +1,17 @@
 [
   {
+    "id": "2026-09-24-spell-vfx",
+    "title": "Spell effects and sounds",
+    "date": "2026-09-24",
+    "content": [
+      "Spells use the new particle effects, including Crushing Sigil, Orbiting Wisp, and the void spells",
+      "Spell sounds were retuned, and Orbiting Wisp plays an impact when it hits"
+    ],
+    "highlights": [],
+    "balance": [],
+    "fixes": []
+  },
+  {
     "id": "2026-09-19-brand-splash",
     "title": "Mage Trials key art",
     "date": "2026-09-19",
