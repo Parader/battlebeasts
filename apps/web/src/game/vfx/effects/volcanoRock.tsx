@@ -7,18 +7,17 @@ import type { OneShotEffect } from "../types";
 import { softEnvelope } from "../easing";
 import { GroundDecal } from "../components/GroundDecal";
 import { AoeRimMarker } from "../components/AoeRimMarker";
-import { getSharedFireMaterial } from "../components/FireParticleField";
 import { groundPresets } from "../presets/ground";
 import {
   BOULDER_TARGET_SIZE,
   VOLCANO_GLB_URL,
   instantiateBoulder,
 } from "../volcanoAsset";
+import { burstElementRole } from "../engine";
 
 import { registerSharedGeometry, registerSharedMaterial } from "../vfxDisposal";
 
 const SHARD_COUNT = 9;
-const FIRE_COUNT = 22;
 const shardGeo = new THREE.DodecahedronGeometry(0.12, 0);
 const shardMatA = new THREE.MeshBasicMaterial({ color: "#7c2d12", toneMapped: true });
 const shardMatB = new THREE.MeshBasicMaterial({ color: "#ea580c", toneMapped: true });
@@ -28,7 +27,11 @@ registerSharedMaterial(shardMatA);
 registerSharedMaterial(shardMatB);
 registerSharedMaterial(shardMatC);
 
-/** variant 1 = telegraph (circle + arc), 2 = impact shatter. */
+/**
+ * Caster blow/travel: falling rock; impact: fire burst; ground: crater decal.
+ * Particles: ParticleWorld; light: none; status: StatusAuraFx handles burning.
+ * Variant 1 = telegraph (circle + arc), 2 = impact shatter.
+ */
 export function VolcanoRockEffect({ shot }: { shot: OneShotEffect }) {
   if ((shot.variant ?? 1) === 2) {
     return <VolcanoRockImpact shot={shot} />;
@@ -103,10 +106,7 @@ type Shard = {
   size: number;
 };
 
-/**
- * Leap Slam crater + rock shatter + fire.png pop.
- * Shared by volcano rock landings and Magma Orbs collide.
- */
+/** Leap Slam crater + rock shatter + ParticleWorld fire impact. */
 export function VolcanoBoulderImpactFx({
   x,
   z,
@@ -125,6 +125,10 @@ export function VolcanoBoulderImpactFx({
   const p = groundPresets.earthSlam;
   const blastR = Math.max(0.8, radius);
   const life = Math.max(lifeMs, p.lifeMs, 1100);
+
+  useEffect(() => {
+    burstElementRole("fire", "impact", x, 0.12, z);
+  }, [born, x, z]);
 
   return (
     <group>
@@ -146,7 +150,6 @@ export function VolcanoBoulderImpactFx({
         seed={seed}
         radius={blastR}
       />
-      <FirePopBurst x={x} z={z} born={born} lifeMs={life} seed={seed} />
     </group>
   );
 }
@@ -347,124 +350,5 @@ export function OrbAirShatterFx({
         />
       ))}
     </group>
-  );
-}
-
-type FireP = {
-  vx: number;
-  vy: number;
-  vz: number;
-  life: number;
-  size: number;
-  delay: number;
-};
-
-/** One-shot fire.png burst — reuses shared firewall/volcano fire material. */
-function FirePopBurst({
-  x,
-  z,
-  born,
-  lifeMs,
-  seed,
-}: {
-  x: number;
-  z: number;
-  born: number;
-  lifeMs: number;
-  seed: number;
-}) {
-  const points = useRef<THREE.Points>(null);
-  const material = useMemo(() => getSharedFireMaterial(), []);
-
-  const particles = useMemo<FireP[]>(() => {
-    const out: FireP[] = [];
-    let s = (seed * 2246822519) >>> 0;
-    const rnd = () => {
-      s = (s * 1664525 + 1013904223) >>> 0;
-      return s / 4294967296;
-    };
-    for (let i = 0; i < FIRE_COUNT; i++) {
-      const ang = rnd() * Math.PI * 2;
-      const elev = 0.35 + rnd() * 0.9;
-      const spd = 1.4 + rnd() * 2.6;
-      out.push({
-        vx: Math.cos(ang) * Math.sin(elev) * spd,
-        vy: Math.cos(elev) * spd * 0.55 + 1.4 + rnd() * 1.6,
-        vz: Math.sin(ang) * Math.sin(elev) * spd,
-        life: 0.35 + rnd() * 0.35,
-        size: 0.14 + rnd() * 0.18,
-        delay: rnd() * 0.08,
-      });
-    }
-    return out;
-  }, [seed]);
-
-  const positions = useMemo(() => new Float32Array(FIRE_COUNT * 3), []);
-  const sizes = useMemo(() => new Float32Array(FIRE_COUNT), []);
-  const colors = useMemo(() => new Float32Array(FIRE_COUNT * 4), []);
-  const angles = useMemo(() => new Float32Array(FIRE_COUNT), []);
-
-  const geometry = useMemo(() => {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-    geo.setAttribute("aColor", new THREE.BufferAttribute(colors, 4));
-    geo.setAttribute("aAngle", new THREE.BufferAttribute(angles, 1));
-    return geo;
-  }, [positions, sizes, colors, angles]);
-
-  useEffect(() => {
-    return () => {
-      geometry.dispose();
-    };
-  }, [geometry]);
-
-  useFrame(() => {
-    const pts = points.current;
-    if (!pts) return;
-    const ageSec = (performance.now() - born) / 1000;
-    if (ageSec > lifeMs / 1000) {
-      pts.visible = false;
-      return;
-    }
-    let write = 0;
-    for (let i = 0; i < FIRE_COUNT; i++) {
-      const p = particles[i]!;
-      const lived = ageSec - p.delay;
-      if (lived < 0 || lived >= p.life) continue;
-      const t = lived / p.life;
-      const fade = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
-      const drag = 1 - t * 0.4;
-      positions[write * 3] = p.vx * lived * drag;
-      positions[write * 3 + 1] = Math.max(0.05, p.vy * lived - 2.8 * lived * lived);
-      positions[write * 3 + 2] = p.vz * lived * drag;
-      sizes[write] = p.size * (0.55 + (1 - t) * 0.9) * 40;
-      // Hot → ember
-      const r = 1;
-      const g = 0.55 + (1 - t) * 0.35;
-      const b = 0.15 + (1 - t) * 0.2;
-      colors[write * 4] = r;
-      colors[write * 4 + 1] = g;
-      colors[write * 4 + 2] = b;
-      colors[write * 4 + 3] = Math.max(0, fade) * 0.95;
-      angles[write] = lived * 4.5 + i;
-      write++;
-    }
-    geometry.setDrawRange(0, write);
-    geometry.attributes.position!.needsUpdate = true;
-    geometry.attributes.aSize!.needsUpdate = true;
-    geometry.attributes.aColor!.needsUpdate = true;
-    geometry.attributes.aAngle!.needsUpdate = true;
-    pts.visible = write > 0;
-  });
-
-  return (
-    <points
-      ref={points}
-      position={[x, 0.12, z]}
-      geometry={geometry}
-      material={material}
-      frustumCulled={false}
-    />
   );
 }

@@ -17,6 +17,8 @@ export type VfxSpawnOpts = {
   targetId?: string;
   /** Optional style index (e.g. crescent swing 0/1/2). */
   variant?: number;
+  /** 1-based combo / stage index when the one-shot needs it. */
+  comboHit?: number;
   /** Override one-shot lifetime (ms). */
   lifeMs?: number;
   /**
@@ -59,6 +61,8 @@ export type OneShotEffect = {
   /** Frost Ball: ms used for charge grow (not full life). */
   chargeMs?: number;
   variant?: number;
+  /** 1-based combo / stage index when the one-shot needs it. */
+  comboHit?: number;
   radius?: number;
   startRadius?: number;
   growMs?: number;

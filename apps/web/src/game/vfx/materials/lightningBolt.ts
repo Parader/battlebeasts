@@ -11,6 +11,7 @@ void main() {
 /**
  * Tiny procedural lightning bolt on a wide thin quad.
  * UV.x = along the stroke, UV.y = across. Flickers by reseeding jagged offsets.
+ * Style: white core + colored glow, sharp branches (ribbon electricity look).
  */
 const FRAG = /* glsl */ `
 uniform vec3 uColor;
@@ -26,44 +27,51 @@ float hash(float n) {
 
 /** Jagged centerline offset in UV.y space (−0.5..0.5). */
 float jagAt(float along, float seed, float flicker) {
-  float segs = 14.0;
+  float segs = 18.0;
   float f = along * segs;
   float i = floor(f);
   float t = fract(f);
   t = t * t * (3.0 - 2.0 * t);
   float a = hash(i + seed + flicker) - 0.5;
   float b = hash(i + 1.0 + seed + flicker) - 0.5;
-  return mix(a, b, t) * 0.55;
+  return mix(a, b, t) * 0.62;
 }
 
 float stroke(vec2 uv, float seed, float flicker, float width) {
   float j = jagAt(uv.x, seed, flicker);
   float d = abs(uv.y - 0.5 - j);
-  float tip = smoothstep(0.0, 0.06, uv.x) * smoothstep(1.0, 0.88, uv.x);
+  float tip = smoothstep(0.0, 0.04, uv.x) * smoothstep(1.0, 0.9, uv.x);
   float core = smoothstep(width, 0.0, d);
-  float glow = smoothstep(width * 3.2, 0.0, d) * 0.4;
-  return (core + glow) * tip;
+  float glow = smoothstep(width * 4.5, 0.0, d) * 0.55;
+  float halo = smoothstep(width * 8.0, 0.0, d) * 0.22;
+  return (core * 1.35 + glow + halo) * tip;
 }
 
 void main() {
-  // Discrete flicker buckets so the bolt snaps to new shapes.
-  float flicker = floor(uTime * 22.0 + uSeed * 3.1);
+  float flicker = floor(uTime * 28.0 + uSeed * 3.1);
 
-  float mainBolt = stroke(vUv, uSeed, flicker, 0.028);
+  float mainBolt = stroke(vUv, uSeed, flicker, 0.022);
 
-  // Short side branch mid-bolt
+  // Mid fork
   vec2 bUv = vUv;
-  bUv.y = 0.5 + (vUv.y - 0.5) * 1.4;
-  bUv.x = (vUv.x - 0.35) / 0.45;
-  float branchMask = step(0.35, vUv.x) * step(vUv.x, 0.8);
-  float branch = stroke(bUv, uSeed + 17.0, flicker + 2.0, 0.02) * branchMask * 0.7;
+  bUv.y = 0.5 + (vUv.y - 0.5) * 1.55;
+  bUv.x = (vUv.x - 0.32) / 0.5;
+  float branchMask = step(0.32, vUv.x) * step(vUv.x, 0.82);
+  float branch = stroke(bUv, uSeed + 17.0, flicker + 2.0, 0.016) * branchMask * 0.75;
 
-  float a = mainBolt + branch;
-  // Occasional full-bolt blink
-  float blink = 0.65 + 0.35 * step(0.12, hash(flicker + uSeed));
+  // Second fork opposite side
+  vec2 b2 = vUv;
+  b2.y = 0.5 - (vUv.y - 0.5) * 1.35;
+  b2.x = (vUv.x - 0.48) / 0.4;
+  float branch2Mask = step(0.48, vUv.x) * step(vUv.x, 0.9);
+  float branch2 = stroke(b2, uSeed + 41.0, flicker + 5.0, 0.014) * branch2Mask * 0.55;
+
+  float a = mainBolt + branch + branch2;
+  float blink = 0.7 + 0.3 * step(0.1, hash(flicker + uSeed));
   a *= blink;
 
-  vec3 col = mix(uColor, uHot, clamp(mainBolt * 1.4, 0.0, 1.0));
+  float hotAmt = clamp(mainBolt * 1.6, 0.0, 1.0);
+  vec3 col = mix(uColor, uHot, hotAmt);
   gl_FragColor = vec4(col, a * uOpacity);
 }
 `;

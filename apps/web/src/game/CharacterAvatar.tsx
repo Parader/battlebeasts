@@ -540,6 +540,7 @@ export function CharacterAvatar({
         />
         <StatusOrnaments
           characterRoot={scene}
+          local
           getStatuses={() => {
             if (!room || !localSessionId) return [];
             const me = room.state?.players?.get(localSessionId) as

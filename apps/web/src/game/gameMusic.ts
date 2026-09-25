@@ -11,12 +11,23 @@ function publicAssetUrl(path: string): string {
   return assetUrl(encoded);
 }
 
-export type MusicTrackId = "village" | "arena";
+export type MusicTrackId = "village" | "arena" | "pve";
 
 export const MUSIC_URLS: Record<MusicTrackId, string> = {
   village: publicAssetUrl("sounds/mage village.mp3"),
   arena: publicAssetUrl("sounds/sand arena.mp3"),
+  pve: publicAssetUrl("sounds/sand arena.mp3"),
 };
+
+/** Rolled once each time a PvE run starts. */
+const PVE_SONG_URLS = [
+  publicAssetUrl("sounds/sand arena.mp3"),
+  publicAssetUrl("sounds/ORCESTRATION.mp3"),
+];
+
+function pickPveSong(): string {
+  return PVE_SONG_URLS[Math.floor(Math.random() * PVE_SONG_URLS.length)]!;
+}
 
 /** Authored bed level so 100% user music isn't harsh. */
 const MUSIC_BED = 0.45;
@@ -169,9 +180,27 @@ export async function preloadVillageMusic(): Promise<void> {
   await preloadTrack("village");
 }
 
-/** Arena / PvP preload. */
+function warmAudio(url: string): Promise<void> {
+  const el = new Audio();
+  el.preload = "auto";
+  el.src = url;
+  return new Promise((resolve) => {
+    const done = () => {
+      window.clearTimeout(timer);
+      el.removeEventListener("canplaythrough", done);
+      el.removeEventListener("error", done);
+      resolve();
+    };
+    const timer = window.setTimeout(done, 8_000);
+    el.addEventListener("canplaythrough", done, { once: true });
+    el.addEventListener("error", done, { once: true });
+    el.load();
+  });
+}
+
+/** Arena / PvP preload, plus the PvE song pool. */
 export async function preloadArenaMusic(): Promise<void> {
-  await preloadTrack("arena");
+  await Promise.all([preloadTrack("arena"), ...PVE_SONG_URLS.map((url) => warmAudio(url))]);
 }
 
 /**
@@ -197,6 +226,7 @@ export function setMusicTrack(track: MusicTrackId | null): void {
   if (!track) return;
 
   const next = getTrack(track);
+  if (track === "pve") next.el.src = pickPveSong();
   next.wantPlaying = true;
   bindUnlockOnce();
   void tryPlay(track);

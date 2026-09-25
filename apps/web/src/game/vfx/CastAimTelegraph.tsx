@@ -2,7 +2,7 @@ import { useFrame } from "@react-three/fiber";
 import type { VfxRoomLike } from "./vfxRoomLike";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { CAST_AIM_COLOR, CAST_AIM_HOT, castAimRuntime } from "../castAimRuntime";
+import { CAST_AIM_COLOR, castAimRuntime } from "../castAimRuntime";
 import { getGroundAim } from "../groundAimRuntime";
 import { getDashStick } from "../dashStickRuntime";
 import { getWorldStaticColliders } from "../worldCollidersRuntime";
@@ -15,7 +15,7 @@ import {
   type CastPreview,
   type CastPreviewKind,
 } from "./castAimPreview";
-import { ABILITIES } from "@battlebeasts/shared";
+import { ABILITIES, ARC_THREAD_CAST } from "@battlebeasts/shared";
 import { hasStatusId } from "../statusBadgeUtils";
 
 type CastLite = {
@@ -34,14 +34,13 @@ const RIM = {
   opacity: 0.42,
 } as const;
 
-const RANGE_RING_OK = CAST_AIM_COLOR;
 const RANGE_RING_OOR = "#ef4444";
 
-function emptyPreview(abilityId: string): CastPreview {
+function emptyPreview(abilityId: string, color = CAST_AIM_COLOR): CastPreview {
   return {
     kind: "none",
     abilityId,
-    color: CAST_AIM_COLOR,
+    color,
     rangeRing: 0,
     rangeRingOutOfRange: false,
     feetRadius: 0,
@@ -101,6 +100,7 @@ export function CastAimTelegraph({
 }) {
   const [abilityId, setAbilityId] = useState<string | null>(null);
   const [kind, setKind] = useState<CastPreviewKind>("none");
+  const [aimTint, setAimTint] = useState(() => castAimRuntime.colors());
 
   const feet = useRef<THREE.Group>(null);
   const aimGroup = useRef<THREE.Group>(null);
@@ -133,13 +133,13 @@ export function CastAimTelegraph({
   const curveMat = useMemo(
     () =>
       new THREE.LineBasicMaterial({
-        color: CAST_AIM_COLOR,
+        color: aimTint.color,
         transparent: true,
         opacity: 0.55,
         depthWrite: false,
         toneMapped: false,
       }),
-    [],
+    [aimTint.color],
   );
 
   useEffect(() => {
@@ -156,6 +156,7 @@ export function CastAimTelegraph({
       // visibility is toggled in useFrame — avoids remount flicker on phase gaps.
       const id = castAimRuntime.abilityId;
       setAbilityId(id);
+      setAimTint(castAimRuntime.colors());
       if (id) {
         const def = ABILITIES[id];
         setKind(def ? castPreviewKindFor(def) : "none");
@@ -306,7 +307,7 @@ export function CastAimTelegraph({
     const stick = getDashStick();
     const preview = resolveCastPreview({
       abilityId: id,
-      color: CAST_AIM_COLOR,
+      color: aimTint.color,
       owner: { x: pos.x, z: pos.z, yaw },
       aim: getGroundAim(),
       statics: getWorldStaticColliders(),
@@ -442,6 +443,12 @@ export function CastAimTelegraph({
     if (!abilityId) return 0.55;
     const def = ABILITIES[abilityId];
     if (kind === "skillshot") {
+      if (abilityId === "arcThread") {
+        return Math.max(
+          0.28,
+          Math.min(0.45, ARC_THREAD_CAST.range * ARC_THREAD_CAST.acquireHalfAngle * 0.55),
+        );
+      }
       return Math.max(0.4, Math.min(1.05, def?.radius ?? 0.55));
     }
     return Math.max(0.25, def?.radius ?? 0.55);
@@ -478,7 +485,7 @@ export function CastAimTelegraph({
           <mesh ref={rangeRingOk} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
             <ringGeometry args={[0.985, 1, 72]} />
             <meshBasicMaterial
-              color={RANGE_RING_OK}
+              color={aimTint.color}
               transparent
               opacity={0.32}
               depthWrite={false}
@@ -504,8 +511,8 @@ export function CastAimTelegraph({
               radius={coneLen}
               shape="cone"
               halfAngle={coneHalf}
-              color={CAST_AIM_COLOR}
-              hotColor={CAST_AIM_HOT}
+              color={aimTint.color}
+              hotColor={aimTint.hot}
               fill={0.14}
               rimWidth={RIM.rimWidth}
               glowWidth={RIM.glowWidth}
@@ -520,8 +527,8 @@ export function CastAimTelegraph({
               radius={coneLen}
               shape="cone"
               halfAngle={coneHalf}
-              color={CAST_AIM_COLOR}
-              hotColor={CAST_AIM_HOT}
+              color={aimTint.color}
+              hotColor={aimTint.hot}
               fill={0.02}
               rimWidth={0.007}
               glowWidth={0.018}
@@ -536,8 +543,8 @@ export function CastAimTelegraph({
               radius={coneLen}
               shape="cone"
               halfAngle={coneHalf}
-              color={CAST_AIM_COLOR}
-              hotColor={CAST_AIM_HOT}
+              color={aimTint.color}
+              hotColor={aimTint.hot}
               fill={0.02}
               rimWidth={0.007}
               glowWidth={0.018}
@@ -556,8 +563,8 @@ export function CastAimTelegraph({
             <AoeRimMarker
               radius={selfR}
               shape="circle"
-              color={CAST_AIM_COLOR}
-              hotColor={CAST_AIM_HOT}
+              color={aimTint.color}
+              hotColor={aimTint.hot}
               fill={RIM.fill}
               rimWidth={RIM.rimWidth}
               glowWidth={RIM.glowWidth}
@@ -585,7 +592,7 @@ export function CastAimTelegraph({
               />
             )}
             <group scale={[selfR, 1, selfR]}>
-              <CastAimReticle color={CAST_AIM_COLOR} y={Y + 0.002} />
+              <CastAimReticle color={aimTint.color} y={Y + 0.002} />
             </group>
           </group>
         )}
@@ -601,8 +608,8 @@ export function CastAimTelegraph({
             <AoeRimMarker
               radius={1}
               shape="circle"
-              color={CAST_AIM_COLOR}
-              hotColor={CAST_AIM_HOT}
+              color={aimTint.color}
+              hotColor={aimTint.hot}
               fill={0.14}
               rimWidth={RIM.rimWidth}
               glowWidth={RIM.glowWidth}
@@ -612,7 +619,7 @@ export function CastAimTelegraph({
               pulse={false}
               y={Y}
             />
-            <CastAimReticle color={CAST_AIM_COLOR} y={Y + 0.002} />
+            <CastAimReticle color={aimTint.color} y={Y + 0.002} />
           </>
         )}
         {kind === "blink" &&
@@ -621,8 +628,8 @@ export function CastAimTelegraph({
               <AoeRimMarker
                 radius={Math.max(0.8, ABILITIES[abilityId!]?.radius ?? 1.5)}
                 shape="circle"
-                color={CAST_AIM_COLOR}
-                hotColor={CAST_AIM_HOT}
+                color={aimTint.color}
+                hotColor={aimTint.hot}
                 fill={RIM.fill}
                 rimWidth={RIM.rimWidth}
                 glowWidth={RIM.glowWidth}
@@ -639,11 +646,11 @@ export function CastAimTelegraph({
                   1 / Math.max(0.8, ABILITIES[abilityId!]?.radius ?? 1.5),
                 ]}
               >
-                <CastAimReticle color={CAST_AIM_COLOR} />
+                <CastAimReticle color={aimTint.color} />
               </group>
             </>
           ) : (
-            <GroundMagicCircle color={CAST_AIM_COLOR} radius={0.95} spin={1.2} showRune y={0} />
+            <GroundMagicCircle color={aimTint.color} radius={0.95} spin={1.2} showRune y={0} />
           ))}
       </group>
 
@@ -653,8 +660,8 @@ export function CastAimTelegraph({
             radius={wallHalfW}
             length={wallLen}
             shape="capsule"
-            color={CAST_AIM_COLOR}
-            hotColor={CAST_AIM_HOT}
+            color={aimTint.color}
+            hotColor={aimTint.hot}
             fill={0.12}
             rimWidth={RIM.rimWidth}
             glowWidth={RIM.glowWidth}
@@ -670,7 +677,7 @@ export function CastAimTelegraph({
       <mesh ref={lineMesh} visible={false} renderOrder={2}>
         <boxGeometry args={[1, 0.03, 1]} />
         <meshBasicMaterial
-          color={CAST_AIM_COLOR}
+          color={aimTint.color}
           transparent
           opacity={0.38}
           depthWrite={false}

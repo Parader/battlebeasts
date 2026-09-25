@@ -3,16 +3,10 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "rea
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { ORBITING_WISP_CAST, orbitingWispWorldPos } from "@battlebeasts/shared";
-import { createEnergyBallMaterial } from "./materials/energyBall";
-import { createCirclePointMaterial } from "./materials/circlePoint";
+import { ATLAS_UV, BatchId, spawnElementRole, type ElementHandle } from "./engine";
+import { getVfxCircleTexture } from "./materials/circlePoint";
 import type { PredictedPose } from "../useBaseCityRoom";
 
-const CORE = "#0c1a2e";
-const BLUE = "#2563eb";
-const BRIGHT = "#38bdf8";
-const HIGHLIGHT = "#e0f2fe";
-
-const TAIL = 4;
 const ARMING_MS = ORBITING_WISP_CAST.armingMs;
 const FADE_MS = 150;
 
@@ -25,19 +19,6 @@ type WispNet = {
   armedAt?: number;
   expiresAt?: number;
   ownerSessionId?: string;
-};
-
-type Fleck = {
-  alive: boolean;
-  age: number;
-  life: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  size: number;
 };
 
 function ownerPose(
@@ -71,71 +52,40 @@ function WispMesh({
   localSessionId: string | null;
   predictedRef?: MutableRefObject<PredictedPose>;
 }) {
-  const group = useRef<THREE.Group>(null);
-  const core = useRef<THREE.Mesh>(null);
-  const glow = useRef<THREE.Mesh>(null);
   const renderPos = useRef(new THREE.Vector3());
   const seeded = useRef(false);
   const spawnLocal = useRef(performance.now());
-  const flecks = useRef<Fleck[]>(
-    Array.from({ length: TAIL }, () => ({
-      alive: false,
-      age: 0,
-      life: 0.22,
-      x: 0,
-      y: 0,
-      z: 0,
-      vx: 0,
-      vy: 0,
-      vz: 0,
-      size: 0.03,
-    })),
-  );
-  const spawnAcc = useRef(0);
-
-  const positions = useMemo(() => new Float32Array(TAIL * 3), []);
-  const sizes = useMemo(() => new Float32Array(TAIL), []);
-  const alphas = useMemo(() => new Float32Array(TAIL), []);
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
-    return g;
-  }, [positions, sizes, alphas]);
-
+  const trail = useRef<ElementHandle | null>(null);
+  const group = useRef<THREE.Group>(null);
+  const travelYaw = useRef(0);
   const coreMat = useMemo(
     () =>
-      new THREE.MeshStandardMaterial({
-        color: CORE,
-        emissive: BLUE,
-        emissiveIntensity: 0.85,
-        metalness: 0.1,
-        roughness: 0.35,
+      new THREE.SpriteMaterial({
+        map: getVfxCircleTexture(),
+        color: "#7dd3fc",
         transparent: true,
-        opacity: 0.95,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
       }),
     [],
   );
-  const glowMat = useMemo(() => createEnergyBallMaterial(BRIGHT, 0.55), []);
-  const pointMat = useMemo(() => createCirclePointMaterial(HIGHLIGHT), []);
 
   useEffect(() => {
     return () => {
-      geo.dispose();
+      trail.current?.kill();
+      trail.current = null;
       coreMat.dispose();
-      glowMat.dispose();
-      pointMat.dispose();
     };
-  }, [geo, coreMat, glowMat, pointMat]);
+  }, [coreMat]);
 
   useFrame((_, dt) => {
     const w = room.state?.orbitingWisps?.get(id) as WispNet | undefined;
-    const g = group.current;
-    if (!w || !g) {
-      if (g) g.visible = false;
+    if (!w) {
       seeded.current = false;
+      trail.current?.kill();
+      trail.current = null;
+      if (group.current) group.current.visible = false;
       return;
     }
     const owner = ownerPose(room, w.ownerSessionId, localSessionId, predictedRef);
@@ -144,10 +94,10 @@ function WispMesh({
       Number.isFinite(w.z) &&
       (w.x !== 0 || w.z !== 0 || (owner != null && Math.hypot(owner.x, owner.z) < 2));
     if (!owner && !schemaOk) {
-      g.visible = false;
+      if (group.current) group.current.visible = false;
       return;
     }
-    g.visible = true;
+    if (group.current) group.current.visible = true;
 
     const safeDt = Math.min(0.05, Math.max(0, dt));
     const nowMs = performance.now();
@@ -183,87 +133,62 @@ function WispMesh({
       tz = owner.z + (pos.z - owner.z) * ease;
       ty = ORBITING_WISP_CAST.height;
     }
+    const prevX = renderPos.current.x;
+    const prevZ = renderPos.current.z;
     if (!seeded.current) {
       renderPos.current.set(tx, ty, tz);
       seeded.current = true;
     } else {
-      renderPos.current.x = THREE.MathUtils.damp(renderPos.current.x, tx, 18, safeDt);
-      renderPos.current.z = THREE.MathUtils.damp(renderPos.current.z, tz, 18, safeDt);
-      renderPos.current.y = THREE.MathUtils.damp(renderPos.current.y, ty, 14, safeDt);
+      renderPos.current.x = THREE.MathUtils.damp(renderPos.current.x, tx, 10, safeDt);
+      renderPos.current.z = THREE.MathUtils.damp(renderPos.current.z, tz, 10, safeDt);
+      renderPos.current.y = THREE.MathUtils.damp(renderPos.current.y, ty, 8, safeDt);
     }
-    g.position.copy(renderPos.current);
-
-    const pulse = 0.92 + 0.08 * Math.sin(performance.now() * 0.008 + id.length);
-    const scale = (0.55 + 0.45 * appear) * (0.55 + 0.45 * fadeOut) * pulse;
-    if (core.current) {
-      core.current.scale.setScalar(scale);
-      coreMat.opacity = 0.95 * opacity;
-      coreMat.emissiveIntensity = 0.7 + 0.35 * opacity;
-    }
-    if (glow.current) {
-      glow.current.scale.setScalar(scale * 1.15);
-      glowMat.opacity = 0.45 * opacity;
+    const movedX = renderPos.current.x - prevX;
+    const movedZ = renderPos.current.z - prevZ;
+    if (movedX * movedX + movedZ * movedZ > 1e-8) {
+      travelYaw.current = Math.atan2(movedX, movedZ);
     }
 
-    // Soft wispy tail opposite orbit tangent.
-    spawnAcc.current += safeDt;
-    if (spawnAcc.current > 0.045 && opacity > 0.2) {
-      spawnAcc.current = 0;
-      const slot = flecks.current.find((f) => !f.alive);
-      if (slot) {
-        const ang = (w.orbitPhase ?? 0) + (Date.now() / 1000) * ORBITING_WISP_CAST.angularSpeed;
-        const txDir = Math.sin(ang);
-        const tzDir = -Math.cos(ang);
-        slot.alive = true;
-        slot.age = 0;
-        slot.life = 0.16 + Math.random() * 0.12;
-        slot.x = (Math.random() - 0.5) * 0.06;
-        slot.y = (Math.random() - 0.5) * 0.05;
-        slot.z = (Math.random() - 0.5) * 0.06;
-        slot.vx = txDir * (0.4 + Math.random() * 0.35);
-        slot.vy = 0.15 + Math.random() * 0.35;
-        slot.vz = tzDir * (0.4 + Math.random() * 0.35);
-        slot.size = 0.025 + Math.random() * 0.02;
-      }
+    if (!trail.current) {
+      const life = ORBITING_WISP_CAST.durationMs / 1000 + 0.4;
+      trail.current = spawnElementRole("wind", "trail", tx, ty, tz, {
+        duration: life,
+        batch: BatchId.AlphaIce,
+        atlasUv: ATLAS_UV.wind,
+        rate: 34,
+        burst: 6,
+        size: 0.55,
+        sizeEnd: 0.08,
+        life: 0.62,
+        lifeJitter: 0.3,
+        spread: 0.08,
+        dirY: 0.06,
+        dirZ: -0.85,
+        noise: 0.45,
+        drag: 0.85,
+        gravity: 0,
+        opacity: 0.72,
+        rotRate: 0,
+        rotJitter: 0,
+        color0: "#f0f9ff",
+        color1: "#7dd3fc",
+        color2: "#1d4ed8",
+      });
     }
-
-    for (let i = 0; i < TAIL; i++) {
-      const f = flecks.current[i]!;
-      if (!f.alive) {
-        alphas[i] = 0;
-        continue;
-      }
-      f.age += safeDt;
-      if (f.age >= f.life) {
-        f.alive = false;
-        alphas[i] = 0;
-        continue;
-      }
-      f.x += f.vx * safeDt;
-      f.y += f.vy * safeDt;
-      f.z += f.vz * safeDt;
-      f.vy += 0.4 * safeDt;
-      const t = f.age / f.life;
-      positions[i * 3] = f.x;
-      positions[i * 3 + 1] = f.y;
-      positions[i * 3 + 2] = f.z;
-      sizes[i] = f.size * (1 - t) * 48;
-      alphas[i] = (1 - t) * 0.75 * opacity;
-    }
-    geo.attributes.position!.needsUpdate = true;
-    geo.attributes.aSize!.needsUpdate = true;
-    geo.attributes.aAlpha!.needsUpdate = true;
+    const px = renderPos.current.x;
+    const py = renderPos.current.y;
+    const pz = renderPos.current.z;
+    if (group.current) group.current.position.set(px, py, pz);
+    const pulse = 0.9 + Math.sin(nowMs * 0.008) * 0.08;
+    coreMat.opacity = 0.92 * opacity;
+    if (group.current) group.current.scale.setScalar(0.46 * pulse * (0.4 + opacity * 0.6));
+    trail.current.setPoseYaw(px, py, pz, travelYaw.current);
+    trail.current.setRateScale(opacity);
   });
 
   return (
-    <group ref={group} frustumCulled={false}>
-      <mesh ref={core} material={coreMat} renderOrder={6} frustumCulled={false}>
-        <sphereGeometry args={[0.11, 10, 10]} />
-      </mesh>
-      <mesh ref={glow} material={glowMat} renderOrder={5} frustumCulled={false}>
-        <sphereGeometry args={[0.2, 10, 10]} />
-      </mesh>
-      <points geometry={geo} material={pointMat} renderOrder={7} frustumCulled={false} />
+    <group ref={group}>
+      <sprite material={coreMat} />
     </group>
   );
 }

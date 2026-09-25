@@ -1,6 +1,6 @@
 import { useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { FIREBALL_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
@@ -8,10 +8,9 @@ import type { VfxFollowContext } from "../catalog";
 import { smoothstep } from "../easing";
 import { findHandBone } from "../attach";
 import { getCharacterRoot } from "../../characterRoots";
-import { FireParticleField } from "../components/FireParticleField";
 import { VOLCANO_GLB_URL, instantiateBoulder } from "../volcanoAsset";
-import { VFX_FIRE_URL } from "../vfxUrls";
 import { useSpellLight } from "../spellLights";
+import { burstElementRole, spawnElementRole, type ElementHandle } from "../engine";
 
 /** Forward / height fallbacks (`FIREBALL_CAST`). */
 export const FIREBALL_HAND_FORWARD = FIREBALL_CAST.handPush;
@@ -42,8 +41,8 @@ type ProjSnap = {
 };
 
 /**
- * Casting Spell fireball: lava boulder in the hands + fire.png particles,
- * then the same mesh becomes the projectile with a world-space fire trail.
+ * Caster blow: cast burst; travel: fire trail; impact/ground: handled elsewhere.
+ * Particles: ParticleWorld; light: spell light; status: StatusAuraFx handles burning.
  */
 export function FireballCastEffect({
   shot,
@@ -67,13 +66,8 @@ export function FireballCastEffect({
   const lastServer = useRef<ProjSnap>({ x: shot.x, z: shot.z, vx: 0, vz: 0 });
   const growFull = useRef(0);
   const done = useRef(false);
-  const fireProgress = useRef(0);
-  const fireOpacity = useRef(0);
-  /** World-space trail — only while the rock is flying. */
-  const trailProgress = useRef(0);
-  const trailOpacity = useRef(0);
-  /** Stream sparks behind the rock (not upward). */
-  const trailVel = useRef({ x: 0, y: 0, z: 0 });
+  const castBurst = useRef(false);
+  const trail = useRef<ElementHandle | null>(null);
   const rightTmp = useRef(new THREE.Vector3());
   const handPos = useRef(new THREE.Vector3());
 
@@ -82,26 +76,15 @@ export function FireballCastEffect({
     [gltf.scene, shot.key],
   );
 
-  const emitters = useMemo(
-    () => [
-      { x: 0, y: 0.02, z: 0, reveal: 0 },
-      { x: 0.08, y: 0.04, z: 0.05, reveal: 0.15 },
-      { x: -0.07, y: 0.03, z: -0.06, reveal: 0.2 },
-      { x: 0.04, y: 0.06, z: -0.08, reveal: 0.25 },
-      { x: -0.05, y: 0.05, z: 0.07, reveal: 0.3 },
-    ],
-    [],
-  );
-
-  /** Mutated each flight frame so particles spawn in world space behind the rock. */
-  const trailEmitters = useMemo(
-    () => [
-      { x: shot.x, y: shot.y, z: shot.z, reveal: 0 },
-      { x: shot.x, y: shot.y, z: shot.z, reveal: 0 },
-      { x: shot.x, y: shot.y, z: shot.z, reveal: 0 },
-    ],
-    [shot.x, shot.y, shot.z],
-  );
+  useEffect(() => {
+    const handle = spawnElementRole("fire", "trail", shot.x, shot.y, shot.z);
+    handle.setRateScale(0);
+    trail.current = handle;
+    return () => {
+      handle.kill();
+      if (trail.current === handle) trail.current = null;
+    };
+  }, [shot.x, shot.y, shot.z]);
 
   useFrame((_, dt) => {
     if (done.current) return;
@@ -187,10 +170,7 @@ export function FireballCastEffect({
 
     if (phase.current === "fade") {
       done.current = true;
-      fireOpacity.current = 0;
-      fireProgress.current = 0;
-      trailOpacity.current = 0;
-      trailProgress.current = 0;
+      trail.current?.setRateScale(0);
       if (root.current) root.current.visible = false;
       if (ball.current) ball.current.visible = false;
       light.off();
@@ -276,41 +256,37 @@ export function FireballCastEffect({
       amp = 1;
     }
 
-    fireProgress.current = appeared ? Math.max(0.2, growFull.current) : 0;
-    // Local aura is charge-only — vertical rise looks wrong in flight.
-    fireOpacity.current = phase.current === "flight" ? 0 : amp;
+    if (appeared && !castBurst.current) {
+      castBurst.current = true;
+      burstElementRole(
+        "fire",
+        "cast",
+        pose.current.x,
+        pose.current.y || FIREBALL_HAND_Y,
+        pose.current.z,
+        {
+          dirX: Math.sin(pose.current.yaw),
+          dirY: 0,
+          dirZ: Math.cos(pose.current.yaw),
+        },
+      );
+    }
 
-    // World trail emitters track the rock so sparks stay behind in flight.
     const flying = phase.current === "flight";
-    trailProgress.current = flying ? 1 : 0;
-    trailOpacity.current = flying ? 1 : 0;
-    if (flying) {
-      const bx = pose.current.x;
-      const by = pose.current.y || FIREBALL_HAND_Y;
-      const bz = pose.current.z;
-      const vx = lastServer.current.vx;
-      const vz = lastServer.current.vz;
-      const spd = Math.hypot(vx, vz) || 1;
-      const bxN = vx / spd;
-      const bzN = vz / spd;
-      // Drift opposite flight so the streak reads as a wake, not a chimney.
-      const wake = Math.min(6.5, Math.max(2.8, spd * 0.28));
-      trailVel.current.x = -bxN * wake;
-      trailVel.current.y = 0.15;
-      trailVel.current.z = -bzN * wake;
-      trailEmitters[0]!.x = bx;
-      trailEmitters[0]!.y = by;
-      trailEmitters[0]!.z = bz;
-      trailEmitters[1]!.x = bx - bxN * 0.22;
-      trailEmitters[1]!.y = by;
-      trailEmitters[1]!.z = bz - bzN * 0.22;
-      trailEmitters[2]!.x = bx - bxN * 0.45;
-      trailEmitters[2]!.y = by;
-      trailEmitters[2]!.z = bz - bzN * 0.45;
-    } else {
-      trailVel.current.x = 0;
-      trailVel.current.y = 0;
-      trailVel.current.z = 0;
+    const trailHandle = trail.current;
+    if (trailHandle) {
+      if (flying) {
+        const yaw = Math.atan2(lastServer.current.vx, lastServer.current.vz);
+        trailHandle.setPoseYaw(
+          pose.current.x,
+          pose.current.y || FIREBALL_HAND_Y,
+          pose.current.z,
+          yaw,
+        );
+        trailHandle.setRateScale(1);
+      } else {
+        trailHandle.setRateScale(0);
+      }
     }
 
     const g = ball.current;
@@ -334,39 +310,11 @@ export function FireballCastEffect({
   });
 
   return (
-    <>
-      {/* World-fixed wake: sparks stream behind the rock along flight. */}
-      <FireParticleField
-        emitters={trailEmitters}
-        rate={120}
-        maxParticles={150}
-        textureUrl={VFX_FIRE_URL}
-        maxLife={0.42}
-        maxSize={0.26}
-        rise={0}
-        spread={0.1}
-        emitVelocityRef={trailVel}
-        progressRef={trailProgress}
-        opacityMulRef={trailOpacity}
-      />
-      <group ref={root} position={[shot.x, shot.y, shot.z]}>
-        <group ref={ball} visible={false}>
-          {boulder && <primitive object={boulder} />}
-          <FireParticleField
-            emitters={emitters}
-            rate={55}
-            maxParticles={70}
-            textureUrl={VFX_FIRE_URL}
-            maxLife={0.7}
-            maxSize={0.22}
-            rise={1.4}
-            spread={0.12}
-            progressRef={fireProgress}
-            opacityMulRef={fireOpacity}
-          />
-          <object3D ref={lightAt} />
-        </group>
+    <group ref={root} position={[shot.x, shot.y, shot.z]}>
+      <group ref={ball} visible={false}>
+        {boulder && <primitive object={boulder} />}
+        <object3D ref={lightAt} />
       </group>
-    </>
+    </group>
   );
 }

@@ -1,15 +1,12 @@
 import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { BLOOD_RUSH_CAST } from "@battlebeasts/shared";
-import { abilityVfxColor } from "../colors";
-import { createCirclePointMaterial } from "../materials/circlePoint";
+import { spawnElementRole, type ElementHandle } from "../engine";
 import { isStealthedStatus } from "../../statusBadgeUtils";
 
-const WISP_COUNT = 16;
 const BLOOD = "#9f1239";
-const BLOOD_HOT = "#f87171";
 
 type CastLite = {
   castAbilityId?: string;
@@ -17,8 +14,7 @@ type CastLite = {
 };
 
 /**
- * Blood Rush crouch charge — rising red wisps + soft ground pulse that builds
- * through anticipation/cast, then drops before the sprint.
+ * Blood Rush charge meshes with a ParticleWorld blood cast emitter.
  */
 export function BloodRushChargeAura({
   room,
@@ -31,19 +27,8 @@ export function BloodRushChargeAura({
   const ring = useRef<THREE.Mesh>(null);
   const haze = useRef<THREE.Mesh>(null);
   const chargeStart = useRef(0);
-  const positions = useMemo(() => new Float32Array(WISP_COUNT * 3), []);
-  const sizes = useMemo(() => new Float32Array(WISP_COUNT), []);
-  const alphas = useMemo(() => new Float32Array(WISP_COUNT), []);
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
-    return g;
-  }, [positions, sizes, alphas]);
-
-  const color = abilityVfxColor("bloodRush", BLOOD_HOT);
-  const mat = useMemo(() => createCirclePointMaterial(color), [color]);
+  const castFx = useRef<ElementHandle | null>(null);
+  const worldPos = useRef(new THREE.Vector3());
   const ringMat = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
@@ -71,19 +56,15 @@ export function BloodRushChargeAura({
     [],
   );
 
-  const specs = useMemo(
-    () =>
-      Array.from({ length: WISP_COUNT }, (_, i) => ({
-        ang: (i / WISP_COUNT) * Math.PI * 2,
-        radius: 0.16 + (i % 5) * 0.045,
-        baseY: 0.12 + (i % 3) * 0.08,
-        rise: 0.85 + (i % 4) * 0.18,
-        size: 0.035 + (i % 3) * 0.018,
-        speed: 0.7 + (i % 5) * 0.14,
-        phase: i * 0.53,
-      })),
-    [],
-  );
+  useEffect(() => {
+    const handle = spawnElementRole("blood", "cast", 0, 0.15, 0);
+    handle.setRateScale(0);
+    castFx.current = handle;
+    return () => {
+      handle.kill();
+      if (castFx.current === handle) castFx.current = null;
+    };
+  }, []);
 
   useFrame(({ clock }) => {
     const g = root.current;
@@ -97,6 +78,7 @@ export function BloodRushChargeAura({
       chargeStart.current = 0;
       ringMat.opacity = 0;
       hazeMat.opacity = 0;
+      castFx.current?.setRateScale(0);
       return;
     }
     const stealthed = isStealthedStatus(
@@ -104,6 +86,7 @@ export function BloodRushChargeAura({
     );
     if (stealthed) {
       g.visible = false;
+      castFx.current?.setRateScale(0);
       return;
     }
 
@@ -119,6 +102,9 @@ export function BloodRushChargeAura({
 
     g.visible = true;
     g.position.set(0, 0, 0);
+    g.getWorldPosition(worldPos.current);
+    castFx.current?.setPose(worldPos.current.x, worldPos.current.y + 0.15, worldPos.current.z);
+    castFx.current?.setRateScale(0.25 + intensity * 0.9);
 
     const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * (3.2 + charge01 * 4));
     if (ring.current) {
@@ -132,23 +118,6 @@ export function BloodRushChargeAura({
       hazeMat.opacity = 0.06 + intensity * 0.16;
     }
 
-    const t = clock.elapsedTime;
-    for (let i = 0; i < WISP_COUNT; i++) {
-      const spec = specs[i]!;
-      const cycle = (t * spec.speed * (0.85 + intensity * 0.55) + spec.phase) % 1;
-      const ang = spec.ang + t * (0.55 + intensity * 0.9);
-      const outward = 0.75 + cycle * (0.55 + intensity * 0.45);
-      positions[i * 3] = Math.cos(ang) * spec.radius * outward;
-      positions[i * 3 + 1] = spec.baseY + cycle * spec.rise * (0.55 + intensity * 0.7);
-      positions[i * 3 + 2] = Math.sin(ang) * spec.radius * outward;
-      const fade =
-        cycle < 0.1 ? cycle / 0.1 : cycle > 0.55 ? 1 - (cycle - 0.55) / 0.45 : 1;
-      sizes[i] = spec.size * (0.7 + cycle * 1.35 + intensity * 0.4) * 38;
-      alphas[i] = Math.max(0, fade) * (0.22 + intensity * 0.55);
-    }
-    geo.attributes.position!.needsUpdate = true;
-    geo.attributes.aSize!.needsUpdate = true;
-    geo.attributes.aAlpha!.needsUpdate = true;
   });
 
   return (
@@ -159,7 +128,6 @@ export function BloodRushChargeAura({
       <mesh ref={haze} position={[0, 0.55, 0]} material={hazeMat} renderOrder={2}>
         <sphereGeometry args={[0.55, 16, 12]} />
       </mesh>
-      <points geometry={geo} material={mat} frustumCulled={false} />
     </group>
   );
 }

@@ -3968,11 +3968,10 @@ export class CombatSystem {
           hit.ownerId,
           hit.abilityId,
         );
-        const sim = this.sims.get(hit.projectileId);
-        if (dealt > 0 && sim?.isRunicFragment) {
+        if (dealt > 0) {
           this.applyRunicShardChill(hit.targetId, hit.ownerId, now);
+          this.trySoulRelayTrigger(hit.ownerId, hit.abilityId, dealt);
         }
-        if (dealt > 0) this.trySoulRelayTrigger(hit.ownerId, hit.abilityId, dealt);
         continue;
       }
       if (abilityEffectKind(def) === "bloomingPath") {
@@ -8471,7 +8470,9 @@ export class CombatSystem {
       // Ally heal is single-target; poison still uses the blast cloud.
       radius: kind === "ally" ? zone.triggerRadius : zone.blastRadius,
       ownerId: zone.ownerId,
+      targetId: triggerTargetId,
       variant: kind === "ally" ? 1 : 2,
+      comboHit: Math.max(1, Math.min(3, zone.stage)),
     });
 
     if (kind === "ally") {
@@ -9061,7 +9062,7 @@ export class CombatSystem {
       return;
     }
 
-    // Initial contact — damage only. Slow/discharge statuses wait for completion.
+    // Initial contact — damage only. Shocked + slow wait for discharge completion.
     this.applyRawDamage(hit.targetId, def.damage, sessionId, def.id);
     const tolDeg =
       def.threadAimToleranceDegrees ?? ARC_THREAD_CAST.threadAimToleranceDegrees;
@@ -9208,7 +9209,7 @@ export class CombatSystem {
 
     const def = ABILITIES[thread.abilityId];
     if (thread.secondaryDamage > 0) {
-      // applyDamage also applies def.applyOnHit (slow) on successful discharge.
+      // applyDamage also applies def.applyOnHit (Shocked + slow) on successful discharge.
       this.applyDamage(
         thread.targetId,
         thread.secondaryDamage,
@@ -9224,6 +9225,12 @@ export class CombatSystem {
         now,
         { abilityId: thread.abilityId },
       );
+    }
+
+    // Static Discharge on the burst (after Shocked applies) — not first contact.
+    const shockStacks = this.statuses.getStacks(thread.targetId, "shocked");
+    if (shockStacks > 0) {
+      this.emitShockDischarge(thread.targetId, thread.ownerId, shockStacks, now);
     }
 
     this.fx({
@@ -9927,7 +9934,12 @@ export class CombatSystem {
     const hasFire = idLower.includes("fire") || idLower.includes("magma") || idLower.includes("volcano");
     const hasFrost = idLower.includes("frost") || idLower.includes("ice");
     const hasPoison = idLower.includes("poison") || idLower.includes("shroom");
-    const hasShock = def.id === "chainLightning" || def.id === "arcThread" || def.id === "surge" || def.id === "elementalOverload";
+    const hasShock =
+      def.id === "chainLightning" ||
+      def.id === "arcThread" ||
+      def.id === "bolt" ||
+      def.id === "surge" ||
+      def.id === "elementalOverload";
 
     if (hasFire) {
       this.applyInstant(targetPos, 3, 8, attackerSessionId, abilityId, now);
@@ -10082,9 +10094,8 @@ export class CombatSystem {
   }
 
   /**
-   * Shocked discharge — when a marked target is hit, jump a small bolt to
-   * the nearest other enemy around them. Uses abilityId "shocked" so the
-   * jump cannot recurse.
+   * Shocked discharge — at max stacks, hitting the marked target jumps a small
+   * bolt to the nearest other enemy. Uses abilityId "shocked" so the jump cannot recurse.
    */
   private emitShockDischarge(
     sourceId: string,
@@ -10092,6 +10103,7 @@ export class CombatSystem {
     stacks: number,
     now: number,
   ) {
+    if (stacks < SHOCKED_STATUS.dischargeMinStacks) return;
     const readyAt = this.shockDischargeReadyAt.get(sourceId) ?? 0;
     if (now < readyAt) return;
     const src = this.bodyPos(sourceId);
@@ -10124,7 +10136,12 @@ export class CombatSystem {
 
     this.shockDischargeReadyAt.set(sourceId, now + SHOCKED_STATUS.dischargeIcdMs);
     const dmg = SHOCKED_STATUS.dischargeDamagePerStack * Math.max(1, stacks);
-    this.applyRawDamage(bestId, dmg, attackerId, "shocked", { triggersCounter: false });
+    // One damage application + one hop FX (skip applyRawDamage hit popup to avoid double numbers).
+    const dealt = this.applyRawDamage(bestId, dmg, attackerId, "shocked", {
+      triggersCounter: false,
+      noCrit: true,
+      skipHitFx: true,
+    });
 
     const hop = this.bodyPos(bestId);
     if (hop) {
@@ -10138,7 +10155,7 @@ export class CombatSystem {
         z2: src.z,
         ownerId: attackerId,
         targetId: bestId,
-        damage: dmg,
+        damage: dealt > 0 ? dealt : undefined,
         variant: 2,
       });
     }
@@ -11859,7 +11876,7 @@ export class CombatSystem {
     }
   }
 
-  /** +1 frostChill stack per shatter fragment hit (main crystal does not chill). */
+  /** +1 frostChill stack per crystal or shatter-fragment hit. */
   private applyRunicShardChill(targetId: string, sourceId: string, now: number) {
     const current = this.statuses.getStacks(targetId, "frostChill");
     const next = Math.min(FROST_CHILL_MAX_STACKS, current + 1);
@@ -11902,6 +11919,7 @@ export class CombatSystem {
         total,
         attackerSessionId,
         abilityId,
+        { skipHitFx: true },
       );
       if (!dealt) return;
 
@@ -12750,6 +12768,8 @@ export class CombatSystem {
       fxVariant?: number;
       /** Battle Rhythm pulse — no crit. */
       noCrit?: boolean;
+      /** Skip combat_fx hit (caller emits its own VFX). */
+      skipHitFx?: boolean;
     },
   ): number {
     const now = Date.now();
@@ -12930,21 +12950,23 @@ export class CombatSystem {
         this.grantEnergy(targetId, "damageTaken", dealt);
         this.tryPveLifesteal(attackerSessionId, damageForLeech, targetId);
       }
-      this.fx({
-        kind: "hit",
-        abilityId,
-        x: player.x,
-        z: player.z,
-        y: abilityId === "elementalOverload" ? 0.2 : undefined,
-        x2: abilityId === "elementalOverload" ? player.x : undefined,
-        z2: abilityId === "elementalOverload" ? player.z : undefined,
-        ownerId: attackerSessionId,
-        targetId,
-        damage: dealt,
-        crit: crit && dealt > 0 ? true : undefined,
-        variant: opts?.fxVariant,
-      });
-      if (shockStacks > 0 && abilityId !== "shocked" && dealt > 0) {
+      if (!opts?.skipHitFx) {
+        this.fx({
+          kind: "hit",
+          abilityId,
+          x: player.x,
+          z: player.z,
+          y: abilityId === "elementalOverload" ? 0.2 : undefined,
+          x2: abilityId === "elementalOverload" ? player.x : undefined,
+          z2: abilityId === "elementalOverload" ? player.z : undefined,
+          ownerId: attackerSessionId,
+          targetId,
+          damage: dealt,
+          crit: crit && dealt > 0 ? true : undefined,
+          variant: opts?.fxVariant,
+        });
+      }
+      if (shockStacks > 0 && abilityId !== "shocked" && abilityId !== "arcThread" && dealt > 0) {
         this.emitShockDischarge(targetId, attackerSessionId, shockStacks, now);
       }
       return damageForLeech;
@@ -12962,21 +12984,23 @@ export class CombatSystem {
         decoy.hp = Math.max(0, decoy.hp - dealt);
         this.tryPveLifesteal(attackerSessionId, damageForLeech, targetId);
       }
-      this.fx({
-        kind: "hit",
-        abilityId,
-        x: decoy.x,
-        z: decoy.z,
-        y: abilityId === "elementalOverload" ? 0.2 : undefined,
-        x2: abilityId === "elementalOverload" ? decoy.x : undefined,
-        z2: abilityId === "elementalOverload" ? decoy.z : undefined,
-        ownerId: attackerSessionId,
-        targetId,
-        damage: dealt,
-        crit: crit && dealt > 0 ? true : undefined,
-        variant: opts?.fxVariant,
-      });
-      if (shockStacks > 0 && abilityId !== "shocked" && dealt > 0) {
+      if (!opts?.skipHitFx) {
+        this.fx({
+          kind: "hit",
+          abilityId,
+          x: decoy.x,
+          z: decoy.z,
+          y: abilityId === "elementalOverload" ? 0.2 : undefined,
+          x2: abilityId === "elementalOverload" ? decoy.x : undefined,
+          z2: abilityId === "elementalOverload" ? decoy.z : undefined,
+          ownerId: attackerSessionId,
+          targetId,
+          damage: dealt,
+          crit: crit && dealt > 0 ? true : undefined,
+          variant: opts?.fxVariant,
+        });
+      }
+      if (shockStacks > 0 && abilityId !== "shocked" && abilityId !== "arcThread" && dealt > 0) {
         this.emitShockDischarge(targetId, attackerSessionId, shockStacks, now);
       }
       if (decoy.hp <= 0) {
@@ -13003,21 +13027,23 @@ export class CombatSystem {
         this.grantEnergy(attackerSessionId, "damageDealt", dealt, abilityId);
         this.tryPveLifesteal(attackerSessionId, damageForLeech, targetId);
       }
-      this.fx({
-        kind: "hit",
-        abilityId,
-        x: target.x,
-        z: target.z,
-        y: abilityId === "elementalOverload" ? 0.2 : undefined,
-        x2: abilityId === "elementalOverload" ? target.x : undefined,
-        z2: abilityId === "elementalOverload" ? target.z : undefined,
-        ownerId: attackerSessionId,
-        targetId,
-        damage: dealt,
-        crit: crit && dealt > 0 ? true : undefined,
-        variant: opts?.fxVariant,
-      });
-      if (shockStacks > 0 && abilityId !== "shocked" && dealt > 0) {
+      if (!opts?.skipHitFx) {
+        this.fx({
+          kind: "hit",
+          abilityId,
+          x: target.x,
+          z: target.z,
+          y: abilityId === "elementalOverload" ? 0.2 : undefined,
+          x2: abilityId === "elementalOverload" ? target.x : undefined,
+          z2: abilityId === "elementalOverload" ? target.z : undefined,
+          ownerId: attackerSessionId,
+          targetId,
+          damage: dealt,
+          crit: crit && dealt > 0 ? true : undefined,
+          variant: opts?.fxVariant,
+        });
+      }
+      if (shockStacks > 0 && abilityId !== "shocked" && abilityId !== "arcThread" && dealt > 0) {
         this.emitShockDischarge(targetId, attackerSessionId, shockStacks, now);
       }
       if (target.hp <= 0) {

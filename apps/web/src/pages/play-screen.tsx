@@ -399,7 +399,9 @@ export const PlayScreen = () => {
         if (!playReady || inContent || !user) return;
         refreshHubQuests();
     }, [playReady, inContent, user?.id, refreshHubQuests]);
-    useGameMusic(playReady ? (inContent ? "arena" : "village") : null);
+    useGameMusic(
+        playReady ? (!inContent ? "village" : isPveRunMode(contentMode) ? "pve" : "arena") : null,
+    );
     useGameAmbiance(playReady ? (inContent ? "arena" : "village") : null);
 
     useEffect(() => {
@@ -1236,6 +1238,7 @@ export const PlayScreen = () => {
                     onEquip={labEquip}
                     onSpawn={labSpawn}
                     onClear={labClear}
+                    predictedRef={predictedRef}
                 />
             )}
 

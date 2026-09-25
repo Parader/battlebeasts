@@ -10,7 +10,95 @@ import type { OneShotEffect } from "../types";
 import { softEnvelope } from "../easing";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { createSmokePointMaterial } from "../materials/circlePoint";
-import { createLightningBoltMaterial, tickLightningBolt } from "../materials/lightningBolt";
+import { burstElementRole } from "../engine";
+import {
+  killLightningCluster,
+  spawnLightningSegment,
+  type LightningClusterOpts,
+} from "../engine/lightningArcs";
+
+/** Lab lightning palette — cyan core, no white tip / spheres. */
+const DISCHARGE_ARC: LightningClusterOpts = {
+  tipGlow: 0,
+  colorCore: "#67e8f9",
+  colorInner: "#38bdf8",
+  colorOuter: "#0ea5e9",
+  colorHalo: "#0b3fc8",
+};
+
+/**
+ * Static Discharge hop (chainLightning variant 2) — filament segment + tip forks.
+ * No white cores, no endpoint spheres.
+ */
+function StaticDischargeEffect({ shot }: { shot: OneShotEffect }) {
+  const hopId = useRef(-1);
+  const tipIds = useRef<number[]>([]);
+  const lifeMs = Math.max(180, shot.life);
+  const killed = useRef(false);
+
+  const killAll = () => {
+    if (hopId.current >= 0) killLightningCluster(hopId.current);
+    for (const id of tipIds.current) killLightningCluster(id);
+    hopId.current = -1;
+    tipIds.current = [];
+    killed.current = true;
+  };
+
+  useEffect(() => {
+    killed.current = false;
+    const fromX = shot.originX ?? shot.x;
+    const fromZ = shot.originZ ?? shot.z;
+    const toX = shot.x;
+    const toZ = shot.z;
+    const y = shot.y ?? 1.05;
+    const dist = Math.hypot(toX - fromX, toZ - fromZ);
+
+    if (dist > 0.2) {
+      hopId.current = spawnLightningSegment(fromX, y, fromZ, toX, y, toZ, {
+        strands: 2,
+        spreadMul: 0.32,
+        jitterMul: 0.55,
+        sag: 0.08,
+        ...DISCHARGE_ARC,
+      });
+    }
+
+    // Tiny tip sparks only — no radial ground lightning burst.
+    const tipN = dist > 0.2 ? 2 : 3;
+    for (let i = 0; i < tipN; i++) {
+      const a = (i / tipN) * Math.PI * 2 + Math.random() * 0.4;
+      const reach = 0.1 + Math.random() * 0.12;
+      const endY = y + (Math.random() - 0.35) * 0.28;
+      const id = spawnLightningSegment(
+        toX,
+        y,
+        toZ,
+        toX + Math.cos(a) * reach,
+        endY,
+        toZ + Math.sin(a) * reach,
+        {
+          strands: 1,
+          spreadMul: 0.2,
+          jitterMul: 0.35,
+          sag: 0.04,
+          ...DISCHARGE_ARC,
+        },
+      );
+      if (id >= 0) tipIds.current.push(id);
+    }
+
+    return () => killAll();
+    // Spawn once per shot instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shot.key]);
+
+  useFrame(() => {
+    if (killed.current) return;
+    if (performance.now() - shot.born >= lifeMs) killAll();
+  });
+
+  return null;
+}
 
 function useBasicMat(color: string, additive = true) {
   const mat = useMemo(
@@ -269,6 +357,13 @@ export function BloodPactEffect({ shot }: { shot: OneShotEffect }) {
   const starA = useRef<THREE.Mesh>(null);
   const starB = useRef<THREE.Mesh>(null);
 
+  /** ParticleWorld owns Blood Pact's cast and impact particles. */
+  useEffect(() => {
+    if (variant !== 0) return;
+    burstElementRole("blood", "cast", shot.x, shot.y + 0.35, shot.z);
+    burstElementRole("blood", "impact", shot.x, shot.y + 0.15, shot.z);
+  }, [shot.key, shot.x, shot.y, shot.z, variant]);
+
   useFrame(() => {
     const g = root.current;
     if (!g) return;
@@ -369,212 +464,86 @@ export function BloodPactEffect({ shot }: { shot: OneShotEffect }) {
             <ringGeometry args={[0.985, 1.0, 4]} />
             <primitive object={starMat} attach="material" />
           </mesh>
-          <AdditiveParticleBurst
-            color="#F87171"
-            origin={[0, 0.35, 0]}
-            count={24}
-            life={0.5}
-            speed={2.4}
-            speedSpread={1.4}
-            size={0.08}
-            sizeEnd={0.015}
-            lift={0.9}
-            upBias={0.3}
-            gravity={2.8}
-            fadeIn={0.08}
-            stagger={0.2}
-            trigger={shot.key}
-          />
         </>
       )}
     </group>
   );
 }
 
-/** Chain Lightning — perfectly aligned 3D jagged arcs + cross bolt ribbons between targets. */
+/**
+ * Chain Lightning hop / Elemental Overload sky strike.
+ *
+ * Caster blow: none — the previous hop (or the sky) is the tell.
+ * Travel: one lab lightning filament between endpoints.
+ * Impact: spark burst where the bolt lands.
+ * Ground: none on a hop; the sky strike's landing burst sits at the feet.
+ * Status: `shocked` is worn by the victim via StatusAuraFx.
+ */
 export function ChainLightningEffect({ shot }: { shot: OneShotEffect }) {
-  const root = useRef<THREE.Group>(null);
-  const isAlly = (shot.variant ?? 0) === 1;
-  const lifeMs = Math.max(240, shot.life);
-  const SEGMENTS = 12;
-  const positions = useMemo(() => new Float32Array((SEGMENTS + 1) * 3), []);
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    return g;
-  }, [positions]);
-  const coreMat = useMemo(
-    () =>
-      new THREE.LineBasicMaterial({
-        color: isAlly ? "#E0F2FE" : "#F8FAFC",
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    [isAlly],
-  );
-  const glowMat = useMemo(
-    () =>
-      new THREE.LineBasicMaterial({
-        color: isAlly ? "#7DD3FC" : "#38BDF8",
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    [isAlly],
-  );
-  const boltMat = useMemo(
-    () =>
-      createLightningBoltMaterial(isAlly ? "#BAE6FD" : "#38BDF8", {
-        hot: isAlly ? "#F0F9FF" : "#F8FAFC",
-        opacity: 0,
-      }),
-    [isAlly],
-  );
-  const boltMesh = useRef<THREE.Mesh>(null);
-  const boltMeshCross = useRef<THREE.Mesh>(null);
-  const fromMesh = useRef<THREE.Mesh>(null);
-  const toMesh = useRef<THREE.Mesh>(null);
+  // Static Discharge / shock proc — shorter lab segments, not the main hop.
+  if ((shot.variant ?? 0) === 2) {
+    return <StaticDischargeEffect shot={shot} />;
+  }
+  return <ChainLightningBoltEffect shot={shot} />;
+}
 
-  useFrame((_, dt) => {
-    const g = root.current;
-    if (!g) return;
-    const age = performance.now() - shot.born;
-    if (age >= lifeMs) {
-      g.visible = false;
-      return;
-    }
-    g.visible = true;
+function ChainLightningBoltEffect({ shot }: { shot: OneShotEffect }) {
+  const hopId = useRef(-1);
+  const killed = useRef(false);
+  const lifeMs = Math.max(240, shot.life);
+  const isAlly = (shot.variant ?? 0) === 1;
+
+  const killAll = () => {
+    if (hopId.current >= 0) killLightningCluster(hopId.current);
+    hopId.current = -1;
+    killed.current = true;
+  };
+
+  useEffect(() => {
+    killed.current = false;
     const fromX = shot.originX ?? shot.x;
     const fromZ = shot.originZ ?? shot.z;
     const toX = shot.x;
     const toZ = shot.z;
-    const horizLen = Math.hypot(toX - fromX, toZ - fromZ);
     const skyStrike = shot.abilityId === "elementalOverload";
-    const skyY = 12.5;
-    const groundY = 0.12;
-    const midY = skyStrike ? (skyY + groundY) * 0.5 : 1.15;
-    const fromY = skyStrike ? skyY : midY;
-    const toY = skyStrike ? groundY : midY;
-    const dx = toX - fromX;
-    const dy = toY - fromY;
-    const dz = toZ - fromZ;
-    const len = Math.hypot(dx, dy, dz) || 0.01;
+    const fromY = skyStrike ? 12.5 : 1.15;
+    const toY = skyStrike ? 0.12 : 1.15;
+    const palette: LightningClusterOpts = isAlly
+      ? {
+          tipGlow: 0.35,
+          colorCore: "#f0f9ff",
+          colorInner: "#bae6fd",
+          colorOuter: "#7dd3fc",
+          colorHalo: "#0ea5e9",
+        }
+      : {
+          tipGlow: 0.5,
+          colorCore: "#f8fafc",
+          colorInner: "#38bdf8",
+          colorOuter: "#0ea5e9",
+          colorHalo: "#0b3fc8",
+        };
 
-    // Orthonormal basis: local X is along the bolt (horizontal hop or sky strike).
-    const dirX = new THREE.Vector3(dx / len, dy / len, dz / len);
-    const upHint = skyStrike ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-    const dirZ = new THREE.Vector3().crossVectors(dirX, upHint).normalize();
-    if (dirZ.lengthSq() < 1e-6) {
-      dirZ.crossVectors(dirX, new THREE.Vector3(0, 0, 1)).normalize();
-    }
-    const dirY = new THREE.Vector3().crossVectors(dirZ, dirX).normalize();
+    hopId.current = spawnLightningSegment(fromX, fromY, fromZ, toX, toY, toZ, {
+      strands: skyStrike ? 4 : 3,
+      spreadMul: skyStrike ? 0.55 : 0.42,
+      jitterMul: 0.7,
+      sag: skyStrike ? 0.02 : 0.1,
+      ...palette,
+    });
+    burstElementRole("lightning", "impact", toX, toY + 0.15, toZ);
 
-    const midX = (fromX + toX) * 0.5;
-    const midZ = (fromZ + toZ) * 0.5;
-    const ribbonW = skyStrike ? 1.15 : 0.65;
+    return () => killAll();
+    // Spawn once per shot instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shot.key]);
 
-    const mVert = new THREE.Matrix4().makeBasis(dirX, dirY, dirZ);
-    if (boltMesh.current) {
-      boltMesh.current.position.set(midX, midY, midZ);
-      boltMesh.current.scale.set(len, ribbonW, 1);
-      boltMesh.current.quaternion.setFromRotationMatrix(mVert);
-    }
-
-    const mHoriz = new THREE.Matrix4().makeBasis(dirX, dirZ, dirY.clone().negate());
-    if (boltMeshCross.current) {
-      boltMeshCross.current.position.set(midX, midY, midZ);
-      boltMeshCross.current.scale.set(len, ribbonW, 1);
-      boltMeshCross.current.quaternion.setFromRotationMatrix(mHoriz);
-    }
-
-    if (fromMesh.current) fromMesh.current.position.set(fromX, fromY, fromZ);
-    if (toMesh.current) toMesh.current.position.set(toX, toY, toZ);
-
-    // 3D jagged electric lines precisely clamped to endpoints at t=0 and t=1
-    const flicker = Math.floor(age / 24);
-    for (let i = 0; i <= SEGMENTS; i++) {
-      const t = i / SEGMENTS;
-      const taper = Math.sin(t * Math.PI);
-      const jag =
-        i === 0 || i === SEGMENTS
-          ? 0
-          : (Math.sin(flicker * 1.9 + i * 2.7) * 0.22 +
-              Math.sin(flicker * 0.8 + i * 4.3) * 0.12) *
-            taper *
-            (0.35 + len * 0.035);
-      const jagY =
-        i === 0 || i === SEGMENTS
-          ? 0
-          : (Math.sin(flicker * 1.3 + i * 3.1) * 0.15) * taper;
-      if (skyStrike) {
-        const side = Math.sin(flicker * 2.1 + i * 1.7) * jag;
-        const side2 = Math.cos(flicker * 1.4 + i * 2.3) * jag;
-        positions[i * 3] = fromX + dx * t + side;
-        positions[i * 3 + 1] = fromY + dy * t;
-        positions[i * 3 + 2] = fromZ + dz * t + side2;
-      } else {
-        const nx = -dz / Math.max(horizLen, 0.01);
-        const nz = dx / Math.max(horizLen, 0.01);
-        positions[i * 3] = fromX + dx * t + nx * jag;
-        positions[i * 3 + 1] = midY + jagY;
-        positions[i * 3 + 2] = fromZ + dz * t + nz * jag;
-      }
-    }
-    geo.attributes.position!.needsUpdate = true;
-
-    const u = age / lifeMs;
-    const op = softEnvelope(u, 0.04, 0.4);
-    coreMat.opacity = op * 0.95;
-    glowMat.opacity = op * 0.6;
-    boltMat.uniforms.uOpacity.value = op * 0.9;
-    tickLightningBolt(boltMat, dt);
+  useFrame(() => {
+    if (killed.current) return;
+    if (performance.now() - shot.born >= lifeMs) killAll();
   });
 
-  return (
-    <group ref={root} visible={false}>
-      <line geometry={geo} frustumCulled={false} renderOrder={30}>
-        <primitive object={glowMat} attach="material" />
-      </line>
-      <line geometry={geo} frustumCulled={false} renderOrder={31}>
-        <primitive object={coreMat} attach="material" />
-      </line>
-      {/* Aligned vertical electric ribbon */}
-      <mesh ref={boltMesh} renderOrder={32} frustumCulled={false}>
-        <planeGeometry args={[1, 1]} />
-        <primitive object={boltMat} attach="material" />
-      </mesh>
-      {/* Aligned horizontal electric ribbon */}
-      <mesh ref={boltMeshCross} renderOrder={33} frustumCulled={false}>
-        <planeGeometry args={[1, 1]} />
-        <primitive object={boltMat} attach="material" />
-      </mesh>
-      {/* Origin contact spark */}
-      <mesh ref={fromMesh} renderOrder={34}>
-        <sphereGeometry args={[isAlly ? 0.18 : 0.14, 8, 6]} />
-        <meshBasicMaterial
-          color={isAlly ? "#BAE6FD" : "#F8FAFC"}
-          transparent
-          opacity={0.85}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
-      {/* Target contact spark */}
-      <mesh ref={toMesh} renderOrder={35}>
-        <sphereGeometry args={[isAlly ? 0.26 : 0.22, 10, 8]} />
-        <meshBasicMaterial
-          color={isAlly ? "#BAE6FD" : "#F8FAFC"}
-          transparent
-          opacity={0.92}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
-    </group>
-  );
+  return null;
 }
 
 /** Position Swap — linked endpoints flash. */

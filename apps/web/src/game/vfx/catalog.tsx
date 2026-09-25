@@ -24,6 +24,7 @@ import { HealBeamEffect } from "./effects/healBeam";
 import { LifeLeechEffect } from "./effects/lifeLeech";
 import { PoisonDartCastEffect } from "./effects/poisonDartCast";
 import { PoisonDartProjectileEffect } from "./effects/poisonDartProjectile";
+import { PoisonHitEffect } from "./effects/poisonHit";
 import { IceLanceCastEffect } from "./effects/iceLanceCast";
 import { IceLanceExplodeEffect } from "./effects/iceLanceExplode";
 import { FirewallGroundEffect } from "./effects/firewallGround";
@@ -36,14 +37,21 @@ import { BloodRushTrailEffect } from "./effects/bloodRushTrail";
 import { SpiritReturnTrailEffect } from "./effects/spiritReturnTrail";
 import { MagmaOrbsCastEffect } from "./effects/magmaOrbsCast";
 import { ShroomBurstEffect } from "./effects/shroomBurst";
+import { ShroomCastEffect } from "./effects/shroomCast";
 import { ArcThreadEffect } from "./effects/arcThread";
 import { SoulMarkRuptureEffect } from "./effects/soulMarkRupture";
 import { SoulMarkProjectileEffect } from "./effects/soulMarkProjectile";
+import { SoulMarkCastEffect } from "./effects/soulMarkCast";
+import { SoulMarkHitEffect } from "./effects/soulMarkHit";
 import { VoidDiscProjectileEffect } from "./effects/voidDiscProjectile";
+import { VoidDiscCastEffect } from "./effects/voidDiscCast";
+import { VoidDiscHitEffect } from "./effects/voidDiscHit";
 import { RunicShardProjectileEffect } from "./effects/runicShardProjectile";
 import { RunicShardShatterEffect } from "./effects/runicShardShatter";
 import { OrbitingWispHitEffect } from "./effects/orbitingWispHit";
 import { AstralChainProjectileEffect } from "./effects/astralChainProjectile";
+import { AstralChainCastEffect } from "./effects/astralChainCast";
+import { AstralChainHitEffect } from "./effects/astralChainHit";
 import { AstralChainBreakEffect } from "./effects/astralChainBreak";
 import { UndergroundPulseEffect } from "./effects/undergroundPulse";
 import {
@@ -275,13 +283,14 @@ const CAST_RENDERERS: Record<string, ShotRenderer> = {
   barrier: (shot, ctx) => <BarrierCastEffect key={shot.key} shot={shot} follow={ctx} />,
   poisonDart: (shot, ctx) => <PoisonDartCastEffect key={shot.key} shot={shot} follow={ctx} />,
   bolt: (shot, ctx) => <BoltCastEffect key={shot.key} shot={shot} follow={ctx} />,
+  shrooms: (shot, ctx) => <ShroomCastEffect key={shot.key} shot={shot} follow={ctx} />,
   // Projectile mesh is the cast visual — don't fall back to bolt muzzle orb.
-  soulMark: () => null,
+  soulMark: (shot, ctx) => <SoulMarkCastEffect key={shot.key} shot={shot} follow={ctx} />,
   prismLance: () => null,
   soulSever: () => null,
-  voidDisc: () => null,
+  voidDisc: (shot, ctx) => <VoidDiscCastEffect key={shot.key} shot={shot} follow={ctx} />,
   runicShard: () => null,
-  astralChain: () => null,
+  astralChain: (shot, ctx) => <AstralChainCastEffect key={shot.key} shot={shot} follow={ctx} />,
   bloomingPath: () => null,
 };
 
@@ -300,7 +309,8 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   },
   portal: (shot) => <PortalBlinkEffect key={shot.key} shot={shot} />,
   iceLance: (shot) => <IceLanceExplodeEffect key={shot.key} shot={shot} />,
-  poisonDart: (shot) => <BoltImpactEffect key={shot.key} shot={shot} />,
+  poisonDart: (shot) => <PoisonHitEffect key={shot.key} shot={shot} />,
+  voidDisc: (shot) => <VoidDiscHitEffect key={shot.key} shot={shot} />,
   bolt: (shot) => <BoltImpactEffect key={shot.key} shot={shot} />,
   volcano: (shot) => <VolcanoRockEffect key={shot.key} shot={shot} />,
   bloodRush: (shot, ctx) => <BloodRushTrailEffect key={shot.key} shot={shot} follow={ctx} />,
@@ -308,15 +318,20 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
   magmaOrbs: (shot, ctx) => <MagmaOrbsCastEffect key={shot.key} shot={shot} follow={ctx} />,
   shrooms: (shot) => <ShroomBurstEffect key={shot.key} shot={shot} />,
   arcThread: (shot, ctx) => <ArcThreadEffect key={shot.key} shot={shot} follow={ctx} />,
-  soulMark: (shot) => <SoulMarkRuptureEffect key={shot.key} shot={shot} />,
-  runicShard: (shot) =>
+  soulMark: (shot) =>
     (shot.variant ?? 0) === 1 ? (
-      <RunicShardShatterEffect key={shot.key} shot={shot} />
+      <SoulMarkRuptureEffect key={shot.key} shot={shot} />
     ) : (
-      <BoltImpactEffect key={shot.key} shot={shot} />
+      <SoulMarkHitEffect key={shot.key} shot={shot} />
     ),
+  runicShard: (shot) => <RunicShardShatterEffect key={shot.key} shot={shot} />,
   orbitingWisp: (shot) => <OrbitingWispHitEffect key={shot.key} shot={shot} />,
-  astralChain: (shot) => <AstralChainBreakEffect key={shot.key} shot={shot} />,
+  astralChain: (shot) =>
+    typeof shot.originX === "number" ? (
+      <AstralChainBreakEffect key={shot.key} shot={shot} />
+    ) : (
+      <AstralChainHitEffect key={shot.key} shot={shot} />
+    ),
   undergroundPulse: (shot) => <UndergroundPulseEffect key={shot.key} shot={shot} />,
   slipstream: (shot) =>
     (shot.variant ?? 0) === 1 || (shot.variant ?? 0) === 2 ? (
@@ -331,7 +346,7 @@ const IMPACT_RENDERERS: Record<string, ShotRenderer> = {
     if (v === 3) return <SoulRelayOutOfRangeEffect key={shot.key} shot={shot} />;
     return <SoulRelaySelfHealEffect key={shot.key} shot={shot} />;
   },
-  crushingSigil: (shot) => <CrushingSigilEffect key={shot.key} shot={shot} />,
+  crushingSigil: (shot, ctx) => <CrushingSigilEffect key={shot.key} shot={shot} follow={ctx} />,
   gravityWell: (shot) => <GravityWellEffect key={shot.key} shot={shot} />,
   prismLance: (shot) => <PrismLanceImpactEffect key={shot.key} shot={shot} />,
   soulSever: (shot) =>
@@ -499,6 +514,8 @@ export {
   BloodRushTrailEffect,
   ArcThreadEffect,
   SoulMarkProjectileEffect,
+  SoulMarkCastEffect,
+  SoulMarkHitEffect,
   SoulMarkRuptureEffect,
   VoidDiscProjectileEffect,
   RunicShardProjectileEffect,

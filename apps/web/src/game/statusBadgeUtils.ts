@@ -22,17 +22,26 @@ const EMPTY_STATUS_ROWS: StatusRowLite[] = [];
 /** Read active status rows from a Colyseus MapSchema-like object. */
 export function collectStatusRows(map: StatusMapLike): StatusRowLite[] {
   if (!map) return EMPTY_STATUS_ROWS;
+  const now = Date.now();
   const rows: StatusRowLite[] = [];
   map.forEach((row) => {
-    if (row?.statusId && STATUSES[row.statusId]) {
-      rows.push({
-        statusId: row.statusId,
-        stacks: row.stacks ?? 1,
-        expiresAt: row.expiresAt,
-        startedAt: row.startedAt,
-        angle: row.angle,
-      });
+    if (!row?.statusId || !STATUSES[row.statusId]) return;
+    // Client-side expire — hide ornaments immediately even if schema lag keeps the row.
+    if (
+      typeof row.expiresAt === "number" &&
+      row.expiresAt > 0 &&
+      row.expiresAt < Number.MAX_SAFE_INTEGER / 2 &&
+      now >= row.expiresAt
+    ) {
+      return;
     }
+    rows.push({
+      statusId: row.statusId,
+      stacks: row.stacks ?? 1,
+      expiresAt: row.expiresAt,
+      startedAt: row.startedAt,
+      angle: row.angle,
+    });
   });
   return rows.length === 0 ? EMPTY_STATUS_ROWS : rows;
 }
@@ -86,7 +95,7 @@ export const SOUL_SEVER_BADGE_IDS = new Set(["soulSevered"]);
 /** Status ids that show the Chilled badge above HP bars (Frost Mist / Runic Shard). */
 export const CHILL_BADGE_IDS = new Set(["frostChill"]);
 
-/** Status ids that show the Shocked badge above HP bars (Chain Lightning, Arc Thread, Surge, Wild Infusion). */
+/** Status ids that show the Shocked badge above HP bars (Chain Lightning, Arc Thread, Bolt, Surge, Wild Infusion). */
 export const SHOCK_BADGE_IDS = new Set(["shocked"]);
 
 /** Status ids that show the Slowed badge above HP bars (Underground Pulse, Gravity Field, etc.). */

@@ -8,17 +8,17 @@ import { softEnvelope } from "../easing";
 import { findBone } from "../attach";
 import { getCharacterRoot, getCombatOwnerPose } from "../../characterRoots";
 import { acquireEnergyBallMaterial } from "../materials/energyBall";
-import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { GEO_SPHERE_LO, GEO_SPHERE_MD } from "../sharedGeo";
 import { useSpellLight } from "../spellLights";
+import { burstElementRole } from "../engine";
 
 const POISON = "#4d7c0f";
 const POISON_DARK = "#1a2e05";
 const POISON_HOT = "#84cc16";
 
 /**
- * Dark poison puff at the hook hand when the dart leaves.
- * Prefers RightHand bone; falls back to yaw + spawnOffset.
+ * Caster: poison preset at the resolved hand. Travel/impact/ground: owned elsewhere.
+ * Particles: ParticleWorld poison cast; poisoned/weakened auras stay in StatusAuraFx.
  */
 export function PoisonDartCastEffect({
   shot,
@@ -35,6 +35,7 @@ export function PoisonDartCastEffect({
   const light = useSpellLight();
   const worldPos = useRef(new THREE.Vector3());
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: shot.y });
+  const castBurst = useRef(false);
 
   useFrame(() => {
     const age = (performance.now() - shot.born) / shot.life;
@@ -80,6 +81,10 @@ export function PoisonDartCastEffect({
     if (root.current) {
       root.current.position.set(pose.current.x, pose.current.y, pose.current.z);
     }
+    if (!castBurst.current) {
+      castBurst.current = true;
+      burstElementRole("poison", "cast", pose.current.x, pose.current.y, pose.current.z);
+    }
 
     const g = group.current;
     if (!g) return;
@@ -101,36 +106,6 @@ export function PoisonDartCastEffect({
         <mesh scale={0.1} geometry={GEO_SPHERE_MD} material={coreMat} />
         <mesh scale={0.1 * 1.8} geometry={GEO_SPHERE_LO} material={glowMat} />
         <object3D ref={lightAt} />
-        <AdditiveParticleBurst
-          color={POISON_DARK}
-          origin={[0, 0, 0]}
-          count={9}
-          life={0.45}
-          speed={0.7}
-          speedSpread={0.7}
-          size={0.09}
-          sizeEnd={0.02}
-          lift={0.55}
-          upBias={0.35}
-          fadeIn={0.2}
-          stagger={0.35}
-          trigger={shot.key}
-        />
-        <AdditiveParticleBurst
-          color={POISON_HOT}
-          origin={[0, 0, 0]}
-          count={6}
-          life={0.38}
-          speed={1.1}
-          speedSpread={0.6}
-          size={0.06}
-          sizeEnd={0.012}
-          lift={0.4}
-          upBias={0.25}
-          fadeIn={0.25}
-          stagger={0.3}
-          trigger={shot.key}
-        />
       </group>
     </group>
   );

@@ -46,6 +46,12 @@ const MANIFEST = path.join(REPO_ROOT, "data", "props.manifest.json");
  */
 const UNUSABLE = path.join(REPO_ROOT, "data", "props.unusable.json");
 /**
+ * Ground materials culled from the layer picker. Same idea as props.unusable:
+ * the catalog is the source of truth for what exists, this file is what authors
+ * have decided not to bother with.
+ */
+const GROUND_UNUSABLE = path.join(REPO_ROOT, "data", "ground.unusable.json");
+/**
  * Colliders corrected by hand in the editor, keyed by prop model.
  *
  * Same reasoning as the unusable list: `pnpm gen:props` rewrites the manifest
@@ -204,6 +210,38 @@ export function editorApi(): Plugin {
               const keys = [...new Set(raw.filter((k): k is string => typeof k === "string"))].sort();
               await fs.mkdir(path.dirname(UNUSABLE), { recursive: true });
               await fs.writeFile(UNUSABLE, `${JSON.stringify({ keys }, null, 2)}\n`, "utf8");
+              send(res, 200, { ok: true, count: keys.length });
+              return;
+            }
+          }
+
+          // --- unusable ground materials ---
+          if (url === "/api/ground/unusable") {
+            if (req.method === "GET") {
+              const raw = await fs.readFile(GROUND_UNUSABLE, "utf8").catch(() => null);
+              let keys: string[] = [];
+              if (raw) {
+                try {
+                  const parsed = JSON.parse(raw);
+                  if (Array.isArray(parsed?.keys)) keys = parsed.keys.filter((k: unknown) => typeof k === "string");
+                } catch {
+                  keys = [];
+                }
+              }
+              send(res, 200, { keys });
+              return;
+            }
+
+            if (req.method === "PUT") {
+              const body = (await readBody(req)) as Json;
+              const raw = Array.isArray(body?.keys) ? body.keys : null;
+              if (!raw) {
+                send(res, 400, { error: "expected { keys: string[] }" });
+                return;
+              }
+              const keys = [...new Set(raw.filter((k): k is string => typeof k === "string"))].sort();
+              await fs.mkdir(path.dirname(GROUND_UNUSABLE), { recursive: true });
+              await fs.writeFile(GROUND_UNUSABLE, `${JSON.stringify({ keys }, null, 2)}\n`, "utf8");
               send(res, 200, { ok: true, count: keys.length });
               return;
             }

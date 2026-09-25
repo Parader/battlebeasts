@@ -1,133 +1,94 @@
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { coneRayMaxLength } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
+import { resolveHandPose, type HandPose } from "../handPose";
+import {
+  collectOccludeBodies,
+  findConeHitBody,
+  resolveImpactPoint,
+  type BodyPoint,
+} from "../spellTargeting";
 import { smooth01 } from "../easing";
-import { createCirclePointMaterial } from "../materials/circlePoint";
-import { getWorldProjectileCircles, getWorldProjectileWalls, getWorldProjectileBoxes } from "../../worldCollidersRuntime";
+import { ATLAS_UV } from "../engine/atlas";
+import {
+  BatchId,
+  Collide,
+  LodRank,
+  killEmitter,
+  setEmitterHoming,
+  setEmitterPose,
+  setEmitterRate,
+  spawnEmitter,
+} from "../engine";
+import { useSpellLight } from "../spellLights";
+import { getWorldProjectileBoxes, getWorldProjectileCircles, getWorldProjectileWalls } from "../../worldCollidersRuntime";
+import { playDrainLifeLoopSfx, stopDrainLifeLoopSfx } from "../../gameSfx";
 
-const DAMAGE_HOT = "#f87171";
-const HEAL_HOT = "#4ade80";
 const HAND_Y = 1.15;
 const SPAWN = 0.45;
+const TARGET_Y = 1.15;
 
-const OUT_MOTES = 72;
-const IN_MOTES = 72;
+const BLOOD_HOT = "#fecaca";
+const BLOOD_MID = "#ef4444";
+const BLOOD_DEEP = "#7f1d1d";
 
-type OccludeBody = {
-  id: string;
-  x: number;
-  z: number;
-  hp?: number;
-};
+const HAND_LIGHT_INTENSITY = 1.35;
+const HAND_LIGHT_DIST = 3.2;
 
-type Mote = {
-  alive: boolean;
-  age: number;
-  life: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  size: number;
-};
+const CASTER_SHELL_RATE = 36;
+const CASTER_RIM_RATE = 18;
+const BLOOD_HAND_RATE = 44;
+const BLOOD_MID_RATE = 34;
+const BLOOD_FAR_RATE = 28;
+const SPILL_SHEET_RATE = 34;
+const SPILL_RUN_RATE = 22;
+const HEAL_STREAM_RATE = 24;
 
-function collectOccludeBodies(
-  follow: VfxFollowContext | undefined,
-  ownerId: string | undefined,
-): OccludeBody[] {
-  const room = follow?.room;
-  if (!room?.state) return [];
-  const out: OccludeBody[] = [];
-  const players = room.state.players as
-    | Map<string, { x?: number; z?: number; hp?: number; team?: string }>
-    | undefined;
-  const ownerTeam =
-    ownerId && players
-      ? (players.get(ownerId) as { team?: string } | undefined)?.team
-      : undefined;
-  players?.forEach((p, id) => {
-    if (ownerId && id === ownerId) return;
-    // Allies soft-stop the ray for length, but must not trigger green "leeching" return.
-    // Keep them out of the hit list used for green motes.
-    if (ownerTeam && p.team && p.team === ownerTeam) return;
-    out.push({ id, x: p.x ?? 0, z: p.z ?? 0, hp: p.hp });
+const BLOOD_SPEED = 4.6;
+const HEAL_SPEED = 4.2;
+/** Steer living leaves at the moving hand (units/sec²-ish pull). */
+const HEAL_HOME_STRENGTH = 16;
+/** Absorb on the hand. Misses fade out past the caster instead of looping back. */
+const HEAL_HOME_KILL = 0.42;
+
+function bloodSpark(extra: Parameters<typeof spawnEmitter>[0]) {
+  return spawnEmitter({
+    groundY: 0,
+    collide: Collide.None,
+    batch: BatchId.AdditiveSpark,
+    atlasUv: ATLAS_UV.spark,
+    color0: BLOOD_HOT,
+    color1: BLOOD_MID,
+    color2: BLOOD_DEEP,
+    rotRate: 0.35,
+    rotJitter: 0.4,
+    ...extra,
   });
-  const targets = room.state.targets as
-    | Map<string, { x?: number; z?: number; hp?: number }>
-    | undefined;
-  targets?.forEach((t, id) => {
-    out.push({ id, x: t.x ?? 0, z: t.z ?? 0, hp: t.hp });
+}
+
+function healLeaf(extra: Parameters<typeof spawnEmitter>[0]) {
+  return spawnEmitter({
+    groundY: 0,
+    collide: Collide.None,
+    batch: BatchId.AdditiveSpark,
+    atlasUv: ATLAS_UV.leaf,
+    color0: "#ecfccb",
+    color1: "#86efac",
+    color2: "#16a34a",
+    size: 0.3,
+    sizeEnd: 0.08,
+    opacity: 0.9,
+    rotRate: 1.8,
+    rotJitter: 1,
+    ...extra,
   });
-  return out;
-}
-
-function createMotePool(n: number): Mote[] {
-  return Array.from({ length: n }, () => ({
-    alive: false,
-    age: 0,
-    life: 1,
-    x: 0,
-    y: 0,
-    z: 0,
-    vx: 0,
-    vy: 0,
-    vz: 0,
-    size: 0.08,
-  }));
-}
-
-/** Red damage fluid — emit along the channel volume, streaming outward. */
-function spawnOutMote(p: Mote, beamLen: number) {
-  p.alive = true;
-  p.age = 0;
-  p.life = 0.28 + Math.random() * 0.38;
-  const along = SPAWN + Math.random() * Math.max(0.2, beamLen - SPAWN) * 0.55;
-  const radial = (Math.random() - 0.5) * 0.22;
-  p.x = radial;
-  p.y = HAND_Y + (Math.random() - 0.5) * 0.28;
-  p.z = along;
-  p.vx = (Math.random() - 0.5) * 0.45;
-  p.vy = (Math.random() - 0.5) * 0.55;
-  p.vz = 2.4 + Math.random() * 3.2;
-  p.size = 0.05 + Math.random() * 0.07;
-}
-
-/** Green heal fluid — spawn near the tip, stream back toward the caster. */
-function spawnInMote(p: Mote, beamLen: number) {
-  p.alive = true;
-  p.age = 0;
-  p.life = 0.28 + Math.random() * 0.38;
-  const tip = Math.max(SPAWN + 0.5, beamLen);
-  const along = tip - Math.random() * Math.max(0.3, (tip - SPAWN) * 0.55);
-  const radial = (Math.random() - 0.5) * 0.22;
-  p.x = radial;
-  p.y = HAND_Y + (Math.random() - 0.5) * 0.28;
-  p.z = along;
-  p.vx = (Math.random() - 0.5) * 0.45;
-  p.vy = (Math.random() - 0.5) * 0.55;
-  p.vz = -(2.2 + Math.random() * 3.0);
-  p.size = 0.05 + Math.random() * 0.07;
-}
-
-function makeParticleBuffers(count: number) {
-  const positions = new Float32Array(count * 3);
-  const sizes = new Float32Array(count);
-  const alphas = new Float32Array(count);
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-  geo.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
-  return { positions, sizes, alphas, geo };
 }
 
 /**
- * Life Leech — particle-only two-way fluid stream (no solid laser core).
- * Red flows out along the aim line; green returns only while a target is hit.
+ * Life Leech — red hand light, blood stream + spill, leaves home to the casting hand.
  */
 export function LifeLeechEffect({
   shot,
@@ -136,55 +97,264 @@ export function LifeLeechEffect({
   shot: OneShotEffect;
   follow?: VfxFollowContext;
 }) {
-  const root = useRef<THREE.Group>(null);
-  const outPts = useRef<THREE.Points>(null);
-  const inPts = useRef<THREE.Points>(null);
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw });
   const liveLen = useRef(shot.radius ?? 7.5);
   const done = useRef(false);
   const lifeMs = useRef(Math.max(200, shot.life));
-  const spawnAcc = useRef(0);
-  const outPool = useRef(createMotePool(OUT_MOTES));
-  const inPool = useRef(createMotePool(IN_MOTES));
+  const hand = useRef<HandPose>({ x: shot.x, y: HAND_Y, z: shot.z });
+  const impact = useRef<BodyPoint>({ x: shot.x, y: TARGET_Y, z: shot.z });
+  const light = useSpellLight();
+
+  const casterShellId = useRef(-1);
+  const casterRimId = useRef(-1);
+  const bloodHandId = useRef(-1);
+  const bloodMidId = useRef(-1);
+  const bloodFarId = useRef(-1);
+  const spillSheetId = useRef(-1);
+  const spillRunId = useRef(-1);
+  const healStreamId = useRef(-1);
 
   const endLength = shot.radius ?? 7.5;
 
-  const outBuf = useMemo(() => makeParticleBuffers(OUT_MOTES), []);
-  const inBuf = useMemo(() => makeParticleBuffers(IN_MOTES), []);
-
-  const outMat = useMemo(() => createCirclePointMaterial(DAMAGE_HOT), []);
-  const inMat = useMemo(() => createCirclePointMaterial(HEAL_HOT), []);
+  const silenceAll = () => {
+    setEmitterRate(casterShellId.current, 0);
+    setEmitterRate(casterRimId.current, 0);
+    setEmitterRate(bloodHandId.current, 0);
+    setEmitterRate(bloodMidId.current, 0);
+    setEmitterRate(bloodFarId.current, 0);
+    setEmitterRate(spillSheetId.current, 0);
+    setEmitterRate(spillRunId.current, 0);
+    setEmitterRate(healStreamId.current, 0);
+    light.off();
+  };
 
   useEffect(() => {
-    return () => {
-      outBuf.geo.dispose();
-      inBuf.geo.dispose();
-      outMat.dispose();
-      inMat.dispose();
-    };
-  }, [outBuf, inBuf, outMat, inMat]);
+    const ownerId = shot.followOwnerId;
+    if (ownerId) playDrainLifeLoopSfx(ownerId);
 
-  useFrame((_, dt) => {
+    casterShellId.current = bloodSpark({
+      x: shot.x,
+      y: HAND_Y,
+      z: shot.z,
+      dirX: 0,
+      dirY: 0.2,
+      dirZ: 0,
+      rate: CASTER_SHELL_RATE,
+      spread: 0.72,
+      gravity: 0.55,
+      drag: 0.55,
+      noise: 0.45,
+      size: 0.14,
+      sizeEnd: 0.03,
+      life: 0.38,
+      lifeJitter: 0.2,
+      opacity: 0.88,
+      lod: LodRank.Core,
+      burst: 10,
+    });
+
+    casterRimId.current = bloodSpark({
+      x: shot.x,
+      y: HAND_Y,
+      z: shot.z,
+      dirX: 0,
+      dirY: -0.15,
+      dirZ: 0,
+      rate: CASTER_RIM_RATE,
+      spread: 0.55,
+      gravity: 1.4,
+      drag: 0.35,
+      noise: 0.3,
+      size: 0.1,
+      sizeEnd: 0.022,
+      life: 0.42,
+      lifeJitter: 0.22,
+      opacity: 0.7,
+      color0: "#f87171",
+      color1: "#b91c1c",
+      color2: "#450a0a",
+      lod: LodRank.Trail,
+      burst: 4,
+    });
+
+    bloodHandId.current = bloodSpark({
+      x: shot.x,
+      y: HAND_Y,
+      z: shot.z,
+      dirX: 0,
+      dirY: -0.15,
+      dirZ: BLOOD_SPEED,
+      rate: BLOOD_HAND_RATE,
+      spread: 0.09,
+      gravity: 0.85,
+      drag: 0.08,
+      noise: 0.22,
+      size: 0.12,
+      sizeEnd: 0.028,
+      life: 0.42,
+      lifeJitter: 0.25,
+      opacity: 0.92,
+      lod: LodRank.Core,
+      burst: 6,
+    });
+
+    bloodMidId.current = bloodSpark({
+      x: shot.x,
+      y: HAND_Y,
+      z: shot.z,
+      dirX: 0,
+      dirY: -0.1,
+      dirZ: BLOOD_SPEED,
+      rate: BLOOD_MID_RATE,
+      spread: 0.11,
+      gravity: 1.0,
+      drag: 0.1,
+      noise: 0.28,
+      size: 0.1,
+      sizeEnd: 0.022,
+      life: 0.4,
+      lifeJitter: 0.3,
+      opacity: 0.82,
+      color0: "#fca5a5",
+      color1: "#dc2626",
+      color2: "#450a0a",
+      lod: LodRank.Trail,
+      burst: 4,
+    });
+
+    bloodFarId.current = bloodSpark({
+      x: shot.x,
+      y: HAND_Y,
+      z: shot.z,
+      dirX: 0,
+      dirY: -0.08,
+      dirZ: BLOOD_SPEED * 0.85,
+      rate: BLOOD_FAR_RATE,
+      spread: 0.12,
+      gravity: 1.15,
+      drag: 0.12,
+      noise: 0.3,
+      size: 0.09,
+      sizeEnd: 0.02,
+      life: 0.36,
+      lifeJitter: 0.3,
+      opacity: 0.75,
+      color0: "#f87171",
+      color1: "#b91c1c",
+      color2: "#1a0505",
+      lod: LodRank.Trail,
+      burst: 3,
+    });
+
+    spillSheetId.current = bloodSpark({
+      x: shot.x,
+      y: TARGET_Y,
+      z: shot.z,
+      dirX: 0,
+      dirY: -1.8,
+      dirZ: 0,
+      rate: 0,
+      spread: 0.14,
+      gravity: 6.2,
+      drag: 0.04,
+      noise: 0.08,
+      size: 0.2,
+      sizeEnd: 0.05,
+      life: 0.85,
+      lifeJitter: 0.2,
+      opacity: 0.95,
+      rotRate: 0.15,
+      lod: LodRank.Core,
+      burst: 0,
+    });
+
+    spillRunId.current = bloodSpark({
+      x: shot.x,
+      y: TARGET_Y,
+      z: shot.z,
+      dirX: 0,
+      dirY: -2.8,
+      dirZ: 0,
+      rate: 0,
+      spread: 0.22,
+      gravity: 5.4,
+      drag: 0.06,
+      noise: 0.12,
+      size: 0.12,
+      sizeEnd: 0.025,
+      life: 1.05,
+      lifeJitter: 0.25,
+      opacity: 0.82,
+      color0: "#f87171",
+      color1: "#b91c1c",
+      color2: "#450a0a",
+      rotRate: 0.1,
+      lod: LodRank.Trail,
+      burst: 0,
+    });
+
+    // Homing stream — living leaves steer toward the casting hand each sim tick.
+    healStreamId.current = healLeaf({
+      x: shot.x,
+      y: HAND_Y,
+      z: shot.z,
+      dirX: 0,
+      dirY: 0.15,
+      dirZ: -HEAL_SPEED,
+      rate: 0,
+      spread: 0.12,
+      gravity: 0.02,
+      drag: 0.4,
+      noise: 0.1,
+      life: 2.4,
+      lifeJitter: 0.12,
+      lod: LodRank.Core,
+      burst: 0,
+      homeStrength: HEAL_HOME_STRENGTH,
+      homeKillRadius: HEAL_HOME_KILL,
+    });
+
+    return () => {
+      if (ownerId) stopDrainLifeLoopSfx(ownerId);
+      const ids = [
+        casterShellId,
+        casterRimId,
+        bloodHandId,
+        bloodMidId,
+        bloodFarId,
+        spillSheetId,
+        spillRunId,
+        healStreamId,
+      ];
+      for (const ref of ids) {
+        if (ref.current >= 0) killEmitter(ref.current);
+        ref.current = -1;
+      }
+      light.off();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shot.x/z are spawn seeds only
+  }, [shot.followOwnerId, shot.key, light]);
+
+  useFrame(() => {
     if (done.current) return;
-    const safeDt = Math.min(0.05, Math.max(0, dt));
 
     const ageMs = performance.now() - shot.born;
     const life = lifeMs.current;
     if (ageMs >= life) {
       done.current = true;
-      if (root.current) root.current.visible = false;
+      silenceAll();
+      if (shot.followOwnerId) stopDrainLifeLoopSfx(shot.followOwnerId);
       shot.life = Math.min(shot.life, ageMs);
       return;
     }
 
-    // Absolute ms envelope — percentage softEnvelope breaks on long hold lifetimes
-    // (first frame fade≈0 would kill the shot immediately).
     const fadeIn = smooth01(ageMs / 120);
     const fadeOut = ageMs > life - 280 ? smooth01((life - ageMs) / 280) : 1;
     const fade = fadeIn * fadeOut;
     if (fade <= 0.01 && ageMs > 160) {
       done.current = true;
-      if (root.current) root.current.visible = false;
+      silenceAll();
+      if (shot.followOwnerId) stopDrainLifeLoopSfx(shot.followOwnerId);
       shot.life = Math.min(shot.life, ageMs);
       return;
     }
@@ -235,97 +405,116 @@ export function LifeLeechEffect({
       shot.followOwnerId ?? "",
       { circles, boxes },
     );
-    /** Green return only while a living body soft-stops the aim ray (not walls / empty air). */
     const hittingTarget = maxLen < wallLen - 0.08;
+    const hitBody = hittingTarget
+      ? findConeHitBody(origin, pose.current.yaw, maxLen, wallLen, bodies)
+      : null;
     const grow = smooth01(Math.min(1, ageMs / Math.max(80, shot.growMs ?? 140)));
     liveLen.current = THREE.MathUtils.lerp(SPAWN, Math.max(SPAWN, maxLen), grow);
 
-    if (root.current) {
-      root.current.visible = true;
-      root.current.position.set(pose.current.x, 0, pose.current.z);
-      root.current.rotation.y = pose.current.yaw;
-    }
+    const fx = Math.sin(pose.current.yaw);
+    const fz = Math.cos(pose.current.yaw);
+
+    const h = resolveHandPose(
+      hand.current,
+      shot.followOwnerId,
+      pose.current.x,
+      pose.current.z,
+      fx,
+      fz,
+    );
+    const hx = h.x;
+    const hy = h.y;
+    const hz = h.z;
 
     const len = liveLen.current;
+    const midAlong = SPAWN + Math.max(0.35, (len - SPAWN) * 0.4);
+    const farAlong = SPAWN + Math.max(0.55, (len - SPAWN) * 0.72);
+    const tipAlong = Math.max(SPAWN + 0.4, len - 0.12);
+    const mx = pose.current.x + fx * midAlong;
+    const mz = pose.current.z + fz * midAlong;
+    const farX = pose.current.x + fx * farAlong;
+    const farZ = pose.current.z + fz * farAlong;
+    const tipY = TARGET_Y;
 
-    if (fade > 0.12) {
-      spawnAcc.current += safeDt;
-      const emitEvery = 0.014;
-      while (spawnAcc.current >= emitEvery) {
-        spawnAcc.current -= emitEvery;
-        const out = outPool.current.find((m) => !m.alive);
-        if (out) spawnOutMote(out, len);
-        if (hittingTarget) {
-          const inn = inPool.current.find((m) => !m.alive);
-          if (inn) spawnInMote(inn, len);
-        }
-        if (Math.random() < 0.65) {
-          const extraOut = outPool.current.find((m) => !m.alive);
-          if (extraOut) spawnOutMote(extraOut, len);
-        }
-        if (hittingTarget && Math.random() < 0.65) {
-          const extraIn = inPool.current.find((m) => !m.alive);
-          if (extraIn) spawnInMote(extraIn, len);
-        }
-      }
+    // Spill + leaf origin: inside the hit body (chest), not the ray tip in empty air.
+    const body = resolveImpactPoint(
+      impact.current,
+      hitBody,
+      pose.current.x + fx * tipAlong,
+      tipY,
+      pose.current.z + fz * tipAlong,
+      fx,
+      fz,
+    );
+    const bodyX = body.x;
+    const bodyY = body.y;
+    const bodyZ = body.z;
+
+    const outDx = fx * BLOOD_SPEED;
+    const outDz = fz * BLOOD_SPEED;
+
+    const bloodScale = fade > 0.12 ? fade : 0;
+    const hitScale = bloodScale > 0 && hittingTarget ? fade : 0;
+
+    if (bloodScale > 0.05) {
+      const pulse = 0.85 + Math.sin(ageMs * 0.014) * 0.15;
+      light.emit(
+        hx,
+        hy,
+        hz,
+        BLOOD_MID,
+        HAND_LIGHT_INTENSITY * bloodScale * pulse,
+        HAND_LIGHT_DIST,
+      );
+    } else {
+      light.off();
     }
 
-    const stepPool = (
-      pool: Mote[],
-      buf: ReturnType<typeof makeParticleBuffers>,
-      pts: RefObject<THREE.Points | null>,
-    ) => {
-      let living = 0;
-      for (let i = 0; i < pool.length; i++) {
-        const p = pool[i]!;
-        if (!p.alive) {
-          buf.positions[i * 3 + 1] = -999;
-          buf.sizes[i] = 0;
-          buf.alphas[i] = 0;
-          continue;
-        }
-        p.age += safeDt;
-        if (p.age >= p.life) {
-          p.alive = false;
-          buf.positions[i * 3 + 1] = -999;
-          buf.sizes[i] = 0;
-          buf.alphas[i] = 0;
-          continue;
-        }
-        const u = p.age / p.life;
-        p.x += p.vx * safeDt;
-        p.y += p.vy * safeDt;
-        p.z += p.vz * safeDt;
-        if (p.z > len + 0.2 || p.z < SPAWN - 0.15) {
-          p.alive = false;
-          buf.positions[i * 3 + 1] = -999;
-          buf.sizes[i] = 0;
-          buf.alphas[i] = 0;
-          continue;
-        }
-        buf.positions[i * 3] = p.x;
-        buf.positions[i * 3 + 1] = p.y;
-        buf.positions[i * 3 + 2] = p.z;
-        const appear = THREE.MathUtils.smoothstep(u, 0, 0.1);
-        const out = (1 - u) * (1 - u);
-        buf.sizes[i] = p.size * appear * (30 + 8 * fade);
-        buf.alphas[i] = appear * out * fade * 0.98;
-        living++;
-      }
-      buf.geo.attributes.position!.needsUpdate = true;
-      buf.geo.attributes.aSize!.needsUpdate = true;
-      buf.geo.attributes.aAlpha!.needsUpdate = true;
-      if (pts.current) pts.current.visible = living > 0;
-    };
+    setEmitterPose(casterShellId.current, hx, hy, hz, 0, 0.2, 0);
+    setEmitterPose(casterRimId.current, hx, hy - 0.02, hz, 0, -0.15, 0);
 
-    stepPool(outPool.current, outBuf, outPts);
-    stepPool(inPool.current, inBuf, inPts);
+    setEmitterPose(bloodHandId.current, hx, hy, hz, outDx, -0.15, outDz);
+    setEmitterPose(bloodMidId.current, mx, hy * 0.55 + tipY * 0.45, mz, outDx, -0.1, outDz);
+    setEmitterPose(bloodFarId.current, farX, tipY + 0.02, farZ, outDx * 0.85, -0.08, outDz * 0.85);
+
+    // Blood spill from inside the enemy torso
+    setEmitterPose(spillSheetId.current, bodyX, bodyY, bodyZ, fx * 0.1, -1.8, fz * 0.1);
+    setEmitterPose(spillRunId.current, bodyX, bodyY - 0.12, bodyZ, fx * 0.08, -2.8, fz * 0.08);
+
+    // Leaves leave the enemy torso and home to the live casting hand.
+    const toHandX = hx - bodyX;
+    const toHandY = hy - bodyY;
+    const toHandZ = hz - bodyZ;
+    const toHandDist = Math.hypot(toHandX, toHandY, toHandZ) || 1;
+    const spd = HEAL_SPEED;
+    setEmitterPose(
+      healStreamId.current,
+      bodyX,
+      bodyY,
+      bodyZ,
+      (toHandX / toHandDist) * spd,
+      (toHandY / toHandDist) * spd,
+      (toHandZ / toHandDist) * spd,
+    );
+    setEmitterHoming(
+      healStreamId.current,
+      hx,
+      hy,
+      hz,
+      HEAL_HOME_STRENGTH,
+      HEAL_HOME_KILL,
+    );
+
+    setEmitterRate(casterShellId.current, CASTER_SHELL_RATE * bloodScale);
+    setEmitterRate(casterRimId.current, CASTER_RIM_RATE * bloodScale);
+    setEmitterRate(bloodHandId.current, BLOOD_HAND_RATE * bloodScale);
+    setEmitterRate(bloodMidId.current, BLOOD_MID_RATE * bloodScale);
+    setEmitterRate(bloodFarId.current, BLOOD_FAR_RATE * bloodScale);
+    setEmitterRate(spillSheetId.current, SPILL_SHEET_RATE * hitScale);
+    setEmitterRate(spillRunId.current, SPILL_RUN_RATE * hitScale);
+    setEmitterRate(healStreamId.current, HEAL_STREAM_RATE * hitScale);
   });
 
-  return (
-    <group ref={root} position={[shot.x, 0, shot.z]} rotation={[0, shot.yaw, 0]}>
-      <points ref={outPts} geometry={outBuf.geo} material={outMat} frustumCulled={false} />
-      <points ref={inPts} geometry={inBuf.geo} material={inMat} frustumCulled={false} />
-    </group>
-  );
+  return null;
 }

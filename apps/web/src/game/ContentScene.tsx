@@ -25,7 +25,8 @@ import {
   WorldTargets,
   PickupOrbs,
 } from "./CombatVfx";
-import { SpellVfxBridge, VfxWorld } from "./vfx";
+import { ParticleWorldView, SpellVfxBridge, VfxWorld } from "./vfx";
+import { LabShapePreview } from "./vfx/engine";
 import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
 import type { PredictedPose } from "./useBaseCityRoom";
@@ -254,6 +255,8 @@ export function ContentScene({
       <Projectiles room={room} />
       <CombatFxMeshes />
       <DamagePopups />
+      <ParticleWorldView />
+      <LabShapePreview originRef={predictedRef} />
       <VfxWorld room={room} localSessionId={localSessionId} predictedRef={predictedRef} />
       <SpellVfxBridge room={room} />
       <CollisionDebugOverlay />

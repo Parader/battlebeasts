@@ -3,6 +3,7 @@ import { Room } from "colyseus.js";
 import {
   ABILITIES,
   SPELL_SLOTS,
+  abilityAppliedEffectNotes,
   formatAbilityArmoryStats,
   kitCooldownMs,
   normalizeLoadout,
@@ -212,6 +213,11 @@ function SlotIcon({
           {ability.description ? (
             <p className="bb-ability-tooltip__desc">{ability.description}</p>
           ) : null}
+          {abilityAppliedEffectNotes(ability).map((fx) => (
+            <p key={fx.name} className="bb-ability-tooltip__effect">
+              <strong>{fx.name}.</strong> {fx.description}
+            </p>
+          ))}
           <p className="bb-ability-tooltip__stats">{statsLine}</p>
           <TalentModList mods={mods} />
         </div>
@@ -351,6 +357,11 @@ function FlexSlotIcon({
           {ability.description ? (
             <p className="bb-ability-tooltip__desc">{ability.description}</p>
           ) : null}
+          {abilityAppliedEffectNotes(ability).map((fx) => (
+            <p key={fx.name} className="bb-ability-tooltip__effect">
+              <strong>{fx.name}.</strong> {fx.description}
+            </p>
+          ))}
           <p className="bb-ability-tooltip__stats">{statsLine}</p>
           <p className="bb-ability-tooltip__cost">
             {cost} Energy{affordable ? "" : " — not enough"}

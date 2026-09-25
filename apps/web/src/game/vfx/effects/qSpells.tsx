@@ -12,9 +12,14 @@ import { softEnvelope } from "../easing";
 import { AoeRimMarker } from "../components/AoeRimMarker";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { GroundDecal } from "../components/GroundDecal";
-import { createSmokePointMaterial } from "../materials/circlePoint";
 import { createRuneMaterial, tickRuneMaterial } from "../materials/rune";
 import { groundPresets } from "../presets/ground";
+import { burstElementRole } from "../engine";
+import {
+  killLightningCluster,
+  moveLightningCluster,
+  spawnLightningCluster,
+} from "../engine/lightningArcs";
 
 function useBasicMat(color: string, additive = true) {
   const mat = useMemo(
@@ -354,46 +359,35 @@ export function SpellbreakerEffect({
       }),
     [],
   );
-  const trailMat = useMemo(() => createSmokePointMaterial("#fde68a"), []);
-  const trailPos = useMemo(() => new Float32Array(8 * 3), []);
-  const trailSize = useMemo(() => new Float32Array(8), []);
-  const trailAlpha = useMemo(() => new Float32Array(8), []);
-  const trailGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(trailPos, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(trailSize, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(trailAlpha, 1));
-    return g;
-  }, [trailPos, trailSize, trailAlpha]);
-
-  const ZONE_MOTES = 22;
-  const motePos = useMemo(() => new Float32Array(ZONE_MOTES * 3), []);
-  const moteSize = useMemo(() => new Float32Array(ZONE_MOTES), []);
-  const moteAlpha = useMemo(() => new Float32Array(ZONE_MOTES), []);
-  const moteGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(motePos, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(moteSize, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(moteAlpha, 1));
-    return g;
-  }, [motePos, moteSize, moteAlpha]);
-  const moteMat = useMemo(() => createSmokePointMaterial("#c4b5fd"), []);
-  const moteSpecs = useMemo(
-    () =>
-      Array.from({ length: ZONE_MOTES }, (_, i) => ({
-        ang: (i / ZONE_MOTES) * Math.PI * 2 + 0.15,
-        radius: 0.35 + (i % 5) * 0.14,
-        baseY: 0.15 + (i % 4) * 0.12,
-        rise: 0.7 + (i % 3) * 0.25,
-        size: 0.05 + (i % 3) * 0.02,
-        speed: 0.18 + (i % 4) * 0.05,
-        phase: i * 0.47,
-        spin: 0.22 + (i % 3) * 0.08,
-      })),
-    [],
-  );
-
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw ?? 0 });
+  /** Zone crackle — one lab cluster, moved with the caster. Launch is a one-shot burst. */
+  const arcId = useRef(-1);
+
+  useEffect(() => {
+    if (isLaunch) {
+      burstElementRole("lightning", "cast", shot.x, 1.15, shot.z);
+      return;
+    }
+    burstElementRole("lightning", "impact", shot.x, 0.4, shot.z);
+    arcId.current = spawnLightningCluster(shot.x, 0.35, shot.z, {
+      strands: 3,
+      spreadMul: 0.45,
+      jitterMul: 0.6,
+      sag: 0.04,
+      tipGlow: 0.25,
+      length: Math.min(2.4, maxR * 0.55),
+      colorCore: "#f8fafc",
+      colorInner: "#c4b5fd",
+      colorOuter: "#8b5cf6",
+      colorHalo: "#4c1d95",
+    });
+    return () => {
+      if (arcId.current >= 0) killLightningCluster(arcId.current);
+      arcId.current = -1;
+    };
+    // One crackle per cast.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shot.key]);
 
   useFrame(() => {
     const ownerId = shot.followOwnerId;
@@ -447,17 +441,6 @@ export function SpellbreakerEffect({
         launchOrb.current.visible = true;
       }
       orbMat.opacity = 0.75 * fade;
-      for (let i = 0; i < 8; i++) {
-        const u = i / 7;
-        trailPos[i * 3] = fx * u * 0.15;
-        trailPos[i * 3 + 1] = y + u * 0.05;
-        trailPos[i * 3 + 2] = fz * u * 0.15;
-        trailSize[i] = (0.08 - u * 0.04) * 28;
-        trailAlpha[i] = fade * (1 - u) * 0.45;
-      }
-      trailGeo.attributes.position!.needsUpdate = true;
-      trailGeo.attributes.aSize!.needsUpdate = true;
-      trailGeo.attributes.aAlpha!.needsUpdate = true;
       return;
     }
 
@@ -485,25 +468,9 @@ export function SpellbreakerEffect({
     // Subtle — player must stay readable inside the zone.
     mat.opacity = 0.28 * opacity;
     wash.opacity = 0.05 * opacity;
-
-    const tSec = age * 0.001;
-    for (let i = 0; i < ZONE_MOTES; i++) {
-      const spec = moteSpecs[i]!;
-      const cycle = (tSec * spec.speed + spec.phase) % 1;
-      const ang = spec.ang + tSec * spec.spin;
-      const r = Math.min(radius * 0.92, spec.radius * (0.55 + radius * 0.35));
-      const y = spec.baseY + cycle * spec.rise;
-      motePos[i * 3] = Math.cos(ang) * r;
-      motePos[i * 3 + 1] = y;
-      motePos[i * 3 + 2] = Math.sin(ang) * r;
-      const fade =
-        cycle < 0.15 ? cycle / 0.15 : cycle > 0.65 ? 1 - (cycle - 0.65) / 0.35 : 1;
-      moteSize[i] = spec.size * (0.85 + cycle * 0.7) * 30;
-      moteAlpha[i] = Math.max(0, fade) * opacity * 0.55;
+    if (arcId.current >= 0) {
+      moveLightningCluster(arcId.current, pose.current.x, 0.35, pose.current.z);
     }
-    moteGeo.attributes.position!.needsUpdate = true;
-    moteGeo.attributes.aSize!.needsUpdate = true;
-    moteGeo.attributes.aAlpha!.needsUpdate = true;
   });
 
   if (isLaunch) {
@@ -513,9 +480,6 @@ export function SpellbreakerEffect({
           <sphereGeometry args={[1, 12, 10]} />
           <primitive object={orbMat} attach="material" />
         </mesh>
-        <points geometry={trailGeo} frustumCulled={false} renderOrder={23}>
-          <primitive object={trailMat} attach="material" />
-        </points>
       </group>
     );
   }
@@ -530,25 +494,6 @@ export function SpellbreakerEffect({
         <ringGeometry args={[0.88, 1.0, 48]} />
         <primitive object={mat} attach="material" />
       </mesh>
-      <points geometry={moteGeo} frustumCulled={false} renderOrder={21}>
-        <primitive object={moteMat} attach="material" />
-      </points>
-      <AdditiveParticleBurst
-        color="#ddd6fe"
-        origin={[0, 0.35, 0]}
-        count={24}
-        life={0.55}
-        speed={1.6}
-        speedSpread={1.2}
-        size={0.1}
-        sizeEnd={0.02}
-        lift={1.4}
-        upBias={0.55}
-        gravity={2.4}
-        fadeIn={0.1}
-        stagger={0.35}
-        trigger={shot.key}
-      />
     </group>
   );
 }

@@ -44,7 +44,7 @@ void main() {
 /**
  * Procedural ground decal — shape mask + elemental style in one shader.
  * uShape: 0 circle, 1 ring, 2 cone, 3 line, 4 rect, 5 arc
- * uStyle: 0 earth, 1 fire, 2 ice, 3 water, 4 wind, 5 poison
+ * uStyle: 0 earth, 1 fire, 2 ice, 3 water, 4 wind, 5 poison, 6 signal (telegraph)
  */
 const FRAG = /* glsl */ `
 uniform vec3 uColorCore;
@@ -69,30 +69,36 @@ uniform float uSectorRanges[24];
 varying vec2 vUv;
 ${NOISE_GLSL}
 
-float shapeMask(vec2 p) {
+float shapeMask(vec2 p, float prog) {
   float r = length(p);
   float ang = atan(p.x, -p.y);
   float soft = max(0.002, uSoftness);
   float edgeNoise = fbm(p * uNoiseScale * 0.9 + 2.3);
+  float pClamped = max(prog, 0.02);
 
   if (uShape < 0.5) {
+    // Telegraph (signal): clean full disc — outline owns the rim, progress is interior-only
+    if (uStyle > 5.5) {
+      float edge = pClamped;
+      return 1.0 - smoothstep(edge - soft * 2.2, edge + soft, r);
+    }
     // Wind uses a smooth disc so radial streams aren't chopped by jagged lobes
     if (uStyle > 3.5 && uStyle < 4.5) {
-      float edge = max(uProgress, 0.02);
+      float edge = pClamped;
       return 1.0 - smoothstep(edge - soft * 5.0, edge + soft * 3.0, r);
     }
     // Jagged blast radius — warp + secondary lobe so it isn't a clean disk
     float lobe = fbm(p * uNoiseScale * 1.6 + 7.1);
-    float edge = uProgress * mix(0.48, 1.22, edgeNoise * 0.7 + lobe * 0.3);
+    float edge = pClamped * mix(0.48, 1.22, edgeNoise * 0.7 + lobe * 0.3);
     return 1.0 - smoothstep(edge - soft * 3.2, edge + soft * 0.55, r);
   }
   if (uShape < 1.5) {
-    float mid = mix(uInnerRatio, 1.0, uProgress) * mix(0.82, 1.0, edgeNoise);
+    float mid = mix(uInnerRatio, 1.0, pClamped) * mix(0.82, 1.0, edgeNoise);
     return 1.0 - smoothstep(0.0, uRingWidth + soft, abs(r - mid));
   }
   if (uShape < 2.5) {
     float inAngle = 1.0 - smoothstep(uHalfAngle, uHalfAngle + soft * 2.0, abs(ang));
-    float maxR = uProgress;
+    float maxR = pClamped;
     if (uSectorCount > 0.5) {
       float span = max(uHalfAngle * 2.0, 0.0001);
       float u = clamp((ang + uHalfAngle) / span, 0.0, 0.9999);
@@ -102,23 +108,28 @@ float shapeMask(vec2 p) {
       float fr = fract(fi);
       maxR = mix(uSectorRanges[i0], uSectorRanges[i1], fr);
     }
+    // Telegraph cone: clean pie — full outline always when prog=1
+    if (uStyle > 5.5) {
+      float inRange = 1.0 - smoothstep(maxR - soft * 2.0, maxR + soft, r);
+      return inAngle * inRange;
+    }
     float inRange = 1.0 - smoothstep(maxR * mix(0.85, 1.1, edgeNoise) - soft, maxR + soft * 0.35, r);
     return inAngle * inRange;
   }
   if (uShape < 3.5) {
-    float along = 1.0 - smoothstep(uProgress - soft, uProgress + soft, abs(p.y) / max(uProgress, 0.001));
+    float along = 1.0 - smoothstep(pClamped - soft, pClamped + soft, abs(p.y) / max(pClamped, 0.001));
     float across = 1.0 - smoothstep(uRingWidth, uRingWidth + soft, abs(p.x));
     float forward = step(-0.02, p.y);
     return along * across * forward;
   }
   if (uShape < 4.5) {
-    float halfL = 0.5 * uAspect * uProgress;
-    float halfW = 0.5 * uProgress / max(uAspect, 0.15);
+    float halfL = 0.5 * uAspect * pClamped;
+    float halfW = 0.5 * pClamped / max(uAspect, 0.15);
     float dx = 1.0 - smoothstep(halfW, halfW + soft, abs(p.x));
     float dy = 1.0 - smoothstep(halfL, halfL + soft, abs(p.y));
     return dx * dy;
   }
-  float mid = mix(uInnerRatio, 0.85, uProgress) * mix(0.9, 1.05, edgeNoise);
+  float mid = mix(uInnerRatio, 0.85, pClamped) * mix(0.9, 1.05, edgeNoise);
   float band = 1.0 - smoothstep(0.0, uRingWidth + soft, abs(r - mid));
   float wedge = 1.0 - smoothstep(uArcSpan * 0.5, uArcSpan * 0.5 + soft * 2.0, abs(ang));
   return band * wedge;
@@ -126,7 +137,9 @@ float shapeMask(vec2 p) {
 
 void main() {
   vec2 p = (vUv - 0.5) * 2.0;
-  float mask = shapeMask(p);
+  // Telegraph (signal): shape mask always full — progress only drives interior fill
+  float edgeProg = uStyle > 5.5 ? 1.0 : uProgress;
+  float mask = shapeMask(p, edgeProg);
   if (mask < 0.001) discard;
 
   float r = length(p);
@@ -185,10 +198,33 @@ void main() {
     col = mix(uColorEdge, mix(uColorMid, uColorCore, heat), heat);
     alpha *= 0.5 + heat * 0.7;
   } else if (style < 2.5) {
-    float rim = smoothstep(0.55, 0.95, mask) * (0.4 + n2);
-    col = mix(uColorMid, uColorCore, rim);
-    col = mix(col, uColorEdge, 1.0 - breakAmt);
-    alpha *= 0.45 + rim * 0.55;
+    // ice / frost — elemental sandbox FROST powder (shaded height, not flat rim wash)
+    float seed = 4.2;
+    float sharp = 1.5;
+    vec2 q = p * max(1.2, uNoiseScale * 0.22);
+    vec2 warp = vec2(fbm(q * 0.55 + seed), fbm(q * 0.55 + seed + 5.7)) * 0.45;
+    float lobes = fbm(q * 0.8 + warp + seed);
+    float reach = r * (1.0 - lobes * 0.40);
+    float cover = mask * smoothstep(0.98, 0.35, reach);
+    if (cover < 0.004) discard;
+
+    // Cheap snow height: drift + voronoi-ish via fbm lobes (full voronoi in lab mark)
+    float drift = fbm(q * 0.85 + seed);
+    float slabs = fbm(q * 1.6 + seed * 7.0);
+    float h = drift * 0.55 + slabs * 0.35 + n * 0.15;
+    float e = 0.08;
+    float hx = fbm((q + vec2(e, 0.0)) * 0.85 + seed);
+    float hy = fbm((q + vec2(0.0, e)) * 0.85 + seed);
+    float lambert = clamp(0.55 + (h - hx) * 3.0 + (h - hy) * 1.4, 0.0, 1.0);
+    float shade = 0.36 + 0.64 * pow(lambert, 0.8);
+
+    float lie = smoothstep(0.10, 0.52, cover * (0.34 + 0.78 * h));
+    col = mix(uColorEdge * 0.55, mix(uColorMid, uColorCore, 0.45), shade);
+    float glint = pow(n2, 6.0) * lie;
+    col = mix(col, uColorCore, glint * 0.5);
+    float lip = smoothstep(0.10, 0.0, abs(reach - uProgress * 0.85)) * cover * 0.4;
+    col = mix(col, mix(uColorEdge, uColorCore, 0.6), lip);
+    alpha = clamp(lie * 0.95 + lip * 0.25, 0.0, 1.0) * mask;
   } else if (style < 3.5) {
     float rip = sin((r * 18.0 - uTime * 4.0) + n * 3.0) * 0.5 + 0.5;
     col = mix(uColorEdge, uColorCore, rip * (1.0 - r));
@@ -224,11 +260,25 @@ void main() {
       col = mix(uColorEdge, mix(uColorMid, uColorCore, spokes), gust);
       alpha *= 0.3 + gust * 0.7;
     }
-  } else {
+  } else if (style < 5.5) {
     float pulse = 0.65 + 0.35 * sin(uTime * 3.0 + n * 6.0);
     float blot = smoothstep(0.35, 0.75, n2);
     col = mix(uColorEdge, mix(uColorMid, uColorCore, blot), blot);
     alpha *= blot * pulse;
+  } else {
+    // signal / telegraph — washed charge disc (rim from AoeRimMarker).
+    // Soft leading edge at the progress front — reaches full radius when progress=1
+    float progressFade = 0.08;
+    float inCharge = 1.0 - smoothstep(uProgress, uProgress + progressFade, r);
+    inCharge *= mask;
+    if (inCharge < 0.01) discard;
+
+    float noiseMul = mix(0.7, 1.0, clamp(n * n2, 0.0, 1.0));
+    vec3 wash = mix(uColorEdge, uColorMid, 0.75 + 0.25 * n);
+    col = wash * noiseMul;
+
+    alpha = inCharge * 0.38;
+    if (alpha < 0.01) discard;
   }
 
   // Lifetime fade comes only from uOpacity (component). Never fade by uProgress —

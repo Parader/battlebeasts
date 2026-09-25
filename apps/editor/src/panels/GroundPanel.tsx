@@ -1,12 +1,16 @@
 import {
   DEFAULT_GROUND_LAYERS,
+  GROUND_MATERIALS,
+  GROUND_MATERIAL_GROUP_ORDER,
+  groundMaterial,
   groundMaterialsByGroup,
   groundResFor,
   MAX_GROUND_HEIGHT_SCALE,
   MAX_GROUND_LAYERS,
   type MapGround,
 } from "@battlebeasts/shared";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { groundUnusable, useGroundUnusableVersion } from "../ground/unusable";
 import { docStore, useEditorSlice } from "../state/docStore";
 import { terrain } from "../state/terrain";
 
@@ -136,6 +140,186 @@ function anchorLabel(ax: number, az: number): string {
   return name ? `Anchor ${name}` : "Anchor centre";
 }
 
+/** Layer dropdowns + a cull list so unused textures stay out of the way. */
+function MaterialPickers({ ground, onChange }: { ground: Painted; onChange: (g: Painted) => void }) {
+  const marksVersion = useGroundUnusableVersion();
+  const [showHidden, setShowHidden] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+
+  useEffect(() => {
+    void groundUnusable.load();
+  }, []);
+
+  const selectedKey = ground.layers.slice(0, MAX_GROUND_LAYERS).join("|");
+
+  const groups = useMemo(() => {
+    void marksVersion;
+    const selected = new Set(selectedKey.split("|").filter(Boolean));
+    const exclude = showHidden ? undefined : groundUnusable.asSet();
+    const base = groundMaterialsByGroup({ excludeIds: exclude });
+
+    // Currently-selected layers must stay in the dropdown even if hidden, or
+    // the <select> value would point at a missing option.
+    if (showHidden || selected.size === 0) return base;
+
+    const byGroup = new Map(base.map((g) => [g.group, g.items.slice()]));
+    for (const id of selected) {
+      if (!exclude?.has(id)) continue;
+      const m = groundMaterial(id);
+      if (!m) continue;
+      const list = byGroup.get(m.group) ?? [];
+      if (!list.some((x) => x.id === id)) list.push(m);
+      byGroup.set(m.group, list);
+    }
+
+    return GROUND_MATERIAL_GROUP_ORDER.filter((group) => byGroup.has(group)).map((group) => ({
+      group,
+      items: (byGroup.get(group) ?? []).slice().sort((a, b) => a.label.localeCompare(b.label)),
+    }));
+  }, [marksVersion, showHidden, selectedKey]);
+
+  return (
+    <>
+      <label style={{ marginTop: 6, display: "block" }}>Materials</label>
+      {Array.from({ length: MAX_GROUND_LAYERS }, (_, i) => (
+        <div className="row" key={i}>
+          <label style={{ width: 18 }}>{i + 1}</label>
+          <select
+            value={gLayer(ground, i)}
+            onChange={(e) => {
+              const layers = [...ground.layers];
+              while (layers.length < MAX_GROUND_LAYERS) layers.push(DEFAULT_GROUND_LAYERS[layers.length]!);
+              layers[i] = e.target.value;
+              onChange({ ...ground, layers });
+            }}
+            style={{ flex: 1 }}
+          >
+            {groups.map(({ group, items }) => (
+              <optgroup key={group} label={group}>
+                {items.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                    {groundUnusable.has(m.id) ? " (hidden)" : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+      ))}
+
+      <div className="row" style={{ marginTop: 4, gap: 8, flexWrap: "wrap" }}>
+        <button type="button" onClick={() => setManageOpen((v) => !v)}>
+          {manageOpen ? "Close library" : "Manage library"}
+        </button>
+        {groundUnusable.size > 0 && (
+          <label className="muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+            Show hidden ({groundUnusable.size})
+          </label>
+        )}
+      </div>
+
+      {manageOpen && <MaterialLibraryManager />}
+    </>
+  );
+}
+
+function gLayer(ground: Painted, i: number): string {
+  return ground.layers[i] ?? "";
+}
+
+/**
+ * Full catalog with hide / restore. Mirrors the prop "unusable" cull: one
+ * click removes a texture from every layer dropdown without deleting files.
+ */
+function MaterialLibraryManager() {
+  const marksVersion = useGroundUnusableVersion();
+  const [query, setQuery] = useState("");
+  const [onlyHidden, setOnlyHidden] = useState(false);
+
+  void marksVersion;
+
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return groundMaterialsByGroup().map(({ group, items }) => ({
+      group,
+      items: items.filter((m) => {
+        if (onlyHidden && !groundUnusable.has(m.id)) return false;
+        if (!q) return true;
+        return m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q) || group.toLowerCase().includes(q);
+      }),
+    })).filter((g) => g.items.length > 0);
+  }, [query, onlyHidden, marksVersion]);
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        background: "var(--panel-2)",
+        border: "1px solid var(--line)",
+        borderRadius: 4,
+        maxHeight: 280,
+        overflow: "auto",
+      }}
+    >
+      <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
+        Hide textures you do not want in the layer lists. Hidden ones stay available to maps that
+        already use them; restore anytime. {GROUND_MATERIALS.length} in catalog, {groundUnusable.size}{" "}
+        hidden.
+      </div>
+      <div className="row" style={{ marginBottom: 6, gap: 6 }}>
+        <input
+          type="search"
+          placeholder="Filter…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <label className="muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+          <input type="checkbox" checked={onlyHidden} onChange={(e) => setOnlyHidden(e.target.checked)} />
+          Hidden only
+        </label>
+      </div>
+      {groups.map(({ group, items }) => (
+        <div key={group} style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>{group}</div>
+          {items.map((m) => {
+            const hidden = groundUnusable.has(m.id);
+            return (
+              <div
+                key={m.id}
+                className="row"
+                style={{
+                  gap: 6,
+                  opacity: hidden ? 0.55 : 1,
+                  marginBottom: 2,
+                }}
+              >
+                <span style={{ flex: 1, fontSize: 12 }}>{m.label}</span>
+                <button
+                  type="button"
+                  title={hidden ? "Restore to picker" : "Hide from picker"}
+                  onClick={() => groundUnusable.toggle(m.id)}
+                  style={{ fontSize: 11, padding: "2px 6px", minWidth: 56 }}
+                >
+                  {hidden ? "Restore" : "Hide"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      {groups.length === 0 && (
+        <div className="muted" style={{ fontSize: 11 }}>
+          No materials match.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function GroundPanel() {
   const doc = useEditorSlice((s) => s.doc);
   const g = doc.ground;
@@ -180,32 +364,7 @@ export function GroundPanel() {
 
       <ResizeControls ground={g} />
 
-      <label style={{ marginTop: 6, display: "block" }}>Materials</label>
-      {Array.from({ length: MAX_GROUND_LAYERS }, (_, i) => (
-        <div className="row" key={i}>
-          <label style={{ width: 18 }}>{i + 1}</label>
-          <select
-            value={g.layers[i] ?? ""}
-            onChange={(e) => {
-              const layers = [...g.layers];
-              while (layers.length < MAX_GROUND_LAYERS) layers.push(DEFAULT_GROUND_LAYERS[layers.length]!);
-              layers[i] = e.target.value;
-              setGround({ ...g, layers });
-            }}
-            style={{ flex: 1 }}
-          >
-            {groundMaterialsByGroup().map(({ group, items }) => (
-              <optgroup key={group} label={group}>
-                {items.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-      ))}
+      <MaterialPickers ground={g} onChange={setGround} />
 
       <div className="row" style={{ marginTop: 6 }}>
         <label>Height</label>

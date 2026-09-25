@@ -21,6 +21,7 @@ import { createHandShieldMaterial } from "./materials/handShield";
 import { createRiftArmRingMaterial } from "./effects/riftArmRing";
 import { createCooldownRingMaterial } from "./SpiritHusks";
 import { getSharedFireMaterial } from "./components/FireParticleField";
+import { createWarmBillboardMesh, getBillboardProto } from "./engine/billboardMaterial";
 import { warmAuraWispMaterials } from "./auraWispTextures";
 import { createChakraVeilMaterial } from "./auraChakraVeil";
 import { createAuraEyeMaterial } from "./auraEyesTexture";
@@ -36,7 +37,10 @@ import {
   GEO_SPHERE_HI,
   GEO_SPHERE_MD,
   GEO_SPIKE_STALK,
+  GEO_PLANE_1,
 } from "./sharedGeo";
+import { createLabGroundMarkMaterial } from "./engine/labShapeMaterials";
+import { createIceShardGeometry } from "./engine/iceCrystalGeometry";
 
 type WarmHandle = {
   group: THREE.Group;
@@ -109,6 +113,7 @@ export function warmSpellMaterials(
     GEO_SPHERE_MD,
     GEO_RING_IMPACT,
     GEO_SPIKE_STALK,
+    GEO_PLANE_1,
   ]) {
     group.add(new THREE.Mesh(geo, warmGeoMat));
   }
@@ -144,6 +149,33 @@ export function warmSpellMaterials(
   addMesh(acquireEnergyBallMaterial("#84cc16", 0.01)); // poison dart
   addMesh(acquireEnergyRingMaterial("#7dd3fc", 0.01));
   addMesh(createGroundDecalMaterial(groundPresets.iceFrost, "circle"));
+  // Ice Lance pin / explode frost sheet (ShaderMaterial — compile once here).
+  addMesh(
+    createLabGroundMarkMaterial(
+      "frost",
+      { hot: "#e0f2fe", mid: "#38bdf8", edge: "#79b6dd" },
+      { opacity: 0.01, additive: false },
+    ),
+  );
+  addMesh(
+    createLabGroundMarkMaterial(
+      "spiral",
+      { hot: "#a7f3d0", mid: "#6ee7b7", edge: "#14532d" },
+      { opacity: 0.01, additive: false },
+    ),
+  );
+  addMesh(
+    createLabGroundMarkMaterial(
+      "scorch",
+      { hot: "#fecaca", mid: "#ef4444", edge: "#450a0a" },
+      { opacity: 0.01, additive: false, pattern: "dissolve-noise" },
+    ),
+  );
+  for (const seed of [3, 7, 11, 15, 19, 23, 29]) {
+    const shardGeo = createIceShardGeometry(seed, 5);
+    ownedGeos.push(shardGeo);
+    group.add(new THREE.Mesh(shardGeo, warmGeoMat));
+  }
   addMesh(
     new THREE.MeshBasicMaterial({
       color: "#e0f2fe",
@@ -235,6 +267,11 @@ export function warmSpellMaterials(
   fireGeo.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array([1, 1, 1, 1]), 4));
   fireGeo.setAttribute("aAngle", new THREE.BufferAttribute(new Float32Array([0]), 1));
   group.add(new THREE.Points(fireGeo, fireMat));
+  // Pooled billboard engine (shared proto — do not dispose).
+  const billboardWarm = createWarmBillboardMesh();
+  skipDispose.add(getBillboardProto());
+  ownedGeos.push(billboardWarm.geometry);
+  group.add(billboardWarm);
   for (const auraMat of warmAuraWispMaterials()) {
     skipDispose.add(auraMat);
     group.add(new THREE.Points(fireGeo, auraMat));

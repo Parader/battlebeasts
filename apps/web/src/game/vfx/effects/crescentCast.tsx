@@ -1,95 +1,56 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
-import { softEnvelope, smooth01 } from "../easing";
+import { softEnvelope } from "../easing";
 import { useSpellLight } from "../spellLights";
+import {
+  createLabMeleeSlashMaterial,
+  tickLabMeleeSlash,
+} from "../engine/labShapeMaterials";
+import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
+import { getWindStreakTexture } from "../windStreakTexture";
+import { CRESCENT_SPELL_RANGE } from "../crescentSpawn";
 
-const SEGMENTS = 36;
-const INDEX_PER_SEG = 6;
+/**
+ * Bright outer of the slash band (shader soft-falls off by r1=0.88).
+ * Size the disc so this visible edge lands at tipReach, not the faint rim.
+ */
+const BAND_VISUAL = 0.68;
+/** Visual reach vs ability range (1 = match; <1 pulls tip in). */
+const VFX_REACH_MUL = 0.88;
 
-/** Per-swing placement — cycles through a 3-hit chain. */
+/**
+ * Per-swing poses — true world-horizontal arcs (no tip/yawLean).
+ * Tip pitch / lean foreshortens differently by facing vs camera; keep flat so
+ * forward reach stays constant. Wipe is shader-driven (not disc roll) so the
+ * tip stays on character-forward at full length.
+ */
 const SWING_POSES = [
   {
     flip: 1 as const,
-    y: 0.88,
-    forward: 1.05,
-    lateral: -0.18,
-    yawBias: -0.28,
-    pitch0: 0.38,
-    pitch1: 0.05,
-    roll0: 0.22,
-    roll1: -0.04,
-    scale: 0.92,
+    y: 1.05,
+    hubFrac: 0.24,
+    lateral: -0.02,
+    /** Lateral vs forward after disc lay-flat (scaleY / scaleX). */
+    widthMul: 0.84,
   },
   {
     flip: -1 as const,
-    y: 1.28,
-    forward: 1.32,
-    lateral: 0.22,
-    yawBias: 0.32,
-    pitch0: -0.12,
-    pitch1: 0.18,
-    roll0: -0.28,
-    roll1: 0.08,
-    scale: 1.05,
+    y: 1.15,
+    hubFrac: 0.26,
+    lateral: 0.02,
+    widthMul: 0.86,
   },
   {
     flip: 1 as const,
-    y: 1.08,
-    forward: 0.95,
-    lateral: 0.06,
-    yawBias: 0.1,
-    pitch0: 0.48,
-    pitch1: -0.15,
-    roll0: 0.08,
-    roll1: -0.18,
-    scale: 0.98,
+    y: 0.98,
+    hubFrac: 0.22,
+    lateral: 0,
+    widthMul: 0.82,
   },
 ] as const;
-
-function buildSwoopRibbon(flip: number): THREE.BufferGeometry {
-  const halfWidth = 0.09;
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-
-  for (let i = 0; i <= SEGMENTS; i++) {
-    const t = i / SEGMENTS;
-    const angle = THREE.MathUtils.lerp(-1.05, 1.05, t);
-    const radius = 1.05 + Math.sin(t * Math.PI) * 0.22;
-    const x = flip * Math.sin(angle) * radius;
-    const z = Math.cos(angle) * radius * 0.72 - 0.05;
-    const y = Math.sin(t * Math.PI) * 0.18 - 0.04;
-
-    const widthMul = 0.35 + Math.sin(t * Math.PI) * 0.65;
-    const w = halfWidth * widthMul;
-
-    const tx = flip * Math.cos(angle);
-    const tz = -Math.sin(angle) * 0.72;
-    const len = Math.hypot(tx, tz) || 1;
-    const nx = -tz / len;
-    const nz = tx / len;
-
-    positions.push(x - nx * w, y, z - nz * w);
-    positions.push(x + nx * w, y, z + nz * w);
-    uvs.push(t, 0, t, 1);
-
-    if (i < SEGMENTS) {
-      const a = i * 2;
-      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-  geo.setDrawRange(0, 0);
-  return geo;
-}
 
 function resolvePose(shot: OneShotEffect) {
   const idx =
@@ -100,7 +61,7 @@ function resolvePose(shot: OneShotEffect) {
 }
 
 /**
- * White crescent swoop — draws along its length and follows the caster while moving.
+ * Crescent swoop — horizontal wind slash in front of the caster; tip at spell range.
  */
 export function CrescentCastEffect({
   shot,
@@ -111,39 +72,71 @@ export function CrescentCastEffect({
 }) {
   const root = useRef<THREE.Group>(null);
   const blade = useRef<THREE.Group>(null);
+  const slash = useRef<THREE.Mesh>(null);
+  const ghost = useRef<THREE.Mesh>(null);
   const lightAt = useRef<THREE.Object3D>(null);
   const light = useSpellLight();
   const swing = useMemo(() => resolvePose(shot), [shot.variant, shot.key]);
-  const geo = useMemo(() => buildSwoopRibbon(swing.flip), [swing.flip]);
-  const glowGeo = useMemo(() => buildSwoopRibbon(swing.flip), [swing.flip]);
 
-  const mat = useMemo(() => {
+  const slashMat = useMemo(
+    () => createLabMeleeSlashMaterial("#ffffff", "#e2e8f0", "#64748b"),
+    [],
+  );
+  const ghostMat = useMemo(
+    () => createLabMeleeSlashMaterial("#f8fafc", "#cbd5e1", "#475569"),
+    [],
+  );
+  const windMat = useMemo(() => {
+    const map = getWindStreakTexture();
     return new THREE.MeshBasicMaterial({
-      color: shot.color,
+      map,
+      color: "#cbd5e1",
       transparent: true,
       opacity: 0,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
-    });
-  }, [shot.color]);
-
-  const glowMat = useMemo(() => {
-    return new THREE.MeshBasicMaterial({
-      color: "#ffffff",
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
+      toneMapped: false,
     });
   }, []);
 
+  const discGeo = useMemo(() => new THREE.CircleGeometry(1, 56), []);
+
+  useEffect(
+    () => () => {
+      slashMat.dispose();
+      ghostMat.dispose();
+      windMat.dispose();
+      discGeo.dispose();
+    },
+    [slashMat, ghostMat, windMat, discGeo],
+  );
+
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw });
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     const age = (performance.now() - shot.born) / shot.life;
-    const forward = shot.followSpawnOffset ?? swing.forward;
+
+    // Size = max range with a visual-only overshoot so the tip reads as contacting.
+    // Close hits pull the hub hard toward the caster (same size, nearer the body).
+    const sizeReach = CRESCENT_SPELL_RANGE * VFX_REACH_MUL;
+    const aimDist = Math.max(
+      0.7,
+      Math.min(CRESCENT_SPELL_RANGE, shot.followSpawnOffset ?? CRESCENT_SPELL_RANGE),
+    );
+    const sizeHub = sizeReach * swing.hubFrac;
+    // After Rz(±π/2)+Rx(-π/2): disc +X → forward, disc +Y → lateral.
+    // Flat disc (no tip) → forward reach is orientation-stable.
+    const radiusAlong = Math.max(0.95, (sizeReach - sizeHub) / BAND_VISUAL);
+    const radiusAcross = radiusAlong * swing.widthMul;
+    // Ease keeps the hub close until the target is near full range.
+    const closeT = Math.pow(aimDist / CRESCENT_SPELL_RANGE, 1.75);
+    const hubForward = THREE.MathUtils.lerp(
+      Math.max(0.08, aimDist * 0.16),
+      sizeHub,
+      closeT,
+    );
+    const tipReach = sizeReach;
 
     if (shot.followOwnerId) {
       const local =
@@ -154,38 +147,38 @@ export function CrescentCastEffect({
           : null;
 
       if (local) {
-        const yaw = local.yaw + swing.yawBias;
-        const rightX = Math.cos(local.yaw);
-        const rightZ = -Math.sin(local.yaw);
+        const yaw = local.yaw;
+        const rightX = Math.cos(yaw);
+        const rightZ = -Math.sin(yaw);
         pose.current.yaw = yaw;
         pose.current.x =
-          local.x + Math.sin(local.yaw) * forward + rightX * swing.lateral;
+          local.x + Math.sin(yaw) * hubForward + rightX * swing.lateral;
         pose.current.z =
-          local.z + Math.cos(local.yaw) * forward + rightZ * swing.lateral;
+          local.z + Math.cos(yaw) * hubForward + rightZ * swing.lateral;
       } else {
         const p = follow.room?.state?.players?.get(shot.followOwnerId) as
           | { x?: number; z?: number; yaw?: number }
           | undefined;
         if (p) {
-          const baseYaw = p.yaw ?? pose.current.yaw;
-          const yaw = baseYaw + swing.yawBias;
-          const rightX = Math.cos(baseYaw);
-          const rightZ = -Math.sin(baseYaw);
+          const yaw = p.yaw ?? pose.current.yaw;
+          const rightX = Math.cos(yaw);
+          const rightZ = -Math.sin(yaw);
           pose.current.yaw = yaw;
           pose.current.x =
-            (p.x ?? pose.current.x) + Math.sin(baseYaw) * forward + rightX * swing.lateral;
+            (p.x ?? pose.current.x) + Math.sin(yaw) * hubForward + rightX * swing.lateral;
           pose.current.z =
-            (p.z ?? pose.current.z) + Math.cos(baseYaw) * forward + rightZ * swing.lateral;
+            (p.z ?? pose.current.z) + Math.cos(yaw) * hubForward + rightZ * swing.lateral;
         }
       }
     } else {
-      const rightX = Math.cos(shot.yaw);
-      const rightZ = -Math.sin(shot.yaw);
-      pose.current.yaw = shot.yaw + swing.yawBias;
+      const yaw = shot.yaw;
+      const rightX = Math.cos(yaw);
+      const rightZ = -Math.sin(yaw);
+      pose.current.yaw = yaw;
       pose.current.x =
-        shot.x + Math.sin(shot.yaw) * forward + rightX * swing.lateral;
+        shot.x + Math.sin(yaw) * hubForward + rightX * swing.lateral;
       pose.current.z =
-        shot.z + Math.cos(shot.yaw) * forward + rightZ * swing.lateral;
+        shot.z + Math.cos(yaw) * hubForward + rightZ * swing.lateral;
     }
 
     if (root.current) {
@@ -201,33 +194,72 @@ export function CrescentCastEffect({
     }
     g.visible = true;
 
-    const drawT = smooth01(THREE.MathUtils.clamp(age / 0.22, 0, 1));
-    const fade = softEnvelope(age, 0.04, 0.55);
-    const segsDrawn = Math.max(1, Math.ceil(drawT * SEGMENTS));
-    const indexCount = segsDrawn * INDEX_PER_SEG;
-    geo.setDrawRange(0, indexCount);
-    glowGeo.setDrawRange(0, indexCount);
+    const progress = age < 0.55 ? Math.pow(age / 0.55, 0.65) : 1;
+    const fade = softEnvelope(age, 0.06, 0.52);
+    tickLabMeleeSlash(slashMat, dt, progress);
+    tickLabMeleeSlash(ghostMat, dt, Math.max(0, progress - 0.1));
+    slashMat.uniforms.uOpacity!.value = 0.95 * fade;
+    ghostMat.uniforms.uOpacity!.value = 0.42 * fade;
+    windMat.opacity = fade * 0.26;
 
-    const u = smooth01(age);
-    g.position.y = swing.y;
-    g.rotation.x = THREE.MathUtils.lerp(swing.pitch0, swing.pitch1, u);
-    g.rotation.z = THREE.MathUtils.lerp(swing.roll0, swing.roll1, drawT);
-    g.scale.setScalar(swing.scale * (0.94 + fade * 0.08));
-    mat.opacity = fade * 0.95;
-    glowMat.opacity = fade * 0.38;
-    light.emitAt(lightAt.current, shot.color, fade * 2.4 * drawT, 3.5);
+    // True flat horizontal: tip always on character-forward at full radiusAlong.
+    // Shader uProgress draws the swipe — do not roll the disc (that skews length by facing).
+    const arcRoll = swing.flip > 0 ? -Math.PI / 2 : Math.PI / 2;
+    g.position.set(0, swing.y, 0);
+    g.rotation.set(-Math.PI / 2, 0, arcRoll);
+    g.scale.set(swing.flip * radiusAlong, radiusAcross, 1);
+
+    if (slash.current) slash.current.scale.setScalar(1 + progress * 0.04);
+    if (ghost.current) {
+      ghost.current.scale.setScalar(1.05 + progress * 0.03);
+      ghost.current.rotation.z = -0.04 * swing.flip;
+    }
+
+    const wisp = g.children.find((c) => c.name === "windWisp") as THREE.Mesh | undefined;
+    if (wisp) {
+      const a = THREE.MathUtils.lerp(-0.95, 1.1, progress);
+      wisp.position.set(Math.cos(a) * BAND_VISUAL, Math.sin(a) * BAND_VISUAL, 0.02);
+      wisp.rotation.z = a + Math.PI * 0.5;
+      wisp.scale.set(0.55 + progress * 0.25, 0.22 + fade * 0.12, 1);
+    }
+
+    if (lightAt.current) {
+      lightAt.current.position.set(BAND_VISUAL, 0.05, 0.02);
+    }
+    light.emitAt(lightAt.current, "#e2e8f0", fade * 1.5 * progress, tipReach + 1.2);
   });
 
   return (
     <group ref={root} position={[shot.x, 0, shot.z]} rotation={[0, shot.yaw, 0]}>
-      <group ref={blade} position={[0, swing.y, 0.12]}>
-        <mesh geometry={geo}>
-          <primitive object={mat} attach="material" />
+      <group ref={blade}>
+        <mesh ref={ghost} geometry={discGeo} renderOrder={40}>
+          <primitive object={ghostMat} attach="material" />
         </mesh>
-        <mesh geometry={glowGeo} scale={[1.08, 1.15, 1.08]}>
-          <primitive object={glowMat} attach="material" />
+        <mesh ref={slash} geometry={discGeo} renderOrder={41}>
+          <primitive object={slashMat} attach="material" />
         </mesh>
-        <object3D ref={lightAt} />
+        <mesh name="windWisp" renderOrder={39}>
+          <planeGeometry args={[1, 1]} />
+          <primitive object={windMat} attach="material" />
+        </mesh>
+        <object3D ref={lightAt} position={[0.7, 0.05, 0.02]} />
+        <AdditiveParticleBurst
+          color="#cbd5e1"
+          origin={[0.7, 0.05, 0.04]}
+          count={8}
+          life={0.3}
+          speed={1.6}
+          speedSpread={0.9}
+          size={0.22}
+          sizeEnd={0.04}
+          lift={0.55}
+          upBias={0.25}
+          gravity={0.05}
+          fadeIn={0.1}
+          stagger={0.28}
+          map={getWindStreakTexture()}
+          trigger={shot.key}
+        />
       </group>
     </group>
   );

@@ -7,6 +7,7 @@ import {
 } from "../runtime/playerVfxRuntime";
 import { getFlightDurationMs } from "../timing";
 import type { CastEngine, CastEngineContext } from "./types";
+import { playIceDrawSfx } from "../../gameSfx";
 
 function chargeMsFor(
   abilityId: string,
@@ -58,6 +59,8 @@ function spawnCharge(ctx: CastEngineContext, chargeMs: number): void {
     // (ice lance fuse plants must survive back-to-back casts).
     clearHandle(ctx.sessionId, ctx.abilityId, false);
   }
+  // Earliest cast beat — anticipation / charge start.
+  if (ctx.abilityId === "iceLance") playIceDrawSfx();
   const yaw = ctx.pose.yaw ?? 0;
   const forward = opts.forward;
   const x = (ctx.pose.x ?? 0) + Math.sin(yaw) * forward;

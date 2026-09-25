@@ -1,15 +1,15 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { OneShotEffect } from "../types";
 import { softEnvelope } from "../easing";
 import {
   GEO_SPIKE_KNOB,
-  GEO_SPIKE_MIST,
   GEO_SPIKE_STALK,
   GEO_SPIKE_THORN,
   GEO_SPIKE_TIP,
 } from "../sharedGeo";
+import { burstElementRole } from "../engine";
 
 /** Poison spike palette — dark bark → toxic lime. */
 const POISON_SPIKE_COLORS = [
@@ -35,23 +35,13 @@ type RootSpec = {
   colorIdx: number;
 };
 
-type MistSpec = {
-  ox: number;
-  oz: number;
-  rise: number;
-  driftX: number;
-  driftZ: number;
-  size: number;
-  delay: number;
-};
-
 /**
- * Poisonous root burst — sharp cone spikes + mist (E Spikes).
+ * Caster/travel/ground: none. Impact: poison preset plus retained spike meshes.
+ * Particles: ParticleWorld poison impact; poisoned/weakened auras stay in StatusAuraFx.
  */
 export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
   const root = useRef<THREE.Group>(null);
   const stalksRef = useRef<THREE.Group>(null);
-  const mistRef = useRef<THREE.Group>(null);
 
   const roots = useMemo((): RootSpec[] => {
     const seed = shot.key * 7919;
@@ -77,24 +67,6 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
       });
     }
     return out;
-  }, [shot.key]);
-
-  const mist = useMemo((): MistSpec[] => {
-    const seed = shot.key * 4243;
-    return Array.from({ length: 5 }, (_, i) => {
-      const a = ((seed + i * 71) % 1000) / 1000;
-      const ang = a * Math.PI * 2;
-      const dist = 0.04 + ((seed + i * 19) % 100) / 100 * 0.14;
-      return {
-        ox: Math.cos(ang) * dist,
-        oz: Math.sin(ang) * dist,
-        rise: 0.28 + ((seed + i * 11) % 100) / 100 * 0.4,
-        driftX: (a - 0.5) * 0.28,
-        driftZ: (((seed + i * 37) % 100) / 100 - 0.5) * 0.28,
-        size: 0.045 + ((seed + i * 5) % 100) / 100 * 0.05,
-        delay: ((seed + i * 43) % 100) / 100 * 0.2,
-      };
-    });
   }, [shot.key]);
 
   const barkMats = useMemo(
@@ -128,21 +100,9 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
       ),
     [],
   );
-  const mistMats = useMemo(
-    () =>
-      Array.from({ length: mist.length }, (_, i) => {
-        const tip = POISON_SPIKE_COLORS[i % POISON_SPIKE_COLORS.length]!.tip;
-        return new THREE.MeshBasicMaterial({
-          color: tip,
-          transparent: true,
-          opacity: 0.28,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          toneMapped: false,
-        });
-      }),
-    [mist.length],
-  );
+  useEffect(() => {
+    burstElementRole("poison", "impact", shot.x, shot.y, shot.z);
+  }, [shot.key, shot.x, shot.y, shot.z]);
 
   useFrame(() => {
     const age = (performance.now() - shot.born) / shot.life;
@@ -180,28 +140,6 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
       }
     }
 
-    if (mistRef.current) {
-      for (let i = 0; i < mistRef.current.children.length; i++) {
-        const mesh = mistRef.current.children[i] as THREE.Mesh;
-        const spec = mist[i];
-        const mat = mistMats[i];
-        if (!spec || !mat) continue;
-        const local = THREE.MathUtils.clamp(
-          (age - spec.delay) / Math.max(0.01, 1 - spec.delay),
-          0,
-          1,
-        );
-        const fade = softEnvelope(local, 0.15, 0.45);
-        mesh.position.set(
-          spec.ox + local * spec.driftX,
-          0.08 + local * spec.rise,
-          spec.oz + local * spec.driftZ,
-        );
-        const s = spec.size * (0.6 + local * 1.4);
-        mesh.scale.setScalar(s);
-        mat.opacity = fade * 0.32;
-      }
-    }
   });
 
   return (
@@ -247,11 +185,6 @@ export function SpikesPopEffect({ shot }: { shot: OneShotEffect }) {
             </group>
           );
         })}
-      </group>
-      <group ref={mistRef}>
-        {mist.map((_, i) => (
-          <mesh key={i} material={mistMats[i]} geometry={GEO_SPIKE_MIST} />
-        ))}
       </group>
     </group>
   );

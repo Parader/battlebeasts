@@ -1,40 +1,34 @@
 import { useFrame } from "@react-three/fiber";
 import { Room } from "colyseus.js";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { abilityVfxColor } from "../colors";
 import { createEnergyBallMaterial, tintEnergyMaterial } from "../materials/energyBall";
-import { createCirclePointMaterial } from "../materials/circlePoint";
+import { burstElementRole, spawnElementRole, type ElementHandle } from "../engine";
 
-const FLECK_COUNT = 10;
 const SHARD_Y = 1.05;
 
 const CRYSTAL = "#6ee7ff";
 const CRYSTAL_HOT = "#e0f7ff";
 const CRYSTAL_DARK = "#0c4a6e";
 
-type Fleck = {
-  alive: boolean;
-  age: number;
-  life: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  size: number;
-};
-
 /**
- * Runic Shard — elongated crystal mesh + short geometric flecks.
- * Fragments (`mode === "fragment"`) use a smaller scale of the same mesh.
+ * Runic Shard travel — crystal mesh with the frost ParticleWorld trail.
+ *
+ * Caster/impact: frost blow on first spawn; hit/shatter bursts live in catalog.
+ * Travel: ice flakes + frost-fog smoke follow the crystal (main shard only —
+ * shatter fragments stay mesh-only so 12 shards don't blow the emitter budget).
+ * Ground: none, this is an airborne crystal.
+ * Particles: ParticleWorld frost trail / ground fog; no THREE.Points.
+ * Light: none, the energy core carries the read.
+ * Status: frostChill is applied in combat, not here.
  */
 export function RunicShardProjectileEffect({ room, id }: { room: Room; id: string }) {
   const group = useRef<THREE.Group>(null);
   const crystal = useRef<THREE.Mesh>(null);
   const core = useRef<THREE.Mesh>(null);
-  const points = useRef<THREE.Points>(null);
+  const wake = useRef<ElementHandle | null>(null);
+  const fog = useRef<ElementHandle | null>(null);
 
   const colorHex = useRef(abilityVfxColor("runicShard", CRYSTAL));
   const shellMat = useMemo(
@@ -58,38 +52,20 @@ export function RunicShardProjectileEffect({ room, id }: { room: Room; id: strin
   const lastServer = useRef({ x: 0, z: 0, vx: 0, vz: 0 });
   const seeded = useRef(false);
   const spin = useRef(0);
-  const spawnAcc = useRef(0);
   const lookTarget = useMemo(() => new THREE.Vector3(), []);
   const isFragment = useRef(false);
 
-  const flecks = useRef<Fleck[]>(
-    Array.from({ length: FLECK_COUNT }, () => ({
-      alive: false,
-      age: 0,
-      life: 0.2,
-      x: 0,
-      y: 0,
-      z: 0,
-      vx: 0,
-      vy: 0,
-      vz: 0,
-      size: 0.03,
-    })),
+  useEffect(
+    () => () => {
+      wake.current?.kill();
+      wake.current = null;
+      fog.current?.kill();
+      fog.current = null;
+      shellMat.dispose();
+      coreMat.dispose();
+    },
+    [shellMat, coreMat],
   );
-
-  const positions = useMemo(() => new Float32Array(FLECK_COUNT * 3), []);
-  const sizes = useMemo(() => new Float32Array(FLECK_COUNT), []);
-  const alphas = useMemo(() => new Float32Array(FLECK_COUNT), []);
-
-  const particleGeo = useMemo(() => {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-    geo.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
-    return geo;
-  }, [positions, sizes, alphas]);
-
-  const particleMat = useMemo(() => createCirclePointMaterial(CRYSTAL_HOT), []);
 
   useFrame((_, dt) => {
     const p = room.state?.projectiles?.get(id) as
@@ -106,14 +82,13 @@ export function RunicShardProjectileEffect({ room, id }: { room: Room; id: strin
     const g = group.current;
     if (!p || !g) {
       if (g) g.visible = false;
-      if (points.current) points.current.visible = false;
+      wake.current?.setRateScale(0);
+      fog.current?.setRateScale(0);
       seeded.current = false;
-      for (const f of flecks.current) f.alive = false;
       return;
     }
 
     g.visible = true;
-    if (points.current) points.current.visible = true;
 
     isFragment.current = p.mode === "fragment" || (p.radius != null && p.radius < 0.25);
     const frag = isFragment.current;
@@ -128,6 +103,9 @@ export function RunicShardProjectileEffect({ room, id }: { room: Room; id: strin
       renderPos.current.set(p.x, SHARD_Y, p.z);
       lastServer.current = { x: p.x, z: p.z, vx, vz };
       seeded.current = true;
+      if (!frag) {
+        burstElementRole("frost", "cast", p.x, SHARD_Y, p.z);
+      }
     } else {
       renderPos.current.x += vx * safeDt;
       renderPos.current.z += vz * safeDt;
@@ -167,52 +145,25 @@ export function RunicShardProjectileEffect({ room, id }: { room: Room; id: strin
       core.current.rotation.z = spin.current;
     }
 
-    spawnAcc.current += safeDt;
-    const emitEvery = frag ? 0.05 : 0.035;
-    if (spawnAcc.current >= emitEvery) {
-      spawnAcc.current = 0;
-      for (const f of flecks.current) {
-        if (f.alive) continue;
-        f.alive = true;
-        f.age = 0;
-        f.life = frag ? 0.14 : 0.22;
-        f.x = (Math.random() - 0.5) * width;
-        f.y = (Math.random() - 0.5) * width;
-        f.z = -len * 0.35;
-        f.vx = (Math.random() - 0.5) * 0.4;
-        f.vy = (Math.random() - 0.5) * 0.4;
-        f.vz = -1.2 - Math.random() * 0.8;
-        f.size = frag ? 0.025 : 0.035;
-        break;
-      }
-    }
+    const px = renderPos.current.x;
+    const py = renderPos.current.y;
+    const pz = renderPos.current.z;
 
-    let mi = 0;
-    for (const f of flecks.current) {
-      if (!f.alive) continue;
-      f.age += safeDt;
-      if (f.age >= f.life) {
-        f.alive = false;
-        continue;
+    if (!frag) {
+      if (!wake.current) {
+        wake.current = spawnElementRole("frost", "trail", px, py, pz);
       }
-      f.x += f.vx * safeDt;
-      f.y += f.vy * safeDt;
-      f.z += f.vz * safeDt;
-      const u = f.age / f.life;
-      positions[mi * 3] = f.x;
-      positions[mi * 3 + 1] = f.y;
-      positions[mi * 3 + 2] = f.z;
-      sizes[mi] = f.size * 36 * (1 - u * 0.5);
-      alphas[mi] = (1 - u) * 0.75;
-      mi += 1;
+      if (!fog.current) {
+        fog.current = spawnElementRole("frost", "ground", px, py, pz);
+      }
+      wake.current.setRateScale(1);
+      wake.current.setPose(px, py, pz);
+      fog.current.setRateScale(0.55);
+      fog.current.setPose(px, py - 0.08, pz);
+    } else {
+      wake.current?.setRateScale(0);
+      fog.current?.setRateScale(0);
     }
-    for (let i = mi; i < FLECK_COUNT; i++) {
-      alphas[i] = 0;
-      sizes[i] = 0;
-    }
-    particleGeo.attributes.position!.needsUpdate = true;
-    particleGeo.attributes.aSize!.needsUpdate = true;
-    particleGeo.attributes.aAlpha!.needsUpdate = true;
   });
 
   return (
@@ -223,7 +174,6 @@ export function RunicShardProjectileEffect({ room, id }: { room: Room; id: strin
       <mesh ref={core} material={coreMat} renderOrder={5}>
         <octahedronGeometry args={[1, 0]} />
       </mesh>
-      <points ref={points} geometry={particleGeo} material={particleMat} renderOrder={6} />
     </group>
   );
 }

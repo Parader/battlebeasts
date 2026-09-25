@@ -5,6 +5,13 @@ export const VFX_FIRE_URL = assetUrl("assets/vfx/fire.png");
 export const VFX_SMOKE_URL = assetUrl("assets/vfx/smoke.png");
 export const VFX_LAVA_URL = assetUrl("assets/vfx/lava.png");
 export const VFX_CIRCLE_URL = assetUrl("assets/vfx/circle.png");
+export const VFX_FLARE_SOFT_URL = assetUrl("assets/vfx/flare-soft.png");
+export const VFX_FLARE_DISTORT_URL = assetUrl("assets/vfx/flare-distort.png");
+export {
+  VFX_PATTERN_URLS,
+  PATTERN_IDS,
+  type PatternId,
+} from "./shaders/patternUrls";
 export const VFX_CHAIN_URL = assetUrl("assets/vfx/chain-strip.png");
 export const VFX_SHADOW_SPELL_URL = assetUrl("assets/vfx/shadow_spell_effects.png");
 export const VFX_SPELL_EFFECTS_URL = assetUrl("assets/vfx/spell_effects.png");

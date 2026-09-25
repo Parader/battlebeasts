@@ -1,5 +1,5 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { ABILITIES, POISON_CLOUD_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
@@ -7,10 +7,10 @@ import { softEnvelope } from "../easing";
 import { AoeRimMarker } from "../components/AoeRimMarker";
 import { GroundDecal } from "../components/GroundDecal";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
-import { FireParticleField } from "../components/FireParticleField";
 import { groundPresets } from "../presets/ground";
 import { VFX_SMOKE_URL } from "../vfxUrls";
 import { getSmokeTexture } from "../smokeTexture";
+import { spawnElementRole, type ElementHandle } from "../engine";
 
 /** Soft smoke disc — tinted green in the plane material. */
 export const POISON_CLOUD_SMOKE_URL = VFX_SMOKE_URL;
@@ -18,10 +18,10 @@ export const POISON_CLOUD_SMOKE_URL = VFX_SMOKE_URL;
 const VIAL_FLIGHT_MS = 280;
 const CLOUD_FADE_IN_MS = 220;
 const CLOUD_FADE_OUT_MS = 650;
-const POISON_SMOKE_COLORS = ["#a3e635", "#65a30d", "#1a2e05"] as const;
 
 /**
- * Poison Cloud — vial arcing to ground aim, green hitbox rim, lingering smoke.
+ * Caster/travel: vial mesh. Impact: additive pop. Ground: poison preset and decals.
+ * Particles: ParticleWorld poison ground; poisoned/weakened auras stay in StatusAuraFx.
  */
 export function PoisonCloudGroundEffect({ shot }: { shot: OneShotEffect }) {
   const def = ABILITIES.poisonCloud;
@@ -34,6 +34,7 @@ export function PoisonCloudGroundEffect({ shot }: { shot: OneShotEffect }) {
   const cloudOpacity = useRef(0);
   const mistProgress = useRef(0);
   const vialRef = useRef<THREE.Mesh>(null);
+  const groundFx = useRef<ElementHandle | null>(null);
 
   const blotPreset = useMemo(
     () => ({
@@ -58,23 +59,15 @@ export function PoisonCloudGroundEffect({ shot }: { shot: OneShotEffect }) {
     [radius, lifeMs],
   );
 
-  const mistEmitters = useMemo(() => {
-    const ring = radius * 0.62;
-    return [
-      { x: 0, y: 0.14, z: 0 },
-      { x: 0, y: 0.22, z: 0 },
-      { x: ring * 0.45, y: 0.12, z: 0 },
-      { x: -ring * 0.45, y: 0.12, z: 0 },
-      { x: 0, y: 0.12, z: ring * 0.45 },
-      { x: 0, y: 0.12, z: -ring * 0.45 },
-      { x: ring * 0.72, y: 0.1, z: ring * 0.35 },
-      { x: -ring * 0.7, y: 0.1, z: -ring * 0.32 },
-      { x: ring * 0.35, y: 0.1, z: -ring * 0.7 },
-      { x: -ring * 0.32, y: 0.1, z: ring * 0.72 },
-      { x: ring * 0.85, y: 0.1, z: 0 },
-      { x: -ring * 0.85, y: 0.1, z: 0 },
-    ];
-  }, [radius]);
+  useEffect(() => {
+    const handle = spawnElementRole("poison", "ground", shot.x, 0.12, shot.z);
+    handle.setRateScale(0);
+    groundFx.current = handle;
+    return () => {
+      handle.kill();
+      if (groundFx.current === handle) groundFx.current = null;
+    };
+  }, [shot.key, shot.x, shot.z]);
 
   useFrame(() => {
     const age = performance.now() - shot.born;
@@ -89,6 +82,7 @@ export function PoisonCloudGroundEffect({ shot }: { shot: OneShotEffect }) {
     // Mist builds after the vial lands.
     mistProgress.current =
       age < VIAL_FLIGHT_MS ? 0 : Math.min(1, (age - VIAL_FLIGHT_MS) / 280);
+    groundFx.current?.setRateScale(mistProgress.current * cloudOpacity.current);
 
     const vial = vialRef.current;
     if (!vial) return;
@@ -174,19 +168,6 @@ export function PoisonCloudGroundEffect({ shot }: { shot: OneShotEffect }) {
           color="#1a2e05"
           y={0.058}
           spin={0.1}
-        />
-        <FireParticleField
-          emitters={mistEmitters}
-          rate={110}
-          maxParticles={240}
-          textureUrl={POISON_CLOUD_SMOKE_URL}
-          maxLife={2.8}
-          maxSize={0.85}
-          rise={0.7}
-          spread={radius * 0.55}
-          colorStops={POISON_SMOKE_COLORS}
-          progressRef={mistProgress}
-          opacityMulRef={cloudOpacity}
         />
         <AdditiveParticleBurst
           color="#a3e635"

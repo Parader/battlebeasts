@@ -1,39 +1,25 @@
+import { useEffect, useRef } from "react";
+import { CONE_OCCLUSION_SECTORS, coneRayMaxLength } from "@battlebeasts/shared";
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
-  CONE_OCCLUSION_SECTORS,
-  coneRayMaxLength,
-} from "@battlebeasts/shared";
-import type { OneShotEffect } from "../types";
+  getWorldProjectileBoxes,
+  getWorldProjectileCircles,
+  getWorldProjectileWalls,
+} from "../../worldCollidersRuntime";
 import type { VfxFollowContext } from "../catalog";
 import { GroundDecal } from "../components/GroundDecal";
-import { groundPresets } from "../presets/ground";
 import { softEnvelope } from "../easing";
-import { createTrailMaterial } from "../materials/trailMaterial";
-import { getWorldProjectileCircles, getWorldProjectileWalls, getWorldProjectileBoxes } from "../../worldCollidersRuntime";
+import { type ElementHandle, spawnElementRole } from "../engine";
+import { groundPresets } from "../presets/ground";
+import type { OneShotEffect } from "../types";
 
-const BEAM_COUNT = 10;
 const HALF_ANGLE_START = 0.28;
 const HALF_ANGLE_END = 0.7;
-/** Near-hand spawn before beams race down the cone. */
-const BEAM_SPAWN = 0.45;
 /** Keep mist above painted ground without scene-wide mesh raycasts. */
 const DECAL_Y = 0.09;
 const OCCLUDE_GROW_MS = 50;
 const OCCLUDE_HOLD_MS = 100;
-
-type IceBeam = {
-  /** Fixed aim angle within the full cone (−1…1 → ±halfAngle). */
-  ang: number;
-  y: number;
-  /** World units per second along the ray. */
-  speed: number;
-  len: number;
-  width: number;
-  phase: number;
-  stagger: number;
-};
 
 type OccludeBody = {
   id: string;
@@ -55,14 +41,14 @@ function collectOccludeBodies(
   into.length = 0;
   const room = follow?.room;
   if (!room?.state) return;
-  const players = room.state.players as Map<string, { x?: number; z?: number; hp?: number }> | undefined;
+  const players = room.state.players as
+    Map<string, { x?: number; z?: number; hp?: number }> | undefined;
   players?.forEach((p, id) => {
     if (ownerId && id === ownerId) return;
     into.push({ id, x: p.x ?? 0, z: p.z ?? 0, hp: p.hp });
   });
   const targets = room.state.targets as
-    | Map<string, { x?: number; z?: number; hp?: number }>
-    | undefined;
+    Map<string, { x?: number; z?: number; hp?: number }> | undefined;
   targets?.forEach((t, id) => {
     into.push({ id, x: t.x ?? 0, z: t.z ?? 0, hp: t.hp });
   });
@@ -86,29 +72,21 @@ function updateSectorRanges(
   for (let s = 0; s < CONE_OCCLUSION_SECTORS; s++) {
     const u = (s + 0.5) / CONE_OCCLUSION_SECTORS;
     const a = -half + u * span;
-    const maxLen = coneRayMaxLength(
-      origin,
-      yaw + a,
-      length,
-      walls,
-      bodies,
-      ownerId ?? null,
-      { circles, boxes },
-    );
+    const maxLen = coneRayMaxLength(origin, yaw + a, length, walls, bodies, ownerId ?? null, {
+      circles,
+      boxes,
+    });
     ranges[s] = Math.max(0, Math.min(1, maxLen * invEnd));
   }
 }
 
-function sectorMaxLen(ranges: Float32Array, a: number, half: number, endLength: number): number {
-  const span = Math.max(1e-4, 2 * half);
-  const u = (a + half) / span;
-  const s = Math.min(CONE_OCCLUSION_SECTORS - 1, Math.max(0, Math.floor(u * CONE_OCCLUSION_SECTORS)));
-  return ranges[s]! * endLength;
-}
-
 /**
- * Frost Mist — ground cone + a few ice streaks along the cone.
- * Wall clip is sampled on a short interval; never raycasts the scene graph.
+ * Caster blow: the frost emitter starts at the cone origin.
+ * Travel: persistent authored mist follows the caster-facing cone.
+ * Impact: none; this is a sustained area sweep.
+ * Ground: the existing clipped cone decal remains.
+ * Particles: ParticleWorld frost ground role replaces mesh streaks.
+ * Light: none; the decal and mist carry the read.
  */
 export function FrostMistConeEffect({
   shot,
@@ -118,10 +96,11 @@ export function FrostMistConeEffect({
   follow?: VfxFollowContext;
 }) {
   const root = useRef<THREE.Group>(null);
-  const beamsRef = useRef<THREE.Group>(null);
+  const mist = useRef<ElementHandle | null>(null);
   const progress = useRef(0);
   const opacity = useRef(0.95);
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: 0 });
+  const occlusionOrigin = useRef({ x: shot.x, z: shot.z });
   const liveLength = useRef(shot.startRadius ?? shot.radius ?? 3);
   const liveHalf = useRef(HALF_ANGLE_START);
   const sectorRanges = useRef<Float32Array>(new Float32Array(CONE_OCCLUSION_SECTORS).fill(1));
@@ -133,38 +112,12 @@ export function FrostMistConeEffect({
   const startLength = shot.startRadius ?? Math.min(endLength, endLength * 0.28);
   const growMs = Math.max(80, shot.growMs ?? 180);
 
-  const beams = useMemo((): IceBeam[] => {
-    const seed = shot.key * 5059;
-    return Array.from({ length: BEAM_COUNT }, (_, i) => {
-      const u = ((seed + i * 47) % 1000) / 1000;
-      const centered = (u * 2 - 1) * (0.55 + ((seed + i * 13) % 100) / 100 * 0.45);
-      return {
-        ang: centered,
-        y: 0.55 + ((seed + i * 19) % 100) / 100 * 0.85,
-        speed: 22 + ((seed + i * 7) % 100) / 100 * 16,
-        len: 0.28 + ((seed + i * 11) % 100) / 100 * 0.22,
-        width: 0.028 + ((seed + i * 17) % 100) / 100 * 0.022,
-        phase: ((seed + i * 43) % 100) / 100,
-        stagger: ((seed + i * 29) % 100) / 100 * 0.12,
-      };
-    });
-  }, [shot.key]);
-
-  const beamMats = useMemo(
-    () => [
-      createTrailMaterial("#e0f2fe", { opacity: 0.85, head: 0.22 }),
-      createTrailMaterial("#7dd3fc", { opacity: 0.85, head: 0.22 }),
-    ],
-    [],
-  );
-  const beamGeo = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
-
   useEffect(
     () => () => {
-      for (const mat of beamMats) mat.dispose();
-      beamGeo.dispose();
+      mist.current?.kill();
+      mist.current = null;
     },
-    [beamMats, beamGeo],
+    [],
   );
 
   useFrame(() => {
@@ -174,6 +127,7 @@ export function FrostMistConeEffect({
     if (!g) return;
     if (age >= 1) {
       g.visible = false;
+      mist.current?.setRateScale(0);
       return;
     }
     g.visible = true;
@@ -186,8 +140,7 @@ export function FrostMistConeEffect({
         pose.current.yaw = follow.predictedRef.current.yaw;
       } else {
         const p = follow.room.state?.players?.get(shot.followOwnerId) as
-          | { x?: number; z?: number; yaw?: number }
-          | undefined;
+          { x?: number; z?: number; yaw?: number } | undefined;
         if (p) {
           pose.current.x = p.x ?? pose.current.x;
           pose.current.z = p.z ?? pose.current.z;
@@ -207,12 +160,18 @@ export function FrostMistConeEffect({
     const amp = softEnvelope(age, 0.02, 0.72);
     opacity.current = 0.65 + amp * 0.35;
     const stormAmp = amp * (0.3 + growT * 0.7);
+    if (!mist.current) {
+      mist.current = spawnElementRole("frost", "ground", pose.current.x, DECAL_Y, pose.current.z);
+    }
+    mist.current.setPoseYaw(pose.current.x, DECAL_Y, pose.current.z, pose.current.yaw);
+    mist.current.setRateScale(stormAmp);
 
     const length = liveLength.current;
     const half = liveHalf.current;
     halfAngleLive.current = half;
-    const elapsed = (now - shot.born) / 1000;
-    const origin = { x: pose.current.x, z: pose.current.z };
+    const origin = occlusionOrigin.current;
+    origin.x = pose.current.x;
+    origin.z = pose.current.z;
     const ranges = sectorRanges.current;
 
     const occludeEvery = growT < 1 ? OCCLUDE_GROW_MS : OCCLUDE_HOLD_MS;
@@ -229,52 +188,6 @@ export function FrostMistConeEffect({
         occludeBodies.current,
         shot.followOwnerId,
       );
-    }
-
-    const stormOpacity = stormAmp * 0.9;
-    for (const mat of beamMats) {
-      mat.uniforms.uOpacity!.value = stormOpacity;
-    }
-
-    if (beamsRef.current) {
-      for (let i = 0; i < beamsRef.current.children.length; i++) {
-        const mesh = beamsRef.current.children[i] as THREE.Mesh;
-        const spec = beams[i];
-        if (!spec) continue;
-
-        const a = spec.ang * HALF_ANGLE_END;
-        if (Math.abs(a) > half + 0.04) {
-          mesh.visible = false;
-          continue;
-        }
-
-        const maxLen = Math.min(length, sectorMaxLen(ranges, a, half, endLength));
-        if (maxLen <= BEAM_SPAWN + 0.05) {
-          mesh.visible = false;
-          continue;
-        }
-
-        const travelSpan = Math.max(0.35, maxLen - BEAM_SPAWN);
-        const cycle = (elapsed * (spec.speed / travelSpan) + spec.phase + spec.stagger) % 1;
-        const dist = BEAM_SPAWN + cycle * travelSpan;
-        if (dist > maxLen * 0.99) {
-          mesh.visible = false;
-          continue;
-        }
-
-        const fade = cycle < 0.08 ? cycle / 0.08 : cycle > 0.75 ? 1 - (cycle - 0.75) / 0.25 : 1;
-        if (growT <= 0.05 || fade <= 0.05) {
-          mesh.visible = false;
-          continue;
-        }
-
-        const sx = Math.sin(a);
-        const sz = Math.cos(a);
-        mesh.position.set(sx * dist, spec.y, sz * dist);
-        mesh.rotation.set(0, a + Math.PI / 2, 0.02);
-        mesh.scale.set(spec.len, spec.width, 1);
-        mesh.visible = true;
-      }
     }
   });
 
@@ -307,11 +220,6 @@ export function FrostMistConeEffect({
         growExpand
         y={DECAL_Y}
       />
-      <group ref={beamsRef}>
-        {beams.map((_, i) => (
-          <mesh key={i} geometry={beamGeo} material={beamMats[i % beamMats.length]} />
-        ))}
-      </group>
     </group>
   );
 }

@@ -14,6 +14,9 @@ export const GEO_OCTA = new THREE.OctahedronGeometry(1, 0);
 
 export const GEO_RING_IMPACT = new THREE.RingGeometry(0.25, 0.55, 24);
 
+/** Unit plane for ground marks / decals (scaled in place). */
+export const GEO_PLANE_1 = new THREE.PlaneGeometry(1, 1);
+
 /** Ice lance tip / shaft (authored radii). */
 export const GEO_LANCE_TIP = new THREE.ConeGeometry(0.034, 0.2, 5);
 export const GEO_LANCE_SHAFT = new THREE.CylinderGeometry(0.018, 0.018, 0.1, 5);

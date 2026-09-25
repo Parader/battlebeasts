@@ -1,5 +1,10 @@
 import { combatMag } from "./combatMagnitude";
-import { getStatus, statusStackSlowPercent, type StatusApplication } from "./statuses";
+import {
+  getStatus,
+  statusEffectsFromAppliesCopy,
+  statusStackSlowPercent,
+  type StatusApplication,
+} from "./statuses";
 import type { TalentTreeId } from "./talentCatalog";
 
 export type AbilityShape = "projectile" | "aoe" | "dash" | "melee" | "buff";
@@ -1800,7 +1805,7 @@ export const RUNIC_SHARD_CAST = {
   releaseFrame: ICE_LANCE_CAST.releaseFrame,
   clipDurationSec: ICE_LANCE_CAST.clipDurationSec,
   /** Compress Baseball Pitching toward a fast LMB throw. */
-  playbackRate: 3.6,
+  playbackRate: 2.15,
   handY: ICE_LANCE_CAST.handY,
 } as const;
 
@@ -2532,23 +2537,25 @@ export const REVENGE_CAST = {
 /** Minimal v0 kit — one ability per Battlerite slot. */
 export const ABILITIES: Record<string, AbilityDef> = {
   /**
-   * Bolt (LMB) — magic_1h (Standing 1H Magic Attack 01).
+   * Bolt (LMB) — electric poke projectile.
    * Projectile leaves at frame 26 (arm punch peak), at BOLT_CAST.playbackRate.
    */
   bolt: {
     id: "bolt",
     unlockCostEssence: 80,
     name: "Bolt",
-    description: "Fast single-target magic bolt. Low cooldown primary poke.",
-    cooldownMs: 300,
+    description:
+      `Hurl a fast electric bolt that deals ${combatMag(11)} damage and applies Shocked.`,
+    cooldownMs: 450,
     range: 12,
     shape: "projectile",
     effectKind: "standard",
-    tags: ["Projectile", "Damage", "SingleTarget", "Cast"],
+    tags: ["Projectile", "Damage", "SingleTarget", "Cast", "Debuff"],
     damage: combatMag(11),
     structureDamage: 1,
     speed: 22,
     spawnOffset: BOLT_CAST.spawnOffset,
+    applyOnHit: [{ statusId: "shocked", chance: 1 }],
     allowedSlots: ["m1"],
     defaultSlot: "m1",
     timing: {
@@ -2574,7 +2581,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     unlockCostEssence: ARC_THREAD_CAST.unlockCostEssence,
     name: "Arc Thread",
     description:
-      `Fire a 7.5m magical tether. On contact, deal ${combatMag(5.5)} damage and hold the link for 0.45s — if it survives, unleash a second ${combatMag(7.5)} discharge and slow the target for 0.7s.`,
+      `Fire a 7.5m magical tether. On contact, deal ${combatMag(5.5)} damage and hold the link for 0.45s — if it survives, unleash a second ${combatMag(7.5)} discharge that applies Shocked and Slowed for 0.7s.`,
     cooldownMs: ARC_THREAD_CAST.cooldownMs,
     range: ARC_THREAD_CAST.range,
     shape: "projectile",
@@ -2693,7 +2700,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
     id: "runicShard",
     name: "Runic Shard",
     description:
-      "Launch a slow runic crystal. Recast while it travels to burst fragments in a full circle — up to twice per shard. Shatter fragments stack Chilled.",
+      "Launch a slow runic crystal that Chills on hit. Recast while it travels to burst fragments in a full circle — up to twice per shard. Fragments stack more Chilled.",
     allowedSlots: ["m1"],
     defaultSlot: "m1",
     unlockCostEssence: RUNIC_SHARD_CAST.unlockCostEssence,
@@ -5780,6 +5787,16 @@ function formatStatusApp(app: StatusApplication): string | null {
   }
   bits.push(formatSeconds(dur));
   return bits.join(" ");
+}
+
+/**
+ * When spell copy says it "applies" a named status, return that status's
+ * player-facing blurb for tooltips (appended after the spell description).
+ */
+export function abilityAppliedEffectNotes(
+  def: AbilityDef,
+): { name: string; description: string }[] {
+  return statusEffectsFromAppliesCopy(def.description);
 }
 
 /**

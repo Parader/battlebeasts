@@ -107,7 +107,7 @@ function describeStatus(def: StatusDef, row: StatusHudRow): string {
     parts.push("Reactive fear aura · enemies who cast inside are feared");
   }
   if (row.statusId === "shocked") {
-    parts.push(`Shocked (${row.stacks}/3) · next hit jumps a bolt to a nearby enemy`);
+    parts.push(`Shocked (${row.stacks}/3) · at 3 stacks, next hit jumps a bolt to a nearby enemy`);
   }
   if (row.statusId === "electrified") {
     parts.push("Next attack inflicts Shocked on target");

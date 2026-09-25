@@ -16,7 +16,16 @@ import {
   usesMeleeSwoopFx,
 } from "./catalog";
 import { notifyCrescentHit, notifyCrescentMelee } from "./crescentSpawn";
-import { playBoltHitSfx } from "../gameSfx";
+import {
+  playBoltHitSfx,
+  playCrescentHitSfx,
+  playOrbitingWispHitSfx,
+  playOrbitingWispSfx,
+  playShroomHealPopSfx,
+  playShroomHealSfx,
+  playShroomHitSfx,
+  playSoulMarkHitSfx,
+} from "../gameSfx";
 import {
   setMagmaOrbsMeetCollide,
   setMagmaOrbsMeetRange,
@@ -225,21 +234,47 @@ export function dispatchCombatFxVfx(
     );
   }
 
-  if (msg.kind === "aoe" && msg.abilityId === "shrooms" && (msg.variant === 1 || msg.variant === 2)) {
-    spawnImpactEffect(
-      msg.abilityId,
-      { x: msg.x, z: msg.z, y: 0.04 },
-      {
-        lifeMs: 900,
-        variant: msg.variant,
-        radius: msg.radius ?? 3.4,
-      },
-    );
+  if (msg.kind === "aoe" && msg.abilityId === "shrooms") {
+    const shroomVariant = Number(msg.variant);
+    if (shroomVariant === 0) playShroomHealSfx();
+    else if (shroomVariant === 1) playShroomHealPopSfx();
+    else if (shroomVariant === 2) playShroomHitSfx();
+    if (shroomVariant === 1 || shroomVariant === 2) {
+      spawnImpactEffect(
+        msg.abilityId,
+        { x: msg.x, z: msg.z, y: 0.55 },
+        {
+          lifeMs: 900,
+          variant: shroomVariant,
+          comboHit: msg.comboHit,
+          radius: msg.radius ?? 3.4,
+          targetId: msg.targetId,
+          originX: msg.x,
+          originZ: msg.z,
+        },
+      );
+    }
   }
 
   const onHit = getAbilityVfxProfile(msg.abilityId).combatFx?.onHit;
   if (msg.kind === "hit" && (onHit === "sfxOnly" || msg.abilityId === "bolt")) {
     if (msg.abilityId === "bolt") playBoltHitSfx();
+  }
+
+  if (msg.kind === "hit" && msg.abilityId === "crescent") {
+    playCrescentHitSfx();
+  }
+
+  if (msg.kind === "aoe" && msg.abilityId === "orbitingWisp" && (msg.variant ?? 0) === 0) {
+    playOrbitingWispSfx();
+  }
+
+  if (msg.kind === "hit" && msg.abilityId === "orbitingWisp" && (msg.variant ?? 0) !== 2) {
+    playOrbitingWispHitSfx();
+  }
+
+  if (msg.kind === "hit" && msg.abilityId === "soulMark" && (msg.variant ?? 0) !== 1) {
+    playSoulMarkHitSfx();
   }
 
   if (msg.kind === "hit" && msg.abilityId.startsWith("pickup_")) {

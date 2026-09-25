@@ -5,9 +5,12 @@ import { SLIPSTREAM_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import { softEnvelope, smooth01 } from "../easing";
 import { getWindStreakTexture } from "../windStreakTexture";
+import { spawnElementRole, type ElementHandle } from "../engine";
+
+/** ParticleWorld supplies the lane wisp layer beneath the retained mesh stream. */
 
 const LAYER_COUNT = 3;
-const PARTICLE_N = 16;
+const TRAIL_LIFE_MS = 700;
 const CYAN_TINT = new THREE.Color("#c0e8f5");
 const PALE_TINT = new THREE.Color("#e4eff8");
 const SIGIL_COLOR = new THREE.Color("#a8d8ea");
@@ -43,24 +46,15 @@ function makeLanePlane(width: number, length: number): THREE.PlaneGeometry {
   return geo;
 }
 
-type ParticleSpec = {
-  along0: number;
-  across: number;
-  y: number;
-  len: number;
-  speed: number;
-  phase: number;
-};
-
 /**
  * Slipstream lane VFX:
  * - Textured wind layers scrolling forward (+Z in local space)
- * - Wispy particle streaks scrolling forward
+ * - Short ParticleWorld wind trail at lane center
  * - Ground sigils at origin and end of lane
  */
 export function SlipstreamLaneEffect({ shot }: { shot: OneShotEffect }) {
   const root = useRef<THREE.Group>(null);
-  const particlesRef = useRef<THREE.Group>(null);
+  const windTrail = useRef<ElementHandle | null>(null);
 
   const windTex = getWindStreakTexture();
 
@@ -118,33 +112,17 @@ export function SlipstreamLaneEffect({ shot }: { shot: OneShotEffect }) {
     };
   }, [layers]);
 
-  // Forward-scrolling particle streaks
-  const particles = useMemo((): ParticleSpec[] => {
-    return Array.from({ length: PARTICLE_N }, (_, i) => ({
-      along0: hash01(seed + 40 + i) * 0.85,
-      across: (hash01(seed + 60 + i) - 0.5) * halfW * 1.5,
-      y: 0.12 + hash01(seed + 80 + i) * 0.6,
-      len: 0.3 + hash01(seed + 100 + i) * 0.55,
-      speed: 0.5 + hash01(seed + 120 + i) * 0.7,
-      phase: hash01(seed + 140 + i),
-    }));
-  }, [halfW, seed]);
-
-  const particleMats = useMemo(
-    () =>
-      particles.map(
-        () =>
-          new THREE.MeshBasicMaterial({
-            color: "#d0e8f2",
-            transparent: true,
-            opacity: 0.3,
-            depthWrite: false,
-            blending: THREE.AdditiveBlending,
-            toneMapped: false,
-          }),
-      ),
-    [particles],
-  );
+  useEffect(() => {
+    const centerX = shot.x + Math.sin(yaw) * length * 0.5;
+    const centerZ = shot.z + Math.cos(yaw) * length * 0.5;
+    const handle = spawnElementRole("wind", "trail", centerX, 0.24, centerZ);
+    handle.setPoseYaw(centerX, 0.24, centerZ, yaw);
+    windTrail.current = handle;
+    return () => {
+      handle.kill();
+      if (windTrail.current === handle) windTrail.current = null;
+    };
+  }, [length, shot.x, shot.z, yaw]);
 
   useFrame(() => {
     const g = root.current;
@@ -166,23 +144,15 @@ export function SlipstreamLaneEffect({ shot }: { shot: OneShotEffect }) {
       layer.mat.opacity = (0.32 - i * 0.05) * appear;
     }
 
-    // Animate particles
-    if (particlesRef.current) {
-      for (let i = 0; i < particlesRef.current.children.length; i++) {
-        const mesh = particlesRef.current.children[i] as THREE.Mesh;
-        const spec = particles[i];
-        const mat = particleMats[i];
-        if (!spec || !mat) continue;
-        const u = (spec.along0 + t * spec.speed + spec.phase) % 1.15;
-        const along = u * length;
-        const travelFade = u < 0.08 ? u / 0.08 : u > 0.85 ? Math.max(0, (1.05 - u) / 0.2) : 1;
-        const endFade = laneEndFade(THREE.MathUtils.clamp(along / length, 0, 1), 0.18);
-        mesh.position.set(spec.across, spec.y, along);
-        mesh.scale.set(0.04 + hash01(seed + i) * 0.03, 1, spec.len);
-        mat.opacity = 0.28 * appear * travelFade * endFade;
+    const trail = windTrail.current;
+    if (trail) {
+      if (ms >= TRAIL_LIFE_MS) {
+        trail.kill();
+        windTrail.current = null;
+      } else {
+        trail.setRateScale(softEnvelope(ms / TRAIL_LIFE_MS, 0.08, 0.65));
       }
     }
-
   });
 
   return (
@@ -199,20 +169,6 @@ export function SlipstreamLaneEffect({ shot }: { shot: OneShotEffect }) {
           <primitive object={layer.geo} attach="geometry" />
         </mesh>
       ))}
-
-      {/* Forward-scrolling particle streaks */}
-      <group ref={particlesRef}>
-        {particles.map((_, i) => (
-          <mesh
-            key={`p-${i}`}
-            material={particleMats[i]}
-            rotation={[-Math.PI / 2, 0, 0]}
-            renderOrder={3}
-          >
-            <planeGeometry args={[0.1, 0.5]} />
-          </mesh>
-        ))}
-      </group>
 
     </group>
   );

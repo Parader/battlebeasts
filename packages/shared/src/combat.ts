@@ -95,7 +95,7 @@ export type ProjectileSim = {
   tickAcc: number;
   /**
    * Sticky / ground fuse (Ice Lance). `flight` until contact, miss, or wall;
-   * then `stuck` (follow target) or `grounded` until explodeIn elapses.
+   * then `stuck` (body or wall surface) or `grounded` (range miss) until explodeIn elapses.
    * Returning projectiles use `outbound` | `turning` | `returning`.
    * Runic Shard shatter children use `fragment`.
    */
@@ -1419,17 +1419,30 @@ export function tickProjectiles(
         : null;
     if (hitWall || hitBubble) {
       if (canDetonate) {
-        p.x = fromX;
-        p.z = fromZ;
-        armDetonate(p, fuseSec, "grounded", null);
+        // Stick tip-first into the surface (body stick pose), not a dirt plant.
+        const hitX = p.x;
+        const hitZ = p.z;
+        const dx = hitX - fromX;
+        const dz = hitZ - fromZ;
+        const len = Math.hypot(dx, dz);
+        if (len > 1e-4) {
+          const inset = Math.max(0.06, p.wallRadius * 0.35);
+          const along = Math.max(0, len - inset);
+          p.x = fromX + (dx / len) * along;
+          p.z = fromZ + (dz / len) * along;
+        } else {
+          p.x = fromX;
+          p.z = fromZ;
+        }
+        armDetonate(p, fuseSec, "stuck", null);
         // Hand Shield still retaliates when a fuse projectile plants on the disc.
         if (hitBubble?.id) {
           wallHits.push({
             projectileId: p.id,
             ownerId: p.ownerId,
             abilityId: p.abilityId,
-            x: fromX,
-            z: fromZ,
+            x: p.x,
+            z: p.z,
             blockBubbleId: hitBubble.id,
             detonatedOnBlock: true,
           });

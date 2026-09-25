@@ -1,5 +1,5 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { OneShotEffect } from "../types";
 import { smooth01 } from "../easing";
@@ -9,7 +9,7 @@ import { ASTRAL_CHAIN_COLORS } from "./astralChainPalette";
 const N = 10;
 
 /**
- * Astral Chain break — dissolve (expire) or snap (escape).
+ * Astral Chain break — the two halves retract, with a snap on escape.
  * shot at caster; originX/Z = target end.
  */
 export function AstralChainBreakEffect({ shot }: { shot: OneShotEffect }) {
@@ -81,6 +81,17 @@ export function AstralChainBreakEffect({ shot }: { shot: OneShotEffect }) {
   }, [motePos, moteSize, moteAlpha]);
   const pointMat = useMemo(() => createCirclePointMaterial(ASTRAL_CHAIN_COLORS.highlight), []);
 
+  useEffect(() => {
+    return () => {
+      geoA.dispose();
+      geoB.dispose();
+      lineMat.dispose();
+      ringMat.dispose();
+      moteGeo.dispose();
+      pointMat.dispose();
+    };
+  }, [geoA, geoB, lineMat, ringMat, moteGeo, pointMat]);
+
   useFrame(() => {
     const g = group.current;
     if (!g) return;
@@ -104,7 +115,6 @@ export function AstralChainBreakEffect({ shot }: { shot: OneShotEffect }) {
     const my = -0.12;
     const mz = (az + bz) * 0.5;
 
-    // Half A: caster → midpoint (retracts toward caster)
     const aPull = split;
     posA[0] = ax;
     posA[1] = ay;
@@ -112,7 +122,6 @@ export function AstralChainBreakEffect({ shot }: { shot: OneShotEffect }) {
     posA[3] = THREE.MathUtils.lerp(mx, ax, aPull);
     posA[4] = THREE.MathUtils.lerp(my, ay, aPull);
     posA[5] = THREE.MathUtils.lerp(mz, az, aPull);
-    // Half B: target → midpoint
     posB[0] = bx;
     posB[1] = by;
     posB[2] = bz;
@@ -127,7 +136,7 @@ export function AstralChainBreakEffect({ shot }: { shot: OneShotEffect }) {
       ring.current.position.set(bx, by, bz);
       ring.current.rotation.x = -Math.PI / 2;
       const ringT = escape ? smooth01(Math.min(1, ms / 70)) : 0;
-      ring.current.scale.setScalar(THREE.MathUtils.lerp(0.1, 0.45, ringT));
+      ring.current.scale.setScalar(THREE.MathUtils.lerp(0.12, 0.52, ringT));
       ringMat.opacity = escape ? ringT * (1 - t) * 0.7 : 0;
     }
 
@@ -137,10 +146,10 @@ export function AstralChainBreakEffect({ shot }: { shot: OneShotEffect }) {
       const ox = fromMid ? mx : bx;
       const oy = fromMid ? my : by;
       const oz = fromMid ? mz : bz;
-      motePos[i * 3] = ox + d.x * d.speed * split * 0.45;
-      motePos[i * 3 + 1] = oy + d.y * d.speed * split * 0.35;
-      motePos[i * 3 + 2] = oz + d.z * d.speed * split * 0.45;
-      moteSize[i] = (0.025 + (1 - split) * 0.02) * (escape ? 40 : 32);
+      motePos[i * 3] = ox + d.x * d.speed * split * 0.52;
+      motePos[i * 3 + 1] = oy + d.y * d.speed * split * 0.4;
+      motePos[i * 3 + 2] = oz + d.z * d.speed * split * 0.52;
+      moteSize[i] = (0.028 + (1 - split) * 0.022) * (escape ? 46 : 37);
       moteAlpha[i] = (1 - split * 0.85) * fade * 0.75;
     }
     moteGeo.attributes.position!.needsUpdate = true;
@@ -153,7 +162,7 @@ export function AstralChainBreakEffect({ shot }: { shot: OneShotEffect }) {
       <primitive object={lineA} renderOrder={8} />
       <primitive object={lineB} renderOrder={8} />
       <mesh ref={ring} material={ringMat} renderOrder={7}>
-        <ringGeometry args={[0.55, 0.72, 24]} />
+        <ringGeometry args={[0.62, 0.82, 24]} />
       </mesh>
       <points geometry={moteGeo} material={pointMat} renderOrder={9} frustumCulled={false} />
     </group>

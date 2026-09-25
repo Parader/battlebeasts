@@ -1,5 +1,6 @@
 import {
   ABILITIES,
+  ARC_THREAD_CAST,
   COLLISION,
   MAGMA_ORBS_CAST,
   RIFT_FISSURE_CAST,
@@ -167,7 +168,7 @@ export function castPreviewKindFor(def: AbilityDef): CastPreviewKind {
   if (kind === "firewall") return "wall";
   if (kind === "slipstream" || kind === "spikeWave") return "line";
   if (kind === "coneChannel" || kind === "silenceSweep") return "cone";
-  if (kind === "arcThread") return "none";
+  if (kind === "arcThread") return "skillshot";
   if (kind === "soulRelay") return "allyBind";
   if (kind === "verdantLeap") return "allyBind";
   if (kind === "predatorStep") return "none";
@@ -546,7 +547,14 @@ export function resolveCastPreview(input: CastPreviewInput): CastPreview {
       const length = rawRange > 24 ? 12 : rawRange;
       const r = def.radius ?? 0.55;
       // Thin skillshots (Prism Lance) keep a readable but narrow corridor.
-      const halfWidth = Math.max(r < 0.35 ? 0.12 : 0.4, Math.min(1.05, r));
+      // Arc Thread: narrow acquire cone → thin filament corridor (~0.4m half-width).
+      const halfWidth =
+        def.id === "arcThread"
+          ? Math.max(
+              0.28,
+              Math.min(0.45, ARC_THREAD_CAST.range * ARC_THREAD_CAST.acquireHalfAngle * 0.55),
+            )
+          : Math.max(r < 0.35 ? 0.12 : 0.4, Math.min(1.05, r));
       const mid = pointInFront(owner, owner.yaw, length * 0.5);
       const tip = pointInFront(owner, owner.yaw, length);
       return {

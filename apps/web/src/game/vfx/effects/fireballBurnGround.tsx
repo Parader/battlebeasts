@@ -1,29 +1,28 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { FIREBALL_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import { softEnvelope } from "../easing";
 import { AoeRimMarker } from "../components/AoeRimMarker";
 import { GroundDecal } from "../components/GroundDecal";
-import { FireParticleField } from "../components/FireParticleField";
 import { groundPresets } from "../presets/ground";
-import { VFX_FIRE_URL } from "../vfxUrls";
 import { getSmokeTexture } from "../smokeTexture";
+import { spawnElementRole, type ElementHandle } from "../engine";
 
 const FADE_IN_MS = 220;
 const FADE_OUT_MS = 650;
 
 /**
- * Fireball burn zone — poison-cloud layout, fire-tinted.
- * Normal-blend blot (not additive fire core) so bloom doesn't crush the frame.
+ * Caster blow/travel/impact: elsewhere; ground: lingering burn zone.
+ * Particles: ParticleWorld; light: none; status: StatusAuraFx handles burning.
  */
 export function FireballBurnGroundEffect({ shot }: { shot: OneShotEffect }) {
   const radius = Math.max(1.1, shot.radius ?? FIREBALL_CAST.burnRadiusMax);
   const lifeMs = Math.max(1200, shot.life);
   const rimOpacity = useRef(0);
   const cloudOpacity = useRef(0);
-  const fireProgress = useRef(0);
+  const groundFire = useRef<ElementHandle | null>(null);
 
   const blotPreset = useMemo(
     () => ({
@@ -50,20 +49,15 @@ export function FireballBurnGroundEffect({ shot }: { shot: OneShotEffect }) {
     [radius, lifeMs],
   );
 
-  const fireEmitters = useMemo(() => {
-    const ring = radius * 0.62;
-    return [
-      { x: 0, y: 0.14, z: 0, reveal: 0 },
-      { x: ring * 0.45, y: 0.12, z: 0, reveal: 0.1 },
-      { x: -ring * 0.45, y: 0.12, z: 0, reveal: 0.1 },
-      { x: 0, y: 0.12, z: ring * 0.45, reveal: 0.1 },
-      { x: 0, y: 0.12, z: -ring * 0.45, reveal: 0.1 },
-      { x: ring * 0.72, y: 0.1, z: ring * 0.35, reveal: 0.2 },
-      { x: -ring * 0.7, y: 0.1, z: -ring * 0.32, reveal: 0.2 },
-      { x: ring * 0.85, y: 0.1, z: 0, reveal: 0.3 },
-      { x: -ring * 0.85, y: 0.1, z: 0, reveal: 0.3 },
-    ];
-  }, [radius]);
+  useEffect(() => {
+    const handle = spawnElementRole("fire", "ground", shot.x, 0.1, shot.z);
+    handle.setRateScale(0);
+    groundFire.current = handle;
+    return () => {
+      handle.kill();
+      if (groundFire.current === handle) groundFire.current = null;
+    };
+  }, [shot.x, shot.z]);
 
   useFrame(() => {
     const age = performance.now() - shot.born;
@@ -75,7 +69,7 @@ export function FireballBurnGroundEffect({ shot }: { shot: OneShotEffect }) {
     );
     rimOpacity.current = fadeIn * 0.55;
     cloudOpacity.current = fadeIn;
-    fireProgress.current = Math.min(1, age / 280);
+    groundFire.current?.setRateScale(fadeIn);
   });
 
   return (
@@ -123,18 +117,6 @@ export function FireballBurnGroundEffect({ shot }: { shot: OneShotEffect }) {
         color="#7f1d1d"
         y={0.052}
         spin={-0.12}
-      />
-      <FireParticleField
-        emitters={fireEmitters}
-        rate={70}
-        maxParticles={140}
-        textureUrl={VFX_FIRE_URL}
-        maxLife={1.2}
-        maxSize={0.4}
-        rise={1.5}
-        spread={radius * 0.35}
-        progressRef={fireProgress}
-        opacityMulRef={cloudOpacity}
       />
     </group>
   );

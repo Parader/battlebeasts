@@ -91,6 +91,8 @@ void main() {
   float glowSoft = max(soft * 2.0, uGlowWidth);
   // Outside discard — only a thin halo past the hit edge.
   if (d > glowSoft * 0.55) discard;
+  // When fill is off, hard-cut deep interior so glow can't wash the whole disc
+  if (uFill < 0.001 && d < -glowSoft * 1.35) discard;
 
   float rimCore = 1.0 - smoothstep(0.0, soft, abs(d));
   // Glow mostly inward so the marker doesn't read larger than the hitbox.

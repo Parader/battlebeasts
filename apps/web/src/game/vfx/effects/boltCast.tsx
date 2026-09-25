@@ -1,18 +1,35 @@
 import { BOLT_CAST } from "@battlebeasts/shared";
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
-import * as THREE from "three";
+import { useEffect, useRef } from "react";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
 import { softEnvelope } from "../easing";
-import { acquireEnergyBallMaterial } from "../materials/energyBall";
-import { GroundMagicCircle } from "../components/GroundMagicCircle";
-import { getCombatOwnerPose } from "../../characterRoots";
-import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
-import { GEO_SPHERE_HI, GEO_SPHERE_MD } from "../sharedGeo";
-import { useSpellLight } from "../spellLights";
+import { getCombatOwnerPose, getCharacterRoot } from "../../characterRoots";
+import { findHandBone } from "../attach";
+import {
+  killLightningCluster,
+  moveLightningCluster,
+  spawnLightningCluster,
+  type LightningClusterOpts,
+} from "../engine/lightningArcs";
+import * as THREE from "three";
 
-/** Short muzzle flash — follows caster, offset toward extended hand. */
+const CASTER: LightningClusterOpts = {
+  length: 0.28,
+  strands: 3,
+  spreadMul: 0.32,
+  jitterMul: 0.4,
+  sag: 0.02,
+  tipGlow: 0,
+  colorCore: "#67e8f9",
+  colorInner: "#38bdf8",
+  colorOuter: "#0ea5e9",
+  colorHalo: "#0b3fc8",
+};
+
+/**
+ * Bolt cast — short hand crackle at release (no spheres / ground circles).
+ */
 export function BoltCastEffect({
   shot,
   follow,
@@ -20,18 +37,33 @@ export function BoltCastEffect({
   shot: OneShotEffect;
   follow: VfxFollowContext;
 }) {
-  const root = useRef<THREE.Group>(null);
-  const group = useRef<THREE.Group>(null);
-  const coreMat = useMemo(() => acquireEnergyBallMaterial(shot.color, 0), [shot.color]);
-  const glowMat = useMemo(() => acquireEnergyBallMaterial(shot.color, 0), [shot.color]);
-  const light = useSpellLight();
+  const clusterId = useRef(-1);
+  const handWorld = useRef(new THREE.Vector3());
   const pose = useRef({ x: shot.x, z: shot.z, yaw: shot.yaw, y: shot.y });
 
+  useEffect(() => {
+    return () => {
+      if (clusterId.current >= 0) killLightningCluster(clusterId.current);
+      clusterId.current = -1;
+    };
+  }, []);
+
   useFrame(() => {
-    const age = (performance.now() - shot.born) / shot.life;
+    const age = (performance.now() - shot.born) / Math.max(16, shot.life);
+    if (age >= 1) {
+      if (clusterId.current >= 0) {
+        killLightningCluster(clusterId.current);
+        clusterId.current = -1;
+      }
+      return;
+    }
+
+    const offset = shot.followSpawnOffset ?? BOLT_CAST.spawnOffset;
+    let hx = pose.current.x;
+    let hy = shot.y;
+    let hz = pose.current.z;
 
     if (shot.followOwnerId) {
-      const offset = shot.followSpawnOffset ?? BOLT_CAST.spawnOffset;
       const local =
         follow.localSessionId &&
         shot.followOwnerId === follow.localSessionId &&
@@ -43,6 +75,9 @@ export function BoltCastEffect({
         pose.current.yaw = local.yaw;
         pose.current.x = local.x + Math.sin(local.yaw) * offset;
         pose.current.z = local.z + Math.cos(local.yaw) * offset;
+        hx = pose.current.x;
+        hz = pose.current.z;
+        hy = BOLT_CAST.handY;
       } else {
         const p = getCombatOwnerPose(follow.room, shot.followOwnerId);
         if (p) {
@@ -50,61 +85,36 @@ export function BoltCastEffect({
           pose.current.yaw = yaw;
           pose.current.x = (p.x ?? pose.current.x) + Math.sin(yaw) * offset;
           pose.current.z = (p.z ?? pose.current.z) + Math.cos(yaw) * offset;
+          hx = pose.current.x;
+          hz = pose.current.z;
+          hy = BOLT_CAST.handY;
         }
+      }
+
+      const charRoot = getCharacterRoot(shot.followOwnerId);
+      const hand = charRoot ? findHandBone(charRoot, "right") : null;
+      if (hand) {
+        hand.getWorldPosition(handWorld.current);
+        hx = handWorld.current.x;
+        hy = handWorld.current.y;
+        hz = handWorld.current.z;
       }
     }
 
-    if (root.current) {
-      root.current.position.set(pose.current.x, 0, pose.current.z);
-    }
-
-    const g = group.current;
-    if (!g) return;
-    if (age >= 1) {
-      g.visible = false;
-      light.off();
+    const amp = softEnvelope(age, 0.35, 0.55);
+    if (amp < 0.04) {
+      if (clusterId.current >= 0) {
+        killLightningCluster(clusterId.current);
+        clusterId.current = -1;
+      }
       return;
     }
-    g.visible = true;
-    const amp = softEnvelope(age, 0.42, 0.58);
-    g.scale.setScalar(0.08 + amp * 0.55);
-    coreMat.opacity = amp * 0.9;
-    glowMat.opacity = amp * 0.4;
-    // Pool lights live at the scene root, so this is world space -- the group
-    // it used to hang off sits at (pose, shot.y).
-    light.emit(pose.current.x, shot.y, pose.current.z, shot.color, amp * 2.2, 3.5);
+
+    const by = hy - 0.04;
+    if (clusterId.current < 0 || !moveLightningCluster(clusterId.current, hx, by, hz)) {
+      clusterId.current = spawnLightningCluster(hx, by, hz, CASTER);
+    }
   });
 
-  return (
-    <group ref={root} position={[shot.x, 0, shot.z]}>
-      <group ref={group} position={[0, shot.y, 0]} scale={0.08}>
-        <mesh scale={0.12} geometry={GEO_SPHERE_HI} material={coreMat} />
-        <mesh scale={0.12 * 1.7} geometry={GEO_SPHERE_MD} material={glowMat} />
-        <AdditiveParticleBurst
-          color={shot.color}
-          origin={[0, 0, 0]}
-          count={7}
-          life={0.32}
-          speed={0.9}
-          speedSpread={0.5}
-          size={0.07}
-          sizeEnd={0.015}
-          lift={0.35}
-          upBias={0.5}
-          fadeIn={0.35}
-          trigger={shot.key}
-        />
-      </group>
-      <GroundMagicCircle
-        color={shot.color}
-        radius={0.32}
-        born={shot.born}
-        life={shot.life}
-        showRune
-        spin={1.6}
-        appearEnd={0.45}
-        fadeStart={0.55}
-      />
-    </group>
-  );
+  return null;
 }

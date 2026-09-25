@@ -1,4 +1,5 @@
 import { ABILITIES, phaseDurationMs } from "@battlebeasts/shared";
+import { playRunicShardCastSfx, playSoulMarkThrowSfx } from "../../gameSfx";
 import { spawnCastEffect } from "../runtime";
 import { getPlayerVfxRuntime } from "../runtime/playerVfxRuntime";
 import type { CastEngine, CastEngineContext, PlayerCastPose } from "./types";
@@ -14,6 +15,8 @@ function fireMuzzle(
   const forward = opts.forward;
   const x = (pose.x ?? 0) + Math.sin(yaw) * forward;
   const z = (pose.z ?? 0) + Math.cos(yaw) * forward;
+  if (abilityId === "runicShard") playRunicShardCastSfx();
+  if (abilityId === "soulMark") playSoulMarkThrowSfx();
   spawnCastEffect(
     abilityId,
     { x, z, yaw, y: opts.handY },

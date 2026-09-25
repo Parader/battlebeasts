@@ -3,14 +3,21 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { createLightningBoltMaterial, tickLightningBolt } from "./vfx/materials/lightningBolt";
 import { createCirclePointMaterial } from "./vfx/materials/circlePoint";
+import {
+  createLabGroundMarkMaterial,
+  tickLabGroundMark,
+} from "./vfx/engine/labShapeMaterials";
 import { CounterStatusFx } from "./CounterStatusFx";
 import { HandShieldFx } from "./HandShieldFx";
 import { HexAnchorOrnament } from "./HexAnchorOrnament";
 import { BindingRootedOrnament } from "./BindingRootedOrnament";
 import { SpellbreakerOrbOrnament } from "./SpellbreakerOrbOrnament";
 import { SoulMarkOrnament } from "./SoulMarkOrnament";
+import { RejuvenationOrnament } from "./RejuvenationOrnament";
+import { PoisonOrnament } from "./PoisonOrnament";
 import { SoulRelayOrnament } from "./SoulRelayOrnament";
 import { BloodPactOrnament } from "./BloodPactOrnament";
+import { StatusAuraFx } from "./vfx/StatusAuraFx";
 import { STATUSES } from "@battlebeasts/shared";
 import { type StatusRowLite } from "./statusBadgeUtils";
 
@@ -21,6 +28,8 @@ type Props = {
   headY?: number;
   /** Character scene root — used for Counter second-skin glow. */
   characterRoot?: THREE.Object3D | null;
+  /** The local player's own body: status auras skip distance gating and show self-only FX. */
+  local?: boolean;
 };
 
 function basicMat(color: string, opacity: number) {
@@ -37,15 +46,8 @@ function basicMat(color: string, opacity: number) {
 const BOLT_COUNT = 6;
 const SURGE_COLOR = "#67e8f9";
 const SURGE_HOT = "#fef08a";
-const POISON_WISP_COUNT = 6;
-const WEAKEN_WISP_COUNT = 7;
-const BURN_WISP_COUNT = 10;
 /** Flat overlapping ovals that spin around chained feet. */
 const CHAIN_OVAL_COUNT = 18;
-/** Any DoT that should show the emanating poison cloud. */
-const POISON_STATUS_IDS = new Set(["poisoned"]);
-const BURN_STATUS_IDS = new Set(["burning"]);
-const WEAKEN_STATUS_IDS = new Set(["weakened"]);
 
 const _tempQuat = new THREE.Quaternion();
 const _tempEuler = new THREE.Euler(0, 0, 0, "YXZ");
@@ -92,20 +94,17 @@ function buildExposedChevronsGeo(): THREE.BufferGeometry {
  * World-space malus ornaments over a unit (stun tornado, poison, bleed, slow)
  * plus Surge lightning / Counter glow while buffed.
  */
-export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = null }: Props) {
+export function StatusOrnaments({
+  getStatuses,
+  headY = 2.15,
+  characterRoot = null,
+  local = false,
+}: Props) {
   const stun = useRef<THREE.Group>(null);
   const stunRings = useRef<(THREE.Group | null)[]>([null, null, null]);
   const fearGroup = useRef<THREE.Group>(null);
   const fearOrbs = useRef<(THREE.Mesh | null)[]>([null, null, null]);
   const fearAuras = useRef<(THREE.Mesh | null)[]>([null, null, null]);
-  const poison = useRef<THREE.Group>(null);
-  const poisonPoints = useRef<THREE.Points>(null);
-  const weaken = useRef<THREE.Group>(null);
-  const weakenPoints = useRef<THREE.Points>(null);
-  const burn = useRef<THREE.Group>(null);
-  const burnWisps = useRef<(THREE.Mesh | null)[]>([]);
-  const bleed = useRef<THREE.Group>(null);
-  const soulSever = useRef<THREE.Group>(null);
   const slow = useRef<THREE.Group>(null);
   const rooted = useRef<THREE.Group>(null);
   const rootShards = useRef<(THREE.Mesh | null)[]>([]);
@@ -119,8 +118,7 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
   const surge = useRef<THREE.Group>(null);
   const bolts = useRef<(THREE.Mesh | null)[]>([]);
   const shockedGroup = useRef<THREE.Group>(null);
-  const shockBolts = useRef<(THREE.Mesh | null)[]>([]);
-  const shockRefresh = useRef(0);
+  const shockedMark = useRef<THREE.Mesh>(null);
   const exposedAngleGroup = useRef<THREE.Group>(null);
   const exposedReveal = useRef(0);
   const lastExposedAngle = useRef(0);
@@ -163,84 +161,6 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     return geo;
   }, [fearPositions, fearSizes, fearAlphas]);
   const fearPointMat = useMemo(() => createCirclePointMaterial("#a855f7"), []);
-  const poisonPositions = useMemo(() => new Float32Array(POISON_WISP_COUNT * 3), []);
-  const poisonSizes = useMemo(() => new Float32Array(POISON_WISP_COUNT), []);
-  const poisonAlphas = useMemo(() => new Float32Array(POISON_WISP_COUNT), []);
-  const poisonGeo = useMemo(() => {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(poisonPositions, 3));
-    geo.setAttribute("aSize", new THREE.BufferAttribute(poisonSizes, 1));
-    geo.setAttribute("aAlpha", new THREE.BufferAttribute(poisonAlphas, 1));
-    return geo;
-  }, [poisonPositions, poisonSizes, poisonAlphas]);
-  /** Same Points + circle.png path as dart bursts — not SpriteMaterial (that hung the tab). */
-  const poisonPointMat = useMemo(() => createCirclePointMaterial("#4ade80"), []);
-  const poisonCoreMat = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: "#052e16",
-        transparent: true,
-        opacity: 0.28,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    [],
-  );
-
-  const weakenPositions = useMemo(() => new Float32Array(WEAKEN_WISP_COUNT * 3), []);
-  const weakenSizes = useMemo(() => new Float32Array(WEAKEN_WISP_COUNT), []);
-  const weakenAlphas = useMemo(() => new Float32Array(WEAKEN_WISP_COUNT), []);
-  const weakenGeo = useMemo(() => {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(weakenPositions, 3));
-    geo.setAttribute("aSize", new THREE.BufferAttribute(weakenSizes, 1));
-    geo.setAttribute("aAlpha", new THREE.BufferAttribute(weakenAlphas, 1));
-    return geo;
-  }, [weakenPositions, weakenSizes, weakenAlphas]);
-  const weakenPointMat = useMemo(() => createCirclePointMaterial("#94a3b8"), []);
-  const weakenCoreMat = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: "#334155",
-        transparent: true,
-        opacity: 0.32,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    [],
-  );
-  const weakenRingMat = useMemo(() => basicMat("#94a3b8", 0.45), []);
-
-  const burnMats = useMemo(
-    () =>
-      Array.from({ length: BURN_WISP_COUNT }, (_, i) =>
-        new THREE.MeshBasicMaterial({
-          color: i % 3 === 0 ? "#fff7ed" : i % 3 === 1 ? "#fb923c" : "#ea580c",
-          transparent: true,
-          opacity: 0.35,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          toneMapped: false,
-        }),
-      ),
-    [],
-  );
-  const burnCoreMat = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: "#7c2d12",
-        transparent: true,
-        opacity: 0.28,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    [],
-  );
-  const bleedMats = useMemo(() => [0, 1, 2, 3].map(() => basicMat("#f87171", 0.65)), []);
-  const soulSeverMats = useMemo(
-    () => [0, 1, 2, 3, 4].map(() => basicMat("#EF4444", 0.55)),
-    [],
-  );
   const slowMat = useMemo(() => basicMat("#93c5fd", 0.5), []);
   const rootIceMat = useMemo(
     () =>
@@ -304,15 +224,13 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     [],
   );
 
-  const SHOCK_BOLT_COUNT = 3;
-  const shockBoltMats = useMemo(
+  const SHOCK_GROUND_SIZE = 0.85;
+  const shockedGroundMat = useMemo(
     () =>
-      Array.from({ length: SHOCK_BOLT_COUNT }, (_, i) =>
-        createLightningBoltMaterial("#38bdf8", {
-          hot: "#e0f2fe",
-          opacity: 0.95,
-          seed: 37 + i * 9.1,
-        }),
+      createLabGroundMarkMaterial(
+        "arc",
+        { hot: "#e0f2fe", mid: "#38bdf8", edge: "#0c4a6e" },
+        { opacity: 0.9, additive: true },
       ),
     [],
   );
@@ -391,24 +309,13 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       fearAuraMat.dispose();
       fearGeo.dispose();
       fearPointMat.dispose();
-      poisonGeo.dispose();
-      poisonPointMat.dispose();
-      poisonCoreMat.dispose();
-      weakenGeo.dispose();
-      weakenPointMat.dispose();
-      weakenCoreMat.dispose();
-      weakenRingMat.dispose();
-      burnMats.forEach((m) => m.dispose());
-      burnCoreMat.dispose();
-      bleedMats.forEach((m) => m.dispose());
-      soulSeverMats.forEach((m) => m.dispose());
       slowMat.dispose();
       rootIceMat.dispose();
       rootGlowMat.dispose();
       chainOvalMat.dispose();
       chainGlowMat.dispose();
       boltMats.forEach((m) => m.dispose());
-      shockBoltMats.forEach((m) => m.dispose());
+      shockedGroundMat.dispose();
       exposedArcBandGeo.dispose();
       exposedArcCoreGeo.dispose();
       exposedLightSpillGeo.dispose();
@@ -424,24 +331,13 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     fearAuraMat,
     fearGeo,
     fearPointMat,
-    poisonGeo,
-    poisonPointMat,
-    poisonCoreMat,
-    weakenGeo,
-    weakenPointMat,
-    weakenCoreMat,
-    weakenRingMat,
-    burnMats,
-    burnCoreMat,
-    bleedMats,
-    soulSeverMats,
     slowMat,
     rootIceMat,
     rootGlowMat,
     chainOvalMat,
     chainGlowMat,
     boltMats,
-    shockBoltMats,
+    shockedGroundMat,
     exposedArcBandGeo,
     exposedArcCoreGeo,
     exposedLightSpillGeo,
@@ -459,60 +355,6 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         { radius: 0.105, tube: 0.014, y: 0.075, arc: Math.PI * 2, pivot: 0.028, speed: -3.7, phase: 1.9, tilt: 0.18 },
         { radius: 0.145, tube: 0.015, y: 0.015, arc: Math.PI * 2, pivot: 0.035, speed: 2.6, phase: 3.7, tilt: 0.12 },
       ] as const,
-    [],
-  );
-
-  const wispSpecs = useMemo(
-    () =>
-      Array.from({ length: POISON_WISP_COUNT }, (_, i) => {
-        const a = (i / POISON_WISP_COUNT) * Math.PI * 2;
-        return {
-          ang: a,
-          radius: 0.22 + (i % 4) * 0.07,
-          baseY: 0.55 + (i % 3) * 0.18,
-          rise: 0.55 + (i % 5) * 0.12,
-          size: 0.05 + (i % 3) * 0.025,
-          speed: 0.45 + (i % 4) * 0.12,
-          phase: i * 0.73,
-          spin: 0.6 + (i % 3) * 0.35,
-        };
-      }),
-    [],
-  );
-
-  const weakenWispSpecs = useMemo(
-    () =>
-      Array.from({ length: WEAKEN_WISP_COUNT }, (_, i) => {
-        const a = (i / WEAKEN_WISP_COUNT) * Math.PI * 2 + 0.15;
-        return {
-          ang: a,
-          radius: 0.24 + (i % 4) * 0.06,
-          baseY: 0.48 + (i % 3) * 0.16,
-          rise: 0.48 + (i % 5) * 0.1,
-          size: 0.048 + (i % 3) * 0.02,
-          speed: 0.4 + (i % 4) * 0.1,
-          phase: i * 0.67,
-          spin: 0.5 + (i % 3) * 0.28,
-        };
-      }),
-    [],
-  );
-
-  const burnWispSpecs = useMemo(
-    () =>
-      Array.from({ length: BURN_WISP_COUNT }, (_, i) => {
-        const a = (i / BURN_WISP_COUNT) * Math.PI * 2 + 0.2;
-        return {
-          ang: a,
-          radius: 0.2 + (i % 4) * 0.065,
-          baseY: 0.5 + (i % 3) * 0.16,
-          rise: 0.6 + (i % 5) * 0.14,
-          size: 0.045 + (i % 3) * 0.022,
-          speed: 0.55 + (i % 4) * 0.14,
-          phase: i * 0.81,
-          spin: 0.75 + (i % 3) * 0.4,
-        };
-      }),
     [],
   );
 
@@ -582,22 +424,25 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
     if (rows.length === 0) {
       if (stun.current) stun.current.visible = false;
       if (fearGroup.current) fearGroup.current.visible = false;
-      if (poison.current) poison.current.visible = false;
-      if (weaken.current) weaken.current.visible = false;
-      if (burn.current) burn.current.visible = false;
-      if (bleed.current) bleed.current.visible = false;
-      if (soulSever.current) soulSever.current.visible = false;
       if (slow.current) slow.current.visible = false;
       if (surge.current) surge.current.visible = false;
+      if (shockedGroup.current) shockedGroup.current.visible = false;
+      if (shockedMark.current) shockedMark.current.visible = false;
+      shockedGroundMat.uniforms.uOpacity!.value = 0;
+      if (exposedAngleGroup.current) exposedAngleGroup.current.visible = false;
+      exposedReveal.current = 0;
+      exposedBandMat.opacity = 0;
+      exposedCoreMat.opacity = 0;
+      exposedSpillMat.opacity = 0;
+      exposedChevronMat.opacity = 0;
       moveSeeded.current = false;
       trailDir.current.x = 0;
       trailDir.current.z = -1;
+      for (const m of bolts.current) {
+        if (m) m.visible = false;
+      }
       return;
     }
-
-    const poisoned = rows.some((r) => POISON_STATUS_IDS.has(r.statusId));
-    const weakened = rows.some((r) => WEAKEN_STATUS_IDS.has(r.statusId));
-    const burning = rows.some((r) => BURN_STATUS_IDS.has(r.statusId));
 
     const feared = has("feared");
 
@@ -651,107 +496,13 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         }
       }
     }
-    if (poison.current) {
-      poison.current.visible = poisoned;
-      if (poisoned) {
-        for (let i = 0; i < POISON_WISP_COUNT; i++) {
-          const spec = wispSpecs[i]!;
-          const cycle = (t * spec.speed + spec.phase) % 1;
-          const ang = spec.ang + t * spec.spin;
-          const y = spec.baseY + cycle * spec.rise;
-          const outward = 0.85 + cycle * 0.55;
-          poisonPositions[i * 3] = Math.cos(ang) * spec.radius * outward;
-          poisonPositions[i * 3 + 1] = y;
-          poisonPositions[i * 3 + 2] = Math.sin(ang) * spec.radius * outward;
-          const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.55 ? 1 - (cycle - 0.55) / 0.45 : 1;
-          // Size into the same distance formula as AdditiveParticleBurst (×40)
-          poisonSizes[i] = spec.size * (0.7 + cycle * 1.1) * 36;
-          poisonAlphas[i] = Math.max(0, fade) * (0.35 + (i % 3) * 0.08);
-        }
-        poisonGeo.attributes.position!.needsUpdate = true;
-        poisonGeo.attributes.aSize!.needsUpdate = true;
-        poisonGeo.attributes.aAlpha!.needsUpdate = true;
-        poisonCoreMat.opacity = 0.18 + 0.1 * (0.5 + 0.5 * Math.sin(t * 4.2));
-      }
-    }
-    if (weaken.current) {
-      weaken.current.visible = weakened;
-      if (weakened) {
-        for (let i = 0; i < WEAKEN_WISP_COUNT; i++) {
-          const spec = weakenWispSpecs[i]!;
-          const cycle = (t * spec.speed + spec.phase) % 1;
-          const ang = spec.ang + t * spec.spin;
-          const y = spec.baseY + cycle * spec.rise;
-          const outward = 0.9 + cycle * 0.5;
-          weakenPositions[i * 3] = Math.cos(ang) * spec.radius * outward;
-          weakenPositions[i * 3 + 1] = y;
-          weakenPositions[i * 3 + 2] = Math.sin(ang) * spec.radius * outward;
-          const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.55 ? 1 - (cycle - 0.55) / 0.45 : 1;
-          weakenSizes[i] = spec.size * (0.75 + cycle * 1.05) * 36;
-          weakenAlphas[i] = Math.max(0, fade) * (0.4 + (i % 3) * 0.07);
-        }
-        weakenGeo.attributes.position!.needsUpdate = true;
-        weakenGeo.attributes.aSize!.needsUpdate = true;
-        weakenGeo.attributes.aAlpha!.needsUpdate = true;
-        weakenCoreMat.opacity = 0.22 + 0.1 * (0.5 + 0.5 * Math.sin(t * 3.6));
-        weaken.current.rotation.y = t * 0.55;
-      }
-    }
-    if (burn.current) {
-      burn.current.visible = burning;
-      if (burning) {
-        for (let i = 0; i < burnWisps.current.length; i++) {
-          const mesh = burnWisps.current[i];
-          const spec = burnWispSpecs[i];
-          const mat = burnMats[i];
-          if (!mesh || !spec || !mat) continue;
-          const cycle = (t * spec.speed + spec.phase) % 1;
-          const ang = spec.ang + t * spec.spin;
-          const y = spec.baseY + cycle * spec.rise;
-          const outward = 0.8 + cycle * 0.5;
-          mesh.position.set(
-            Math.cos(ang) * spec.radius * outward,
-            y,
-            Math.sin(ang) * spec.radius * outward,
-          );
-          const s = spec.size * (0.65 + cycle * 1.2);
-          mesh.scale.setScalar(s);
-          const fade = cycle < 0.12 ? cycle / 0.12 : cycle > 0.5 ? 1 - (cycle - 0.5) / 0.5 : 1;
-          mat.opacity = Math.max(0, fade) * (0.28 + (i % 3) * 0.07);
-        }
-        burnCoreMat.opacity = 0.16 + 0.12 * (0.5 + 0.5 * Math.sin(t * 5.1));
-      }
-    }
-    if (bleed.current) {
-      bleed.current.visible = has("bleeding");
-      if (bleed.current.visible) {
-        for (let i = 0; i < bleed.current.children.length; i++) {
-          const d = bleed.current.children[i]!;
-          const phase = i * 1.7;
-          const cycle = (t * 0.55 + phase) % 0.55;
-          d.position.y = -0.05 - cycle;
-          const mat = bleedMats[i];
-          if (mat) mat.opacity = 0.25 + 0.45 * (1 - cycle / 0.55);
-        }
-      }
-    }
-    if (soulSever.current) {
-      soulSever.current.visible = has("soulSevered");
-      if (soulSever.current.visible) {
-        for (let i = 0; i < soulSever.current.children.length; i++) {
-          const d = soulSever.current.children[i]!;
-          const phase = i * 1.35;
-          const cycle = (t * 0.7 + phase) % 0.7;
-          d.position.y = -0.02 - cycle * 1.05;
-          const mat = soulSeverMats[i];
-          if (mat) mat.opacity = 0.2 + 0.5 * (1 - cycle / 0.7);
-        }
-      }
-    }
     if (slow.current) {
-      slow.current.visible =
-        has("slowed") || has("frostChill") || has("poisonMiasma") || has("gravityFieldSlow");
-      if (slow.current.visible) {
+      // Shocked uses the lab ground mark — don't stack the old slow ring circles.
+      const wantSlowRings =
+        (has("slowed") || has("frostChill") || has("poisonMiasma") || has("gravityFieldSlow")) &&
+        !has("shocked");
+      slow.current.visible = wantSlowRings;
+      if (wantSlowRings) {
         slow.current.rotation.y += safeDt * 0.9;
         slow.current.position.y = 0.12 + 0.03 * Math.sin(t * 2);
         const chillStacks = rows.find((r) => r.statusId === "frostChill")?.stacks ?? 0;
@@ -827,42 +578,25 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
       }
     }
 
-    const shockRow = rows.find((r) => r.statusId === "shocked");
-    const shockStacks = shockRow ? Math.max(1, shockRow.stacks ?? 1) : 0;
-    if (shockedGroup.current) shockedGroup.current.visible = shockStacks > 0;
-
-    if (shockStacks > 0) {
-      for (const mat of shockBoltMats) tickLightningBolt(mat, safeDt);
-      shockRefresh.current -= safeDt;
-      if (shockRefresh.current <= 0) {
-        shockRefresh.current = 0.05 + Math.random() * 0.04;
-        const activeCount = Math.min(SHOCK_BOLT_COUNT, shockStacks);
-        for (let i = 0; i < SHOCK_BOLT_COUNT; i++) {
-          const m = shockBolts.current[i];
-          if (!m) continue;
-          if (i >= activeCount) {
-            m.visible = false;
-            continue;
-          }
-          const ang = Math.random() * Math.PI * 2;
-          const rad = 0.06 + Math.random() * 0.12;
-          const y = 0.35 + Math.random() * (headY * 0.45);
-          m.position.set(Math.cos(ang) * rad, y, Math.sin(ang) * rad);
-          m.rotation.set(
-            (Math.random() - 0.5) * Math.PI,
-            (Math.random() - 0.5) * Math.PI,
-            (Math.random() - 0.5) * Math.PI,
-          );
-          const len = 0.1 + Math.random() * 0.12;
-          const h = 0.03 + Math.random() * 0.02;
-          m.scale.set(len, h, 1);
-          m.visible = true;
-        }
-      }
+    const nowMs = Date.now();
+    const shockRow = rows.find((r) => {
+      if (r.statusId !== "shocked") return false;
+      if (typeof r.expiresAt === "number" && r.expiresAt > 0 && nowMs >= r.expiresAt) return false;
+      return true;
+    });
+    const shockStacks = shockRow ? Math.max(1, Math.floor(Number(shockRow.stacks) || 1)) : 0;
+    const wantShock = shockStacks > 0;
+    if (shockedGroup.current) shockedGroup.current.visible = wantShock;
+    if (shockedMark.current) shockedMark.current.visible = wantShock;
+    if (wantShock) {
+      tickLabGroundMark(shockedGroundMat, safeDt);
+      const stack01 = Math.min(1, shockStacks / 3);
+      const pulse = 0.72 + 0.28 * Math.sin(t * 5.2);
+      shockedGroundMat.uniforms.uOpacity!.value = (0.55 + 0.35 * stack01) * pulse;
+      const s = SHOCK_GROUND_SIZE * (0.92 + 0.08 * stack01);
+      shockedMark.current?.scale.set(s, s, s);
     } else {
-      for (const m of shockBolts.current) {
-        if (m) m.visible = false;
-      }
+      shockedGroundMat.uniforms.uOpacity!.value = 0;
     }
 
     const exposed = rows.find((r) => r.statusId === "exposedAngle");
@@ -944,73 +678,8 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         ))}
       </group>
 
-      <group ref={poison} visible={false}>
-        {/* Soft torso haze */}
-        <mesh position={[0, 1.05, 0]} scale={[0.55, 0.85, 0.45]}>
-          <sphereGeometry args={[0.55, 10, 10]} />
-          <primitive object={poisonCoreMat} attach="material" />
-        </mesh>
-        <points
-          ref={poisonPoints}
-          geometry={poisonGeo}
-          material={poisonPointMat}
-          frustumCulled={false}
-        />
-      </group>
-
-      <group ref={weaken} visible={false}>
-        <mesh position={[0, 0.95, 0]} scale={[0.48, 0.72, 0.4]}>
-          <sphereGeometry args={[0.55, 10, 10]} />
-          <primitive object={weakenCoreMat} attach="material" />
-        </mesh>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]}>
-          <ringGeometry args={[0.38, 0.52, 28]} />
-          <primitive object={weakenRingMat} attach="material" />
-        </mesh>
-        <points
-          ref={weakenPoints}
-          geometry={weakenGeo}
-          material={weakenPointMat}
-          frustumCulled={false}
-        />
-      </group>
-
-      <group ref={burn} visible={false}>
-        <mesh position={[0, 1.0, 0]} scale={[0.5, 0.8, 0.42]}>
-          <sphereGeometry args={[0.55, 10, 10]} />
-          <primitive object={burnCoreMat} attach="material" />
-        </mesh>
-        {burnMats.map((mat, i) => (
-          <mesh
-            key={`burn-${i}`}
-            ref={(el) => {
-              burnWisps.current[i] = el;
-            }}
-          >
-            <sphereGeometry args={[1, 6, 6]} />
-            <primitive object={mat} attach="material" />
-          </mesh>
-        ))}
-      </group>
-
-      <group ref={bleed} position={[0, 1.35, 0.15]} visible={false}>
-        {bleedMats.map((mat, i) => (
-          <mesh key={i} position={[(i - 1.5) * 0.08, 0, (i % 2) * 0.05]}>
-            <sphereGeometry args={[0.045, 6, 6]} />
-            <primitive object={mat} attach="material" />
-          </mesh>
-        ))}
-      </group>
-
-      {/* Soul Sever — violet soul-bleed drips while imprint is active. */}
-      <group ref={soulSever} position={[0, 1.4, 0.12]} visible={false}>
-        {soulSeverMats.map((mat, i) => (
-          <mesh key={i} position={[(i - 2) * 0.07, 0, (i % 2) * 0.06]}>
-            <sphereGeometry args={[0.038, 6, 6]} />
-            <primitive object={mat} attach="material" />
-          </mesh>
-        ))}
-      </group>
+      {/* Burning / poisoned / bleeding / chilled / regen live on ParticleWorld. */}
+      <StatusAuraFx getStatuses={getStatuses} local={local} />
 
       <group ref={slow} position={[0, 0.12, 0]} visible={false}>
         <mesh rotation={[-Math.PI / 2, 0, 0]}>
@@ -1110,20 +779,19 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
         ))}
       </group>
 
-      {/* Shocked — crackling cyan electric arcs across the body */}
+      {/* Shocked — small lab lightning ground mark (no body bolts / tendrils) */}
       <group ref={shockedGroup} visible={false}>
-        {shockBoltMats.map((mat, i) => (
-          <mesh
-            key={`shock-bolt-${i}`}
-            ref={(el) => {
-              shockBolts.current[i] = el;
-            }}
-            visible={false}
-          >
-            <planeGeometry args={[1, 1]} />
-            <primitive object={mat} attach="material" />
-          </mesh>
-        ))}
+        <mesh
+          ref={shockedMark}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.04, 0]}
+          scale={SHOCK_GROUND_SIZE}
+          renderOrder={8}
+          frustumCulled={false}
+        >
+          <planeGeometry args={[1, 1]} />
+          <primitive object={shockedGroundMat} attach="material" />
+        </mesh>
       </group>
 
       {/* Exposed Angle (DES_14) — illuminated 90° vulnerability light zone on ground circle */}
@@ -1192,6 +860,26 @@ export function StatusOrnaments({ getStatuses, headY = 2.15, characterRoot = nul
           return max;
         }}
       />
+      <PoisonOrnament
+        getStacks={() => {
+          let max = 0;
+          for (const r of getStatuses()) {
+            if (r.statusId === "poisoned") max = Math.max(max, r.stacks ?? 1);
+          }
+          return max;
+        }}
+      />
+      <RejuvenationOrnament
+        getStacks={() => {
+          let max = 0;
+          for (const r of getStatuses()) {
+            if (r.statusId === "rejuvenated" || r.statusId === "overflowingGraceHot") {
+              max = Math.max(max, r.stacks ?? 1);
+            }
+          }
+          return max;
+        }}
+      />
       <BuffAppearBurst getStatuses={getStatuses} y={headY * 0.55} />
     </group>
   );
@@ -1228,7 +916,9 @@ function BuffAppearBurst({
     const buffIds: string[] = [];
     for (const row of rows) {
       const def = STATUSES[row.statusId];
-      if (def?.polarity === "buff") buffIds.push(row.statusId);
+      if (def?.polarity !== "buff") continue;
+      if (row.statusId === "rejuvenated" || row.statusId === "overflowingGraceHot") continue;
+      buffIds.push(row.statusId);
     }
 
     if (!seeded.current) {

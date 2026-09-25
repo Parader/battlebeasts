@@ -1,5 +1,28 @@
 type Listener = () => void;
 
+/** How local cast aim should tint — for testing ally/enemy telegraph looks. */
+export type CastAimRelationPreview = "self" | "ally" | "enemy";
+
+/** Shared LoL / Battlerite-style aim telegraph tint (local / self). */
+export const CAST_AIM_COLOR = "#3ec6ff";
+export const CAST_AIM_HOT = "#c8f4ff";
+
+/** Ally telegraph tint (team green — matches lab telegraphFriendly). */
+export const CAST_AIM_ALLY_COLOR = "#22c55e";
+export const CAST_AIM_ALLY_HOT = "#bbf7d0";
+
+/** Enemy telegraph tint (hostile red — matches lab telegraphEnemy). */
+export const CAST_AIM_ENEMY_COLOR = "#ef4444";
+export const CAST_AIM_ENEMY_HOT = "#fecaca";
+
+export function castAimColorsFor(
+  relation: CastAimRelationPreview,
+): { color: string; hot: string } {
+  if (relation === "ally") return { color: CAST_AIM_ALLY_COLOR, hot: CAST_AIM_ALLY_HOT };
+  if (relation === "enemy") return { color: CAST_AIM_ENEMY_COLOR, hot: CAST_AIM_ENEMY_HOT };
+  return { color: CAST_AIM_COLOR, hot: CAST_AIM_HOT };
+}
+
 /**
  * Optimistic local cast bus — useBaseCityRoom writes ability/phase so
  * CastAimTelegraph can show on the same frame as cast queue (before schema).
@@ -9,6 +32,11 @@ class CastAimRuntime {
   phase = "";
   /** 1-based combo swing; previews only for the first hit (≤1). */
   comboHit = 1;
+  /**
+   * Preview cast-aim as self / ally / enemy tint (Spell Lab toggle).
+   * Does not change gameplay — only telegraph colors.
+   */
+  relationPreview: CastAimRelationPreview = "self";
   /**
    * After cancel/clear, ignore schema fallback until the next intentional cast
    * so a stale castPhase can't resurrect the ghost.
@@ -46,6 +74,16 @@ class CastAimRuntime {
     this.phase = nextPhase;
     this.comboHit = nextCombo;
     this.emit();
+  }
+
+  setRelationPreview(relation: CastAimRelationPreview): void {
+    if (this.relationPreview === relation) return;
+    this.relationPreview = relation;
+    this.emit();
+  }
+
+  colors(): { color: string; hot: string } {
+    return castAimColorsFor(this.relationPreview);
   }
 
   clear(): void {
@@ -90,7 +128,3 @@ class CastAimRuntime {
 }
 
 export const castAimRuntime = new CastAimRuntime();
-
-/** Shared LoL / Battlerite-style aim telegraph tint. */
-export const CAST_AIM_COLOR = "#3ec6ff";
-export const CAST_AIM_HOT = "#c8f4ff";

@@ -16,7 +16,8 @@ import { FixedFollowCamera } from "./FixedFollowCamera";
 import { RemotePlayers } from "./RemotePlayers";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { CombatFxMeshes, DamagePopups, Projectiles, WorldTargets, Decoys, Volcanoes, RockWalls, WorldTrees, ProtectionBubbles, OrbitingWisps, AstralChains, SoulSevers, RiftPortals, Shrooms, SpiritHusks, PickupOrbs } from "./CombatVfx";
-import { SpellVfxBridge, VfxWorld } from "./vfx";
+import { ParticleWorldView, SpellVfxBridge, VfxWorld } from "./vfx";
+import { LabShapePreview } from "./vfx/engine";
 import { setGroundAim } from "./groundAimRuntime";
 import { FollowSun } from "./FollowSun";
 import { CollisionDebugOverlay } from "./CollisionDebugOverlay";
@@ -577,6 +578,8 @@ export function BaseCityScene({ room, localSessionId, predictedRef, partySession
             <Projectiles room={room} />
             <CombatFxMeshes />
             <DamagePopups />
+            <ParticleWorldView />
+            <LabShapePreview originRef={predictedRef} />
             <VfxWorld
                 room={room}
                 localSessionId={localSessionId}

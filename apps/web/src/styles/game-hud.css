@@ -1644,6 +1644,18 @@
   color: var(--bb-ink-soft);
 }
 
+.bb-armoury-card__tooltip-effect {
+  margin: 0.3rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: #9ec5e8;
+}
+
+.bb-armoury-card__tooltip-effect strong {
+  color: #c7e0f5;
+  font-weight: 700;
+}
+
 .bb-armoury-card__tooltip-stats {
   margin: 0.4rem 0 0;
   font-size: 0.78rem;
@@ -2423,6 +2435,18 @@
   font-size: 0.72rem;
   line-height: 1.35;
   color: var(--bb-ink-soft, #c5d4e2);
+}
+
+.bb-ability-tooltip__effect {
+  margin: 0.3rem 0 0;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: #9ec5e8;
+}
+
+.bb-ability-tooltip__effect strong {
+  color: #c7e0f5;
+  font-weight: 700;
 }
 
 .bb-ability-tooltip__stats {

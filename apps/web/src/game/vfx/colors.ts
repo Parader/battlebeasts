@@ -1,6 +1,6 @@
 /** Shared ability tint for combat VFX (projectiles, hits, muzzle). */
 export const ABILITY_VFX_COLOR: Record<string, string> = {
-  bolt: "#38bdf8",
+  bolt: "#67e8f9",
   arcThread: "#67e8f9",
   soulMark: "#a78bfa",
   voidDisc: "#8b2dce",
@@ -59,6 +59,7 @@ export const ABILITY_VFX_COLOR: Record<string, string> = {
   healBeam: "#6ee7b7",
   lifeLeech: "#ef4444",
   poisonDart: "#4d7c0f",
+  poisoned: "#84cc16",
   iceLance: "#7dd3fc",
   counter: "#f5c542",
   revenge: "#ef4444",

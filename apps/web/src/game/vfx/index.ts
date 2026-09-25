@@ -120,6 +120,18 @@ export {
 } from "./materials";
 
 export { ObjectPool, createVec3Pool } from "./pool";
+export {
+  ParticleWorldView,
+  spawnEmitter,
+  setEmitterPose,
+  setEmitterRate,
+  killEmitter,
+  killAllEmitters,
+  fireCone,
+  spawnStressCones,
+  getParticleWorld,
+  MAX_PARTICLES,
+} from "./engine";
 
 export {
   applyAtlasFrame,

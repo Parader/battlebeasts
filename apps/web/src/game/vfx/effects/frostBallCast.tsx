@@ -1,16 +1,16 @@
-import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
-import * as THREE from "three";
+import { useEffect, useMemo, useRef } from "react";
 import { FROST_BALL_CAST } from "@battlebeasts/shared";
-import type { OneShotEffect } from "../types";
+import { useFrame } from "@react-three/fiber";
+import * as THREE from "three";
+import { getCombatOwnerPose } from "../../characterRoots";
 import type { VfxFollowContext } from "../catalog";
-import { smoothstep } from "../easing";
-import { acquireEnergyBallMaterial } from "../materials/energyBall";
-import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
 import { GroundDecal } from "../components/GroundDecal";
+import { smoothstep } from "../easing";
+import { type ElementHandle, burstElementRole, spawnElementRole } from "../engine";
+import { acquireEnergyBallMaterial } from "../materials/energyBall";
 import { groundPresets } from "../presets/ground";
 import { useSpellLight } from "../spellLights";
-import { getCombatOwnerPose } from "../../characterRoots";
+import type { OneShotEffect } from "../types";
 
 /** Forward offset / height — matches projectile spawn (`FROST_BALL_CAST`). */
 export const FROST_HAND_FORWARD = FROST_BALL_CAST.spawnOffset;
@@ -29,9 +29,12 @@ type ProjSnap = {
 };
 
 /**
- * One frost orb for the whole cast: grows in the hand (visual only), then the
- * same mesh + ground aura becomes the drifting projectile when the server
- * spawns it. Prep never deals damage — combat starts at projectile spawn.
+ * Caster blow: frost cast burst as the orb forms.
+ * Travel: persistent frost trail follows the projectile body.
+ * Impact: frost impact burst when the server projectile ends.
+ * Ground: existing frost decal follows the orb.
+ * Particles: ParticleWorld frost role presets only.
+ * Light: existing SpellLight stays on the orb.
  */
 export function FrostBallCastEffect({
   shot,
@@ -59,9 +62,20 @@ export function FrostBallCastEffect({
   const fadeOut = useRef(1);
   const growFull = useRef(0);
   const done = useRef(false);
+  const trail = useRef<ElementHandle | null>(null);
+  const castBlown = useRef(false);
+  const impactBlown = useRef(false);
 
   /** Windup duration for the grow curve (not the full shot life). */
   const chargeSec = Math.max(0.2, (shot.chargeMs ?? 480) / 1000);
+
+  useEffect(
+    () => () => {
+      trail.current?.kill();
+      trail.current = null;
+    },
+    [],
+  );
 
   useFrame((_, dt) => {
     if (done.current) return;
@@ -75,7 +89,14 @@ export function FrostBallCastEffect({
       let snap: ProjSnap | null = null;
       room.state.projectiles.forEach(
         (
-          p: { ownerSessionId?: string; abilityId?: string; x: number; z: number; vx?: number; vz?: number },
+          p: {
+            ownerSessionId?: string;
+            abilityId?: string;
+            x: number;
+            z: number;
+            vx?: number;
+            vz?: number;
+          },
           id: string,
         ) => {
           if (found) return;
@@ -103,11 +124,22 @@ export function FrostBallCastEffect({
     // --- Flight: track server projectile ---
     if (phase.current === "flight" && projId.current && room?.state?.projectiles) {
       const p = room.state.projectiles.get(projId.current) as
-        | { x: number; z: number; vx?: number; vz?: number }
-        | undefined;
+        { x: number; z: number; vx?: number; vz?: number } | undefined;
       if (!p) {
         phase.current = "fade";
         fadeOut.current = 1;
+        trail.current?.kill();
+        trail.current = null;
+        if (!impactBlown.current) {
+          impactBlown.current = true;
+          burstElementRole(
+            "frost",
+            "impact",
+            renderPos.current.x,
+            FROST_HAND_Y,
+            renderPos.current.z,
+          );
+        }
       } else {
         const vx = p.vx ?? 0;
         const vz = p.vz ?? 0;
@@ -159,9 +191,7 @@ export function FrostBallCastEffect({
     // --- Charge: follow casting hand ---
     if (phase.current === "charge" && shot.followOwnerId) {
       const local =
-        follow.localSessionId &&
-        shot.followOwnerId === follow.localSessionId &&
-        follow.predictedRef
+        follow.localSessionId && shot.followOwnerId === follow.localSessionId && follow.predictedRef
           ? follow.predictedRef.current
           : null;
 
@@ -193,10 +223,27 @@ export function FrostBallCastEffect({
       root.current.position.set(pose.current.x, 0, pose.current.z);
     }
 
+    if (!castBlown.current && phase.current === "charge") {
+      castBlown.current = true;
+      burstElementRole("frost", "cast", pose.current.x, pose.current.y, pose.current.z);
+    }
+
+    if (phase.current === "flight") {
+      if (!trail.current) {
+        trail.current = spawnElementRole(
+          "frost",
+          "trail",
+          pose.current.x,
+          FROST_HAND_Y,
+          pose.current.z,
+        );
+      }
+      trail.current.setPose(pose.current.x, FROST_HAND_Y, pose.current.z);
+      trail.current.setRateScale(1);
+    }
+
     const growT =
-      phase.current === "charge"
-        ? THREE.MathUtils.clamp(ageSec / (chargeSec * 0.92), 0, 1)
-        : 1;
+      phase.current === "charge" ? THREE.MathUtils.clamp(ageSec / (chargeSec * 0.92), 0, 1) : 1;
     const grow = phase.current === "charge" ? 1 - (1 - growT) * (1 - growT) : 1;
     growFull.current = Math.max(growFull.current, grow);
 
@@ -256,21 +303,6 @@ export function FrostBallCastEffect({
           <primitive object={glowMat} attach="material" />
         </mesh>
         <object3D ref={lightAt} />
-        <AdditiveParticleBurst
-          color={shot.color}
-          origin={[0, 0, 0]}
-          count={12}
-          life={0.5}
-          speed={0.7}
-          speedSpread={0.4}
-          size={0.08}
-          sizeEnd={0.015}
-          lift={0.3}
-          upBias={0.35}
-          fadeIn={0.4}
-          stagger={0.55}
-          trigger={shot.key}
-        />
       </group>
     </group>
   );

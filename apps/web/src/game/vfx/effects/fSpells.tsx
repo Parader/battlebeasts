@@ -1,3 +1,4 @@
+/** ParticleWorld-backed dash particles; mesh silhouettes stay intact. */
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -12,6 +13,7 @@ import { softEnvelope } from "../easing";
 import { createCirclePointMaterial, createSmokePointMaterial } from "../materials/circlePoint";
 import { createLightningBoltMaterial, tickLightningBolt } from "../materials/lightningBolt";
 import { createAscendantColumnMaterial } from "../materials/ascendantColumn";
+import { burstElementRole, spawnElementRole, type ElementHandle } from "../engine";
 
 function useBasicMat(color: string, additive = true) {
   const mat = useMemo(
@@ -35,6 +37,7 @@ function useBasicMat(color: string, additive = true) {
 // ============================================================================
 // 1. Cyclone Kick Effect (4-second long spin, ultra-thin circles, vortex ribbons)
 // ============================================================================
+/** ParticleWorld owns the caster whirl; local meshes retain the kick silhouette. */
 export function CycloneKickEffect({
   shot,
   follow,
@@ -48,6 +51,7 @@ export function CycloneKickEffect({
   const outerBorder = useRef<THREE.Mesh>(null);
   const innerRing = useRef<THREE.Mesh>(null);
   const vortexCone = useRef<THREE.Mesh>(null);
+  const castWind = useRef<ElementHandle | null>(null);
 
   const radius = Math.max(1.8, shot.radius ?? CYCLONE_KICK_CAST.radius);
   // Full 4s duration
@@ -82,18 +86,15 @@ export function CycloneKickEffect({
     [radius],
   );
 
-  const MOTES = 32;
-  const motePos = useMemo(() => new Float32Array(MOTES * 3), []);
-  const moteSize = useMemo(() => new Float32Array(MOTES), []);
-  const moteAlpha = useMemo(() => new Float32Array(MOTES), []);
-  const moteGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(motePos, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(moteSize, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(moteAlpha, 1));
-    return g;
-  }, [motePos, moteSize, moteAlpha]);
-  const moteMat = useMemo(() => createSmokePointMaterial("#38BDF8"), []);
+  useEffect(() => {
+    const handle = spawnElementRole("wind", "cast", shot.x, 0.45, shot.z);
+    handle.setRateScale(0);
+    castWind.current = handle;
+    return () => {
+      handle.kill();
+      if (castWind.current === handle) castWind.current = null;
+    };
+  }, [shot.x, shot.z]);
 
   useFrame(() => {
     const g = root.current;
@@ -101,6 +102,8 @@ export function CycloneKickEffect({
     const age = performance.now() - shot.born;
     if (age >= lifeMs) {
       g.visible = false;
+      castWind.current?.kill();
+      castWind.current = null;
       return;
     }
     g.visible = true;
@@ -122,6 +125,8 @@ export function CycloneKickEffect({
     const u = age / lifeMs;
     // Fade in quickly, hold strong for 4s, fade out smoothly at end
     const fade = softEnvelope(u, 0.04, 0.92);
+    castWind.current?.setPose(px, 0.45, pz);
+    castWind.current?.setRateScale(fade);
 
     // Continuous high-speed spin (matches Hurricane Kick character animation spin direction)
     const spin = age * 0.016;
@@ -148,21 +153,6 @@ export function CycloneKickEffect({
     }
     coneMat.opacity = 0.12 * fade;
 
-    // Spiraling upward cyclone motes
-    for (let i = 0; i < MOTES; i++) {
-      const moteAge = (age * 0.002 + i / MOTES) % 1.0;
-      const ang = (i / MOTES) * Math.PI * 2 + spin * 0.6 + moteAge * Math.PI * 2.5;
-      // Inward funnel as it rises
-      const dist = radius * (0.85 - moteAge * 0.45) * (0.8 + 0.2 * (i % 3));
-      motePos[i * 3] = Math.cos(ang) * dist;
-      motePos[i * 3 + 1] = 0.15 + moteAge * 1.6;
-      motePos[i * 3 + 2] = Math.sin(ang) * dist;
-      moteSize[i] = 0.12 * (1 - moteAge * 0.4);
-      moteAlpha[i] = fade * 0.8 * (1 - moteAge * 0.7);
-    }
-    moteGeo.attributes.position.needsUpdate = true;
-    moteGeo.attributes.aSize.needsUpdate = true;
-    moteGeo.attributes.aAlpha.needsUpdate = true;
   });
 
   return (
@@ -186,10 +176,6 @@ export function CycloneKickEffect({
       <mesh ref={vortexCone} geometry={coneGeo} renderOrder={32}>
         <primitive object={coneMat} attach="material" />
       </mesh>
-      {/* Cyclone wind motes */}
-      <points geometry={moteGeo} renderOrder={35}>
-        <primitive object={moteMat} attach="material" />
-      </points>
     </group>
   );
 }
@@ -203,6 +189,7 @@ export function PhantomRushEffect({ shot }: { shot: OneShotEffect }) {
   const ribbonHoriz = useRef<THREE.Mesh>(null);
   const sliceA = useRef<THREE.Mesh>(null);
   const sliceB = useRef<THREE.Mesh>(null);
+  const trail = useRef<ElementHandle | null>(null);
   const lifeMs = Math.max(220, shot.life);
 
   const startX = shot.originX ?? shot.x;
@@ -220,19 +207,25 @@ export function PhantomRushEffect({ shot }: { shot: OneShotEffect }) {
 
   const ribbonGeo = useMemo(() => new THREE.PlaneGeometry(1, 0.55), []);
   const sliceGeo = useMemo(() => new THREE.BoxGeometry(0.08, 0.08, 1.6), []);
+  const ribbonBases = useMemo(() => {
+    const dirX = new THREE.Vector3(dx / dist, 0, dz / dist);
+    const dirY = new THREE.Vector3(0, 1, 0);
+    const dirZ = new THREE.Vector3().crossVectors(dirX, dirY).normalize();
+    return {
+      vertical: new THREE.Matrix4().makeBasis(dirX, dirY, dirZ),
+      horizontal: new THREE.Matrix4().makeBasis(dirX, dirZ, dirY.clone().negate()),
+    };
+  }, [dist, dx, dz]);
 
-  const MOTES = 20;
-  const motePos = useMemo(() => new Float32Array(MOTES * 3), []);
-  const moteSize = useMemo(() => new Float32Array(MOTES), []);
-  const moteAlpha = useMemo(() => new Float32Array(MOTES), []);
-  const moteGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(motePos, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(moteSize, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(moteAlpha, 1));
-    return g;
-  }, [motePos, moteSize, moteAlpha]);
-  const moteMat = useMemo(() => createSmokePointMaterial("#A78BFA"), []);
+  useEffect(() => {
+    const handle = spawnElementRole("wind", "trail", startX, 0.7, startZ);
+    handle.setRateScale(0);
+    trail.current = handle;
+    return () => {
+      handle.kill();
+      if (trail.current === handle) trail.current = null;
+    };
+  }, [shot.key, startX, startZ]);
 
   useFrame(() => {
     const g = root.current;
@@ -240,6 +233,8 @@ export function PhantomRushEffect({ shot }: { shot: OneShotEffect }) {
     const age = performance.now() - shot.born;
     if (age >= lifeMs) {
       g.visible = false;
+      trail.current?.kill();
+      trail.current = null;
       return;
     }
     g.visible = true;
@@ -247,29 +242,22 @@ export function PhantomRushEffect({ shot }: { shot: OneShotEffect }) {
     const u = age / lifeMs;
     const fade = softEnvelope(u, 0.05, 0.45);
 
-    // Directional basis for proper 3D ribbon orientation (no upright vertical boxes!)
-    const dirX = new THREE.Vector3(dx / dist, 0, dz / dist);
-    const dirY = new THREE.Vector3(0, 1, 0);
-    const dirZ = new THREE.Vector3().crossVectors(dirX, dirY).normalize();
-
     const midX = (startX + targetX) * 0.5;
     const midY = 0.85;
     const midZ = (startZ + targetZ) * 0.5;
 
     // Vertical ribbon along travel path
-    const mVert = new THREE.Matrix4().makeBasis(dirX, dirY, dirZ);
     if (ribbonVert.current) {
       ribbonVert.current.position.set(midX, midY, midZ);
       ribbonVert.current.scale.set(dist, 1 - u * 0.4, 1);
-      ribbonVert.current.quaternion.setFromRotationMatrix(mVert);
+      ribbonVert.current.quaternion.setFromRotationMatrix(ribbonBases.vertical);
     }
 
     // Horizontal ribbon along travel path
-    const mHoriz = new THREE.Matrix4().makeBasis(dirX, dirZ, dirY.clone().negate());
     if (ribbonHoriz.current) {
       ribbonHoriz.current.position.set(midX, 0.4, midZ);
       ribbonHoriz.current.scale.set(dist, 0.7 * (1 - u * 0.5), 1);
-      ribbonHoriz.current.quaternion.setFromRotationMatrix(mHoriz);
+      ribbonHoriz.current.quaternion.setFromRotationMatrix(ribbonBases.horizontal);
     }
 
     violetMat.opacity = 0.85 * fade;
@@ -291,18 +279,9 @@ export function PhantomRushEffect({ shot }: { shot: OneShotEffect }) {
     }
     slashMat.opacity = 0.95 * slashFade;
 
-    // Afterimage phantom sparkles along the travel line
-    for (let i = 0; i < MOTES; i++) {
-      const frac = i / MOTES;
-      motePos[i * 3] = startX + dx * frac + (Math.sin(i * 4 + u * 6) * 0.2);
-      motePos[i * 3 + 1] = 0.3 + (i % 4) * 0.25 + u * 0.6;
-      motePos[i * 3 + 2] = startZ + dz * frac + (Math.cos(i * 4 + u * 6) * 0.2);
-      moteSize[i] = 0.16 * (1 - u * 0.5);
-      moteAlpha[i] = fade * 0.85;
-    }
-    moteGeo.attributes.position.needsUpdate = true;
-    moteGeo.attributes.aSize.needsUpdate = true;
-    moteGeo.attributes.aAlpha.needsUpdate = true;
+    const travel = Math.min(1, u * 1.2);
+    trail.current?.setPose(startX + dx * travel, 0.7, startZ + dz * travel);
+    trail.current?.setRateScale(fade);
   });
 
   return (
@@ -321,9 +300,6 @@ export function PhantomRushEffect({ shot }: { shot: OneShotEffect }) {
       <mesh ref={sliceB} geometry={sliceGeo} renderOrder={36}>
         <primitive object={slashMat} attach="material" />
       </mesh>
-      <points geometry={moteGeo} renderOrder={37}>
-        <primitive object={moteMat} attach="material" />
-      </points>
     </group>
   );
 }
@@ -505,6 +481,7 @@ export function DreadAuraEffect({
 }) {
   const root = useRef<THREE.Group>(null);
   const sigilGroup = useRef<THREE.Group>(null);
+  const auraFx = useRef<ElementHandle | null>(null);
 
   const isTrigger = (shot.variant ?? 0) === 1; // 1 = reactive fear trigger burst
   const lifeMs = isTrigger ? 500 : Math.max(1200, shot.life);
@@ -533,18 +510,20 @@ export function DreadAuraEffect({
     [radius],
   );
 
-  const MOTES = 24;
-  const motePos = useMemo(() => new Float32Array(MOTES * 3), []);
-  const moteSize = useMemo(() => new Float32Array(MOTES), []);
-  const moteAlpha = useMemo(() => new Float32Array(MOTES), []);
-  const moteGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(motePos, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(moteSize, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(moteAlpha, 1));
-    return g;
-  }, [motePos, moteSize, moteAlpha]);
-  const moteMat = useMemo(() => createSmokePointMaterial("#A855F7"), []);
+  /** ParticleWorld owns the Dread Aura shell and trigger sparks. */
+  useEffect(() => {
+    if (isTrigger) {
+      burstElementRole("void", "impact", shot.x, shot.y + 0.8, shot.z);
+      return;
+    }
+    const handle = spawnElementRole("void", "cast", shot.x, 0.12, shot.z);
+    handle.setRateScale(0);
+    auraFx.current = handle;
+    return () => {
+      handle.kill();
+      if (auraFx.current === handle) auraFx.current = null;
+    };
+  }, [isTrigger, shot.key, shot.x, shot.y, shot.z]);
 
   useFrame(() => {
     const g = root.current;
@@ -552,29 +531,13 @@ export function DreadAuraEffect({
     const age = performance.now() - shot.born;
     if (age >= lifeMs) {
       g.visible = false;
+      auraFx.current?.setRateScale(0);
       return;
     }
     g.visible = true;
 
     if (isTrigger) {
-      // Snap to feared target position — quick motes burst (no low-quality purple circle)
       g.position.set(shot.x, 0.8, shot.z);
-      const u = age / lifeMs;
-      const fade = softEnvelope(u, 0.06, 0.4);
-
-      // Dark violet fear sparks bursting outward
-      for (let i = 0; i < MOTES; i++) {
-        const ang = (i / MOTES) * Math.PI * 2;
-        const spd = 0.8 + (i % 4) * 0.35;
-        motePos[i * 3] = Math.cos(ang) * u * spd * 1.5;
-        motePos[i * 3 + 1] = 0.2 + u * 1.2 + Math.sin(i * 3) * 0.2;
-        motePos[i * 3 + 2] = Math.sin(ang) * u * spd * 1.5;
-        moteSize[i] = 0.16 * (1 - u * 0.6);
-        moteAlpha[i] = fade * 0.9;
-      }
-      moteGeo.attributes.position.needsUpdate = true;
-      moteGeo.attributes.aSize.needsUpdate = true;
-      moteGeo.attributes.aAlpha.needsUpdate = true;
     } else {
       // Persistent Dread Aura sigil follows caster
       let px = shot.x;
@@ -590,6 +553,8 @@ export function DreadAuraEffect({
 
       const u = age / lifeMs;
       const fade = softEnvelope(u, 0.05, 0.8);
+      auraFx.current?.setPose(px, 0.12, pz);
+      auraFx.current?.setRateScale(fade);
 
       // Slow occult counter-clockwise rotation of the ground sigil
       if (sigilGroup.current) {
@@ -599,29 +564,13 @@ export function DreadAuraEffect({
       fearMat.opacity = 0.95 * fade;
       shadowMat.opacity = 0.65 * fade;
 
-      // Orbiting shadow wisps along the outer perimeter
-      const t = age * 0.001;
-      for (let i = 0; i < MOTES; i++) {
-        const ang = (i / MOTES) * Math.PI * 2 + t * 0.45;
-        const r = radius * (0.94 + 0.06 * Math.sin(t * 3 + i));
-        motePos[i * 3] = Math.cos(ang) * r;
-        motePos[i * 3 + 1] = 0.15 + ((i % 5) / 5) * 0.35;
-        motePos[i * 3 + 2] = Math.sin(ang) * r;
-        moteSize[i] = 0.14 * (0.8 + 0.3 * Math.sin(t * 4 + i));
-        moteAlpha[i] = fade * 0.8;
-      }
-      moteGeo.attributes.position.needsUpdate = true;
-      moteGeo.attributes.aSize.needsUpdate = true;
-      moteGeo.attributes.aAlpha.needsUpdate = true;
     }
   });
 
   return (
     <group ref={root} visible={false}>
       {isTrigger ? (
-        <points geometry={moteGeo} renderOrder={38}>
-          <primitive object={moteMat} attach="material" />
-        </points>
+        null
       ) : (
         <>
           {/* Intricate rotating purple occult sigil */}
@@ -652,10 +601,6 @@ export function DreadAuraEffect({
               <primitive object={shadowMat} attach="material" />
             </mesh>
           </group>
-          {/* Perimeter void wisps */}
-          <points geometry={moteGeo} renderOrder={35}>
-            <primitive object={moteMat} attach="material" />
-          </points>
         </>
       )}
     </group>

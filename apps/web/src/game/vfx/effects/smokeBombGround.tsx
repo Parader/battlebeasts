@@ -1,5 +1,5 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { ABILITIES, SMOKE_BOMB_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
@@ -7,17 +7,16 @@ import { softEnvelope } from "../easing";
 import { AoeRimMarker } from "../components/AoeRimMarker";
 import { GroundDecal } from "../components/GroundDecal";
 import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
-import { FireParticleField } from "../components/FireParticleField";
 import { groundPresets } from "../presets/ground";
-import { VFX_SMOKE_URL } from "../vfxUrls";
 import { getSmokeTexture } from "../smokeTexture";
+import { spawnElementRole, type ElementHandle } from "../engine";
 
 const CLOUD_FADE_IN_MS = 180;
 const CLOUD_FADE_OUT_MS = 700;
-const SMOKE_COLORS = ["#e2e8f0", "#94a3b8", "#475569"] as const;
 
 /**
- * Smoke Bomb — grey lingering cloud at feet (poison-cloud silhouette, ash tint).
+ * Caster/travel: none. Impact: additive pop. Ground: void preset and smoke decals.
+ * Particles: ParticleWorld void ground; poisoned/weakened auras stay in StatusAuraFx.
  */
 export function SmokeBombGroundEffect({ shot }: { shot: OneShotEffect }) {
   const def = ABILITIES.smokeBomb;
@@ -27,6 +26,7 @@ export function SmokeBombGroundEffect({ shot }: { shot: OneShotEffect }) {
   const rimOpacity = useRef(0);
   const cloudOpacity = useRef(0);
   const mistProgress = useRef(0);
+  const groundFx = useRef<ElementHandle | null>(null);
 
   const blotPreset = useMemo(
     () => ({
@@ -51,23 +51,15 @@ export function SmokeBombGroundEffect({ shot }: { shot: OneShotEffect }) {
     [radius, lifeMs],
   );
 
-  const mistEmitters = useMemo(() => {
-    const ring = radius * 0.62;
-    return [
-      { x: 0, y: 0.14, z: 0 },
-      { x: 0, y: 0.22, z: 0 },
-      { x: ring * 0.45, y: 0.12, z: 0 },
-      { x: -ring * 0.45, y: 0.12, z: 0 },
-      { x: 0, y: 0.12, z: ring * 0.45 },
-      { x: 0, y: 0.12, z: -ring * 0.45 },
-      { x: ring * 0.72, y: 0.1, z: ring * 0.35 },
-      { x: -ring * 0.7, y: 0.1, z: -ring * 0.32 },
-      { x: ring * 0.35, y: 0.1, z: -ring * 0.7 },
-      { x: -ring * 0.32, y: 0.1, z: ring * 0.72 },
-      { x: ring * 0.85, y: 0.1, z: 0 },
-      { x: -ring * 0.85, y: 0.1, z: 0 },
-    ];
-  }, [radius]);
+  useEffect(() => {
+    const handle = spawnElementRole("void", "ground", shot.x, 0.12, shot.z);
+    handle.setRateScale(0);
+    groundFx.current = handle;
+    return () => {
+      handle.kill();
+      if (groundFx.current === handle) groundFx.current = null;
+    };
+  }, [shot.key, shot.x, shot.z]);
 
   useFrame(() => {
     const age = performance.now() - shot.born;
@@ -80,6 +72,7 @@ export function SmokeBombGroundEffect({ shot }: { shot: OneShotEffect }) {
     rimOpacity.current = fadeIn * 0.55;
     cloudOpacity.current = fadeIn;
     mistProgress.current = Math.min(1, age / 220);
+    groundFx.current?.setRateScale(mistProgress.current * cloudOpacity.current);
   });
 
   return (
@@ -137,19 +130,6 @@ export function SmokeBombGroundEffect({ shot }: { shot: OneShotEffect }) {
         color="#1e293b"
         y={0.058}
         spin={0.09}
-      />
-      <FireParticleField
-        emitters={mistEmitters}
-        rate={100}
-        maxParticles={220}
-        textureUrl={VFX_SMOKE_URL}
-        maxLife={2.6}
-        maxSize={0.9}
-        rise={0.55}
-        spread={radius * 0.55}
-        colorStops={SMOKE_COLORS}
-        progressRef={mistProgress}
-        opacityMulRef={cloudOpacity}
       />
       <AdditiveParticleBurst
         color="#cbd5e1"

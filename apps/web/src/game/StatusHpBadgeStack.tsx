@@ -352,7 +352,7 @@ export function StatusHpBadgeStack({
             background: "rgba(14, 116, 144, 0.94)",
             border: "1px solid rgba(56, 189, 248, 0.55)",
           }}
-          title="Shocked (+10% damage taken/stack · Static Discharge)"
+          title="Shocked (+10% damage taken/stack · Static Discharge at 3 stacks)"
         >
           <DurationRing ringRef={shockRingRef ?? { current: null }} accent="#38bdf8" />
           <img

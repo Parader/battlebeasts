@@ -7,12 +7,11 @@ import type { VfxFollowContext } from "../catalog";
 import { softEnvelope } from "../easing";
 import { AoeRimMarker } from "../components/AoeRimMarker";
 import { GroundDecal } from "../components/GroundDecal";
-import { createCirclePointMaterial } from "../materials/circlePoint";
 import { groundPresets } from "../presets/ground";
 import { getSmokeTexture } from "../smokeTexture";
+import { spawnElementRole, type ElementHandle } from "../engine";
 
 const PUFF_COUNT = 7;
-const SPRAY_COUNT = 72;
 const SHADOW = "#2e1065";
 const VIOLET = "#7c3aed";
 const HOT = "#c4b5fd";
@@ -25,19 +24,6 @@ const RELEASE_MS =
   1000;
 /** Start spreading ~45% into the windup. */
 const BURP_START_MS = RELEASE_MS * 0.45;
-
-type SprayParticle = {
-  alive: boolean;
-  age: number;
-  life: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  size: number;
-};
 
 type ShadowPuff = {
   /** −1..1 across the cone. */
@@ -66,7 +52,7 @@ function makePuffs(): ShadowPuff[] {
 }
 
 /**
- * Silence Sweep — cursed shadow burp that expands from the caster over the frontal cone.
+ * Silence Sweep — shaped meshes with a ParticleWorld void sweep.
  */
 export function SilenceSweepEffect({
   shot,
@@ -79,10 +65,7 @@ export function SilenceSweepEffect({
   const rimOpacity = useRef(1);
   const waveProgress = useRef(0.02);
   const waveOpacity = useRef(0.9);
-  const sprayPoints = useRef<THREE.Points>(null);
-  const sprayEmitAcc = useRef(0);
-  const sprayPool = useRef<SprayParticle[]>([]);
-  const sprayCursor = useRef(0);
+  const sweepFx = useRef<ElementHandle | null>(null);
   const puffMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const puffMats = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
 
@@ -119,36 +102,15 @@ export function SilenceSweepEffect({
     [range, halfAngle, lifeMs],
   );
 
-  const sprayPositions = useMemo(() => new Float32Array(SPRAY_COUNT * 3), []);
-  const spraySizes = useMemo(() => new Float32Array(SPRAY_COUNT), []);
-  const sprayAlphas = useMemo(() => new Float32Array(SPRAY_COUNT), []);
-  const sprayGeo = useMemo(() => {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(sprayPositions, 3));
-    geo.setAttribute("aSize", new THREE.BufferAttribute(spraySizes, 1));
-    geo.setAttribute("aAlpha", new THREE.BufferAttribute(sprayAlphas, 1));
-    return geo;
-  }, [sprayPositions, spraySizes, sprayAlphas]);
-  const sprayMat = useMemo(() => createCirclePointMaterial(VIOLET), []);
-
   useEffect(() => {
-    sprayPool.current = Array.from({ length: SPRAY_COUNT }, () => ({
-      alive: false,
-      age: 0,
-      life: 0.35,
-      x: 0,
-      y: -999,
-      z: 0,
-      vx: 0,
-      vy: 0,
-      vz: 0,
-      size: 0.18,
-    }));
+    const handle = spawnElementRole("void", "ground", shot.x, 0.12, shot.z);
+    handle.setRateScale(0);
+    sweepFx.current = handle;
     return () => {
-      sprayGeo.dispose();
-      sprayMat.dispose();
+      handle.kill();
+      if (sweepFx.current === handle) sweepFx.current = null;
     };
-  }, [sprayGeo, sprayMat]);
+  }, [shot.key, shot.x, shot.z]);
 
   useFrame((_, dt) => {
     const age = performance.now() - shot.born;
@@ -158,7 +120,6 @@ export function SilenceSweepEffect({
     const burpAge = age - BURP_START_MS;
     const su = Math.max(0, Math.min(1, burpAge / sweepMs));
     const ease = 1 - (1 - su) * (1 - su);
-    const burping = burpAge >= 0 && su < 1;
     // Hitbox rim + shadow fill share the same grow curve.
     waveProgress.current = burpAge < 0 ? 0.04 : Math.max(0.08, ease);
     waveOpacity.current = fade * (burpAge < 0 ? 0.15 : 0.95);
@@ -189,6 +150,8 @@ export function SilenceSweepEffect({
       root.current.position.set(x, 0, z);
       root.current.rotation.y = yaw;
     }
+    sweepFx.current?.setPoseYaw(x, 0.12, z, yaw);
+    sweepFx.current?.setRateScale(fade * (burpAge < 0 ? 0 : 1 - su * 0.55));
 
     // Soft smoke puffs ride the wave front across the cone.
     for (let i = 0; i < PUFF_COUNT; i++) {
@@ -217,75 +180,6 @@ export function SilenceSweepEffect({
       mat.opacity = op;
     }
 
-    // Dense spray from chest — the burp kick into the cone.
-    const safeDt = Math.min(0.05, dt);
-    if (burping && su < 0.85) {
-      sprayEmitAcc.current += safeDt;
-      while (sprayEmitAcc.current >= 0.008) {
-        sprayEmitAcc.current -= 0.008;
-        const p = sprayPool.current[sprayCursor.current % SPRAY_COUNT]!;
-        sprayCursor.current++;
-        const lane = (Math.random() * 2 - 1) * halfAngle;
-        const spd = 6.5 + Math.random() * 5.5;
-        p.alive = true;
-        p.age = 0;
-        p.life = 0.28 + Math.random() * 0.32;
-        p.x = Math.sin(lane) * 0.25;
-        p.y = 0.85 + Math.random() * 0.35;
-        p.z = 0.2 + Math.random() * 0.15;
-        p.vx = Math.sin(lane) * spd;
-        p.vy = 0.8 + Math.random() * 1.6;
-        p.vz = Math.cos(lane) * spd;
-        p.size = 0.16 + Math.random() * 0.22;
-      }
-    } else {
-      sprayEmitAcc.current = 0;
-    }
-
-    let living = 0;
-    for (let i = 0; i < SPRAY_COUNT; i++) {
-      const p = sprayPool.current[i];
-      if (!p || !p.alive) {
-        sprayPositions[i * 3 + 1] = -999;
-        spraySizes[i] = 0;
-        sprayAlphas[i] = 0;
-        continue;
-      }
-      p.age += safeDt;
-      if (p.age >= p.life) {
-        p.alive = false;
-        sprayPositions[i * 3 + 1] = -999;
-        spraySizes[i] = 0;
-        sprayAlphas[i] = 0;
-        continue;
-      }
-      const t = p.age / p.life;
-      p.x += p.vx * safeDt;
-      p.y += p.vy * safeDt;
-      p.z += p.vz * safeDt;
-      p.vx *= 1 - 1.8 * safeDt;
-      p.vz *= 1 - 1.8 * safeDt;
-      p.vy -= 2.4 * safeDt;
-      // Softly clamp into the cone footprint so spray doesn't overshoot the hitbox.
-      const r = Math.hypot(p.x, p.z);
-      if (r > range * 1.02) {
-        const s = (range * 1.02) / r;
-        p.x *= s;
-        p.z *= s;
-        p.vx *= 0.4;
-        p.vz *= 0.4;
-      }
-      sprayPositions[i * 3] = p.x;
-      sprayPositions[i * 3 + 1] = Math.max(0.05, p.y);
-      sprayPositions[i * 3 + 2] = p.z;
-      spraySizes[i] = p.size * (1.15 - t * 0.55) * 28;
-      sprayAlphas[i] = (1 - t) * (1 - t) * fade * 0.95;
-      living++;
-    }
-    sprayGeo.attributes.position!.needsUpdate = true;
-    sprayGeo.attributes.aSize!.needsUpdate = true;
-    sprayGeo.attributes.aAlpha!.needsUpdate = true;
-    if (sprayPoints.current) sprayPoints.current.visible = living > 0;
   });
 
   return (
@@ -345,13 +239,6 @@ export function SilenceSweepEffect({
         </mesh>
       ))}
 
-      <points
-        ref={sprayPoints}
-        geometry={sprayGeo}
-        material={sprayMat}
-        frustumCulled={false}
-        visible={false}
-      />
     </group>
   );
 }

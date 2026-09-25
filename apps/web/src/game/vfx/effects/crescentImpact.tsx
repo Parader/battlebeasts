@@ -1,106 +1,54 @@
-import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
-import * as THREE from "three";
+import { useEffect } from "react";
 import type { OneShotEffect } from "../types";
-import { softEnvelope } from "../easing";
-import { AdditiveParticleBurst } from "../components/AdditiveParticleBurst";
-
-const BLOOD = "#9f1239";
-const BLOOD_DARK = "#4c0519";
+import { burstElementRole } from "../engine";
 
 /**
- * Crescent hit — short blood spray at the target (chest height).
- * Directional outward burst + fine droplets; no magic ring/rune.
+ * Crescent hit — mid-air wind gust at the contact point.
+ *
+ * Caster blow: none, the cast swoop owns the tell (lab slash material).
+ * Travel: none, this is the landing beat only.
+ * Impact: one outward wind burst on the body plus a lateral spray along the swing.
+ * Ground: none — crescent connects in the air, a scorch would lie about it.
+ * Particles: wind wisps; ambiance is the preset's thin smoke layer.
+ * Light: none, additive wisps carry it.
+ * Status: none.
+ *
+ * Fires once on mount and self-expires, so a hit costs no per-frame work.
  */
 export function CrescentImpactEffect({ shot }: { shot: OneShotEffect }) {
-  const group = useRef<THREE.Group>(null);
-  const flashMat = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: BLOOD,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      }),
-    [],
-  );
-  const mistMat = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: BLOOD_DARK,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        blending: THREE.NormalBlending,
-        toneMapped: false,
-      }),
-    [],
-  );
+  useEffect(() => {
+    const fx = Math.sin(shot.yaw);
+    const fz = Math.cos(shot.yaw);
+    const flip = (shot.variant ?? 0) % 2 === 1 ? -1 : 1;
 
-  useFrame(() => {
-    const g = group.current;
-    if (!g) return;
-    const age = (performance.now() - shot.born) / shot.life;
-    if (age >= 1) {
-      g.visible = false;
-      return;
-    }
-    g.visible = true;
+    burstElementRole("wind", "impact", shot.x, shot.y + 0.08, shot.z, {
+      burst: 8,
+      spread: 0.55,
+      size: 0.32,
+      sizeEnd: 0.1,
+      life: 0.28,
+    });
 
-    const amp = softEnvelope(age, 0.18, 0.55);
-    flashMat.opacity = amp * 0.85;
-    mistMat.opacity = amp * 0.4;
+    // Lateral spray thrown along the swing arc — reads the direction of the cut.
+    burstElementRole(
+      "wind",
+      "trail",
+      shot.x + fx * 0.15,
+      shot.y + 0.15,
+      shot.z + fz * 0.15,
+      {
+        rate: 0,
+        burst: 5,
+        size: 0.22,
+        sizeEnd: 0.06,
+        dirX: (fx * 0.55 + fz * 1.4) * flip,
+        dirY: 0.35,
+        dirZ: (fz * 0.55 - fx * 1.4) * flip,
+        spread: 0.28,
+        life: 0.22,
+      },
+    );
+  }, [shot.key, shot.x, shot.y, shot.z, shot.yaw, shot.variant]);
 
-    const core = g.children[0] as THREE.Mesh | undefined;
-    const mist = g.children[1] as THREE.Mesh | undefined;
-    if (core) core.scale.setScalar(0.18 + amp * 0.55);
-    if (mist) mist.scale.setScalar(0.35 + amp * 0.9);
-  });
-
-  return (
-    <group ref={group} position={[shot.x, shot.y, shot.z]} rotation={[0, shot.yaw, 0]}>
-      <mesh scale={0.2}>
-        <sphereGeometry args={[0.16, 10, 10]} />
-        <primitive object={flashMat} attach="material" />
-      </mesh>
-      <mesh scale={0.35}>
-        <sphereGeometry args={[0.16, 8, 8]} />
-        <primitive object={mistMat} attach="material" />
-      </mesh>
-      {/* Main arterial spray */}
-      <AdditiveParticleBurst
-        color={BLOOD}
-        origin={[0, 0, 0]}
-        count={22}
-        life={0.38}
-        speed={3.4}
-        speedSpread={2.2}
-        size={0.16}
-        sizeEnd={0.03}
-        lift={0.9}
-        upBias={0.22}
-        fadeIn={0.12}
-        stagger={0.18}
-        trigger={shot.key}
-      />
-      {/* Heavier droplets */}
-      <AdditiveParticleBurst
-        color={BLOOD_DARK}
-        origin={[0, -0.05, 0]}
-        count={10}
-        life={0.48}
-        speed={1.6}
-        speedSpread={1.1}
-        size={0.11}
-        sizeEnd={0.04}
-        lift={0.35}
-        upBias={0.08}
-        fadeIn={0.2}
-        stagger={0.3}
-        trigger={shot.key}
-      />
-    </group>
-  );
+  return null;
 }

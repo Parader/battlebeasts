@@ -1,94 +1,70 @@
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { OneShotEffect } from "../types";
-import { smooth01 } from "../easing";
-import { createCirclePointMaterial } from "../materials/circlePoint";
-
-const N = 6;
-const BRIGHT = "#38bdf8";
-const HOT = "#e0f2fe";
+import { ATLAS_UV, BatchId, burstElementRole } from "../engine";
+import { getVfxCircleTexture } from "../materials/circlePoint";
 
 /**
- * Orbiting Wisp hit / dissipate — tiny compress flash + a few motes (no boom).
+ * Orbiting Wisp impact — the same wind streaks and soft circle as the wisp,
+ * popped outward on the target.
  */
 export function OrbitingWispHitEffect({ shot }: { shot: OneShotEffect }) {
-  const group = useRef<THREE.Group>(null);
-  const flash = useRef<THREE.Mesh>(null);
-
-  const flashMat = useMemo(
+  const sprite = useRef<THREE.Sprite>(null);
+  const burst = useRef(false);
+  const mat = useMemo(
     () =>
-      new THREE.MeshBasicMaterial({
-        color: HOT,
+      new THREE.SpriteMaterial({
+        map: getVfxCircleTexture(),
+        color: "#7dd3fc",
         transparent: true,
         opacity: 0,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
+        toneMapped: false,
       }),
     [],
   );
 
-  const pos = useMemo(() => new Float32Array(N * 3), []);
-  const size = useMemo(() => new Float32Array(N), []);
-  const alpha = useMemo(() => new Float32Array(N), []);
-  const dirs = useMemo(
-    () =>
-      Array.from({ length: N }, () => {
-        const a = Math.random() * Math.PI * 2;
-        return {
-          x: Math.cos(a),
-          y: 0.2 + Math.random() * 0.6,
-          z: Math.sin(a),
-          speed: 0.9 + Math.random() * 1.1,
-        };
-      }),
-    [],
-  );
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    g.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
-    g.setAttribute("aAlpha", new THREE.BufferAttribute(alpha, 1));
-    return g;
-  }, [pos, size, alpha]);
-  const pointMat = useMemo(() => createCirclePointMaterial(BRIGHT), []);
+  useEffect(() => () => mat.dispose(), [mat]);
 
   useFrame(() => {
-    const g = group.current;
-    if (!g) return;
     const ms = performance.now() - shot.born;
-    if (ms >= shot.life) {
-      g.visible = false;
-      return;
+    const life = Math.max(1, shot.life);
+    if (!burst.current) {
+      burst.current = true;
+      burstElementRole("wind", "trail", shot.x, shot.y, shot.z, {
+        batch: BatchId.AlphaIce,
+        atlasUv: ATLAS_UV.wind,
+        rate: 0,
+        burst: 16,
+        size: 0.5,
+        sizeEnd: 0.08,
+        life: 0.45,
+        lifeJitter: 0.25,
+        spread: 1.1,
+        dirX: 0,
+        dirY: 0.7,
+        dirZ: 0,
+        noise: 0.45,
+        drag: 0.85,
+        gravity: 0,
+        opacity: 0.85,
+        rotRate: 0,
+        rotJitter: 0,
+        color0: "#f0f9ff",
+        color1: "#7dd3fc",
+        color2: "#1d4ed8",
+      });
     }
-    g.visible = true;
-    const flashT = smooth01(Math.min(1, ms / 35));
-    const breakT = ms < 25 ? 0 : Math.min(1, (ms - 25) / 90);
-    const fade = ms < 50 ? 1 : 1 - Math.min(1, (ms - 50) / (shot.life - 50));
-
-    if (flash.current) {
-      flash.current.scale.setScalar(THREE.MathUtils.lerp(0.08, 0.28, flashT) * (1 - breakT * 0.4));
-      flashMat.opacity = flashT * (1 - breakT) * 0.9 * fade;
+    const u = Math.min(1, ms / life);
+    const fade = 1 - u;
+    mat.opacity = fade * fade * 0.95;
+    if (sprite.current) {
+      sprite.current.scale.setScalar(THREE.MathUtils.lerp(0.28, 0.72, u));
+      sprite.current.visible = fade > 0.04;
     }
-    for (let i = 0; i < N; i++) {
-      const d = dirs[i]!;
-      pos[i * 3] = d.x * d.speed * breakT * 0.4;
-      pos[i * 3 + 1] = d.y * d.speed * breakT * 0.35;
-      pos[i * 3 + 2] = d.z * d.speed * breakT * 0.4;
-      size[i] = (0.03 + (1 - breakT) * 0.025) * 36;
-      alpha[i] = (1 - breakT) * 0.8 * fade;
-    }
-    geo.attributes.position!.needsUpdate = true;
-    geo.attributes.aSize!.needsUpdate = true;
-    geo.attributes.aAlpha!.needsUpdate = true;
   });
 
-  return (
-    <group ref={group} position={[shot.x, shot.y, shot.z]}>
-      <mesh ref={flash} material={flashMat} renderOrder={8}>
-        <sphereGeometry args={[1, 10, 10]} />
-      </mesh>
-      <points geometry={geo} material={pointMat} renderOrder={7} />
-    </group>
-  );
+  return <sprite ref={sprite} position={[shot.x, shot.y, shot.z]} material={mat} />;
 }

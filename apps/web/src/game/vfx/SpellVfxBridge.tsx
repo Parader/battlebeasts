@@ -9,7 +9,7 @@ import {
   getPlayerVfxRuntime,
 } from "./runtime/playerVfxRuntime";
 import { cancelFollowOwnerVfx } from "./runtime";
-import { stopBoltCastSfx } from "../gameSfx";
+import { stopArcThreadLoopSfx, stopBoltCastSfx, stopDrainLifeLoopSfx } from "../gameSfx";
 
 function tickCaster(sessionId: string, raw: PlayerCastPose, now: number, live: Set<string>) {
   live.add(sessionId);
@@ -79,6 +79,8 @@ export function SpellVfxBridge({ room }: { room: VfxRoomLike | null }) {
       cancelFollowOwnerVfx("barrier", sessionId);
       cleanupPlayerVfx(sessionId);
       stopBoltCastSfx(sessionId);
+      stopArcThreadLoopSfx(sessionId);
+      stopDrainLifeLoopSfx(sessionId);
     });
   });
 

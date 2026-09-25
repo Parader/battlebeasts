@@ -467,6 +467,7 @@ const ELEMENTAL_ABILITY_IDS = new Set([
   "shrooms",
   "chainLightning",
   "arcThread",
+  "bolt",
   "elementalOverload",
 ]);
 

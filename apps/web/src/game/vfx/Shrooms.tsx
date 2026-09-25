@@ -1,11 +1,15 @@
 import { useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Room } from "colyseus.js";
 import * as THREE from "three";
 import { SHROOM_CAST } from "@battlebeasts/shared";
-import { GroundDecal } from "./components/GroundDecal";
-import { groundPresets } from "./presets/ground";
+import {
+  createLabGroundMarkMaterial,
+  tickLabGroundMark,
+} from "./engine/labShapeMaterials";
+import { spawnElementRole, type ElementHandle } from "./engine";
+import { GEO_PLANE_1 } from "./sharedGeo";
 import {
   SHROOM_GREEN_GLB_URL,
   SHROOM_RED_GLB_URL,
@@ -31,40 +35,26 @@ type PlayerTeam = { team?: string };
 
 const STAGE_SCALE = [0.55, 0.82, 1.08] as const;
 
-const allyTriggerPreset = {
-  ...groundPresets.iceFrost,
-  element: "poison" as const,
-  shape: "circle" as const,
-  colorCore: "#bbf7d0",
-  colorMid: "#4ade80",
-  colorEdge: "#166534",
-  opacity: 0.78,
-  additive: true,
-  ringWidth: 0.1,
-  softness: 0.06,
-  innerRatio: 0.2,
-  spin: 0.25,
-  appearEnd: 0.06,
-  fadeStart: 0.94,
-};
+const HEAL_COLORS = { hot: "#a7f3d0", mid: "#6ee7b7", edge: "#14532d" };
 
-const enemyTriggerPreset = {
-  ...groundPresets.iceFrost,
-  // Keep poison style (same as ally) — fire style was an unnecessary divergence.
-  element: "poison" as const,
-  shape: "circle" as const,
-  colorCore: "#fecaca",
-  colorMid: "#f87171",
-  colorEdge: "#991b1b",
-  opacity: 0.82,
-  additive: true,
-  ringWidth: 0.1,
-  softness: 0.06,
-  innerRatio: 0.2,
-  spin: 0.3,
-  appearEnd: 0.06,
-  fadeStart: 0.94,
-};
+const PAD_Y = 0.03;
+const FEET_Y = 0.08;
+/** Quiet pad mist by stage — 3 living plants × 2 layers is the budget. */
+const WAKE_RATE = [0, 0.22, 0.4, 0.58] as const;
+
+function spawnPadWake(kind: "heal" | "blood", x: number, y: number, z: number): ElementHandle {
+  return spawnElementRole(kind, "ground", x, y, z, {
+    dirY: kind === "heal" ? 0.28 : 0.06,
+    spread: 0.2,
+    gravity: kind === "heal" ? -0.05 : 0.55,
+    drag: 1.5,
+    size: kind === "heal" ? 0.18 : 0.14,
+    sizeEnd: kind === "heal" ? 0.42 : 0.32,
+    life: 0.7,
+    rate: 8,
+    opacity: kind === "heal" ? 0.2 : 0.16,
+  });
+}
 
 /** Green for owner/allies; red for enemies (matches who the pad helps vs hurts). */
 function shroomPadIsFriendly(
@@ -105,9 +95,12 @@ function ShroomMesh({
   const redGltf = useGLTF(SHROOM_RED_GLB_URL);
   const root = useRef<THREE.Group>(null);
   const meshRoot = useRef<THREE.Group>(null);
+  const healMark = useRef<THREE.Mesh>(null);
+  const wake = useRef<ElementHandle | null>(null);
+  const padKind = useRef<"heal" | "blood" | null>(null);
+  const world = useRef(new THREE.Vector3());
   const born = useRef(performance.now());
   const sinkBorn = useRef(0);
-  const opacityMul = useRef(1);
   const stageScale = useRef(STAGE_SCALE[0]);
   const variantRef = useRef(0);
   const [friendly, setFriendly] = useState(() => {
@@ -120,6 +113,11 @@ function ShroomMesh({
       localTeam,
     );
   });
+
+  const healMat = useMemo(
+    () => createLabGroundMarkMaterial("spiral", HEAL_COLORS, { opacity: 0.62, additive: false }),
+    [],
+  );
 
   const mesh = useMemo(() => {
     warmShroomAssets(greenGltf.scene, redGltf.scene);
@@ -134,11 +132,21 @@ function ShroomMesh({
     );
   }, [greenGltf.scene, redGltf.scene, room, id, friendly]);
 
+  useEffect(
+    () => () => {
+      wake.current?.kill();
+      wake.current = null;
+      healMat.dispose();
+    },
+    [healMat],
+  );
+
   useFrame((_, dt) => {
     const v = room.state?.shrooms?.get(id) as ShroomSchema | undefined;
     const g = root.current;
     if (!v || !g) {
       if (g) g.visible = false;
+      wake.current?.setRateScale(0);
       return;
     }
     g.visible = true;
@@ -176,28 +184,44 @@ function ShroomMesh({
       meshRoot.current.position.y = -0.12 * yPop - 0.85 * buryEase;
       meshRoot.current.visible = true;
     }
-    opacityMul.current = sinking
+
+    const fade = sinking
       ? Math.max(0, 1 - (performance.now() - sinkBorn.current) / SHROOM_CAST.sinkMs)
       : 1;
-  });
+    tickLabGroundMark(healMat, dt);
+    healMat.uniforms.uOpacity!.value = 0.55 * fade;
+    if (healMark.current) healMark.current.visible = nextFriendly;
 
-  const triggerR = SHROOM_CAST.triggerRadius * 1.12;
-  const preset = friendly ? allyTriggerPreset : enemyTriggerPreset;
+    const triggerR = (v.triggerRadius ?? SHROOM_CAST.triggerRadius) * 1.12;
+    const padScale = triggerR * 2;
+    healMark.current?.scale.set(padScale, padScale, padScale);
+
+    g.getWorldPosition(world.current);
+    const want = nextFriendly ? "heal" : "blood";
+    const wx = world.current.x;
+    const wy = world.current.y + FEET_Y;
+    const wz = world.current.z;
+    if (padKind.current !== want) {
+      wake.current?.kill();
+      wake.current = spawnPadWake(want, wx, wy, wz);
+      padKind.current = want;
+    }
+    wake.current?.setPose(wx, wy, wz);
+    wake.current?.setRateScale(sinking ? 0 : WAKE_RATE[stage]!);
+  });
 
   if (!mesh) return null;
   return (
     <group ref={root}>
-      <GroundDecal
-        key={friendly ? "ally" : "enemy"}
-        preset={preset}
-        shape="circle"
-        x={0}
-        z={0}
-        y={0.03}
-        born={born.current}
-        life={SHROOM_CAST.maxLifeMs}
-        radius={triggerR}
-        opacityMulRef={opacityMul}
+      <mesh
+        ref={healMark}
+        geometry={GEO_PLANE_1}
+        material={healMat}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, PAD_Y, 0]}
+        renderOrder={5}
+        frustumCulled={false}
+        visible={friendly}
       />
       <group ref={meshRoot}>
         <primitive key={friendly ? "ally" : "enemy"} object={mesh} />

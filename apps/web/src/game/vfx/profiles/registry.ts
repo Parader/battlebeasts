@@ -12,6 +12,7 @@ import {
   POISON_DART_CAST,
   SOUL_MARK_CAST,
   VOID_DISC_CAST,
+  ASTRAL_CHAIN_CAST,
   RUNIC_SHARD_CAST,
 } from "@battlebeasts/shared";
 import type { AbilityVfxProfile, AbilityVfxAssets } from "./types";
@@ -96,7 +97,7 @@ const MUZZLE_POISON: AbilityVfxProfile = {
   combatFx: {
     onHit: "catalogImpact",
     hitY: 0.7,
-    skipLegacyBurst: false,
+    skipLegacyBurst: true,
   },
 };
 
@@ -111,7 +112,7 @@ const MUZZLE_VOID_DISC: AbilityVfxProfile = {
   combatFx: {
     onHit: "catalogImpact",
     hitY: 0.7,
-    skipLegacyBurst: false,
+    skipLegacyBurst: true,
   },
 };
 
@@ -290,7 +291,13 @@ const ORBITING_WISP: AbilityVfxProfile = {
 };
 
 const SHROOMS: AbilityVfxProfile = {
-  castEngine: "combatFxOnly",
+  castEngine: "muzzleLead",
+  muzzleLead: {
+    forward: 0.45,
+    handY: BOLT_CAST.handY,
+    /** Fire as soon as cast starts — that's the plant beat. */
+    leadMs: 8000,
+  },
   projectile: "none",
   combatFx: { skipLegacyBurst: true },
 };
@@ -328,7 +335,7 @@ const SOUL_MARK: AbilityVfxProfile = {
   },
   projectile: "catalog",
   combatFx: {
-    onHit: "none",
+    onHit: "catalogImpact",
     hitY: 1.05,
     onAoe: "soulMark",
     skipLegacyBurst: true,
@@ -378,10 +385,16 @@ const CHAIN_JUMP: AbilityVfxProfile = {
 };
 
 const ASTRAL_CHAIN: AbilityVfxProfile = {
-  castEngine: "none",
+  castEngine: "muzzleLead",
+  muzzleLead: {
+    forward: ASTRAL_CHAIN_CAST.spawnOffset,
+    handY: ASTRAL_CHAIN_CAST.handY,
+    leadMs: 0,
+  },
   projectile: "catalog",
   combatFx: {
-    onHit: "none",
+    onHit: "catalogImpact",
+    hitY: 1.05,
     onAoe: "astralChain",
     skipLegacyBurst: true,
   },
@@ -430,8 +443,8 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
     ...MUZZLE_BOLT,
     combatFx: {
       onHit: "catalogImpact",
-      hitY: 0.7,
-      skipLegacyBurst: false,
+      hitY: 1.05,
+      skipLegacyBurst: true,
     },
   },
   arcThread: ARC_THREAD,
@@ -439,6 +452,14 @@ const PROFILES: Record<string, AbilityVfxProfile> = {
   voidDisc: MUZZLE_VOID_DISC,
   runicShard: MUZZLE_RUNIC_SHARD,
   poisonDart: MUZZLE_POISON,
+  poisoned: {
+    castEngine: "none",
+    projectile: "none",
+    combatFx: {
+      onHit: "none",
+      skipLegacyBurst: true,
+    },
+  },
   frostBall: CHARGE_FROST,
   fireball: CHARGE_FIREBALL,
   iceLance: CHARGE_ICE_LANCE,

@@ -14,15 +14,19 @@ type Listener = () => void;
 const CAST_LIFE_MS: Record<string, number> = {
   bolt: 320,
   soulMark: 340,
-  crescent: 260,
+  voidDisc: 340,
+  astralChain: 340,
+  crescent: 300,
   poisonDart: 380,
+  shrooms: 380,
 };
 
 const IMPACT_LIFE_MS: Record<string, number> = {
   bolt: 380,
   soulMark: 420,
+  voidDisc: 480,
   runicShard: 280,
-  orbitingWisp: 180,
+  orbitingWisp: 520,
   astralChain: 220,
   undergroundPulse: 750,
   slipstream: 3200,
@@ -54,7 +58,7 @@ const IMPACT_LIFE_MS: Record<string, number> = {
   chainLightning: 280,
   elementalOverload: 420,
   positionSwap: 520,
-  crescent: 320,
+  crescent: 380,
   smash: 900,
   gust: 1200,
   spikes: 560,
@@ -197,6 +201,7 @@ class VfxRuntime {
       targetId: opts?.targetId,
       chargeMs: opts?.chargeMs,
       variant: opts?.variant,
+      comboHit: opts?.comboHit,
       radius: opts?.radius,
       startRadius: opts?.startRadius,
       growMs: opts?.growMs,

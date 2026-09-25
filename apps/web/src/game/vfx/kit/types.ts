@@ -3,7 +3,7 @@
  * Ground is fully implemented; projectile/laser/stream/wave are API-ready scaffolds.
  */
 
-export type VfxElement = "fire" | "ice" | "water" | "wind" | "poison" | "earth";
+export type VfxElement = "fire" | "ice" | "water" | "wind" | "poison" | "earth" | "signal";
 
 export type GroundShape = "circle" | "ring" | "cone" | "line" | "rect" | "arc";
 
@@ -74,6 +74,8 @@ export const ELEMENT_STYLE: Record<VfxElement, number> = {
   water: 3,
   wind: 4,
   poison: 5,
+  /** AW-style combat telegraph — team-tinted fill + bright outline. */
+  signal: 6,
 };
 
 /** Shape index consumed by GroundDecalMaterial.uShape */

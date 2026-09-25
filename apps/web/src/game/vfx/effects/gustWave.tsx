@@ -4,10 +4,10 @@ import * as THREE from "three";
 import { ABILITIES, GUST_AOE_CAST } from "@battlebeasts/shared";
 import type { OneShotEffect } from "../types";
 import type { VfxFollowContext } from "../catalog";
-import { GroundDecal } from "../components/GroundDecal";
-import { groundPresets } from "../presets/ground";
-import { softEnvelope } from "../easing";
 import { createTrailMaterial } from "../materials/trailMaterial";
+import { burstElementRole } from "../engine";
+
+/** ParticleWorld owns the gust cloud; shader air sheets remain local. */
 
 function gustFrameWallMs(frame: number): number {
   return (
@@ -48,10 +48,7 @@ function makeAirSheets(): AirSheet[] {
   return sheets;
 }
 
-/**
- * Gust Q — suck gathers, then a simple expanding smoke disc (frost-aura style).
- * Mid-air sheets still fire outward on the blow.
- */
+/** Gust Q — a ParticleWorld impact drives the blow beneath shader air sheets. */
 export function GustWaveEffect({
   shot,
   follow,
@@ -59,21 +56,19 @@ export function GustWaveEffect({
   shot: OneShotEffect;
   follow?: VfxFollowContext;
 }) {
-  const smoke = groundPresets.windSmoke;
   const radius = Math.max(
     2.5,
     (typeof shot.radius === "number" && shot.radius > 0
       ? shot.radius
       : null) ??
       ABILITIES.gust.radius ??
-      smoke.radius,
+      3.5,
   );
   /** Sheets were tuned for ~3.5r — scale so they still reach the hit edge. */
   const sheetSpeedMul = radius / 3.5;
   const root = useRef<THREE.Group>(null);
-  const progress = useRef(0);
-  const opacity = useRef(0);
   const pose = useRef({ x: shot.x, z: shot.z });
+  const impactBurst = useRef(false);
   const airSheets = useMemo(() => makeAirSheets(), []);
   const sheetMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const trailMats = useMemo(
@@ -93,8 +88,6 @@ export function GustWaveEffect({
   const suckStart = gustFrameWallMs(GUST_AOE_CAST.suckStartFrame);
   const suckEnd = gustFrameWallMs(GUST_AOE_CAST.suckEndFrame);
   const blowAt = gustFrameWallMs(GUST_AOE_CAST.blowFrame);
-  const outwardMs = 240;
-  const fadeMs = 55;
   const sheetLifeMs = 280;
 
   useFrame(() => {
@@ -125,7 +118,6 @@ export function GustWaveEffect({
 
     const ageMs = performance.now() - shot.born;
     if (ageMs >= shot.life) {
-      opacity.current = 0;
       for (let i = 0; i < AIR_SHEET_COUNT; i++) {
         const m = sheetMeshes.current[i];
         if (m) m.visible = false;
@@ -134,38 +126,23 @@ export function GustWaveEffect({
     }
 
     if (ageMs < suckStart) {
-      progress.current = 0;
-      opacity.current = 0;
       return;
     }
 
-    // Soft gather — faint smoke shrinks in
     if (ageMs < suckEnd) {
-      const u = (ageMs - suckStart) / Math.max(1, suckEnd - suckStart);
-      progress.current = 1 - u * u * 0.75;
-      opacity.current = softEnvelope(u, 0.08, 0.9) * 0.45;
       return;
     }
 
     if (ageMs < blowAt) {
-      progress.current = 0.25;
-      opacity.current = 0.45;
       return;
     }
 
-    // Circular push — expand smoke disc, then fade
-    const sinceBlow = ageMs - blowAt;
-    const u = Math.min(1, sinceBlow / outwardMs);
-    const e = 1 - (1 - u) * (1 - u);
-    progress.current = 0.2 + e * 0.8;
-
-    if (sinceBlow < outwardMs) {
-      opacity.current = softEnvelope(u, 0.04, 0.55);
-    } else {
-      const fadeU = Math.min(1, (sinceBlow - outwardMs) / fadeMs);
-      opacity.current = Math.max(0, 1 - fadeU);
+    if (!impactBurst.current) {
+      impactBurst.current = true;
+      burstElementRole("wind", "impact", pose.current.x, 0.12, pose.current.z);
     }
 
+    const sinceBlow = ageMs - blowAt;
     const sinceBlowSec = sinceBlow / 1000;
     for (let i = 0; i < AIR_SHEET_COUNT; i++) {
       const b = airSheets[i]!;
@@ -201,17 +178,6 @@ export function GustWaveEffect({
 
   return (
     <group ref={root} position={[shot.x, 0, shot.z]}>
-      <GroundDecal
-        preset={smoke}
-        shape="circle"
-        x={0}
-        z={0}
-        y={0.04}
-        radius={radius}
-        growExpand
-        progressRef={progress}
-        opacityMulRef={opacity}
-      />
       {airSheets.map((b, i) => (
         <mesh
           key={i}

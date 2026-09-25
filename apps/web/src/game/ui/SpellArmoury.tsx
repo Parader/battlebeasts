@@ -15,6 +15,7 @@ import {
   FLEX_SLOT_COUNT,
   SPELL_SLOTS,
   abilitiesForSlot,
+  abilityAppliedEffectNotes,
   abilityUnlockCostForPlayer,
   canAffordShopCost,
   hasFirstUnlockVoucher,
@@ -151,6 +152,11 @@ function SpellCardTooltip({
       {ability.description ? (
         <p className="bb-armoury-card__tooltip-desc">{ability.description}</p>
       ) : null}
+      {abilityAppliedEffectNotes(ability).map((fx) => (
+        <p key={fx.name} className="bb-armoury-card__tooltip-effect">
+          <strong>{fx.name}.</strong> {fx.description}
+        </p>
+      ))}
       <p className="bb-armoury-card__tooltip-stats">{adjustedCdLabel}</p>
       {mods.length > 0 ? (
         <>

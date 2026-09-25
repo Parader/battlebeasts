@@ -29,7 +29,7 @@ import {
   DREAD_AURA_CAST,
   DIVINE_BEAM_CAST,
 } from "@battlebeasts/shared";
-import { playSlamHitSfx } from "../gameSfx";
+import { playSlamHitSfx, playIceHitSfx, playSoulMarkExplosionSfx } from "../gameSfx";
 import type { CombatFxDispatchCtx, CombatFxMessage } from "./combatFxTypes";
 import type { CombatFxAoeMode } from "./profiles/types";
 import { CHANNEL_VFX } from "./profiles/registry";
@@ -153,6 +153,7 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
       },
       { lifeMs: 900, radius: msg.radius ?? 2.0 },
     );
+    playIceHitSfx();
   },
 
   channelOnce: (msg, ctx) => {
@@ -304,6 +305,7 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
       { x: msg.x, z: msg.z, y: msg.y ?? 1.15 },
       { lifeMs: 420, variant: msg.variant ?? 1, radius: msg.radius ?? 0.5 },
     );
+    playSoulMarkExplosionSfx();
   },
 
   runicShard: (msg) => {
@@ -314,6 +316,7 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
       { x: msg.x, z: msg.z, y: msg.y ?? 0.95 },
       { lifeMs: 220, variant: 1, radius: msg.radius ?? 0.6 },
     );
+    playIceHitSfx();
   },
 
   astralChain: (msg) => {
@@ -407,6 +410,7 @@ export const AOE_COMBAT_FX_HANDLERS: Partial<Record<CombatFxAoeMode, AoeHandler>
       {
         lifeMs: CRUSHING_SIGIL_CAST.vfxLifeMs,
         radius: msg.radius ?? CRUSHING_SIGIL_CAST.radius,
+        followOwnerId: msg.ownerId,
       },
     );
   },

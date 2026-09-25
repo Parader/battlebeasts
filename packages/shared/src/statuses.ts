@@ -143,12 +143,14 @@ export interface StatusApplication {
   chance?: number;
 }
 
-/** Shocked mark — no pulse; attacked targets discharge to a nearby enemy. */
+/** Shocked mark — no pulse; at max stacks, attacked targets discharge to a nearby enemy. */
 export const SHOCKED_STATUS = {
   durationMs: 4000,
   dischargeRadius: 4.5,
-  dischargeDamagePerStack: combatMag(4),
+  dischargeDamagePerStack: combatMag(2),
   dischargeIcdMs: 500,
+  /** Static Discharge only fires when the target has this many Shocked stacks. */
+  dischargeMinStacks: 3,
 } as const;
 
 export const STATUSES: Record<string, StatusDef> = {
@@ -234,6 +236,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#93c5fd",
     tag: "SLW",
+    description: "Reduced movement speed.",
   },
   /**
    * Poison Cloud aura — 20% slow while standing in the cloud (refreshed each tick).
@@ -436,6 +439,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "refresh",
     color: "#fb923c",
     tag: "BRN",
+    description: `Fire DoT — ${combatMag(4)} damage every 0.5s for 3s.`,
   },
   /**
    * Shared poison DoT — every poison spell applies this (like burning / bleeding).
@@ -453,6 +457,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "stack",
     color: "#3f6212",
     tag: "PSN",
+    description: `Poison DoT that stacks up to 3 — ${combatMag(2)} damage every 0.7s for 5s per stack.`,
   },
   /**
    * Soul Mark stacks — visual / rupture tracker only (no tick damage).
@@ -514,6 +519,7 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "stack",
     color: "#f87171",
     tag: "BLD",
+    description: `Bleed DoT that stacks up to 3 — ${combatMag(5)} damage every 0.6s for 3.5s per stack.`,
   },
   /**
    * Frost Mist chill — each stack = +10% slow (additive with other slows).
@@ -533,10 +539,11 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "stack",
     color: "#bae6fd",
     tag: "CHL",
+    description: "Stacking frost slow — 10% slower movement per stack.",
   },
   /**
    * Shocked — short electrical mark (Chain Lightning, Arc Thread, Surge, Wild Infusion).
-   * No pulse damage. When the marked target is hit, a small bolt jumps to a nearby enemy.
+   * No pulse damage. At 3 stacks, hitting the marked target jumps a small bolt to a nearby enemy.
    * Consumed by Elemental Overload for burst damage.
    */
   shocked: {
@@ -549,6 +556,8 @@ export const STATUSES: Record<string, StatusDef> = {
     stackRule: "stack",
     color: "#38bdf8",
     tag: "SHK",
+    description:
+      "Stacks up to 3. At 3 stacks, the next hit jumps a Static Discharge bolt to a nearby enemy.",
   },
   /**
    * Electrified — self-buff from casting Surge. Next offensive attack consumes this
@@ -1705,6 +1714,53 @@ export function nextFrostChillStacks(
 
 export function getStatus(id: string): StatusDef | undefined {
   return STATUSES[id];
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Status names mentioned in ability copy after the word "applies"
+ * (e.g. "applies Shocked" → Shocked blurb). Longest names first so
+ * multi-word statuses win over shorter overlaps.
+ */
+export function statusEffectsFromAppliesCopy(
+  description: string | undefined | null,
+): { name: string; description: string }[] {
+  const text = description?.trim() ?? "";
+  if (!text || !/\bapplies\b/i.test(text)) return [];
+
+  const clauses: string[] = [];
+  const clauseRe = /\bapplies\b([^.]*)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = clauseRe.exec(text)) !== null) {
+    const clause = m[1]?.trim();
+    if (clause) clauses.push(clause);
+  }
+  if (clauses.length === 0) return [];
+  const haystack = clauses.join(" ");
+
+  const named = Object.values(STATUSES)
+    .filter((st) => st.description && st.name)
+    .sort((a, b) => b.name.length - a.name.length);
+
+  const found: { name: string; description: string; index: number }[] = [];
+  const seen = new Set<string>();
+  for (const st of named) {
+    if (seen.has(st.id)) continue;
+    const re = new RegExp(`\\b${escapeRegExp(st.name)}\\b`, "i");
+    const match = re.exec(haystack);
+    if (!match || st.description == null) continue;
+    seen.add(st.id);
+    found.push({
+      name: st.name,
+      description: st.description,
+      index: match.index,
+    });
+  }
+  found.sort((a, b) => a.index - b.index);
+  return found.map(({ name, description }) => ({ name, description }));
 }
 
 /** Map key for a status row — per-source statuses use `id@sourceId`. */
