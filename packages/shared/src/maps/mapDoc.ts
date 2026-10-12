@@ -18,7 +18,6 @@ import type {
   WallCollider,
 } from "../collision";
 import { COLLISION, localToWorldXZ } from "../collision";
-import { DEFAULT_GROUND_LAYERS } from "./groundMaterials";
 import type {
   MapElement,
   MapElementParams,
@@ -33,6 +32,13 @@ import {
   paramString,
   pickupSpec,
 } from "./elements";
+import {
+  SCATTER_MAX_DABS,
+  SCATTER_MAX_DENSITY,
+  SCATTER_MAX_MIX,
+  type MapScatter,
+  type MapScatterProp,
+} from "./scatter";
 
 /** Widest passage a player cannot fit through (diameter + separation skin). */
 export const MIN_PASSABLE_GAP = COLLISION.playerRadius * 2 + COLLISION.skin;
@@ -80,7 +86,32 @@ export type MapGround =
        */
       resX: number;
       resZ: number;
-      /** Up to 4 material ids, one per RGBA splat channel. */
+      /**
+       * Tile grid. Absent or 1×1 is one splat for the whole ground.
+       *
+       * Above 1, `resX` / `resZ` are the grid of each tile, and paint is one
+       * sidecar per tile (`tileSplatUrl`). The zone is still one map.
+       */
+      tilesX?: number;
+      tilesZ?: number;
+      /**
+       * `"index"` stores two material slots and a blend per texel, so the map
+       * can use the whole catalog. Absent means a legacy four-weight splat
+       * whose channels follow `layers` in order.
+       */
+      paint?: "index";
+      /**
+       * Material shown wherever nobody has painted.
+       *
+       * Unpainted ground is this material and nothing else: those tiles are not
+       * stored, so a large map does not pay for a splat until a brush touches
+       * it. Absent on older documents, which used `layers[0]`.
+       */
+      base?: string;
+      /**
+       * Index mode: every material id used on the map, for preloading.
+       * Legacy weight mode: up to four ids, one per splat channel.
+       */
       layers: string[];
       splatUrl?: string;
       heightUrl?: string;
@@ -98,6 +129,11 @@ export type MapGround =
 
 /** Hard ceiling on `heightScale`, enforced by the parser. */
 export const MAX_GROUND_HEIGHT_SCALE = 0.5;
+
+/** Material an unpainted texel shows. Older maps stored that choice as `layers[0]`. */
+export function paintedBaseId(ground: { base?: string; layers?: readonly string[] }): string {
+  return ground.base || ground.layers?.[0] || "grass";
+}
 
 /**
  * Per-axis texel ceiling.
@@ -128,6 +164,7 @@ export function groundResFor(
 }
 
 export type MapEnv = {
+  /** Sky library id, e.g. `enchanted-meadow/TEM_Skybox_01A`. Absent keeps the flat match haze. */
   skyPreset?: string;
   fogColor?: string;
   fogNear?: number;
@@ -212,6 +249,23 @@ export type MapWall = ProjectilePermeable &
     points: Array<[number, number]>;
   };
 
+/** Default river width, in metres. A closed loop ignores it and fills as a pond. */
+export const DEFAULT_WATER_WIDTH = 4;
+
+/**
+ * A drawn body of water. An open polyline is a river of `width` metres. A
+ * closed loop is a pond that fills the polygon. Drawn like a boundary, and
+ * it does not block movement.
+ */
+export type MapWater = Groupable & {
+  id: string;
+  closed: boolean;
+  /** World-space XZ polyline. */
+  points: Array<[number, number]>;
+  /** River width in metres. Kept on ponds so opening the loop still has one. */
+  width: number;
+};
+
 export type MapTeam = "a" | "b" | "c";
 
 export type MapDoc = {
@@ -222,6 +276,13 @@ export type MapDoc = {
   env: MapEnv;
   props: MapPropPlacement[];
   walls: MapWall[];
+  /** Rivers and ponds drawn on the ground. Absent in older documents. */
+  waters: MapWater[];
+  /**
+   * Painted patches of grass, leaves, and small rocks. Expanded from a seed
+   * at draw time, so the file does not store every clump.
+   */
+  scatters: MapScatter[];
   /**
    * Spawns, hub stands, portals, objectives -- everything interactive. One
    * open-ended list rather than a field per concept; see `elements.ts`.
@@ -628,12 +689,16 @@ export function emptyMapDoc(id: string, name = id): MapDoc {
       sizeX: 80,
       sizeZ: 80,
       ...groundResFor(80, 80),
-      layers: [...DEFAULT_GROUND_LAYERS],
+      base: "grass",
+      layers: ["grass"],
+      paint: "index",
       heightScale: 0,
     },
     env: {},
     props: [],
     walls: [],
+    waters: [],
+    scatters: [],
     elements: [],
     active: false,
   };
@@ -682,6 +747,11 @@ function parseCollider(raw: unknown): MapColliderSpec {
  * on disk, so a bare `size` is read as an equal-sided extent rather than
  * failing the parse.
  */
+function tileCount(raw: unknown): number {
+  if (!isNum(raw)) return 1;
+  return Math.max(1, Math.min(16, Math.round(raw)));
+}
+
 function parseExtent(raw: Record<string, unknown>): { sizeX: number; sizeZ: number } | null {
   if (isNum(raw.sizeX) && isNum(raw.sizeZ)) {
     return { sizeX: Math.max(1, raw.sizeX), sizeZ: Math.max(1, raw.sizeZ) };
@@ -710,7 +780,10 @@ function parseGround(raw: unknown, errors: string[]): MapGround {
     }
     if (raw.kind === "painted" && parseExtent(raw)) {
       const { sizeX, sizeZ } = parseExtent(raw)!;
-      const layers = Array.isArray(raw.layers) ? raw.layers.filter(isStr).slice(0, 4) : [];
+      const paint = raw.paint === "index" ? ("index" as const) : undefined;
+      const layers = Array.isArray(raw.layers)
+        ? raw.layers.filter(isStr).slice(0, paint === "index" ? 256 : 4)
+        : [];
       const requested = isNum(raw.heightScale) ? raw.heightScale : 0;
       const heightScale = Math.min(Math.max(0, requested), MAX_GROUND_HEIGHT_SCALE);
       if (requested > MAX_GROUND_HEIGHT_SCALE) {
@@ -737,12 +810,18 @@ function parseGround(raw: unknown, errors: string[]): MapGround {
               }
             : groundResFor(sizeX, sizeZ);
 
+      const tilesX = tileCount(raw.tilesX);
+      const tilesZ = tileCount(raw.tilesZ);
+      const base = isStr(raw.base) && raw.base ? raw.base : undefined;
       return {
         kind: "painted",
         sizeX,
         sizeZ,
         ...res,
+        ...(tilesX > 1 || tilesZ > 1 ? { tilesX, tilesZ } : {}),
+        ...(base ? { base } : {}),
         layers,
+        ...(paint ? { paint } : {}),
         splatUrl: isStr(raw.splatUrl) ? raw.splatUrl : undefined,
         heightUrl: isStr(raw.heightUrl) ? raw.heightUrl : undefined,
         heightScale,
@@ -860,6 +939,49 @@ function parseElements(raw: Record<string, unknown>, errors: string[]): MapEleme
   return out;
 }
 
+function parseScatters(raw: Record<string, unknown>, errors: string[]): MapScatter[] {
+  const out: MapScatter[] = [];
+  for (const [i, s] of (Array.isArray(raw.scatters) ? raw.scatters : []).entries()) {
+    if (!isRec(s) || !Array.isArray(s.dabs) || !Array.isArray(s.props)) {
+      errors.push(`scatters[${i}] is malformed and was dropped`);
+      continue;
+    }
+    const dabs: Array<[number, number, number]> = [];
+    for (const dab of s.dabs) {
+      if (!Array.isArray(dab) || !isNum(dab[0]) || !isNum(dab[1]) || !isNum(dab[2]) || dab[2] <= 0) continue;
+      dabs.push([dab[0], dab[1], dab[2]]);
+      if (dabs.length >= SCATTER_MAX_DABS) break;
+    }
+    const props: MapScatterProp[] = [];
+    for (const p of s.props) {
+      if (!isRec(p) || !isStr(p.prop)) continue;
+      props.push({
+        prop: p.prop,
+        baseY: isNum(p.baseY) ? p.baseY : 0,
+        ...(isNum(p.pivotX) && p.pivotX !== 0 ? { pivotX: p.pivotX } : {}),
+        ...(isNum(p.pivotZ) && p.pivotZ !== 0 ? { pivotZ: p.pivotZ } : {}),
+      });
+      if (props.length >= SCATTER_MAX_MIX) break;
+    }
+    if (!dabs.length || !props.length) {
+      errors.push(`scatters[${i}] has nothing to plant and was dropped`);
+      continue;
+    }
+    const scaleMin = isNum(s.scaleMin) ? s.scaleMin : 0.85;
+    const scaleMax = isNum(s.scaleMax) ? s.scaleMax : 1.15;
+    out.push({
+      id: isStr(s.id) ? s.id : `s${i}`,
+      dabs,
+      props,
+      density: Math.min(SCATTER_MAX_DENSITY, Math.max(0.05, isNum(s.density) ? s.density : 1.5)),
+      seed: isNum(s.seed) ? s.seed : 1,
+      scaleMin,
+      scaleMax,
+    });
+  }
+  return out;
+}
+
 /** Structural parse. Recoverable problems are reported but do not fail the doc. */
 export function parseMapDoc(raw: unknown): Parsed {
   const errors: string[] = [];
@@ -915,6 +1037,30 @@ export function parseMapDoc(raw: unknown): Parsed {
     });
   }
 
+  const waters: MapWater[] = [];
+  for (const [i, w] of (Array.isArray(raw.waters) ? raw.waters : []).entries()) {
+    if (!isRec(w) || !Array.isArray(w.points)) {
+      errors.push(`waters[${i}] is malformed and was dropped`);
+      continue;
+    }
+    const points = w.points
+      .filter((pt): pt is [number, number] => Array.isArray(pt) && isNum(pt[0]) && isNum(pt[1]))
+      .map((pt) => [pt[0], pt[1]] as [number, number]);
+    if (points.length < 2) {
+      errors.push(`waters[${i}] has fewer than 2 valid points and was dropped`);
+      continue;
+    }
+    const width = isNum(w.width) && w.width >= 0.25 ? w.width : DEFAULT_WATER_WIDTH;
+    waters.push({
+      id: isStr(w.id) ? w.id : `a${i}`,
+      closed: w.closed === true && points.length >= 3,
+      points,
+      width,
+      ...(isStr(w.group) ? { group: w.group } : {}),
+    });
+  }
+
+  const scatters = parseScatters(raw, errors);
   const elements = parseElements(raw, errors);
   const env = isRec(raw.env) ? raw.env : {};
 
@@ -932,6 +1078,8 @@ export function parseMapDoc(raw: unknown): Parsed {
       },
       props,
       walls,
+      waters,
+      scatters,
       elements,
       suppressedWarnings: Array.isArray(raw.suppressedWarnings)
         ? raw.suppressedWarnings.filter(isStr)
@@ -1015,7 +1163,7 @@ export function validateMapDoc(
   };
 
   const ids = new Set<string>();
-  for (const entity of [...doc.props, ...doc.walls, ...doc.elements]) {
+  for (const entity of [...doc.props, ...doc.walls, ...doc.scatters, ...doc.elements]) {
     if (ids.has(entity.id)) err("duplicate-id", [entity.id], `duplicate id "${entity.id}"`);
     ids.add(entity.id);
   }
@@ -1140,6 +1288,9 @@ export function mapGroundExtent(doc: MapDoc): { x: number; z: number } {
     let max = 20;
     for (const p of doc.props) max = Math.max(max, Math.abs(p.x), Math.abs(p.z));
     for (const w of doc.walls) {
+      for (const [x, z] of w.points) max = Math.max(max, Math.abs(x), Math.abs(z));
+    }
+    for (const w of doc.waters) {
       for (const [x, z] of w.points) max = Math.max(max, Math.abs(x), Math.abs(z));
     }
     const s = Math.max(40, Math.ceil(max * 2 + 16));

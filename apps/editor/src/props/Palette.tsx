@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import { docStore, useEditorSlice } from "../state/docStore";
-import { CATEGORY_LABELS, CATEGORY_ORDER, categorize } from "./categories";
+import { docStore, toggleScatterProp, useEditorSlice } from "../state/docStore";
+import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, folderLabel } from "./categories";
 import { propDisplayName, searchProps, usePropIndex, type PropEntry } from "./manifest";
 import { colliderOverrides } from "./overrides";
 import { PropThumb } from "./PropThumb";
@@ -42,6 +42,7 @@ export const Palette = memo(function Palette() {
   const { index, error } = usePropIndex();
   const brushProp = useEditorSlice((s) => s.brushProp);
   const tool = useEditorSlice((s) => s.tool);
+  const scatterProps = useEditorSlice((s) => s.scatter.props);
   const marksVersion = useUnusableVersion();
   const [query, setQuery] = useState("");
   const [biome, setBiome] = useState<string | null>(null);
@@ -63,16 +64,27 @@ export const Palette = memo(function Palette() {
 
     // category -> "biome/Family" -> variants
     const byCat = new Map<string, Map<string, PropEntry[]>>();
+    const labels = new Map<string, string>();
     for (const p of hits) {
-      const cat = categorize(p.family);
-      const famKey = `${p.biome}/${p.family}`;
+      const cat = categoryOf(p);
+      if (p.folder) labels.set(cat, folderLabel(p.folder, p.biome, biome !== null));
+      const famKey = `${p.biome}/${p.folder ? `${p.folder}/` : ""}${p.family}`;
       const fams = byCat.get(cat) ?? byCat.set(cat, new Map()).get(cat)!;
       const list = fams.get(famKey);
       if (list) list.push(p);
       else fams.set(famKey, [p]);
     }
 
-    return CATEGORY_ORDER.filter((id) => byCat.has(id)).map((id) => {
+    const ids = [...byCat.keys()].sort((a, b) => {
+      const ai = CATEGORY_ORDER.indexOf(a);
+      const bi = CATEGORY_ORDER.indexOf(b);
+      const ao = ai === -1 ? CATEGORY_ORDER.length : ai;
+      const bo = bi === -1 ? CATEGORY_ORDER.length : bi;
+      if (ao !== bo) return ao - bo;
+      return (labels.get(a) ?? a).localeCompare(labels.get(b) ?? b);
+    });
+
+    return ids.map((id) => {
       const fams = byCat.get(id)!;
       let count = 0;
       for (const list of fams.values()) {
@@ -81,7 +93,7 @@ export const Palette = memo(function Palette() {
       }
       return {
         id,
-        label: CATEGORY_LABELS.get(id) ?? id,
+        label: labels.get(id) ?? CATEGORY_LABELS.get(id) ?? id,
         count,
         families: [...fams.entries()]
           .sort((a, b) => a[0].localeCompare(b[0]))
@@ -113,7 +125,14 @@ export const Palette = memo(function Palette() {
     apply(next);
   };
 
-  const arm = (key: string) => docStore.setUi({ brushProp: key, tool: "place" });
+  const arm = (key: string) => {
+    if (tool === "scatter") {
+      toggleScatterProp(key);
+      return;
+    }
+    docStore.setUi({ brushProp: key, tool: "place" });
+  };
+  const inMix = (key: string) => tool === "scatter" && scatterProps.includes(key);
 
   // Flattened in display order, so the arrow keys walk exactly what is on
   // screen -- current search and biome filter included.
@@ -152,7 +171,10 @@ export const Palette = memo(function Palette() {
       // screen. Replacing the value closes whatever the last step opened.
       const entry = index?.byKey.get(key);
       if (entry) {
-        setAutoOpen({ cat: categorize(entry.family), fam: `${entry.biome}/${entry.family}` });
+        setAutoOpen({
+          cat: categoryOf(entry),
+          fam: `${entry.biome}/${entry.folder ? `${entry.folder}/` : ""}${entry.family}`,
+        });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -263,7 +285,10 @@ export const Palette = memo(function Palette() {
                           <span
                             className="tree-fam-name"
                             style={{
-                              color: brushProp === first.key && single ? "var(--accent)" : undefined,
+                              color:
+                                (brushProp === first.key && single && tool === "place") || inMix(first.key)
+                                  ? "var(--accent)"
+                                  : undefined,
                             }}
                           >
                             {propDisplayName(first)}
@@ -301,7 +326,7 @@ export const Palette = memo(function Palette() {
                                 key={v.key}
                                 className={[
                                   "variant-chip",
-                                  brushProp === v.key ? "active" : "",
+                                  (tool === "place" && brushProp === v.key) || inMix(v.key) ? "active" : "",
                                   marked ? "chip--unusable" : "",
                                 ]
                                   .filter(Boolean)

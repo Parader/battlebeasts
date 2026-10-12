@@ -25,6 +25,7 @@ import {
   type NpcAction,
   type NpcModelDef,
 } from "../npcs";
+import { LIGHT_KIND_IDS } from "./lights";
 
 export type MapElementParamValue = string | number | boolean;
 export type MapElementParams = Record<string, MapElementParamValue>;
@@ -74,7 +75,8 @@ export type ElementGroup =
   | "Portals"
   | "Objectives"
   | "Pickups"
-  | "Dungeon";
+  | "Dungeon"
+  | "Lighting";
 
 /**
  * A numeric param drawn as a range circle in the editor.
@@ -530,6 +532,24 @@ export const ELEMENT_TYPES: readonly ElementTypeDef[] = [
       // Staggers a contested pickup away from round start, so the opening is
       // decided by position rather than by who spawned nearest to it.
       { key: "firstSpawnMs", label: "First spawn delay (ms)", kind: "number", default: 0, step: 1000, min: 0 },
+    ],
+  },
+
+  /*
+   * A light you place yourself. Props such as a lamp post have no light of
+   * their own; drop this on the post and set Height to the lantern.
+   * Type chooses the colour and whether it flickers.
+   */
+  {
+    id: "light",
+    label: "Light",
+    group: "Lighting",
+    color: "#ffd2a1",
+    volume: "none",
+    facing: false,
+    params: [
+      { key: "kind", label: "Type", kind: "enum", options: LIGHT_KIND_IDS, default: "lamp" },
+      { key: "height", label: "Height above ground", kind: "number", default: 3.2, step: 0.1, min: 0 },
     ],
   },
 ];

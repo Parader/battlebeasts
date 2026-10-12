@@ -1,20 +1,33 @@
 import {
   ARENA_SPAWNS,
   getMapSource,
+  layoutFromGround,
+  groundSlot,
+  paintedBaseId,
+  placementTileKey,
   propUrlForKey,
+  tileRect,
+  tileSplatUrl,
+  tileHeightUrl,
   type MapDoc,
   type MapPropPlacement,
   type MapSource,
 } from "@battlebeasts/shared";
 import { useGLTF } from "@react-three/drei";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { assetUrl } from "./assetUrl";
 import { DocNpcs } from "./DocNpcs";
+import { dressEnvironmentObject } from "./environmentMotion";
+import { particleKind, PropParticleField } from "./envParticles";
+import { MapLights } from "./MapLights";
 import { reportMapPropMounted, reportMapPropUnmounted } from "./mapPropMountGate";
+import { GAME_GROUND_MESH_SEGS, PaintedGround, type HeightGrid } from "./PaintedGround";
 import { useOccluder } from "./useOccluder";
-import { PaintedGround, type HeightGrid } from "./PaintedGround";
+import { WaterBodies } from "./WaterBodies";
+import { DocScatter } from "./ScatterField";
+import { bindZoneLayout, propGroupKey, useAdmittedGroups } from "./zoneFocus";
 
 /**
  * Renders whichever map a room is running, resolved through the shared
@@ -96,11 +109,11 @@ function BakedMap({
 
 // --- document ---------------------------------------------------------------
 
-function DocGround({ doc }: { doc: MapDoc }) {
+function DocGround({ doc, admitted }: { doc: MapDoc; admitted: Set<string> | null }) {
   const g = doc.ground;
 
   if (g.kind === "mesh") return <MeshGround url={g.url} scale={g.scale} at={g.plantAt} />;
-  if (g.kind === "painted") return <PaintedDocGround ground={g} />;
+  if (g.kind === "painted") return <PaintedDocGround ground={g} mapId={doc.id} admitted={admitted} />;
 
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.002, 0]} receiveShadow>
@@ -116,26 +129,120 @@ function DocGround({ doc }: { doc: MapDoc }) {
  * A map with no splat yet renders as its base material rather than failing --
  * that is the state every map is in before anyone paints it.
  */
-function PaintedDocGround({ ground }: { ground: Extract<MapDoc["ground"], { kind: "painted" }> }) {
-  const splat = useSidecarTexture(ground.splatUrl);
+function PaintedDocGround({
+  ground,
+  mapId,
+  admitted,
+}: {
+  ground: Extract<MapDoc["ground"], { kind: "painted" }>;
+  mapId: string;
+  admitted: Set<string> | null;
+}) {
+  const layout = layoutFromGround(ground);
+  if (!layout.tiled || !admitted) {
+    return <SinglePaintedGround ground={ground} />;
+  }
+  const tiles = [...admitted].filter((key) => key.startsWith("ground\0"));
+  return (
+    <>
+      {tiles.map((key) => {
+        const [tx, tz] = key.slice("ground\0".length).split(":").map(Number);
+        if (tx == null || tz == null || Number.isNaN(tx) || Number.isNaN(tz)) return null;
+        return (
+          <StreamedGroundTile
+            key={`${tx}:${tz}`}
+            mapId={mapId}
+            ground={ground}
+            tx={tx}
+            tz={tz}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function SinglePaintedGround({ ground }: { ground: Extract<MapDoc["ground"], { kind: "painted" }> }) {
+  const indexed = ground.paint === "index";
+  const baseId = paintedBaseId(ground);
+  const palette = ground.layers.includes(baseId) ? ground.layers : [baseId, ...ground.layers];
+  const splat = useSidecarTexture(ground.splatUrl, indexed, groundSlot(baseId));
   const heights = useHeightData(ground.heightUrl, ground.heightScale);
   if (!splat) return null;
-  return <PaintedGround ground={ground} splat={splat} heights={heights} />;
+  return (
+    <PaintedGround
+      ground={ground}
+      splat={splat}
+      heights={heights}
+      maxMeshSegs={heights ? GAME_GROUND_MESH_SEGS : 1}
+      splatMode={indexed ? "index" : "weights"}
+      palette={palette}
+    />
+  );
+}
+
+function StreamedGroundTile({
+  mapId,
+  ground,
+  tx,
+  tz,
+}: {
+  mapId: string;
+  ground: Extract<MapDoc["ground"], { kind: "painted" }>;
+  tx: number;
+  tz: number;
+}) {
+  const layout = layoutFromGround(ground);
+  const rect = tileRect(layout, tx, tz);
+  const indexed = ground.paint === "index";
+  const baseId = paintedBaseId(ground);
+  const palette = ground.layers.includes(baseId) ? ground.layers : [baseId, ...ground.layers];
+  const splat = useSidecarTexture(tileSplatUrl(mapId, tx, tz), indexed, groundSlot(baseId));
+  const heights = useHeightData(ground.heightScale > 0 ? tileHeightUrl(mapId, tx, tz) : undefined, ground.heightScale);
+  const tileGround = useMemo(
+    () => ({ ...ground, sizeX: rect.sizeX, sizeZ: rect.sizeZ, resX: layout.resX, resZ: layout.resZ }),
+    [ground, rect.sizeX, rect.sizeZ, layout.resX, layout.resZ],
+  );
+  if (!splat) return null;
+  return (
+    <PaintedGround
+      ground={tileGround}
+      splat={splat}
+      heights={heights}
+      maxMeshSegs={heights ? GAME_GROUND_MESH_SEGS : 1}
+      offset={[rect.originX, rect.originZ]}
+      splatMode={indexed ? "index" : "weights"}
+      palette={palette}
+    />
+  );
 }
 
 /** The splat map, or a solid base-layer fallback when the map is unpainted. */
-function useSidecarTexture(url: string | undefined): THREE.Texture | null {
+function useSidecarTexture(url: string | undefined, indexed = false, baseSlot = 0): THREE.Texture | null {
   const [tex, setTex] = useState<THREE.Texture | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     const fallback = () => {
-      // One texel of pure layer 0 -- the shader normalises, so size is moot.
-      const data = new Uint8Array([255, 0, 0, 255]);
+      const data = indexed
+        ? new Uint8Array([baseSlot, baseSlot, 0, 255])
+        : new Uint8Array([255, 0, 0, 255]);
       const t = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat);
+      t.colorSpace = THREE.NoColorSpace;
+      t.magFilter = indexed ? THREE.NearestFilter : THREE.LinearFilter;
+      t.minFilter = indexed ? THREE.NearestFilter : THREE.LinearFilter;
+      t.generateMipmaps = false;
       t.needsUpdate = true;
       return t;
+    };
+
+    const finish = (t: THREE.Texture) => {
+      t.colorSpace = THREE.NoColorSpace;
+      t.magFilter = indexed ? THREE.NearestFilter : THREE.LinearFilter;
+      t.minFilter = indexed ? THREE.NearestFilter : THREE.LinearFilter;
+      t.generateMipmaps = false;
+      t.needsUpdate = true;
     };
 
     if (!url) {
@@ -147,9 +254,7 @@ function useSidecarTexture(url: string | undefined): THREE.Texture | null {
       assetUrl(url.replace(/^\//, "")),
       (t) => {
         if (cancelled) return;
-        t.minFilter = THREE.LinearFilter;
-        t.magFilter = THREE.LinearFilter;
-        t.generateMipmaps = false;
+        finish(t);
         setTex(t);
       },
       undefined,
@@ -161,7 +266,7 @@ function useSidecarTexture(url: string | undefined): THREE.Texture | null {
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [url, indexed, baseSlot]);
 
   return tex;
 }
@@ -238,29 +343,57 @@ function MeshGround({
 }
 
 function DocMap({ doc }: { doc: MapDoc }) {
+  const layout = useMemo(
+    () => (doc.ground.kind === "painted" ? layoutFromGround(doc.ground) : null),
+    [doc.ground],
+  );
+  const tiled = Boolean(layout?.tiled);
+  useLayoutEffect(() => {
+    if (!tiled || !layout) return;
+    bindZoneLayout(layout);
+    return () => bindZoneLayout(null);
+  }, [tiled, layout]);
+  const admittedKeys = useAdmittedGroups(doc, tiled && layout ? layout : null);
+  const admitted = useMemo(() => (admittedKeys ? new Set(admittedKeys) : null), [admittedKeys]);
+
   const byProp = useMemo(() => {
-    const groups = new Map<string, MapPropPlacement[]>();
+    const groups = new Map<string, { prop: string; placements: MapPropPlacement[] }>();
+    const add = (id: string, prop: string, placement: MapPropPlacement) => {
+      const group = groups.get(id);
+      if (group) group.placements.push(placement);
+      else groups.set(id, { prop, placements: [placement] });
+    };
     for (const p of doc.props) {
-      const list = groups.get(p.prop);
-      if (list) list.push(p);
-      else groups.set(p.prop, [p]);
+      if (admitted && doc.ground.kind === "painted") {
+        const tile = placementTileKey(doc.ground, p.x, p.z);
+        if (!admitted.has(propGroupKey(tile, p.prop))) continue;
+        add(`${tile}\0${p.prop}`, p.prop, p);
+        continue;
+      }
+      add(p.prop, p.prop, p);
     }
     return [...groups.entries()];
-  }, [doc.props]);
+  }, [doc, admitted]);
 
   return (
     <>
-      <DocGround doc={doc} />
+      <DocGround doc={doc} admitted={admitted} />
+      <WaterBodies doc={doc} />
+      <MapLights doc={doc} />
       <Suspense fallback={null}>
         <DocNpcs doc={doc} />
       </Suspense>
-      {byProp.map(([propKey, placements]) => (
-        <Suspense key={propKey} fallback={null}>
+      <DocScatter doc={doc} admitted={admitted} />
+      {byProp.map(([id, group]) => (
+        <Suspense key={id} fallback={null}>
           <InstancedProp
             mapId={doc.id}
-            propKey={propKey}
-            placements={placements}
+            propKey={group.prop}
+            placements={group.placements}
           />
+          {particleKind(group.prop) && (
+            <PropParticleField propKey={group.prop} placements={group.placements} />
+          )}
         </Suspense>
       ))}
     </>
@@ -321,6 +454,7 @@ function InstancedProp({
       local: THREE.Matrix4;
     }> = [];
 
+    dressEnvironmentObject(source, propKey);
     source.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh || !mesh.geometry) return;
@@ -331,7 +465,7 @@ function InstancedProp({
       });
     });
     return out;
-  }, [gltf.scene]);
+  }, [gltf.scene, propKey]);
 
   const tiles = useMemo(
     () => tilePlacements(placements).map((tile) => tile.map(placementMatrix)),
@@ -383,6 +517,10 @@ function InstancedPart({
     inst.instanceMatrix.needsUpdate = true;
     inst.castShadow = true;
     inst.receiveShadow = true;
+    const mats = Array.isArray(material) ? material : [material];
+    if (mats.some((item) => item.userData.envMotion === "falls" || item.userData.envMotion === "water")) {
+      inst.renderOrder = 2;
+    }
     inst.computeBoundingSphere();
     return inst;
   }, [geometry, material, local, matrices]);

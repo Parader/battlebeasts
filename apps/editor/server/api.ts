@@ -69,6 +69,40 @@ const SAFE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 type Json = Record<string, unknown>;
 
+async function writeSidecar(id: string, suffix: string, raw: unknown, channels: 1 | 4): Promise<boolean | "bad"> {
+  if (raw == null) return false;
+  if (typeof raw !== "object") return "bad";
+  const { width, height, data } = raw as Json;
+  if (typeof width !== "number" || typeof height !== "number" || typeof data !== "string") return "bad";
+  if (width < 1 || height < 1 || width > 4096 || height > 4096) return "bad";
+  const png = encodePng(new Uint8Array(Buffer.from(data, "base64")), width, height, channels);
+  const out = path.join(SIDECAR_DIR, `${id}.${suffix}`);
+  await fs.mkdir(SIDECAR_DIR, { recursive: true });
+  await fs.writeFile(out, png);
+  return true;
+}
+
+/** Drop this map's splat/height files that are not in `keep` (suffix after `${id}.`). */
+async function deleteLooseSidecars(id: string, keep: Set<string>) {
+  let names: string[] = [];
+  try {
+    names = await fs.readdir(SIDECAR_DIR);
+  } catch {
+    return;
+  }
+  const prefix = `${id}.`;
+  await Promise.all(
+    names.map(async (name) => {
+      if (!name.startsWith(prefix) || !name.endsWith(".png")) return;
+      const suffix = name.slice(prefix.length);
+      if (!suffix.startsWith("t") && suffix !== "splat.png" && suffix !== "height.png") return;
+      if (suffix.startsWith("t") && !/^\d+_\d+\.(splat|height)\.png$/.test(suffix.slice(1))) return;
+      if (keep.has(suffix)) return;
+      await fs.unlink(path.join(SIDECAR_DIR, name)).catch(() => {});
+    }),
+  );
+}
+
 /**
  * Rebuild the authored-map index after the set of map files changes.
  *
@@ -379,28 +413,65 @@ export function editorApi(): Plugin {
                * unpainted.
                */
               const written: string[] = [path.relative(REPO_ROOT, file)];
-              const sidecars = [
-                { key: "splat", suffix: "splat.png", channels: 4 as const },
-                { key: "height", suffix: "height.png", channels: 1 as const },
-              ];
-              for (const { key, suffix, channels } of sidecars) {
-                const raw = body?.[key];
-                if (!raw || typeof raw !== "object") continue;
-                const { width, height, data } = raw as Json;
-                if (typeof width !== "number" || typeof height !== "number" || typeof data !== "string") {
-                  send(res, 400, { error: `${key} sidecar must be { width, height, data }` });
-                  return;
+              const tilePayload = body?.tiles;
+              if (Array.isArray(tilePayload)) {
+                const keep = new Set<string>();
+                for (const tile of tilePayload) {
+                  if (!tile || typeof tile !== "object") {
+                    send(res, 400, { error: "tile sidecar must be an object" });
+                    return;
+                  }
+                  const tx = (tile as Json).tx;
+                  const tz = (tile as Json).tz;
+                  if (!Number.isInteger(tx) || !Number.isInteger(tz) || (tx as number) < 0 || (tz as number) < 0 || (tx as number) > 15 || (tz as number) > 15) {
+                    send(res, 400, { error: "tile tx/tz must be integers from 0 to 15" });
+                    return;
+                  }
+                  const wroteSplat = await writeSidecar(id, `t${tx}_${tz}.splat.png`, (tile as Json).splat, 4);
+                  if (wroteSplat === "bad") {
+                    send(res, 400, { error: "tile splat must be { width, height, data }" });
+                    return;
+                  }
+                  if (wroteSplat) {
+                    keep.add(`t${tx}_${tz}.splat.png`);
+                    written.push(path.relative(REPO_ROOT, path.join(SIDECAR_DIR, `${id}.t${tx}_${tz}.splat.png`)));
+                  }
+                  const wroteHeight = await writeSidecar(id, `t${tx}_${tz}.height.png`, (tile as Json).height, 1);
+                  if (wroteHeight === "bad") {
+                    send(res, 400, { error: "tile height must be { width, height, data }" });
+                    return;
+                  }
+                  if (wroteHeight) {
+                    keep.add(`t${tx}_${tz}.height.png`);
+                    written.push(path.relative(REPO_ROOT, path.join(SIDECAR_DIR, `${id}.t${tx}_${tz}.height.png`)));
+                  }
                 }
-                const png = encodePng(
-                  new Uint8Array(Buffer.from(data, "base64")),
-                  width,
-                  height,
-                  channels,
-                );
-                const out = path.join(SIDECAR_DIR, `${id}.${suffix}`);
-                await fs.mkdir(SIDECAR_DIR, { recursive: true });
-                await fs.writeFile(out, png);
-                written.push(path.relative(REPO_ROOT, out));
+                await deleteLooseSidecars(id, keep);
+              } else if (body && ("splat" in body || "height" in body)) {
+                const sidecars = [
+                  { key: "splat", suffix: "splat.png", channels: 4 as const },
+                  { key: "height", suffix: "height.png", channels: 1 as const },
+                ];
+                const keep = new Set<string>();
+                for (const { key, suffix, channels } of sidecars) {
+                  if (!(key in body)) {
+                    keep.add(suffix);
+                    continue;
+                  }
+                  const raw = body[key];
+                  // Null drops a sidecar that was only the base material.
+                  if (raw == null) continue;
+                  const wrote = await writeSidecar(id, suffix, raw, channels);
+                  if (wrote === "bad") {
+                    send(res, 400, { error: `${key} sidecar must be { width, height, data }` });
+                    return;
+                  }
+                  if (wrote) {
+                    keep.add(suffix);
+                    written.push(path.relative(REPO_ROOT, path.join(SIDECAR_DIR, `${id}.${suffix}`)));
+                  }
+                }
+                await deleteLooseSidecars(id, keep);
               }
 
               const indexError = isNew ? await regenMapIndex() : null;
@@ -416,9 +487,7 @@ export function editorApi(): Plugin {
                 return;
               }
               // Sidecars are optional, so a missing one is not an error.
-              for (const suffix of ["splat.png", "height.png"]) {
-                await fs.unlink(path.join(SIDECAR_DIR, `${id}.${suffix}`)).catch(() => {});
-              }
+              await deleteLooseSidecars(id, new Set());
               const indexError = await regenMapIndex();
               send(res, 200, { ok: true, indexError });
               return;

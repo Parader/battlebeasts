@@ -1,5 +1,5 @@
 import { parseMapDoc, validateMapDoc, type MapDoc, type MapWarning } from "@battlebeasts/shared";
-import type { SidecarPayload } from "../state/terrain";
+import type { TerrainSidecars } from "../state/terrain";
 
 /** Public URLs the runtime loads painted-ground sidecars from. */
 export const splatUrlFor = (id: string) => `assets/maps/${id}.splat.png`;
@@ -68,10 +68,7 @@ export async function deleteMap(id: string): Promise<void> {
  * Saves the document. Validation warnings are returned rather than thrown --
  * a half-finished map should still be saveable, you just want to know.
  */
-export async function saveMap(
-  doc: MapDoc,
-  sidecars?: { splat?: SidecarPayload; height?: SidecarPayload },
-): Promise<SaveResult> {
+export async function saveMap(doc: MapDoc, sidecars?: TerrainSidecars): Promise<SaveResult> {
   const warnings = validateMapDoc(doc).filter((w) => !w.suppressed);
   const body = await asJson(
     await fetch(`/api/maps/${encodeURIComponent(doc.id)}`, {

@@ -284,9 +284,25 @@ function parseName(baseName) {
   return { family: stripped, variant: 1 };
 }
 
+/**
+ * `kingdom/PP_Rock_01.glb` stays a flat biome file.
+ * `enchanted-meadow/Buildings/Building_Kit/TEM_Wall_01A.glb` keeps the
+ * original kit folder in the middle, which the palette groups on.
+ */
+function splitPropRel(rel) {
+  const key = rel.replace(/\.glb$/i, "");
+  const parts = key.split("/");
+  const biome = parts[0] || "misc";
+  const folder = parts.length > 2 ? parts.slice(1, -1).join("/") : "";
+  return { key, biome, folder };
+}
+
 /** Palette label. Custom kit folders prefix the biome so they are easy to find. */
-function formatPropLabel(biome, family) {
-  const name = family.replace(/_/g, " ");
+function formatPropLabel(biome, family, folder) {
+  // SICS meshes keep a short pack code (`TEM_`, `TGV_`). The folder is the
+  // classification, so the code is noise on the row.
+  let name = folder ? family.replace(/^[A-Z]{2,5}_/, "") : family;
+  name = name.replace(/_/g, " ");
   return biome === "meshy" ? `meshy - ${name}` : name;
 }
 
@@ -375,8 +391,16 @@ async function main() {
 
     const cached = cache[rel];
     if (cached && cached.stamp === stamp) {
-      const biome = rel.includes("/") ? rel.slice(0, rel.indexOf("/")) : "misc";
-      const entry = { ...cached.entry, label: formatPropLabel(biome, cached.entry.family) };
+      const { key, biome, folder } = splitPropRel(rel);
+      const entry = {
+        ...cached.entry,
+        key,
+        biome,
+        url: `/assets/props/${rel}`,
+        label: formatPropLabel(biome, cached.entry.family, folder),
+      };
+      if (folder) entry.folder = folder;
+      else delete entry.folder;
       nextCache[rel] = { stamp, entry };
       props.push(entry);
       reused++;
@@ -399,7 +423,7 @@ async function main() {
       continue;
     }
 
-    const biome = rel.includes("/") ? rel.slice(0, rel.indexOf("/")) : "misc";
+    const { key, biome, folder } = splitPropRel(rel);
     const baseName = path.basename(file, ".glb");
     const { family, variant } = parseName(baseName);
 
@@ -429,11 +453,12 @@ async function main() {
     const height = m.max[1] - m.min[1];
 
     const entry = {
-      key: `${biome}/${baseName}`,
+      key,
       url: `/assets/props/${rel}`,
       biome,
+      ...(folder ? { folder } : {}),
       family,
-      label: formatPropLabel(biome, family),
+      label: formatPropLabel(biome, family, folder),
       variant,
       bounds: {
         // Full extents: used for palette size display and scenery detection.

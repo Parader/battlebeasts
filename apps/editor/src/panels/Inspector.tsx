@@ -1,12 +1,16 @@
 import {
+  SCATTER_MAX_DENSITY,
   elementType,
+  expandScatter,
   mapPlaySlots,
   type MapColliderSpec,
   type MapElement,
   type MapElementParamValue,
   type MapElementShape,
   type MapPropPlacement,
+  type MapScatter,
   type MapWall,
+  type MapWater,
   propTargetRadius,
 } from "@battlebeasts/shared";
 import { colliderWithMode, stickyOf } from "../props/collider";
@@ -282,6 +286,67 @@ function WallInspector({ wall }: { wall: MapWall }) {
   );
 }
 
+function WaterInspector({ water }: { water: MapWater }) {
+  const kind = water.closed ? "Pond" : "River";
+  return (
+    <div className="section">
+      <h3>{kind}</h3>
+      <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+        {water.id} · {water.points.length} points
+        <br />
+        {water.closed
+          ? "Fills the loop. It does not block movement."
+          : "A river of the width below. Close it to turn it into a pond."}
+        <br />
+        <br />
+        Drag a point to move it, click a midpoint to insert one, Alt-click a point to remove it.
+      </div>
+      <div className="row">
+        <label>Shape</label>
+        <button
+          className={water.closed ? "active" : undefined}
+          onClick={() =>
+            docStore.edit((d) => {
+              const w = d.waters.find((x) => x.id === water.id);
+              if (!w || w.points.length < 3) return;
+              w.closed = !w.closed;
+            })
+          }
+        >
+          {water.closed ? "Pond" : "River"}
+        </button>
+      </div>
+      <Num
+        label="Width"
+        value={water.width}
+        step={0.25}
+        onChange={(width) => {
+          if (width < 0.25) return;
+          docStore.edit((d) => {
+            const w = d.waters.find((x) => x.id === water.id);
+            if (w) w.width = width;
+          }, `water-width:${water.id}`);
+        }}
+      />
+      <div className="muted" style={{ fontSize: 11 }}>
+        Metres across a river. A pond keeps the value for when you open it.
+      </div>
+      <DuplicateButton />
+      <button
+        style={{ marginTop: 8, width: "100%", borderColor: "var(--danger)", color: "var(--danger)" }}
+        onClick={() => {
+          docStore.edit((d) => {
+            d.waters = d.waters.filter((w) => w.id !== water.id);
+          });
+          docStore.setUi({ selectedId: null });
+        }}
+      >
+        Delete (Del)
+      </button>
+    </div>
+  );
+}
+
 function ElementInspector({ el }: { el: MapElement }) {
   const def = elementType(el.type);
 
@@ -468,18 +533,20 @@ function GroupInspector({ ids }: { ids: string[] }) {
   const has = new Set(ids);
   const props = doc.props.filter((p) => has.has(p.id)).length;
   const walls = doc.walls.filter((w) => has.has(w.id)).length;
+  const waters = (doc.waters ?? []).filter((w) => has.has(w.id)).length;
   const elements = doc.elements.filter((e) => has.has(e.id)).length;
 
   const parts = [
     props && `${props} prop${props === 1 ? "" : "s"}`,
     walls && `${walls} boundar${walls === 1 ? "y" : "ies"}`,
+    waters && `${waters} water`,
     elements && `${elements} element${elements === 1 ? "" : "s"}`,
   ].filter(Boolean);
 
   // A selection is "a group" only when everything in it shares one id, which is
   // exactly the case where ungrouping is the obvious next action.
   const groups = new Set(
-    [...doc.props, ...doc.walls, ...doc.elements]
+    [...doc.props, ...doc.walls, ...(doc.waters ?? []), ...doc.elements]
       .filter((e) => has.has(e.id))
       .map((e) => e.group),
   );
@@ -584,15 +651,55 @@ function MapInspector() {
   );
 }
 
+function ScatterInspector({ field }: { field: MapScatter }) {
+  const count = expandScatter(field, () => 0).length;
+  const set = (patch: Partial<MapScatter>) =>
+    docStore.edit((d) => {
+      const target = d.scatters.find((s) => s.id === field.id);
+      if (target) Object.assign(target, patch);
+    }, `scatter:${field.id}`);
+
+  return (
+    <div className="section">
+      <h3>Scatter patch</h3>
+      <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+        {count} clumps · {field.props.length} model{field.props.length === 1 ? "" : "s"}. Drawn
+        together, with no collision and no shadows.
+      </div>
+      <div className="row">
+        <label>Density</label>
+        <input
+          type="range"
+          min={0.05}
+          max={SCATTER_MAX_DENSITY}
+          step={0.05}
+          value={field.density}
+          onChange={(e) => set({ density: Number(e.target.value) })}
+          style={{ flex: 1 }}
+        />
+        <span className="muted" style={{ fontSize: 11 }}>{field.density}/m²</span>
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <button onClick={() => duplicateSelected()}>Duplicate</button>
+        <button onClick={() => deleteSelected()}>Delete</button>
+      </div>
+    </div>
+  );
+}
+
 export function Inspector() {
   const { doc, selectedId, selectedIds } = useEditor();
   const { index } = usePropIndex();
   const prop = doc.props.find((p) => p.id === selectedId);
   const wall = doc.walls.find((w) => w.id === selectedId);
+  const water = doc.waters?.find((w) => w.id === selectedId);
+  const scatter = doc.scatters.find((s) => s.id === selectedId);
   const element = doc.elements.find((e) => e.id === selectedId);
 
   if (selectedIds.length > 1) return <GroupInspector ids={selectedIds} />;
   if (wall) return <WallInspector wall={wall} />;
+  if (water) return <WaterInspector water={water} />;
+  if (scatter) return <ScatterInspector field={scatter} />;
   if (element) return <ElementInspector el={element} />;
 
   if (!prop) {

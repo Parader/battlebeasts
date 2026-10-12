@@ -209,6 +209,22 @@
       "offsetZ": -0.025,
       "blocksProjectiles": false
     },
+    "golden-valley/Props/Exterior_Props/TGV_Wood_Fence_04A": {
+      "mode": "box",
+      "halfX": 2.379,
+      "halfZ": 0.135,
+      "yaw": 0,
+      "offsetX": -0.033,
+      "offsetZ": -0.023
+    },
+    "golden-valley/Props/Exterior_Props/TGV_Wood_Fence_Pole_02A": {
+      "mode": "box",
+      "halfX": 0.08,
+      "halfZ": 0.086,
+      "yaw": 0,
+      "offsetX": -0.005999999999999998,
+      "offsetZ": -0.022
+    },
     "kingdom/PP_Cart_Fireworks_01_Preset": {
       "mode": "circle",
       "radius": 0.957,

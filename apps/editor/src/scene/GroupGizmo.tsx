@@ -17,6 +17,7 @@ type DragStart = {
   centre: THREE.Vector3;
   props: Map<string, { x: number; z: number }>;
   walls: Map<string, [number, number][]>;
+  waters: Map<string, [number, number][]>;
   elements: Map<string, { x: number; z: number }>;
 };
 
@@ -53,6 +54,12 @@ export function GroupGizmo() {
       c.z += w.points.reduce((a, q) => a + q[1], 0) / w.points.length;
       n++;
     }
+    for (const w of doc.waters ?? []) {
+      if (!ids.has(w.id) || !w.points.length) continue;
+      c.x += w.points.reduce((a, q) => a + q[0], 0) / w.points.length;
+      c.z += w.points.reduce((a, q) => a + q[1], 0) / w.points.length;
+      n++;
+    }
     if (n > 0) c.divideScalar(n);
     return c;
   }, [doc, ids]);
@@ -75,12 +82,16 @@ export function GroupGizmo() {
       centre: centre.clone(),
       props: new Map(),
       walls: new Map(),
+      waters: new Map(),
       elements: new Map(),
     };
     for (const p of doc.props) if (ids.has(p.id)) start.props.set(p.id, { x: p.x, z: p.z });
     for (const e of doc.elements) if (ids.has(e.id)) start.elements.set(e.id, { x: e.x, z: e.z });
     for (const w of doc.walls) {
       if (ids.has(w.id)) start.walls.set(w.id, w.points.map((q) => [q[0], q[1]] as [number, number]));
+    }
+    for (const w of doc.waters ?? []) {
+      if (ids.has(w.id)) start.waters.set(w.id, w.points.map((q) => [q[0], q[1]] as [number, number]));
     }
     drag.current = start;
   };
@@ -117,6 +128,10 @@ export function GroupGizmo() {
       }
       for (const w of d.walls) {
         const from = start.walls.get(w.id);
+        if (from) w.points = from.map((q) => [q[0] + dx, q[1] + dz] as [number, number]);
+      }
+      for (const w of d.waters) {
+        const from = start.waters.get(w.id);
         if (from) w.points = from.map((q) => [q[0] + dx, q[1] + dz] as [number, number]);
       }
       // One coalesce key for the whole drag, so it is a single undo step.

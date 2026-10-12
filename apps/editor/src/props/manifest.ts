@@ -12,6 +12,12 @@ export type PropEntry = {
   key: string;
   url: string;
   biome: string;
+  /**
+   * Original kit folder under the biome, e.g. `Buildings/Building_Kit`.
+   * Set for imported packs that already classify themselves. Empty for the
+   * older libraries, which the palette still sorts by name.
+   */
+  folder?: string;
   family: string;
   label: string;
   variant: number;
@@ -118,7 +124,7 @@ export function searchProps(index: PropIndex, query: string, biome: string | nul
   const terms = q.split(/\s+/);
   const scored: Array<{ p: PropEntry; score: number }> = [];
   for (const p of pool) {
-    const hay = `${p.biome} ${p.family} ${p.label}`.toLowerCase();
+    const hay = `${p.biome} ${p.folder ?? ""} ${p.family} ${p.label}`.toLowerCase();
     let score = 0;
     let ok = true;
     for (const t of terms) {

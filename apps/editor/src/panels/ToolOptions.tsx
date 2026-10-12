@@ -1,16 +1,18 @@
 import {
   ELEMENT_GROUPS,
   ELEMENT_TYPES,
+  SCATTER_MAX_DENSITY,
+  SCATTER_MAX_MIX,
   elementType,
-  groundMaterial,
-  MAX_GROUND_LAYERS,
   paramString,
   type MapTeam,
 } from "@battlebeasts/shared";
 import { TEAM_COLOR } from "../scene/Elements";
-import { docStore, setElementType, useEditorSlice } from "../state/docStore";
+import { propDisplayName, usePropIndex } from "../props/manifest";
+import { docStore, setElementType, toggleScatterProp, useEditorSlice } from "../state/docStore";
 import type { BrushMode } from "../state/terrain";
 import { ParamFields } from "./ElementParams";
+import { MaterialPicker } from "./MaterialPicker";
 
 /**
  * What the next placed prop will do about collision.
@@ -56,6 +58,7 @@ export function ToolOptions() {
   const elementParams = useEditorSlice((s) => s.elementParams);
 
   if (tool === "paint") return <PaintOptions />;
+  if (tool === "scatter") return <ScatterOptions />;
   if (tool === "place") return <PlaceOptions />;
   if (tool !== "element") return null;
 
@@ -172,24 +175,7 @@ function PaintOptions() {
       </div>
 
       {brush.mode === "paint" && (
-        <div style={{ marginTop: 6 }}>
-          <label>Material</label>
-          <div className="toolbar">
-            {g.layers.slice(0, MAX_GROUND_LAYERS).map((id, i) => {
-              const mat = groundMaterial(id);
-              return (
-                <button
-                  key={`${id}-${i}`}
-                  className={brush.layer === i ? "active" : undefined}
-                  onClick={() => set({ layer: i })}
-                  title={mat ? mat.label : `Unknown material "${id}"`}
-                >
-                  {mat ? mat.label : id}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <MaterialPicker selected={brush.material} onSelect={(material) => set({ material })} />
       )}
 
       {sculpting && g.heightScale <= 0 && (
@@ -217,6 +203,82 @@ function PaintOptions() {
       <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
         Left-drag the ground to {brush.mode === "paint" ? "paint" : "sculpt"}. Middle or
         right-drag still moves the camera. Ctrl+Z undoes a whole stroke.
+      </div>
+    </div>
+  );
+}
+
+function ScatterOptions() {
+  const scatter = useEditorSlice((s) => s.scatter);
+  const { index } = usePropIndex();
+  const set = (patch: Partial<typeof scatter>) => docStore.setUi({ scatter: { ...scatter, ...patch } });
+
+  return (
+    <div className="section">
+      <h3>Scatter</h3>
+      <div className="muted" style={{ fontSize: 11 }}>
+        Click props in the palette to build a mix, then paint where they should
+        grow. Each copy of a model draws together, and nothing in the patch
+        blocks movement. A grass patch is already a clump, so 0.2 per square
+        metre is a loose meadow.
+      </div>
+      <div style={{ marginTop: 8 }}>
+        {scatter.props.length === 0 && (
+          <div className="muted" style={{ fontSize: 11 }}>
+            No models yet. Pick up to {SCATTER_MAX_MIX} from the palette.
+          </div>
+        )}
+        {scatter.props.map((key) => {
+          const entry = index?.byKey.get(key);
+          return (
+            <div key={key} className="row" style={{ marginTop: 4 }}>
+              <span style={{ flex: 1, fontSize: 12 }}>
+                {entry ? `${entry.biome.replace(/-/g, " ")} · ${propDisplayName(entry)}` : key}
+              </span>
+              <button onClick={() => toggleScatterProp(key)} title="Remove from the mix">
+                ×
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <Slider
+        label="Density"
+        value={scatter.density}
+        min={0.05}
+        max={SCATTER_MAX_DENSITY}
+        step={0.05}
+        suffix="/m²"
+        onChange={(density) => set({ density })}
+      />
+      <Slider
+        label="Size"
+        value={scatter.radius}
+        min={1}
+        max={16}
+        step={0.5}
+        suffix=" m"
+        onChange={(radius) => set({ radius })}
+      />
+      <Slider
+        label="Scale min"
+        value={scatter.scaleMin}
+        min={0.4}
+        max={2}
+        step={0.05}
+        onChange={(scaleMin) => set({ scaleMin })}
+      />
+      <Slider
+        label="Scale max"
+        value={scatter.scaleMax}
+        min={0.4}
+        max={2}
+        step={0.05}
+        onChange={(scaleMax) => set({ scaleMax })}
+      />
+      <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+        Left-drag the ground. Each spot plants a random model from the mix, with
+        a random facing and size. Ctrl+Z removes the whole patch.
       </div>
     </div>
   );
@@ -251,7 +313,7 @@ function Slider({
         onChange={(e) => onChange(Number(e.target.value))}
         style={{ flex: 1 }}
       />
-      <span className="muted" style={{ fontSize: 11, width: 44, textAlign: "right" }}>
+      <span className="muted" style={{ fontSize: 11, minWidth: 44, textAlign: "right" }}>
         {value.toFixed(2).replace(/\.00$/, "")}
         {suffix}
       </span>

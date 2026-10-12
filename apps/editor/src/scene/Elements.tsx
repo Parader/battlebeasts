@@ -2,6 +2,7 @@ import {
   COLLISION,
   elementType,
   entityBehaviour,
+  lightPreset,
   NPC_INTERACT_RADIUS,
   PICKUP_EFFECTS,
   PICKUP_PREVIEW_COLOR,
@@ -11,8 +12,8 @@ import {
   type MapTeam,
 } from "@battlebeasts/shared";
 import { Html, TransformControls } from "@react-three/drei";
-import { useThree } from "@react-three/fiber";
-import { Suspense, memo, useState, useSyncExternalStore } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
+import { Suspense, memo, useRef, useState, useSyncExternalStore } from "react";
 import * as THREE from "three";
 import { docStore, selectEntity, useEditor, useEditorSlice } from "../state/docStore";
 import { terrain } from "../state/terrain";
@@ -48,6 +49,7 @@ function elementColor(el: MapElement): string {
     const effect = paramString(el, "effect", "energy");
     return PICKUP_PREVIEW_COLOR[effect] ?? def.color;
   }
+  if (el.type === "light") return lightPreset(paramString(el, "kind", "lamp")).color;
   return def.color;
 }
 
@@ -79,6 +81,7 @@ function elementLabel(el: MapElement): string {
     const name = paramString(el, "name", "Villager");
     return action === "talk" ? name : `${name} · ${action}`;
   }
+  if (el.type === "light") return lightPreset(paramString(el, "kind", "lamp")).label;
   const custom =
     paramString(el, "label") || paramString(el, "entity") || paramString(el, "tag");
   return custom || def.label;
@@ -232,6 +235,44 @@ function usePlantedY(el: MapElement, scene: THREE.Object3D): number {
   return groundHeightAt(scene, el.x, el.z) ?? el.y ?? 0;
 }
 
+function LightMarker({ el }: { el: MapElement }) {
+  const preset = lightPreset(paramString(el, "kind", "lamp"));
+  const height = Math.max(0, paramNumber(el, "height", preset.height));
+  const light = useRef<THREE.PointLight>(null);
+  useFrame(() => {
+    const lamp = light.current;
+    if (!lamp || preset.flicker === 0) return;
+    const wave = Math.sin((performance.now() / 1000) * preset.flickerSpeed);
+    lamp.intensity = preset.intensity * (1 + wave * preset.flicker);
+  });
+  return (
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
+        <ringGeometry args={[0.16, 0.28, 20]} />
+        <meshBasicMaterial color={preset.color} depthTest={false} />
+      </mesh>
+      {height > 0.05 && (
+        <mesh position={[0, height / 2, 0]}>
+          <cylinderGeometry args={[0.015, 0.015, height, 6]} />
+          <meshBasicMaterial color={preset.color} transparent opacity={0.45} />
+        </mesh>
+      )}
+      <mesh position={[0, height, 0]}>
+        <sphereGeometry args={[0.12, 12, 12]} />
+        <meshBasicMaterial color={preset.color} />
+      </mesh>
+      <pointLight
+        ref={light}
+        position={[0, height, 0]}
+        color={preset.color}
+        intensity={preset.intensity}
+        distance={preset.distance}
+        decay={2}
+      />
+    </group>
+  );
+}
+
 const ElementView = memo(function ElementView({
   el,
   selected,
@@ -317,7 +358,11 @@ const ElementView = memo(function ElementView({
           </Suspense>
         )}
 
-        {/* Body disc at the player's real collision radius. */}
+        {el.type === "light" && <LightMarker el={el} />}
+
+        {/* Body disc at the player's real collision radius. Lights use a bulb instead. */}
+        {el.type !== "light" && (
+        <>
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
           <circleGeometry args={[r, 28]} />
           <meshBasicMaterial
@@ -338,6 +383,8 @@ const ElementView = memo(function ElementView({
             <coneGeometry args={[0.16, 0.42, 3]} />
             <meshBasicMaterial color={color} depthTest={false} />
           </mesh>
+        )}
+        </>
         )}
 
         {/*
@@ -376,7 +423,7 @@ const ElementView = memo(function ElementView({
          * Cylinder hint so the element is visible from a low camera. NPCs skip
          * it -- they have a body to be seen by, and the haze only fogs it.
          */}
-        {el.type !== "npc" && (
+        {el.type !== "npc" && el.type !== "light" && (
         <mesh position={[0, 0.9, 0]}>
           <cylinderGeometry args={[r, r, 1.8, 16, 1, true]} />
           <meshBasicMaterial
@@ -389,8 +436,8 @@ const ElementView = memo(function ElementView({
         </mesh>
         )}
 
-        {(selected || el.type === "npc" || el.type === "player_spawn") && (
-          <group position={[0, 2.1, 0]}>
+        {(selected || el.type === "npc" || el.type === "player_spawn" || el.type === "light") && (
+          <group position={[0, el.type === "light" ? Math.max(0, paramNumber(el, "height", 3.2)) + 0.45 : 2.1, 0]}>
             <Label text={elementLabel(el)} color={color} />
           </group>
         )}

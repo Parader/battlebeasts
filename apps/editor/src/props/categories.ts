@@ -115,3 +115,19 @@ export function categorize(family: string): string {
   memo.set(family, found);
   return found;
 }
+
+/**
+ * Packs imported from their original folders classify themselves. The keyword
+ * rules stay for the older libraries, which have no folder of their own.
+ */
+export function categoryOf(p: { family: string; biome: string; folder?: string }): string {
+  if (p.folder) return `folder:${p.biome}/${p.folder}`;
+  return categorize(p.family);
+}
+
+/** `Buildings/Building_Kit` -> `Buildings/Building Kit`. */
+export function folderLabel(folder: string, biome: string, biomeFiltered: boolean): string {
+  const pretty = folder.replace(/_/g, " ");
+  if (biomeFiltered) return pretty;
+  return `${biome.replace(/-/g, " ")} / ${pretty}`;
+}

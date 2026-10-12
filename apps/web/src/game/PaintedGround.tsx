@@ -1,9 +1,10 @@
 import { groundMaterial, MAX_GROUND_LAYERS, type MapGround } from "@battlebeasts/shared";
 import { useTexture } from "@react-three/drei";
-import { forwardRef, useLayoutEffect, useMemo } from "react";
+import { forwardRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import * as THREE from "three";
 import { assetUrl } from "./assetUrl";
+import { GROUND_ARRAY_SIZE, packGroundPalette } from "./groundArray";
 
 /**
  * Painted terrain: up to four ground materials blended by a splat texture,
@@ -361,6 +362,151 @@ export function createPaintedGroundMaterial(
   return mat;
 }
 
+const INDEX_DIFF = /* glsl */ `
+  vec4 bbCtrl = texture2D(uSplat, vMapUv);
+  float bbIdA = floor(bbCtrl.r * 255.0 + 0.5);
+  float bbIdB = floor(bbCtrl.g * 255.0 + 0.5);
+  float bbWB = bbCtrl.b;
+  vec2 bbWorld = vMapUv * uSize;
+  vec2 bbInfoA = texture2D(uInfo, vec2((bbIdA + 0.5) / 256.0, 0.5)).rg;
+  vec2 bbInfoB = texture2D(uInfo, vec2((bbIdB + 0.5) / 256.0, 0.5)).rg;
+  float bbLayerA = floor(bbInfoA.r * 255.0 + 0.5);
+  float bbLayerB = floor(bbInfoB.r * 255.0 + 0.5);
+  float bbTileA = max(0.25, floor(bbInfoA.g * 255.0 + 0.5) / 4.0);
+  float bbTileB = max(0.25, floor(bbInfoB.g * 255.0 + 0.5) / 4.0);
+  vec3 bbAlbedo = mix(
+    texture2D(uDiff, vec3(bbWorld / bbTileA, bbLayerA)).rgb,
+    texture2D(uDiff, vec3(bbWorld / bbTileB, bbLayerB)).rgb,
+    bbWB
+  );
+  diffuseColor *= vec4(bbAlbedo, 1.0);
+`;
+
+const INDEX_NOR = /* glsl */ `
+  vec3 bbMapN = mix(
+    texture2D(uNor, vec3(bbWorld / bbTileA, bbLayerA)).xyz,
+    texture2D(uNor, vec3(bbWorld / bbTileB, bbLayerB)).xyz,
+    bbWB
+  );
+  bbMapN = bbMapN * 2.0 - 1.0;
+  bbMapN.xy *= normalScale;
+  normal = normalize(tbn * bbMapN);
+`;
+
+type GpuPalette = {
+  key: string;
+  diff: THREE.DataArrayTexture;
+  nor: THREE.DataArrayTexture;
+  info: THREE.DataTexture;
+};
+
+let gpuPalette: GpuPalette | null = null;
+let retiredPalette: GpuPalette | null = null;
+let paletteFlight: { key: string; promise: Promise<GpuPalette> } | null = null;
+
+function disposePalette(palette: GpuPalette | null) {
+  palette?.diff.dispose();
+  palette?.nor.dispose();
+  palette?.info.dispose();
+}
+
+function makeArrayTexture(data: Uint8Array, depth: number, srgb: boolean): THREE.DataArrayTexture {
+  const texture = new THREE.DataArrayTexture(data, GROUND_ARRAY_SIZE, GROUND_ARRAY_SIZE, depth);
+  texture.format = THREE.RGBAFormat;
+  texture.type = THREE.UnsignedByteType;
+  texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.wrapR = THREE.ClampToEdgeWrapping;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/** One uploaded catalog for every ground tile. Rebuilt when the id list changes. */
+function indexedGroundPalette(ids: readonly string[]): Promise<GpuPalette> {
+  const key = ids.join("|");
+  if (gpuPalette?.key === key) return Promise.resolve(gpuPalette);
+  if (paletteFlight?.key === key) return paletteFlight.promise;
+  const promise = packGroundPalette(ids).then((packed) => {
+    const info = new THREE.DataTexture(packed.info, 256, 1, THREE.RGBAFormat);
+    info.colorSpace = THREE.NoColorSpace;
+    info.magFilter = THREE.NearestFilter;
+    info.minFilter = THREE.NearestFilter;
+    info.generateMipmaps = false;
+    info.wrapS = THREE.ClampToEdgeWrapping;
+    info.wrapT = THREE.ClampToEdgeWrapping;
+    info.needsUpdate = true;
+    const next: GpuPalette = {
+      key,
+      diff: makeArrayTexture(packed.diff, packed.depth, true),
+      nor: makeArrayTexture(packed.nor, packed.depth, false),
+      info,
+    };
+    disposePalette(retiredPalette);
+    retiredPalette = gpuPalette;
+    gpuPalette = next;
+    return next;
+  });
+  paletteFlight = { key, promise };
+  return promise;
+}
+
+function createIndexedGroundMaterial(
+  gpu: GpuPalette,
+  splat: THREE.Texture,
+  sizeX: number,
+  sizeZ: number,
+): THREE.MeshStandardMaterial {
+  splat.colorSpace = THREE.NoColorSpace;
+  splat.magFilter = THREE.NearestFilter;
+  splat.minFilter = THREE.NearestFilter;
+  splat.generateMipmaps = false;
+  splat.flipY = false;
+  splat.needsUpdate = true;
+
+  const dummyDiff = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  dummyDiff.colorSpace = THREE.SRGBColorSpace;
+  dummyDiff.needsUpdate = true;
+  const dummyNor = new THREE.DataTexture(new Uint8Array([128, 128, 255, 255]), 1, 1);
+  dummyNor.colorSpace = THREE.NoColorSpace;
+  dummyNor.needsUpdate = true;
+
+  const mat = new THREE.MeshStandardMaterial({
+    map: dummyDiff,
+    normalMap: dummyNor,
+    metalness: 0,
+    roughness: 1,
+  });
+
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uSplat = { value: splat };
+    shader.uniforms.uInfo = { value: gpu.info };
+    shader.uniforms.uDiff = { value: gpu.diff };
+    shader.uniforms.uNor = { value: gpu.nor };
+    shader.uniforms.uSize = { value: new THREE.Vector2(sizeX, sizeZ) };
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        /* glsl */ `
+        #include <common>
+        uniform sampler2D uSplat;
+        uniform sampler2D uInfo;
+        uniform sampler2DArray uDiff;
+        uniform sampler2DArray uNor;
+        uniform vec2 uSize;
+        `,
+      )
+      .replace("#include <map_fragment>", INDEX_DIFF)
+      .replace("#include <normal_fragment_maps>", INDEX_NOR);
+  };
+  mat.customProgramCacheKey = () => "bb-indexed-ground-1";
+  return mat;
+}
+
 // --- component --------------------------------------------------------------
 
 type Props = {
@@ -377,6 +523,15 @@ type Props = {
    * stroke is in flight so a 160² lattice is not renormalised on every dab.
    */
   skipNormals?: boolean;
+  /** World XZ of the mesh centre. Tiles are centred on themselves, not the zone. */
+  offset?: readonly [number, number];
+  /**
+   * `index` blends any catalog material, two per texel. `weights` is the
+   * legacy four-slot splat. The editor always passes `index`.
+   */
+  splatMode?: "index" | "weights";
+  /** Material ids to upload for `index` mode. */
+  palette?: readonly string[];
 };
 
 /** Loads the four PBR maps for one layer id. */
@@ -400,8 +555,8 @@ function useLayerTextures(layerIds: string[]): GroundLayerTextures[] {
   );
 }
 
-export const PaintedGround = forwardRef<THREE.Mesh, Props>(function PaintedGround(
-  { ground, splat, heights = null, name, maxMeshSegs, skipNormals = false },
+const WeightPaintedGround = forwardRef<THREE.Mesh, Props>(function WeightPaintedGround(
+  { ground, splat, heights = null, name, maxMeshSegs, skipNormals = false, offset },
   ref,
 ) {
   const layers = useLayerTextures([...ground.layers]);
@@ -449,7 +604,81 @@ export const PaintedGround = forwardRef<THREE.Mesh, Props>(function PaintedGroun
       geometry={geometry}
       material={material}
       receiveShadow
-      position={[0, -0.002, 0]}
+      position={[offset?.[0] ?? 0, -0.002, offset?.[1] ?? 0]}
     />
   );
+});
+
+const IndexedPaintedGround = forwardRef<THREE.Mesh, Props>(function IndexedPaintedGround(
+  { ground, splat, heights = null, name, maxMeshSegs, skipNormals = false, offset, palette },
+  ref,
+) {
+  const ids = palette?.length ? palette : ground.layers.length ? ground.layers : ["grass"];
+  const key = ids.join("|");
+  const [material, setMaterial] = useState<THREE.MeshStandardMaterial | null>(null);
+  const matRef = useRef<THREE.MeshStandardMaterial | null>(null);
+
+  const { sizeX, sizeZ, resX, resZ, heightScale } = ground;
+  const meshExtent = useMemo(
+    () =>
+      maxMeshSegs != null
+        ? cappedGroundExtent({ sizeX, sizeZ, resX, resZ }, maxMeshSegs)
+        : { sizeX, sizeZ, resX, resZ },
+    [sizeX, sizeZ, resX, resZ, maxMeshSegs],
+  );
+  const geometry = useMemo(() => buildGroundGeometry(meshExtent, null, 0), [meshExtent]);
+  const fallback = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: "#6a7354", roughness: 1, metalness: 0 }),
+    [],
+  );
+
+  useEffect(() => {
+    let dead = false;
+    void indexedGroundPalette(ids).then((gpu) => {
+      if (dead) return;
+      const next = createIndexedGroundMaterial(gpu, splat, sizeX, sizeZ);
+      matRef.current?.dispose();
+      matRef.current = next;
+      setMaterial(next);
+    });
+    return () => {
+      dead = true;
+    };
+    // ids is represented by key; the array identity changes every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, splat, sizeX, sizeZ]);
+
+  useEffect(() => {
+    return () => {
+      matRef.current?.dispose();
+      matRef.current = null;
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    updateGroundHeights(geometry, meshExtent, heights, heightScale, { normals: !skipNormals });
+  }, [geometry, meshExtent, heights, heightScale, skipNormals]);
+
+  useLayoutEffect(() => {
+    return () => {
+      geometry.dispose();
+      fallback.dispose();
+    };
+  }, [geometry, fallback]);
+
+  return (
+    <mesh
+      ref={ref}
+      name={name}
+      geometry={geometry}
+      material={material ?? fallback}
+      receiveShadow
+      position={[offset?.[0] ?? 0, -0.002, offset?.[1] ?? 0]}
+    />
+  );
+});
+
+export const PaintedGround = forwardRef<THREE.Mesh, Props>(function PaintedGround(props, ref) {
+  if (props.splatMode === "index") return <IndexedPaintedGround {...props} ref={ref} />;
+  return <WeightPaintedGround {...props} ref={ref} />;
 });

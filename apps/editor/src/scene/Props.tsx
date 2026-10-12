@@ -1,10 +1,27 @@
-import { propUrlForKey, type MapColliderSpec, type MapPropPlacement } from "@battlebeasts/shared";
+import {
+  layoutFromGround,
+  placementTileKey,
+  propUrlForKey,
+  tileKey,
+  tilesWithin,
+  ZONE_WARM_RADIUS,
+  type MapColliderSpec,
+  type MapPropPlacement,
+} from "@battlebeasts/shared";
 import { TransformControls, useGLTF } from "@react-three/drei";
-import { Suspense, memo, useMemo, useState } from "react";
+import { Suspense, memo, useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import type { GizmoMode } from "../state/docStore";
 import { docStore, selectEntity, useEditorSlice } from "../state/docStore";
 import { wasDragged } from "./clickGuard";
+import { dressEnvironmentObject } from "@web/game/environmentMotion";
+import { EnvParticleBurst, particleKind } from "@web/game/envParticles?fresh=7";
+import { paintLife } from "./lifePaint";
+import { paintToonWater } from "./waterPaint";
+import { useEditorFocus } from "./viewFocus";
+
+/** Repeated props at or above this count share one instanced draw. */
+const INSTANCE_AT = 8;
 
 /**
  * Placed props.
@@ -26,6 +43,9 @@ function clonePropScene(propKey: string, gltf: { scene: THREE.Object3D }): THREE
   let template = propSceneTemplates.get(propKey);
   if (!template) {
     template = gltf.scene.clone(true);
+    dressEnvironmentObject(template, propKey);
+    paintToonWater(template, propKey);
+    paintLife(template, propKey);
     template.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) {
         o.castShadow = true;
@@ -60,6 +80,10 @@ const PropModel = memo(function PropModel({
   const [group, setGroup] = useState<THREE.Group | null>(null);
 
   const scene = useMemo(() => clonePropScene(p.prop, gltf), [p.prop, gltf]);
+  useEffect(() => {
+    paintToonWater(scene, p.prop);
+    paintLife(scene, p.prop);
+  }, [scene, p.prop]);
 
   /** Read the live object back into the document as the gizmo drags. */
   const commit = () => {
@@ -85,6 +109,8 @@ const PropModel = memo(function PropModel({
       if (scale > 0.01) target.scale = scale;
     }, `gizmo:${p.id}`);
   };
+
+  const puff = particleKind(p.prop);
 
   return (
     <>
@@ -117,6 +143,7 @@ const PropModel = memo(function PropModel({
         */}
         <group position={[-(p.pivotX ?? 0), 0, -(p.pivotZ ?? 0)]}>
           <primitive object={scene} />
+          {puff && <EnvParticleBurst kind={puff} source={scene} />}
         </group>
         {selected && <SelectionRing prop={p} />}
       </group>
@@ -214,18 +241,142 @@ function SelectionRing({ prop }: { prop: MapPropPlacement }) {
   );
 }
 
+function placementMatrix(p: MapPropPlacement): THREE.Matrix4 {
+  const m = new THREE.Matrix4().compose(
+    new THREE.Vector3(p.x, p.y, p.z),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(p.pitch ?? 0, p.yaw, p.roll ?? 0, "YXZ")),
+    new THREE.Vector3(p.scale, p.scale, p.scale),
+  );
+  const px = p.pivotX ?? 0;
+  const pz = p.pivotZ ?? 0;
+  if (px !== 0 || pz !== 0) m.multiply(new THREE.Matrix4().makeTranslation(-px, 0, -pz));
+  return m;
+}
+
+function InstancedEditorPart({
+  geometry,
+  material,
+  local,
+  placements,
+}: {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material | THREE.Material[];
+  local: THREE.Matrix4;
+  placements: MapPropPlacement[];
+}) {
+  const mesh = useMemo(() => {
+    const inst = new THREE.InstancedMesh(geometry, material, placements.length);
+    const world = new THREE.Matrix4();
+    for (let i = 0; i < placements.length; i++) {
+      world.copy(placementMatrix(placements[i]!)).multiply(local);
+      inst.setMatrixAt(i, world);
+    }
+    inst.instanceMatrix.needsUpdate = true;
+    inst.castShadow = true;
+    inst.computeBoundingSphere();
+    return inst;
+  }, [geometry, material, local, placements]);
+
+  useEffect(() => () => mesh.dispose(), [mesh]);
+
+  return (
+    <primitive
+      object={mesh}
+      onPointerUp={(e: { button: number; instanceId?: number; stopPropagation: () => void; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean }) => {
+        if (e.button !== 0 || wasDragged() || e.instanceId == null) return;
+        const placement = placements[e.instanceId];
+        if (!placement) return;
+        e.stopPropagation();
+        selectEntity(placement.id, {
+          additive: Boolean(e.shiftKey || e.ctrlKey || e.metaKey),
+          isolate: Boolean(e.altKey),
+        });
+      }}
+    />
+  );
+}
+
+function InstancedEditorProps({ propKey, placements }: { propKey: string; placements: MapPropPlacement[] }) {
+  const gltf = useGLTF(propUrlForKey(propKey));
+  const parts = useMemo(() => {
+    const source = gltf.scene;
+    source.updateMatrixWorld(true);
+    dressEnvironmentObject(source, propKey);
+    paintLife(source, propKey);
+    const out: Array<{ geometry: THREE.BufferGeometry; material: THREE.Material | THREE.Material[]; local: THREE.Matrix4 }> = [];
+    source.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry) return;
+      out.push({ geometry: mesh.geometry, material: mesh.material, local: mesh.matrixWorld.clone() });
+    });
+    return out;
+  }, [gltf.scene, propKey]);
+
+  return (
+    <>
+      {parts.map((part, i) => (
+        <InstancedEditorPart
+          key={i}
+          geometry={part.geometry}
+          material={part.material}
+          local={part.local}
+          placements={placements}
+        />
+      ))}
+    </>
+  );
+}
+
 export const Props = memo(function Props() {
   const list = useEditorSlice((s) => s.doc.props);
+  const ground = useEditorSlice((s) => s.doc.ground);
   const selectedIds = useEditorSlice((s) => s.selectedIds);
   const gizmo = useEditorSlice((s) => s.gizmo);
   const gridSnap = useEditorSlice((s) => s.gridSnap);
   const angleSnap = useEditorSlice((s) => s.angleSnap);
+  const focus = useEditorFocus();
   const solo = selectedIds.length === 1 ? selectedIds[0] : null;
+
+  const visible = useMemo(() => {
+    if (ground.kind !== "painted") return list;
+    const layout = layoutFromGround(ground);
+    if (!layout.tiled) return list;
+    const near = new Set(tilesWithin(layout, focus.tx, focus.tz, ZONE_WARM_RADIUS).map((t) => tileKey(t.tx, t.tz)));
+    const selected = new Set(selectedIds);
+    return list.filter((p) => selected.has(p.id) || near.has(placementTileKey(ground, p.x, p.z)));
+  }, [list, ground, focus.tx, focus.tz, selectedIds]);
+
+  const { singles, batches } = useMemo(() => {
+    const selected = new Set(selectedIds);
+    const groups = new Map<string, MapPropPlacement[]>();
+    const alone: MapPropPlacement[] = [];
+    for (const p of visible) {
+      if (selected.has(p.id)) {
+        alone.push(p);
+        continue;
+      }
+      const group = groups.get(p.prop);
+      if (group) group.push(p);
+      else groups.set(p.prop, [p]);
+    }
+    const grouped: { prop: string; placements: MapPropPlacement[] }[] = [];
+    for (const [prop, placements] of groups) {
+      if (placements.length >= INSTANCE_AT) grouped.push({ prop, placements });
+      else alone.push(...placements);
+    }
+    return { singles: alone, batches: grouped };
+  }, [visible, selectedIds]);
+
   return (
     <>
-      {list.map((p) => (
+      {batches.map((batch) => (
+        <Suspense key={batch.prop} fallback={null}>
+          <InstancedEditorProps propKey={batch.prop} placements={batch.placements} />
+        </Suspense>
+      ))}
+      {singles.map((p) => (
         // Keyed by prop as well as id so swapping the model remounts the loader.
-        <Suspense key={`${p.id}:${p.prop}`} fallback={null}>
+        <Suspense key={`${p.id}:${p.prop}:flag-spray3`} fallback={null}>
           <PropModel
             p={p}
             selected={selectedIds.includes(p.id)}

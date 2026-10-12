@@ -1,4 +1,8 @@
 import * as THREE from "three";
+import { colorBillboardMasks, cutoutVegetationAtlas } from "@web/game/environmentMotion";
+import { vertexColorIsWindMask } from "@web/game/envMotionKind";
+import { liftDeadVertexColors } from "@web/game/vertexTint";
+import { paintToonWater } from "../scene/waterPaint";
 
 /**
  * One shared WebGL context for every palette thumbnail.
@@ -9,6 +13,8 @@ import * as THREE from "three";
  */
 
 const SIZE = 96;
+/** Palette shots taken before dead vertex colors were cleared stay cached otherwise. */
+const THUMB_REV = "8";
 
 type Job = {
   url: string;
@@ -65,11 +71,24 @@ function blit(from: HTMLCanvasElement, to: HTMLCanvasElement) {
   ctx.drawImage(from, 0, 0);
 }
 
-function renderSnapshot(source: THREE.Object3D): HTMLCanvasElement | null {
+function propKeyFromAssetUrl(url: string): string {
+  const clean = url.split("?")[0];
+  const marker = "/assets/props/";
+  const at = clean.indexOf(marker);
+  if (at < 0) return clean;
+  return decodeURIComponent(clean.slice(at + marker.length).replace(/\.glb$/i, ""));
+}
+
+function renderSnapshot(source: THREE.Object3D, url: string): HTMLCanvasElement | null {
   ensureScene();
   if (!renderer || !scene || !camera) return null;
 
+  const propKey = propKeyFromAssetUrl(url);
+  liftDeadVertexColors(source, vertexColorIsWindMask(propKey));
+  cutoutVegetationAtlas(source);
+  colorBillboardMasks(source, propKey);
   const root = source.clone(true);
+  paintToonWater(root, propKeyFromAssetUrl(url));
   _box.setFromObject(root);
   if (_box.isEmpty()) return null;
   _box.getSize(_size);
@@ -81,7 +100,9 @@ function renderSnapshot(source: THREE.Object3D): HTMLCanvasElement | null {
 
   const maxDim = Math.max(_size.x, _size.y, _size.z, 0.08);
   const dist = maxDim * 1.85;
-  camera.position.set(dist * 0.74, dist * 0.58, dist * 0.92);
+  const flat = _size.y < Math.max(_size.x, _size.z) * 0.22;
+  if (flat) camera.position.set(dist * 0.15, dist * 1.05, dist * 0.42);
+  else camera.position.set(dist * 0.74, dist * 0.58, dist * 0.92);
   camera.near = Math.max(0.02, dist / 40);
   camera.far = dist * 24;
   camera.lookAt(0, 0, 0);
@@ -107,10 +128,10 @@ function drain() {
     return;
   }
   if (!job.cancelled) {
-    let shot = snapshots.get(job.url);
+    let shot = snapshots.get(`${job.url}|${THUMB_REV}`);
     if (!shot) {
-      shot = renderSnapshot(job.source) ?? undefined;
-      if (shot) snapshots.set(job.url, shot);
+      shot = renderSnapshot(job.source, job.url) ?? undefined;
+      if (shot) snapshots.set(`${job.url}|${THUMB_REV}`, shot);
     }
     if (shot && !job.cancelled) blit(shot, job.canvas);
   }
@@ -124,7 +145,7 @@ export function requestPropThumb(
   source: THREE.Object3D,
   canvas: HTMLCanvasElement,
 ): () => void {
-  const cached = snapshots.get(url);
+  const cached = snapshots.get(`${url}|${THUMB_REV}`);
   if (cached) {
     blit(cached, canvas);
     return () => {};

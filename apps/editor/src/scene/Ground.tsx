@@ -1,9 +1,11 @@
-import { groundMaterial, type MapDoc } from "@battlebeasts/shared";
+import { groundMaterial, layoutFromGround, tilesWithin, ZONE_WARM_RADIUS, type MapDoc } from "@battlebeasts/shared";
 import { useGLTF } from "@react-three/drei";
+import { assetUrl } from "@web/game/assetUrl";
 import { PaintedGround } from "@web/game/PaintedGround";
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
 import * as THREE from "three";
-import { terrain } from "../state/terrain";
+import { terrain, type TerrainTile } from "../state/terrain";
+import { bindEditorLayout, useEditorFocus } from "./viewFocus";
 
 /** Editor displacement lattice. Splat/height buffers stay at document res. */
 const EDITOR_GROUND_MESH_SEGS = 160;
@@ -14,7 +16,8 @@ const EDITOR_GROUND_MESH_SEGS = 160;
  *
  * Painted ground renders through the game's own `PaintedGround`, driven by the
  * editor's live splat and height buffers, so what you paint here is literally
- * the same shader that runs in a match.
+ * the same shader that runs in a match. A tiled zone draws the neighbourhood
+ * around the camera; the other tiles stay in memory and come in as you pan.
  */
 
 export const GROUND_NAME = "__editor_ground";
@@ -31,15 +34,12 @@ function BlenderGround({ url, scale, plantAt }: { url: string; scale: number; pl
 
 /** Flat plane with one tiling material -- blockouts and simple maps. */
 function PlaneGround({ sizeX, sizeZ, material }: { sizeX: number; sizeZ: number; material: string }) {
-  // Falls back to a flat colour when the id is unknown, rather than failing to
-  // render the one surface every tool raycasts against.
   const known = !!groundMaterial(material);
   return (
     <mesh
       name={GROUND_NAME}
       rotation={[-Math.PI / 2, 0, 0]}
       receiveShadow
-      // Nudged below y=0 so coplanar decals and the grid do not z-fight.
       position={[0, -0.002, 0]}
     >
       <planeGeometry args={[sizeX, sizeZ]} />
@@ -53,34 +53,132 @@ function PlaneGround({ sizeX, sizeZ, material }: { sizeX: number; sizeZ: number;
   );
 }
 
-function PaintedTerrain({ ground }: { ground: Extract<MapDoc["ground"], { kind: "painted" }> }) {
-  // Re-read on every terrain mutation so brush strokes show up immediately.
-  useSyncExternalStore(terrain.subscribe, () => `${terrain.heightVersion}:${terrain.stroking ? 1 : 0}`);
-  const splat = terrain.texture;
-
-  // The live buffer, not a copy. `PaintedGround` reads it synchronously in a
-  // layout effect and keeps nothing, so there is no aliasing to guard against
-  // -- and copying a quarter-megabyte on every dab of a sculpt brush was pure
-  // overhead. A fresh wrapper object per version is what triggers the update.
+function LiveTile({
+  tile,
+  ground,
+}: {
+  tile: TerrainTile;
+  ground: Extract<MapDoc["ground"], { kind: "painted" }>;
+}) {
+  const raised = ground.heightScale > 0 && tile.hasHeight && tile.heights != null;
   const heights = useMemo(
-    () =>
-      ground.heightScale > 0
-        ? { data: terrain.heights, resX: terrain.resX, resZ: terrain.resZ }
-        : null,
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the version counter
-    [terrain.heightVersion, ground.heightScale],
+    () => (raised && tile.heights ? { data: tile.heights, resX: tile.resX, resZ: tile.resZ } : null),
+    // The buffer is stable; the version says the samples changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tile, tile.heightVersion, raised],
   );
-
-  if (!splat) return null;
+  const tileGround = useMemo(
+    () => ({ ...ground, sizeX: tile.sizeX, sizeZ: tile.sizeZ, resX: tile.resX, resZ: tile.resZ }),
+    [ground, tile.sizeX, tile.sizeZ, tile.resX, tile.resZ],
+  );
+  if (!tile.texture) return null;
   return (
     <PaintedGround
-      ground={ground}
-      splat={splat}
+      ground={tileGround}
+      splat={tile.texture}
       heights={heights}
-      name={GROUND_NAME}
-      maxMeshSegs={EDITOR_GROUND_MESH_SEGS}
+      // Flat paint is a texture on a quad. The dense lattice is only for sculpt.
+      maxMeshSegs={raised ? EDITOR_GROUND_MESH_SEGS : 1}
       skipNormals={terrain.stroking}
+      offset={[tile.originX, tile.originZ]}
+      splatMode="index"
+      palette={terrain.paletteIds}
     />
+  );
+}
+
+/**
+ * Unpainted tiles: one repeating material, one quad each.
+ *
+ * No splat texture and no displaced lattice. A 1024 m map of base ground is a
+ * handful of planes instead of dozens of 160² meshes.
+ */
+function SolidTiles({
+  tiles,
+  materialId,
+}: {
+  tiles: TerrainTile[];
+  materialId: string;
+}) {
+  const sample = tiles[0];
+  const def = groundMaterial(materialId);
+  const [material, setMaterial] = useState<THREE.Material | null>(null);
+  const fallback = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: "#6a7354", roughness: 1, metalness: 0 }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!def || !sample) return;
+    let dead = false;
+    const loader = new THREE.TextureLoader();
+    const diff = loader.load(assetUrl(def.diff));
+    const nor = loader.load(assetUrl(def.nor));
+    const prep = (tex: THREE.Texture, srgb: boolean) => {
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(sample.sizeX / def.tile, sample.sizeZ / def.tile);
+      tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      tex.anisotropy = 4;
+    };
+    prep(diff, true);
+    prep(nor, false);
+    const next = new THREE.MeshStandardMaterial({ map: diff, normalMap: nor, roughness: 1, metalness: 0 });
+    if (!dead) setMaterial(next);
+    return () => {
+      dead = true;
+      diff.dispose();
+      nor.dispose();
+      next.dispose();
+    };
+  }, [def, sample, materialId]);
+
+  useEffect(() => () => fallback.dispose(), [fallback]);
+
+  if (!sample) return null;
+  const mat = material ?? fallback;
+  return (
+    <>
+      {tiles.map((tile) => (
+        <mesh
+          key={`${tile.tx}:${tile.tz}`}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[tile.originX, -0.002, tile.originZ]}
+          material={mat}
+          receiveShadow
+        >
+          <planeGeometry args={[tile.sizeX, tile.sizeZ]} />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
+function PaintedTerrain({ ground }: { ground: Extract<MapDoc["ground"], { kind: "painted" }> }) {
+  const revision = useSyncExternalStore(terrain.subscribe, () => terrain.revision);
+  const focus = useEditorFocus();
+  const layout = useMemo(() => layoutFromGround(ground), [ground]);
+  useLayoutEffect(() => {
+    if (!terrain.tiles.length) terrain.load({ ground } as MapDoc);
+    bindEditorLayout(layout);
+  }, [ground, layout]);
+
+  const visible = useMemo(() => {
+    if (!layout.tiled) return terrain.tiles;
+    const wanted = new Set(tilesWithin(layout, focus.tx, focus.tz, ZONE_WARM_RADIUS).map((t) => `${t.tx}:${t.tz}`));
+    return terrain.tiles.filter((tile) => wanted.has(`${tile.tx}:${tile.tz}`));
+  }, [layout, focus.tx, focus.tz, revision]);
+
+  if (!visible.length) return null;
+  const solid = visible.filter((tile) => tile.solid);
+  const painted = visible.filter((tile) => !tile.solid);
+  return (
+    <group name={GROUND_NAME}>
+      {solid.length > 0 && <SolidTiles tiles={solid} materialId={terrain.baseId} />}
+      {painted.map((tile) => (
+        <LiveTile key={`${tile.tx}:${tile.tz}:${tile.resX}x${tile.resZ}:${tile.hasHeight ? "h" : "f"}`} tile={tile} ground={ground} />
+      ))}
+    </group>
   );
 }
 

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "id": "village_2",
+  "name": "Village 2",
+  "ground": {
+    "kind": "painted",
+    "sizeX": 600,
+    "sizeZ": 600,
+    "resX": 384,
+    "resZ": 384,
+    "layers": [
+      "grass_sparse",
+      "dirt",
+      "forest_floor_dense",
+      "dry_earth"
+    ],
+    "paint": "index",
+    "heightScale": 0,
+    "base": "grass_sparse",
+    "tilesX": 5,
+    "tilesZ": 5
+  },
+  "env": {},
+  "props": [],
+  "walls": [],
+  "waters": [],
+  "scatters": [],
+  "elements": [],
+  "active": false
+}

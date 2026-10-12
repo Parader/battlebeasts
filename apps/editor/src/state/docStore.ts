@@ -1,9 +1,12 @@
 import {
+  DEFAULT_WATER_WIDTH,
+  SCATTER_MAX_MIX,
   defaultElementParams,
   elementType,
   emptyMapDoc,
   type MapDoc,
   type MapElementParams,
+  type MapScatterProp,
 } from "@battlebeasts/shared";
 import { useRef, useSyncExternalStore } from "react";
 import type { StickyCollider } from "../props/collider";
@@ -15,7 +18,7 @@ import { DEFAULT_BRUSH, type BrushSettings } from "./terrain";
  * previous document and pushes it.
  */
 
-export type Tool = "select" | "place" | "scatter" | "wall" | "element" | "paint";
+export type Tool = "select" | "place" | "scatter" | "wall" | "water" | "element" | "paint";
 
 /** Gizmo mode for the current selection, mirroring the usual W/E/R bindings. */
 export type GizmoMode = "translate" | "rotate" | "scale";
@@ -68,6 +71,17 @@ export type EditorState = {
 
   /** Terrain brush settings. The pixels themselves live in `terrain.ts`. */
   brush: BrushSettings;
+  /**
+   * Scatter brush. The mix is manifest keys; a stroke bakes each model's
+   * base and pivot into the patch so the game never reads the manifest.
+   */
+  scatter: {
+    props: string[];
+    density: number;
+    radius: number;
+    scaleMin: number;
+    scaleMax: number;
+  };
   /**
    * Set while a brush stroke is in flight so the camera stops competing for
    * left-drag. Ephemeral UI state, never saved.
@@ -135,6 +149,7 @@ function initialState(): EditorState {
     elementType: "player_spawn",
     elementParams: defaultElementParams(elementType("player_spawn")!),
     brush: { ...DEFAULT_BRUSH },
+    scatter: { props: [], density: 0.2, radius: 6, scaleMin: 0.85, scaleMax: 1.2 },
     orbitLocked: false,
     focusRequest: null,
     gameViewNonce: 0,
@@ -281,6 +296,8 @@ class DocStore {
     const exists = (id: string) =>
       doc.props.some((p) => p.id === id) ||
       doc.walls.some((w) => w.id === id) ||
+      (doc.waters ?? []).some((w) => w.id === id) ||
+      (doc.scatters ?? []).some((s) => s.id === id) ||
       doc.elements.some((e) => e.id === id);
 
     const kept = this.state.selectedIds.filter(exists);
@@ -303,6 +320,12 @@ function cloneWorkingDoc(doc: MapDoc): MapDoc {
     env: { ...doc.env },
     props: doc.props.map((p) => ({ ...p })),
     walls: doc.walls.map((w) => ({ ...w, points: w.points.map((pt) => [pt[0], pt[1]] as [number, number]) })),
+    waters: (doc.waters ?? []).map((w) => ({ ...w, points: w.points.map((pt) => [pt[0], pt[1]] as [number, number]) })),
+    scatters: (doc.scatters ?? []).map((s) => ({
+      ...s,
+      dabs: s.dabs.map((d) => [d[0], d[1], d[2]] as [number, number, number]),
+      props: s.props.map((p) => ({ ...p })),
+    })),
     elements: doc.elements.map((e) => ({
       ...e,
       params: { ...e.params },
@@ -346,6 +369,8 @@ export function nextId(doc: MapDoc, prefix: string): string {
   const used = new Set<string>([
     ...doc.props.map((p) => p.id),
     ...doc.walls.map((w) => w.id),
+    ...(doc.waters ?? []).map((w) => w.id),
+    ...(doc.scatters ?? []).map((s) => s.id),
     ...doc.elements.map((e) => e.id),
   ]);
   let n = 1;
@@ -373,9 +398,70 @@ export function commitWall(points: ReadonlyArray<readonly [number, number]>, clo
   docStore.setUi({ wallDraft: null, wallCursor: null, selectedId: id });
 }
 
+/** Add or remove a model from the scatter mix. The mix is what the next stroke plants. */
+export function toggleScatterProp(key: string): void {
+  const cur = docStore.getSnapshot().scatter;
+  const has = cur.props.includes(key);
+  const props = has
+    ? cur.props.filter((k) => k !== key)
+    : cur.props.length >= SCATTER_MAX_MIX
+      ? cur.props
+      : [...cur.props, key];
+  docStore.setUi({ scatter: { ...cur, props } });
+}
+
+/**
+ * Store one painted patch. `baked` carries each model's base and pivot so the
+ * game can sit the clumps without the prop manifest.
+ */
+export function commitScatter(
+  dabs: ReadonlyArray<readonly [number, number, number]>,
+  baked: MapScatterProp[],
+): string | null {
+  if (!dabs.length || !baked.length) return null;
+  const { scatter, doc } = docStore.getSnapshot();
+  const id = nextId(doc, "s");
+  docStore.edit((d) => {
+    d.scatters.push({
+      id,
+      dabs: dabs.map((dab) => [dab[0], dab[1], dab[2]] as [number, number, number]),
+      props: baked.map((p) => ({ ...p })),
+      density: scatter.density,
+      seed: Math.floor(Math.random() * 1_000_000_000) + 1,
+      scaleMin: Math.min(scatter.scaleMin, scatter.scaleMax),
+      scaleMax: Math.max(scatter.scaleMin, scatter.scaleMax),
+    });
+  });
+  docStore.setUi({ selectedId: id });
+  return id;
+}
+
+export function commitWater(points: ReadonlyArray<readonly [number, number]>, closed: boolean): void {
+  if (points.length < 2 || (closed && points.length < 3)) {
+    docStore.setUi({ wallDraft: null, wallCursor: null });
+    return;
+  }
+  const id = nextId(docStore.getSnapshot().doc, "a");
+  docStore.edit((d) => {
+    d.waters.push({
+      id,
+      closed: closed && points.length >= 3,
+      points: points.map((p) => [p[0], p[1]] as [number, number]),
+      width: DEFAULT_WATER_WIDTH,
+    });
+  });
+  docStore.setUi({ wallDraft: null, wallCursor: null, selectedId: id });
+}
+
+/** Commit whichever stroke is armed: a boundary, or a river / pond. */
+export function commitStroke(points: ReadonlyArray<readonly [number, number]>, closed: boolean): void {
+  if (docStore.getSnapshot().tool === "water") commitWater(points, closed);
+  else commitWall(points, closed);
+}
+
 /** Every entity in the document, as a flat list of the fields grouping needs. */
 function allEntities(doc: MapDoc): Array<{ id: string; group?: string }> {
-  return [...doc.props, ...doc.walls, ...doc.elements];
+  return [...doc.props, ...doc.walls, ...(doc.waters ?? []), ...doc.elements];
 }
 
 /** The group an entity belongs to, or null when it stands alone. */
@@ -513,7 +599,7 @@ export function duplicateSelected(): string[] {
       if (!from) return undefined;
       const seen = regroup.get(from);
       if (seen) return seen;
-      const used = new Set([...d.props, ...d.walls, ...d.elements].map((e) => e.group));
+      const used = new Set([...d.props, ...d.walls, ...d.waters, ...d.elements].map((e) => e.group));
       while (used.has(`g${nextGroup}`)) nextGroup++;
       const fresh = `g${nextGroup++}`;
       regroup.set(from, fresh);
@@ -536,6 +622,18 @@ export function duplicateSelected(): string[] {
         continue;
       }
 
+      const scatter = d.scatters.find((s) => s.id === id);
+      if (scatter) {
+        const nid = nextId(d, "s");
+        d.scatters.push({
+          ...structuredClone(scatter),
+          id: nid,
+          dabs: scatter.dabs.map(([x, z, r]) => [x + step, z, r] as [number, number, number]),
+        });
+        created.push(nid);
+        continue;
+      }
+
       const wall = d.walls.find((w) => w.id === id);
       if (wall) {
         const nid = nextId(d, "w");
@@ -544,6 +642,19 @@ export function duplicateSelected(): string[] {
           id: nid,
           points: wall.points.map((p) => [p[0] + step, p[1]] as [number, number]),
           group: groupFor(wall.group),
+        });
+        created.push(nid);
+        continue;
+      }
+
+      const water = d.waters.find((w) => w.id === id);
+      if (water) {
+        const nid = nextId(d, "a");
+        d.waters.push({
+          ...structuredClone(water),
+          id: nid,
+          points: water.points.map((p) => [p[0] + step, p[1]] as [number, number]),
+          group: groupFor(water.group),
         });
         created.push(nid);
         continue;
@@ -582,6 +693,8 @@ export function deleteSelected(): number {
   docStore.edit((d) => {
     d.props = d.props.filter((p) => !kill.has(p.id));
     d.walls = d.walls.filter((w) => !kill.has(w.id));
+    d.waters = d.waters.filter((w) => !kill.has(w.id));
+    d.scatters = d.scatters.filter((s) => !kill.has(s.id));
     d.elements = d.elements.filter((e) => !kill.has(e.id));
   });
   docStore.setUi({ selectedId: null });

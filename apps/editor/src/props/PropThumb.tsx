@@ -1,5 +1,7 @@
 import { useGLTF } from "@react-three/drei";
 import { Component, Suspense, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { isTreeProp } from "@web/game/envMotionKind";
+import { liftDeadVertexColors } from "@web/game/vertexTint";
 import { requestPropThumb } from "./thumbRenderer";
 
 /**
@@ -23,6 +25,10 @@ function PropThumbScene({ url, canvasRef }: { url: string; canvasRef: RefObject<
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const marker = "/assets/props/";
+    const at = url.indexOf(marker);
+    const propKey = at < 0 ? url : decodeURIComponent(url.slice(at + marker.length).replace(/\.glb(\?.*)?$/i, ""));
+    liftDeadVertexColors(gltf.scene, isTreeProp(propKey));
     return requestPropThumb(url, gltf.scene, canvas);
   }, [url, gltf.scene, canvasRef]);
   return null;

@@ -5,15 +5,16 @@ import {
   mapGroundExtent,
   mapGroundSize,
   propUrlForKey,
+  SCATTER_MAX_DABS,
 } from "@battlebeasts/shared";
 import { Environment, Grid, OrbitControls, useGLTF } from "@react-three/drei";
-import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
+import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { colliderForPlacement } from "../props/collider";
 import { usePropIndex } from "../props/manifest";
 import { colliderOverrides } from "../props/overrides";
-import { commitWall, docStore, nextId, rollYaw, snap, useEditor, useEditorSlice } from "../state/docStore";
+import { commitScatter, commitStroke, docStore, nextId, rollYaw, snap, useEditor, useEditorSlice } from "../state/docStore";
 import { terrain } from "../state/terrain";
 import { wasDragged } from "./clickGuard";
 import { CollisionOverlay } from "./CollisionOverlay";
@@ -21,9 +22,29 @@ import { Elements } from "./Elements";
 import { GameViewSnap, OrientationCompass, OrientationProbe } from "./GameView";
 import { GroupGizmo } from "./GroupGizmo";
 import { Ground } from "./Ground";
+import { EnvMotionClock } from "@web/game/EnvMotionClock";
+import { dressEnvironmentObject } from "@web/game/environmentMotion";
+import { paintLife } from "./lifePaint";
+import { paintToonWater } from "./waterPaint";
+import { MapSky } from "./MapSky";
 import { Props } from "./Props";
+import { ScatterFields } from "./Scatter";
 import { ScaleReference } from "./ScaleReference";
+import { Waters } from "./Waters";
 import { CLOSE_SNAP_M, Walls } from "./Walls";
+import { setEditorFocus } from "./viewFocus";
+
+/** Quantise the orbit target so the ground neighbourhood follows a pan. */
+function TrackEditorFocus() {
+  const camera = useThree((s) => s.camera);
+  const controls = useThree((s) => s.controls) as { target?: THREE.Vector3 } | null;
+  useFrame(() => {
+    const target = controls?.target;
+    if (target) setEditorFocus(target.x, target.z);
+    else setEditorFocus(camera.position.x, camera.position.z);
+  });
+  return null;
+}
 
 function Lights({ size }: { size: number }) {
   // Matched loosely to the game's outdoor lighting so props read the same here
@@ -74,6 +95,7 @@ function PlacementGhost({ x, z, radius }: { x: number; z: number; radius: number
  */
 function GhostModel({
   url,
+  propKey,
   x,
   y,
   z,
@@ -82,6 +104,7 @@ function GhostModel({
   pivotZ,
 }: {
   url: string;
+  propKey: string;
   x: number;
   y: number;
   z: number;
@@ -117,8 +140,22 @@ function GhostModel({
       });
       mesh.material = Array.isArray(mesh.material) ? faded : faded[0]!;
     });
+    dressEnvironmentObject(clone, propKey);
+    paintToonWater(clone, propKey);
+    paintLife(clone, propKey);
+    clone.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of mats) {
+        if (!(material instanceof THREE.MeshStandardMaterial)) continue;
+        material.transparent = true;
+        material.opacity = 0.45;
+        material.depthWrite = false;
+      }
+    });
     return clone;
-  }, [gltf]);
+  }, [gltf, propKey]);
 
   // Same nesting as a placed prop, so the preview is the placement.
   return (
@@ -142,7 +179,7 @@ function BrushCursor({ x, z, radius }: { x: number; z: number; radius: number })
 
 /** Ground plus the click-to-plant behaviour that targets it. */
 function GroundLayer() {
-  const { doc, tool, brushProp, brush, gridSnap, angleSnap, wallDraft, ghostYaw, stickyCollider } =
+  const { doc, tool, brushProp, brush, scatter, gridSnap, angleSnap, wallDraft, ghostYaw, stickyCollider } =
     useEditor();
   const { index } = usePropIndex();
   // Snapped, so this only re-renders when the ghost actually moves a cell.
@@ -150,9 +187,13 @@ function GroundLayer() {
   // Unsnapped, because a brush should follow the cursor smoothly.
   const [brushAt, setBrushAt] = useState<{ x: number; z: number } | null>(null);
   const painting = useRef(false);
+  const scattering = useRef(false);
+  const scatterDabs = useRef<Array<[number, number, number]>>([]);
+  const [draftDabs, setDraftDabs] = useState<Array<[number, number, number]>>([]);
 
   const armed = tool === "place" && brushProp ? index?.byKey.get(brushProp) : undefined;
   const canPaint = tool === "paint" && doc.ground.kind === "painted";
+  const canScatter = tool === "scatter" && doc.ground.kind === "painted";
 
   // Fresh facing whenever a different prop is armed, so arrow-keying through a
   // family does not show every variant at the same angle.
@@ -182,28 +223,72 @@ function GroundLayer() {
    * OrbitControls is disabled for the duration instead, leaving middle-drag
    * and right-drag to move the camera.
    */
+  const pushScatterDab = (x: number, z: number) => {
+    const radius = scatter.radius;
+    const dabs = scatterDabs.current;
+    const last = dabs[dabs.length - 1];
+    if (last && Math.hypot(last[0] - x, last[1] - z) < radius * 0.45) return;
+    if (dabs.length >= SCATTER_MAX_DABS) return;
+    dabs.push([x, z, radius]);
+    setDraftDabs(dabs.slice());
+  };
+
   const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
-    if (!canPaint || e.button !== 0) return;
+    if (e.button !== 0) return;
+    if (canPaint) {
+      e.stopPropagation();
+      painting.current = true;
+      docStore.setUi({ orbitLocked: true });
+      terrain.beginStroke();
+      terrain.stamp(e.point.x, e.point.z, brush);
+      return;
+    }
+    if (!canScatter || !scatter.props.length) return;
     e.stopPropagation();
-    painting.current = true;
+    scattering.current = true;
+    scatterDabs.current = [];
     docStore.setUi({ orbitLocked: true });
-    terrain.beginStroke();
-    terrain.stamp(e.point.x, e.point.z, brush);
+    pushScatterDab(e.point.x, e.point.z);
   };
 
   const endStroke = () => {
-    if (!painting.current) return;
-    painting.current = false;
+    if (painting.current) {
+      painting.current = false;
+      docStore.setUi({ orbitLocked: false });
+      terrain.endStroke();
+    }
+    if (!scattering.current) return;
+    scattering.current = false;
     docStore.setUi({ orbitLocked: false });
-    terrain.endStroke();
+    const dabs = scatterDabs.current;
+    scatterDabs.current = [];
+    setDraftDabs([]);
+    if (!dabs.length || !index) return;
+    const baked = scatter.props.flatMap((key) => {
+      const entry = index.byKey.get(key);
+      if (!entry) return [];
+      return [
+        {
+          prop: key,
+          baseY: entry.bounds.baseY,
+          ...(entry.bounds.centreX ? { pivotX: entry.bounds.centreX } : {}),
+          ...(entry.bounds.centreZ ? { pivotZ: entry.bounds.centreZ } : {}),
+        },
+      ];
+    });
+    commitScatter(dabs, baked);
   };
 
   const onPointerMove = (e: ThreeEvent<PointerEvent>) => {
-    if (canPaint) {
+    if (canPaint || canScatter) {
       setBrushAt({ x: e.point.x, z: e.point.z });
-      if (painting.current) {
+      if (canPaint && painting.current) {
         e.stopPropagation();
         terrain.stamp(e.point.x, e.point.z, brush);
+      }
+      if (canScatter && scattering.current) {
+        e.stopPropagation();
+        pushScatterDab(e.point.x, e.point.z);
       }
       return;
     }
@@ -212,7 +297,7 @@ function GroundLayer() {
     const x = snap(e.point.x, gridSnap);
     const z = snap(e.point.z, gridSnap);
 
-    if (tool === "wall") {
+    if (tool === "wall" || tool === "water") {
       if (wallDraft) docStore.setUi({ wallCursor: [x, z] });
       return;
     }
@@ -227,14 +312,14 @@ function GroundLayer() {
   // A stroke that ends off-canvas still has to be committed, or the next one
   // would fold into it and undo would jump two strokes back.
   useEffect(() => {
-    if (!canPaint) return;
+    if (!canPaint && !canScatter) return;
     window.addEventListener("pointerup", endStroke);
     window.addEventListener("pointercancel", endStroke);
     return () => {
       window.removeEventListener("pointerup", endStroke);
       window.removeEventListener("pointercancel", endStroke);
     };
-  }, [canPaint]);
+  }, [canPaint, canScatter, scatter, index]);
 
   /** Append a point, or close the loop when clicking back on the start. */
   const addWallPoint = (px: number, pz: number) => {
@@ -244,7 +329,7 @@ function GroundLayer() {
 
     const first = draft[0];
     if (first && draft.length > 2 && Math.hypot(x - first[0], z - first[1]) <= CLOSE_SNAP_M) {
-      commitWall(draft, true);
+      commitStroke(draft, true);
       return;
     }
     // Ignore a repeat click on the same grid cell; it would make a zero-length
@@ -299,7 +384,7 @@ function GroundLayer() {
     }
     if (e.button !== 0 || wasDragged()) return;
 
-    if (tool === "wall") {
+    if (tool === "wall" || tool === "water") {
       e.stopPropagation();
       addWallPoint(e.point.x, e.point.z);
       return;
@@ -376,6 +461,7 @@ function GroundLayer() {
             <GhostModel
               key={armed.key}
               url={propUrlForKey(armed.key)}
+              propKey={armed.key}
               // Straight at the cursor, with the same pivot the placement will
               // store, so the preview is exactly what lands.
               x={hover.x}
@@ -388,7 +474,15 @@ function GroundLayer() {
           </Suspense>
         </>
       )}
-      {canPaint && brushAt && <BrushCursor x={brushAt.x} z={brushAt.z} radius={brush.radius} />}
+      {(canPaint || canScatter) && brushAt && (
+        <BrushCursor x={brushAt.x} z={brushAt.z} radius={canScatter ? scatter.radius : brush.radius} />
+      )}
+      {draftDabs.map(([x, z, r], i) => (
+        <mesh key={`draft-${i}`} position={[x, 0.05, z]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => {}}>
+          <ringGeometry args={[Math.max(0.05, r - 0.12), r, 32]} />
+          <meshBasicMaterial color="#9dcea0" transparent opacity={0.45} depthTest={false} />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -415,6 +509,7 @@ function FocusOnRequest() {
     const prop = doc.props.find((p) => p.id === id);
     const el = doc.elements.find((e) => e.id === id);
     const wall = doc.walls.find((w) => w.id === id);
+    const water = doc.waters?.find((w) => w.id === id);
 
     let target: THREE.Vector3 | null = null;
     if (prop) target = new THREE.Vector3(prop.x, prop.y, prop.z);
@@ -423,6 +518,11 @@ function FocusOnRequest() {
       const n = wall.points.length;
       const cx = wall.points.reduce((a, p) => a + p[0], 0) / n;
       const cz = wall.points.reduce((a, p) => a + p[1], 0) / n;
+      target = new THREE.Vector3(cx, 0, cz);
+    } else if (water?.points.length) {
+      const n = water.points.length;
+      const cx = water.points.reduce((a, p) => a + p[0], 0) / n;
+      const cz = water.points.reduce((a, p) => a + p[1], 0) / n;
       target = new THREE.Vector3(cx, 0, cz);
     }
 
@@ -449,10 +549,12 @@ export function Viewport() {
   const size = useEditorSlice((s) => mapGroundSize(s.doc));
   const extentX = useEditorSlice((s) => mapGroundExtent(s.doc).x);
   const extentZ = useEditorSlice((s) => mapGroundExtent(s.doc).z);
+  const skyId = useEditorSlice((s) => s.doc.env.skyPreset);
 
   return (
     <>
     <Canvas
+      key="gl-restore"
       shadows
       dpr={[1, 1.25]}
       /*
@@ -475,9 +577,17 @@ export function Viewport() {
         if (active && active !== document.body) active.blur();
       }}
     >
-      <color attach="background" args={["#1b1f26"]} />
+      {skyId ? (
+        <Suspense fallback={<color attach="background" args={["#1b1f26"]} />}>
+          <MapSky key={skyId} id={skyId} />
+        </Suspense>
+      ) : (
+        <color attach="background" args={["#1b1f26"]} />
+      )}
 
       <Lights size={size} />
+      <TrackEditorFocus />
+      <EnvMotionClock />
 
       <Suspense fallback={null}>
         <GroundLayer />
@@ -485,7 +595,9 @@ export function Viewport() {
 
       <Suspense fallback={null}>
         <Props />
+        <ScatterFields />
         <Walls />
+        <Waters />
         <Elements />
       </Suspense>
 

@@ -48,6 +48,12 @@ export function describeEntity(doc: MapDoc, id: string): EntityLabel {
     return { label, title: `${label} (${id})`, found: true };
   }
 
+  const water = doc.waters?.find((w) => w.id === id);
+  if (water) {
+    const label = water.closed ? "Pond" : "River";
+    return { label, title: `${label} (${id})`, found: true };
+  }
+
   return { label: id, title: id, found: false };
 }
 

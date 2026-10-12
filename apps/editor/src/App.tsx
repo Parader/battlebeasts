@@ -1,4 +1,15 @@
-import { emptyMapDoc, mapSlotLabel, type MapDoc } from "@battlebeasts/shared";
+import {
+  emptyMapDoc,
+  forEachTile,
+  layoutFromGround,
+  mapSlotLabel,
+  tileHeightUrl,
+  tileIndexAt,
+  tileSplatUrl,
+  tilesWithin,
+  ZONE_WARM_RADIUS,
+  type MapDoc,
+} from "@battlebeasts/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteMap,
@@ -11,13 +22,14 @@ import {
   type MapListEntry,
 } from "./io/maps";
 import { GroundPanel } from "./panels/GroundPanel";
+import { SkyPanel } from "./panels/SkyPanel";
 import { Inspector } from "./panels/Inspector";
 import { ToolOptions } from "./panels/ToolOptions";
 import { Validation } from "./panels/Validation";
 import { Palette } from "./props/Palette";
 import { Viewport } from "./scene/Viewport";
 import {
-  commitWall,
+  commitStroke,
   deleteSelected,
   docStore,
   duplicateSelected,
@@ -26,10 +38,11 @@ import {
   useEditorSlice,
 } from "./state/docStore";
 import { loadSidecar, terrain } from "./state/terrain";
+import { getEditorFocus } from "./scene/viewFocus";
 
 /** Size splat/height buffers from the document so the viewport can render immediately. */
 function primeTerrain(doc: MapDoc): void {
-  terrain.load(doc, null, null);
+  terrain.load(doc);
 }
 
 /**
@@ -38,18 +51,49 @@ function primeTerrain(doc: MapDoc): void {
  * Missing sidecars are normal rather than an error: a map that has never been
  * painted just starts as base material over flat ground.
  */
+/**
+ * Pull saved terrain in small batches, nearest tiles first.
+ *
+ * The viewport is already showing the base material. Each batch lands on its
+ * own turn, so a large map does not decode every sidecar in one hitch, and a
+ * tile that is only the base material collapses instead of keeping a buffer.
+ */
 async function loadTerrainSidecars(doc: MapDoc): Promise<void> {
   if (doc.ground.kind !== "painted") return;
-  const [splat, height] = await Promise.all([
-    doc.ground.splatUrl ? loadSidecar(doc.ground.splatUrl) : Promise.resolve(null),
-    doc.ground.heightUrl ? loadSidecar(doc.ground.heightUrl) : Promise.resolve(null),
-  ]);
-  terrain.load(doc, splat, height);
-}
+  const generation = terrain.generation;
+  const ground = doc.ground;
+  const layout = layoutFromGround(ground);
+  if (!layout.tiled && !ground.splatUrl && !ground.heightUrl) return;
 
-async function loadTerrainFor(doc: MapDoc): Promise<void> {
-  primeTerrain(doc);
-  await loadTerrainSidecars(doc);
+  const coords: { tx: number; tz: number }[] = [];
+  forEachTile(layout, (coord) => coords.push(coord));
+  const focus = getEditorFocus();
+  const tx = layout.tiled ? tileIndexAt(layout.sizeX, layout.tilesX, focus.x) : 0;
+  const tz = layout.tiled ? tileIndexAt(layout.sizeZ, layout.tilesZ, focus.z) : 0;
+  const near = new Set(tilesWithin(layout, tx, tz, ZONE_WARM_RADIUS).map((tile) => `${tile.tx}:${tile.tz}`));
+  coords.sort((a, b) => Number(near.has(`${b.tx}:${b.tz}`)) - Number(near.has(`${a.tx}:${a.tz}`)));
+
+  const BATCH = 4;
+  for (let i = 0; i < coords.length; i += BATCH) {
+    if (terrain.generation !== generation) return;
+    await Promise.all(
+      coords.slice(i, i + BATCH).map(async ({ tx: tileX, tz: tileZ }) => {
+        const splatUrl = layout.tiled ? tileSplatUrl(doc.id, tileX, tileZ) : ground.splatUrl;
+        const heightUrl = layout.tiled
+          ? ground.heightScale > 0
+            ? tileHeightUrl(doc.id, tileX, tileZ)
+            : undefined
+          : ground.heightScale > 0
+            ? ground.heightUrl
+            : undefined;
+        const [splat, height] = await Promise.all([
+          splatUrl ? loadSidecar(splatUrl) : Promise.resolve(null),
+          heightUrl ? loadSidecar(heightUrl) : Promise.resolve(null),
+        ]);
+        terrain.ingestLoaded(generation, tileX, tileZ, splat, height);
+      }),
+    );
+  }
 }
 
 function useMapList() {
@@ -147,8 +191,10 @@ function ToolButtons() {
     { id: "select", label: "Select", hint: "Click anything to select it" },
     { id: "place", label: "Place", hint: "Click the ground to plant the armed prop" },
     { id: "wall", label: "Boundary", hint: "Draw a collision boundary on the ground (B)" },
+    { id: "water", label: "Water", hint: "Draw a river, or close the loop for a pond" },
     { id: "element", label: "Element", hint: "Place a spawn, stand, portal or objective" },
     { id: "paint", label: "Terrain", hint: "Paint ground materials and sculpt height (T)" },
+    { id: "scatter", label: "Scatter", hint: "Paint grass, leaves, and rocks by density" },
   ] as const;
   return (
     <div className="toolbar">
@@ -302,14 +348,33 @@ function TopBar({ onStatus }: { onStatus: (s: string) => void }) {
       // the sidecars on disk — the expensive part of creating a new map.
       // A clone must always write them: URLs are derived from the id, and
       // leaving them out would point the copy at files that do not exist.
-      if (terrain.dirty || opts?.forceSidecars) sidecars = terrain.sidecars();
+      // A map opened from the old four-weight splat is converted in memory, so
+      // the first save has to write the index splat and the flag together.
+      const layout = layoutFromGround(current.ground);
+      const writeSidecars =
+        terrain.dirty || !!opts?.forceSidecars || terrain.pendingUpgrade || terrain.pendingSlim;
+      if (writeSidecars) sidecars = terrain.sidecars();
+      const { tilesX: _dropX, tilesZ: _dropZ, ...base } = current.ground;
+      const indexed = terrain.tiles.length > 0;
+      const painted = {
+        ...base,
+        base: terrain.baseId,
+        ...(indexed ? { paint: "index" as const, layers: terrain.materialIds() } : {}),
+      };
+      const sole = terrain.tiles[0];
+      const keepSplat = !!sole && !sole.solid;
       toSave = {
         ...current,
-        ground: {
-          ...current.ground,
-          splatUrl: splatUrlFor(current.id),
-          heightUrl: current.ground.heightScale > 0 ? heightUrlFor(current.id) : undefined,
-        },
+        ground: layout.tiled
+          ? { ...painted, tilesX: layout.tilesX, tilesZ: layout.tilesZ, splatUrl: undefined, heightUrl: undefined }
+          : {
+              ...painted,
+              splatUrl: keepSplat ? splatUrlFor(current.id) : undefined,
+              heightUrl:
+                keepSplat && sole?.hasHeight && current.ground.heightScale > 0
+                  ? heightUrlFor(current.id)
+                  : undefined,
+            },
       };
     }
     const result = await saveMap(toSave, sidecars ?? undefined);
@@ -490,13 +555,19 @@ function TopBar({ onStatus }: { onStatus: (s: string) => void }) {
 }
 
 function statusHint(tool: string, hasDraft: boolean, armed: boolean): string {
-  if (tool === "wall") {
+  if (tool === "wall" || tool === "water") {
+    const noun = tool === "water" ? "river" : "boundary";
     return hasDraft
-      ? "Click to add points · click the start ring to close · Enter finishes open · Backspace undoes a point · Esc cancels"
-      : "Click the ground to start a boundary";
+      ? `Click to add points · click the start ring to close · Enter finishes the ${noun} · Backspace undoes a point · Esc cancels`
+      : tool === "water"
+        ? "Click the ground to start a river · close the loop for a pond"
+        : "Click the ground to start a boundary";
   }
   if (tool === "paint") {
     return "Left-drag to paint or sculpt · middle-drag orbits · right-drag pans · Ctrl+Z undoes a stroke";
+  }
+  if (tool === "scatter") {
+    return "Add models from the palette · left-drag a patch · Ctrl+Z removes it · click a patch in Select to edit";
   }
   if (tool === "place" && armed)
     return "Click the ground to plant · ←/→ swaps model · Esc to cancel";
@@ -510,7 +581,9 @@ export function App() {
   const wallDraft = useEditorSlice((s) => s.wallDraft);
   const propCount = useEditorSlice((s) => s.doc.props.length);
   const wallCount = useEditorSlice((s) => s.doc.walls.length);
+  const waterCount = useEditorSlice((s) => s.doc.waters?.length ?? 0);
   const elementCount = useEditorSlice((s) => s.doc.elements.length);
+  const scatterCount = useEditorSlice((s) => s.doc.scatters.length);
   const [status, setStatus] = useState("Ready");
 
   useEffect(() => {
@@ -570,7 +643,7 @@ export function App() {
       if (wallDraft) {
         if (e.key === "Enter") {
           e.preventDefault();
-          commitWall(wallDraft, false);
+          commitStroke(wallDraft, false);
           return;
         }
         if (e.key === "Backspace") {
@@ -669,6 +742,7 @@ export function App() {
 
       <div className="right">
         <Inspector />
+        <SkyPanel />
         <GroundPanel />
         <Validation />
       </div>
@@ -678,7 +752,7 @@ export function App() {
         <span className="spacer" />
         <span>{statusHint(tool, !!wallDraft, !!brushProp)}</span>
         <span>
-          {propCount} props · {wallCount} boundaries · {elementCount} elements
+          {propCount} props · {scatterCount} scatter · {wallCount} boundaries · {waterCount} water · {elementCount} elements
         </span>
       </div>
     </div>

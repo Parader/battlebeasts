@@ -1,18 +1,19 @@
 import {
-  DEFAULT_GROUND_LAYERS,
   GROUND_MATERIALS,
-  GROUND_MATERIAL_GROUP_ORDER,
   groundMaterial,
   groundMaterialsByGroup,
   groundResFor,
+  groundTileLayout,
   MAX_GROUND_HEIGHT_SCALE,
-  MAX_GROUND_LAYERS,
+  MAX_ZONE_M,
+  paintedBaseId,
   type MapGround,
 } from "@battlebeasts/shared";
 import { useEffect, useMemo, useState } from "react";
 import { groundUnusable, useGroundUnusableVersion } from "../ground/unusable";
 import { docStore, useEditorSlice } from "../state/docStore";
 import { terrain } from "../state/terrain";
+import { MaterialPicker } from "./MaterialPicker";
 
 /**
  * Ground setup: extent, materials and height range.
@@ -47,20 +48,38 @@ function ResizeControls({ ground }: { ground: Painted }) {
   const [d, setD] = useState(String(ground.sizeZ));
   const [anchor, setAnchor] = useState(4);
 
-  const nextX = Math.max(8, Math.round(Number(w) || ground.sizeX));
-  const nextZ = Math.max(8, Math.round(Number(d) || ground.sizeZ));
+  const nextX = Math.max(8, Math.min(MAX_ZONE_M, Math.round(Number(w) || ground.sizeX)));
+  const nextZ = Math.max(8, Math.min(MAX_ZONE_M, Math.round(Number(d) || ground.sizeZ)));
   const changed = nextX !== ground.sizeX || nextZ !== ground.sizeZ;
-  const res = groundResFor(nextX, nextZ);
+  const layout = groundTileLayout(nextX, nextZ);
 
   const apply = () => {
     if (!changed) return;
     const [ax, az] = ANCHORS[anchor]!;
     const shift = { x: (ax * (nextX - ground.sizeX)) / 2, z: (az * (nextZ - ground.sizeZ)) / 2 };
 
-    terrain.resize({ sizeX: nextX, sizeZ: nextZ, ...res }, shift);
+    terrain.resize(
+      {
+        sizeX: nextX,
+        sizeZ: nextZ,
+        resX: layout.resX,
+        resZ: layout.resZ,
+        tilesX: layout.tilesX,
+        tilesZ: layout.tilesZ,
+      },
+      shift,
+    );
 
     docStore.edit((doc) => {
-      doc.ground = { ...ground, sizeX: nextX, sizeZ: nextZ, ...res };
+      const { tilesX: _tilesX, tilesZ: _tilesZ, ...rest } = ground;
+      doc.ground = {
+        ...rest,
+        sizeX: nextX,
+        sizeZ: nextZ,
+        resX: layout.resX,
+        resZ: layout.resZ,
+        ...(layout.tiled ? { tilesX: layout.tilesX, tilesZ: layout.tilesZ } : {}),
+      };
       if (shift.x === 0 && shift.z === 0) return;
       for (const p of doc.props) {
         p.x += shift.x;
@@ -113,7 +132,9 @@ function ResizeControls({ ground }: { ground: Painted }) {
           ))}
         </div>
         <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
-          {res.resX}x{res.resZ} grid
+          {layout.tiled
+            ? `${layout.tilesX}×${layout.tilesZ} tiles, ${layout.resX}×${layout.resZ} each`
+            : `${layout.resX}x${layout.resZ} grid`}
         </span>
       </div>
 
@@ -125,8 +146,12 @@ function ResizeControls({ ground }: { ground: Painted }) {
 
       {changed && (
         <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
-          Everything on the map shifts to keep the anchored side in place. Terrain paint is
-          carried over; new ground starts on the base layer. This clears terrain undo.
+          Everything on the map shifts to keep the anchored side in place. Painted tiles are
+          carried over; new ground stays the base material and is not stored until you paint
+          it. This clears terrain undo.
+          {layout.tiled
+            ? " Past 160 m the ground is stored as tiles, so paint stays sharp and the game only draws the area around you."
+            : ""}
         </div>
       )}
     </>
@@ -140,93 +165,28 @@ function anchorLabel(ax: number, az: number): string {
   return name ? `Anchor ${name}` : "Anchor centre";
 }
 
-/** Layer dropdowns + a cull list so unused textures stay out of the way. */
-function MaterialPickers({ ground, onChange }: { ground: Painted; onChange: (g: Painted) => void }) {
-  const marksVersion = useGroundUnusableVersion();
-  const [showHidden, setShowHidden] = useState(false);
+/** Library cull, so unused textures stay out of the paint picker. */
+function MaterialPickers() {
   const [manageOpen, setManageOpen] = useState(false);
 
   useEffect(() => {
     void groundUnusable.load();
   }, []);
 
-  const selectedKey = ground.layers.slice(0, MAX_GROUND_LAYERS).join("|");
-
-  const groups = useMemo(() => {
-    void marksVersion;
-    const selected = new Set(selectedKey.split("|").filter(Boolean));
-    const exclude = showHidden ? undefined : groundUnusable.asSet();
-    const base = groundMaterialsByGroup({ excludeIds: exclude });
-
-    // Currently-selected layers must stay in the dropdown even if hidden, or
-    // the <select> value would point at a missing option.
-    if (showHidden || selected.size === 0) return base;
-
-    const byGroup = new Map(base.map((g) => [g.group, g.items.slice()]));
-    for (const id of selected) {
-      if (!exclude?.has(id)) continue;
-      const m = groundMaterial(id);
-      if (!m) continue;
-      const list = byGroup.get(m.group) ?? [];
-      if (!list.some((x) => x.id === id)) list.push(m);
-      byGroup.set(m.group, list);
-    }
-
-    return GROUND_MATERIAL_GROUP_ORDER.filter((group) => byGroup.has(group)).map((group) => ({
-      group,
-      items: (byGroup.get(group) ?? []).slice().sort((a, b) => a.label.localeCompare(b.label)),
-    }));
-  }, [marksVersion, showHidden, selectedKey]);
-
   return (
     <>
-      <label style={{ marginTop: 6, display: "block" }}>Materials</label>
-      {Array.from({ length: MAX_GROUND_LAYERS }, (_, i) => (
-        <div className="row" key={i}>
-          <label style={{ width: 18 }}>{i + 1}</label>
-          <select
-            value={gLayer(ground, i)}
-            onChange={(e) => {
-              const layers = [...ground.layers];
-              while (layers.length < MAX_GROUND_LAYERS) layers.push(DEFAULT_GROUND_LAYERS[layers.length]!);
-              layers[i] = e.target.value;
-              onChange({ ...ground, layers });
-            }}
-            style={{ flex: 1 }}
-          >
-            {groups.map(({ group, items }) => (
-              <optgroup key={group} label={group}>
-                {items.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                    {groundUnusable.has(m.id) ? " (hidden)" : ""}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-      ))}
-
+      <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+        Pick a material on the Terrain brush and paint it. Each spot blends that material with
+        whatever is already there, so a transition can use more than four.
+      </div>
       <div className="row" style={{ marginTop: 4, gap: 8, flexWrap: "wrap" }}>
         <button type="button" onClick={() => setManageOpen((v) => !v)}>
           {manageOpen ? "Close library" : "Manage library"}
         </button>
-        {groundUnusable.size > 0 && (
-          <label className="muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
-            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
-            Show hidden ({groundUnusable.size})
-          </label>
-        )}
       </div>
-
       {manageOpen && <MaterialLibraryManager />}
     </>
   );
-}
-
-function gLayer(ground: Painted, i: number): string {
-  return ground.layers[i] ?? "";
 }
 
 /**
@@ -265,7 +225,7 @@ function MaterialLibraryManager() {
       }}
     >
       <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
-        Hide textures you do not want in the layer lists. Hidden ones stay available to maps that
+        Hide textures you do not want in the paint picker. Hidden ones stay available to maps that
         already use them; restore anytime. {GROUND_MATERIALS.length} in catalog, {groundUnusable.size}{" "}
         hidden.
       </div>
@@ -297,6 +257,11 @@ function MaterialLibraryManager() {
                   marginBottom: 2,
                 }}
               >
+                <img
+                  src={`${import.meta.env.BASE_URL}${m.diff}`}
+                  alt=""
+                  style={{ width: 28, height: 28, objectFit: "cover", borderRadius: 2, flex: "none" }}
+                />
                 <span style={{ flex: 1, fontSize: 12 }}>{m.label}</span>
                 <button
                   type="button"
@@ -340,16 +305,19 @@ export function GroundPanel() {
             if (!window.confirm("Convert to painted terrain? The current ground is replaced.")) return;
             const sizeX = g.kind === "plane" ? g.sizeX : 80;
             const sizeZ = g.kind === "plane" ? g.sizeZ : 80;
+            const base = g.kind === "plane" && groundMaterial(g.material) ? g.material : "grass";
             const next: MapGround = {
               kind: "painted",
               sizeX,
               sizeZ,
               ...groundResFor(sizeX, sizeZ),
-              layers: [...DEFAULT_GROUND_LAYERS],
+              base,
+              layers: [base],
+              paint: "index",
               heightScale: 0.25,
             };
             setGround(next);
-            terrain.load({ ...doc, ground: next }, null, null);
+            terrain.load({ ...doc, ground: next });
           }}
         >
           Convert to painted terrain
@@ -364,7 +332,18 @@ export function GroundPanel() {
 
       <ResizeControls ground={g} />
 
-      <MaterialPickers ground={g} onChange={setGround} />
+      <MaterialPicker
+        label="Base material"
+        selected={paintedBaseId(g)}
+        touchPalette={false}
+        hint="Unpainted ground uses this, and it is not stored per texel. A large map stays light until a brush touches it. Changing it recolors only ground that still shows the old base."
+        onSelect={(id) => {
+          terrain.setBase(id);
+          setGround({ ...g, base: id });
+        }}
+      />
+
+      <MaterialPickers />
 
       <div className="row" style={{ marginTop: 6 }}>
         <label>Height</label>

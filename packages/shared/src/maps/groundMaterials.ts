@@ -5,16 +5,23 @@
  * `shared/index`, which the game server imports, and the server has no
  * business pulling a renderer in just to know a material's id.
  *
- * A painted ground names up to four of these in `MapGround.layers`; the splat
- * texture's R, G, B and A channels weight them in that order.
+ * A painted splat stores two materials per texel (what's underneath, and what
+ * the brush is blending in) so a map can use every material in this catalog.
+ * Older maps still store four layer weights; the editor converts those on load.
  *
- * Sources are Poly Haven and ambientCG (both CC0). The 1k tier is deliberate:
- * the camera is top-down and every material stretches over a multi-metre
- * repeat, so 2k buys nothing but download size.
+ * `slot` is the byte written into the splat. It is the index in this catalog
+ * and must only grow by appending. Reordering or inserting would retint every
+ * saved map.
+ *
+ * Scanned sources are Poly Haven and ambientCG (both CC0), plus the terrain
+ * layers shipped with the SICS prop packs. The 1k tier is deliberate: the
+ * camera is top-down and every material stretches over a multi-metre repeat.
  *
  * FreePBR is intentionally skipped: its free downloads are personal-use only,
  * while Poly Haven / ambientCG stay CC0 for a commercial game.
  */
+
+import { SICS_GROUND_MATERIALS } from "./groundMaterials.sics";
 
 export type GroundMaterialDef = {
   id: string;
@@ -34,9 +41,17 @@ export type GroundMaterialDef = {
    * next to a ~1.7 m character.
    */
   tile: number;
+  /**
+   * Byte stored in the splat. Assigned from catalog order; append-only.
+   * Zero is a valid slot.
+   */
+  slot: number;
   /** Grouping for the material picker. */
   group: GroundMaterialGroup;
 };
+
+/** A catalog entry before its splat slot is assigned. */
+type GroundMaterialSource = Omit<GroundMaterialDef, "slot">;
 
 /**
  * Author-facing categories for the ground material picker.
@@ -45,6 +60,12 @@ export type GroundMaterialDef = {
  * not by source site.
  */
 export type GroundMaterialGroup =
+  | "Enchanted Meadow"
+  | "Golden Valley"
+  | "Deserted Temples"
+  | "Spring Isles"
+  | "Underworld"
+  | "Stone Age"
   | "Ground"
   | "Grass & Moss"
   | "Sand"
@@ -55,6 +76,12 @@ export type GroundMaterialGroup =
   | "Built";
 
 export const GROUND_MATERIAL_GROUP_ORDER: readonly GroundMaterialGroup[] = [
+  "Enchanted Meadow",
+  "Golden Valley",
+  "Deserted Temples",
+  "Spring Isles",
+  "Underworld",
+  "Stone Age",
   "Ground",
   "Grass & Moss",
   "Sand",
@@ -73,7 +100,7 @@ function polyHaven(
   slug: string,
   tile: number,
   group: GroundMaterialGroup,
-): GroundMaterialDef {
+): GroundMaterialSource {
   return {
     id,
     label,
@@ -91,7 +118,7 @@ function ambientCg(
   assetId: string,
   tile: number,
   group: GroundMaterialGroup,
-): GroundMaterialDef {
+): GroundMaterialSource {
   const slug = assetId.toLowerCase();
   return {
     id,
@@ -104,14 +131,13 @@ function ambientCg(
 }
 
 /**
- * The pool a map picks its layers from.
+ * Scanned ground, in catalog order. SICS terrain layers are appended so their
+ * slots stay after the scans that already shipped.
  *
- * Far larger than `MAX_GROUND_LAYERS`, and deliberately so: the four-channel
- * limit is about what one surface can blend at once, not about how much choice
- * an author has. Ids are stable and stored in map documents, so rename labels
- * freely but never an id.
+ * Ids are stable and stored in map documents, so rename labels freely but
+ * never an id. Slots follow this order and must only grow at the end.
  */
-export const GROUND_MATERIALS: readonly GroundMaterialDef[] = [
+const GROUND_MATERIAL_SOURCES: readonly GroundMaterialSource[] = [
   // --- Ground (mixed cover: gravel, pebbles, leaves, forest litter) ---
   polyHaven("pebbles", "Pebbles", "pebble_ground_01", 5, "Ground"),
   polyHaven("pebbles_clean", "Pebbles, clean", "clean_pebbles", 5, "Ground"),
@@ -240,6 +266,27 @@ export const GROUND_MATERIALS: readonly GroundMaterialDef[] = [
   polyHaven("asphalt", "Asphalt", "asphalt_02", 8, "Built"),
 ];
 
+function withSlots(defs: readonly GroundMaterialSource[]): GroundMaterialDef[] {
+  if (defs.length > 255) {
+    throw new Error(`ground catalog has ${defs.length} materials; a splat slot is one byte`);
+  }
+  return defs.map((def, slot) => ({ ...def, slot }));
+}
+
+export const GROUND_MATERIALS: readonly GroundMaterialDef[] = withSlots([
+  ...GROUND_MATERIAL_SOURCES,
+  ...SICS_GROUND_MATERIALS.map(
+    (material): GroundMaterialSource => ({
+      id: material.id,
+      label: material.label,
+      diff: material.diff,
+      nor: material.nor,
+      tile: material.tile,
+      group: material.group as GroundMaterialGroup,
+    }),
+  ),
+]);
+
 /** Pool grouped for a picker, in catalog order within each group. */
 export function groundMaterialsByGroup(opts?: {
   /** When set, materials whose ids are in this set are omitted. */
@@ -258,29 +305,73 @@ export function groundMaterialsByGroup(opts?: {
 }
 
 const BY_ID = new Map(GROUND_MATERIALS.map((m) => [m.id, m]));
+const BY_SLOT = new Map(GROUND_MATERIALS.map((m) => [m.slot, m]));
 
 export function groundMaterial(id: string): GroundMaterialDef | undefined {
   return BY_ID.get(id);
 }
 
-/** Splat channels available, and so the layer cap on a painted ground. */
+/** Splat byte for a material id. Unknown ids fall back to slot 0. */
+export function groundSlot(id: string): number {
+  return BY_ID.get(id)?.slot ?? 0;
+}
+
+export function groundBySlot(slot: number): GroundMaterialDef | undefined {
+  return BY_SLOT.get(slot);
+}
+
+/**
+ * Rewrite a legacy four-weight splat into the two-material index format.
+ *
+ * Each texel keeps its two strongest layers. The fourth weight is whatever
+ * the first three do not use, matching the shader those maps were painted with.
+ * Channel A stays opaque so a canvas reload cannot premultiply the indices away.
+ */
+export function convertWeightSplatToIndex(splat: Uint8Array, layerIds: readonly string[]): void {
+  const slots = [0, 1, 2, 3].map((index) => groundSlot(layerIds[index] ?? layerIds[0] ?? "grass"));
+  for (let i = 0; i < splat.length; i += 4) {
+    const weights = [
+      (splat[i] ?? 0) / 255,
+      (splat[i + 1] ?? 0) / 255,
+      (splat[i + 2] ?? 0) / 255,
+      0,
+    ];
+    weights[3] = Math.max(0, 1 - weights[0]! - weights[1]! - weights[2]!);
+    let first = 0;
+    let second = 1;
+    for (let channel = 1; channel < 4; channel++) {
+      if (weights[channel]! > weights[first]!) first = channel;
+    }
+    second = first === 0 ? 1 : 0;
+    for (let channel = 0; channel < 4; channel++) {
+      if (channel !== first && weights[channel]! > weights[second]!) second = channel;
+    }
+    const sum = weights[first]! + weights[second]!;
+    const blend = sum > 0.001 ? weights[second]! / sum : 0;
+    splat[i] = slots[first] ?? 0;
+    splat[i + 1] = slots[second] ?? slots[first] ?? 0;
+    splat[i + 2] = Math.round(blend * 255);
+    splat[i + 3] = 255;
+  }
+}
+
+/** Splat channels of a legacy weight map, and so its layer cap. */
 export const MAX_GROUND_LAYERS = 4;
 
 /** Layers a new painted ground starts with: base first, painted on top. */
 export const DEFAULT_GROUND_LAYERS: readonly string[] = ["grass", "dirt", "rock", "sand"];
 
 /**
- * Every texture URL a set of layers needs, for preloading.
- *
- * Colour and normal only. The renderer does not sample roughness or AO -- four
- * layers of all four maps exceeds the guaranteed texture-unit budget, and
- * those two are the least missed on outdoor ground.
+ * Every colour and normal URL a set of materials needs, for preloading.
+ * Materials without a normal (flat) contribute only their colour.
  */
 export function groundLayerUrls(layers: readonly string[]): string[] {
   const out: string[] = [];
-  for (const id of layers.slice(0, MAX_GROUND_LAYERS)) {
-    const m = groundMaterial(id);
-    if (m) out.push(m.diff, m.nor);
+  for (const id of layers) {
+    const material = groundMaterial(id);
+    if (!material) continue;
+    out.push(material.diff);
+    if (material.nor) out.push(material.nor);
   }
   return out;
 }
